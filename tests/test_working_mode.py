@@ -35,6 +35,9 @@ class WorkingModeTests(unittest.TestCase):
     def run_mode(self, *args, cwd=None, env=None):
         if len(args) == 1 and args[0].casefold() in SIDES:
             args = (args[0], SIDES[args[0].casefold()])
+        # The UTF-8 bytes through the file system's own codec: under LC_ALL=C a Turkish name
+        # does not encode as an argument, and this way the child (-X utf8) reads it back whole.
+        args = tuple(os.fsdecode(a.encode('utf-8')) for a in args)
         return subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project), *args],
                               capture_output=True, text=True, encoding='utf-8', timeout=15, cwd=cwd or self.project,
                               env=env)
@@ -636,9 +639,10 @@ class WorkingModeTests(unittest.TestCase):
         spec.loader.exec_module(module)
         before = self.state.read_bytes()
         try:
-            with mock.patch.object(Path, 'is_junction', create=True), \
+            # None: the API is not there to call. A `del` here broke the patch's own restore on
+            # Python 3.11, where create=True removes the attribute again on exit.
+            with mock.patch.object(Path, 'is_junction', None, create=True), \
                     mock.patch('sys.stdout', new=io.StringIO()):
-                del Path.is_junction  # Python 3.11 has no such API.
                 with self.assertRaisesRegex(ValueError, 'linked path refused'):
                     module.mode(self.project, 'saver', SIDES['saver'])
             self.assertFalse((target / 'mode').exists())

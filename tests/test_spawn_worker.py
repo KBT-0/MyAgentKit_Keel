@@ -50,8 +50,13 @@ cmd = args[0]
 started = os.path.join(state, 'started')
 target = args[args.index('-t') + 1].lstrip('=').rstrip(':') if '-t' in args else ''
 if cmd == 'has-session':
-    sys.exit(0 if target in read(started).split('\n') and 'SPAWN_GONE' not in os.environ
-             else "can't find session: " + target)
+    alive = target in read(started).split('\n')
+    if alive and 'SPAWN_GONE' in os.environ:
+        # Confirmed once, right after new-session; then the session has ended.
+        seen = os.path.join(state, 'gone-seen')
+        alive = not os.path.exists(seen)
+        open(seen, 'a').close()
+    sys.exit(0 if alive else "can't find session: " + target)
 if cmd == 'list-clients':
     if os.path.exists(os.path.join(state, 'attached')):
         print('/dev/pts/9: w [120x30 xterm-256color] (attached,UTF-8)')
@@ -170,6 +175,14 @@ with open(script) as f:
     args.append(f.read())
 with open(os.path.join(os.environ['SPAWN_STATE'], 'wt.json'), 'w') as f:
     json.dump(args, f)
+if os.name != 'nt':
+    # The cygpath stub spells paths C:/x and C:\x. Here the supervisor's part of the script (up to
+    # the command it supervises, whose arguments the tests read as spelled) gets the POSIX paths
+    # those stand for, as Git Bash's own would resolve.
+    head, sep, tail = args[-1].partition(" -c 'exec ")
+    head = re.sub(r"'C:(\\[^']*)'", lambda m: "'" + m.group(1).replace('\\', '/') + "'", head.replace('C:/', '/'))
+    with open(script, 'w') as f:
+        f.write(head + sep + tail)
 sys.exit(subprocess.run(['sh', script], stdin=subprocess.DEVNULL).returncode)
 '''
 
@@ -339,8 +352,9 @@ class SpawnWorkerTests(unittest.TestCase):
         if WINDOWS:
             # Native Windows' python3 may be an inaccessible WindowsApps alias. Every
             # shebang fixture uses this runner's interpreter, never a host alias.
+            # UTF-8 mode: a stub that prints the prompt arrow died on a cp1252 console (Windows CI).
             (self.bin / 'python3').write_text('#!/bin/sh\nexec ' +
-                                            shq(sys.executable.replace('\\', '/')) + ' "$@"\n')
+                                            shq(sys.executable.replace('\\', '/')) + ' -X utf8 "$@"\n')
             (self.bin / 'python3').chmod(0o755)
         self.brief = self.cwd / "it's the brief.md"
         self.brief.write_text('Line one of the brief.\nLine two.\n')
@@ -729,7 +743,8 @@ exit 0
         for tab in self.backend_paths():
             for text, ends in ((done, True), (done.replace('completed', 'progress'), False), ('# notes\n', False)):
                 with self.subTest(windows=bool(tab), text=text[:15]):
-                    for path in (self.state / 'finished', self.state / 'claude.json', report):
+                    for path in (self.state / 'finished', self.state / 'claude.json', self.state / 'started',
+                                 report):
                         path.unlink(missing_ok=True)
                     result = self.spawn('w1', str(self.brief), '--result', str(report), **tab, SPAWN_PUBLISH=text,
                                         SPAWN_PUBLISH_TO=str(report), SPAWN_LINGER='4', KIT_WORKER_GRACE='0.2')
@@ -1456,7 +1471,7 @@ exit 0
         # message put an ESC sequence on the lead's terminal. bash with xpg_echo behaves so.
         brief = self.cwd / 'task\\033[2J.md'
         brief.write_text('a brief\n')
-        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief),
+        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w1', str(brief),
                                  '--model', 'm', '--effort', 'high'], cwd=self.cwd,
                                 env=self.base_env(), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)

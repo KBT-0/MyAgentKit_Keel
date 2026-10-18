@@ -30,6 +30,7 @@ def make_project(path):
     (path / 'scripts/boundary_checks.sh').write_text('# The fixture has no boundaries.\n', encoding='utf-8')
     (path / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n', encoding='utf-8')
     (path / 'docs/PROJECT.md').write_text('# PROJECT\n\n## Contents\n', encoding='utf-8')
+    (path / 'scripts/check.sh').chmod(0o755)  # the Stop and pre-commit hooks run ./scripts/check.sh
     subprocess.run(['git', 'init', '-q', str(path)], check=True)
 
 

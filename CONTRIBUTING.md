@@ -85,6 +85,22 @@ plugin is installed from this repository's marketplace, and an installed plugin 
 until its version string changes (code.claude.com/docs/en/plugins-reference, `version`;
 code.claude.com/docs/en/plugins/loading, "Versions and updates").
 
+A release is not announced, and no project is told to sync or update the plugin, before the
+kit's CI is green on every job of the release commit. The maintainer's machine cannot see all
+of them: a Windows host prints NOT RUN for the POSIX suites and a POSIX host for the Windows
+ones, so the kit check passing there proves part of the matrix only. Push the release commit,
+then read the result instead of assuming it:
+
+```sh
+gh run list --branch master --limit 1 --json databaseId,conclusion,headSha
+gh run view RUN_ID --json jobs -q '.jobs[] | "\(.name) \(.conclusion)"'    # all six: success
+```
+
+A red or cancelled job means the release is not out: fix the cause (`gh run view RUN_ID
+--log-failed`), push, and read the next run. v0.11 shipped with five jobs red and one cancelled
+(issue #95), because nothing in this file said to look. The kit's own rule applies to the kit:
+check the pipeline after pushing (`core/scripts/check.sh`, header).
+
 **Run the kit's own acceptance:**
 
 ```sh

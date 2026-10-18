@@ -13,7 +13,9 @@ jobs:
   acceptance:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # macOS 3.14 was cancelled at the old 30 minutes (run 39065623063) while Ubuntu took 14: a
+    # limit that cuts a run short reads as a failure of the kit.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +43,9 @@ jobs:
   windows:
     name: windows-latest / Python ${{ matrix.python }}
     runs-on: windows-latest
-    timeout-minutes: 60
+    # The same run took 59 of the old 60 minutes (3.14, serial tests); 90 keeps a green run from
+    # being cut short until the kit check runs its units sharded.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

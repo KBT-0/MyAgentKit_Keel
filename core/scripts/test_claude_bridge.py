@@ -20,6 +20,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent_usage
 
 ROOT = Path(__file__).resolve().parent
+# The ignore rules the fixtures need (the kit's own file, trimmed to its private-store rules). A
+# fixture never copies the PROJECT's .gitignore: a project that ignores .env hid the secret-file
+# fixtures' planted files, and the kit's secret tests failed in it (issue #91).
+IGNORE_RULES = b'''.DS_Store
+Thumbs.db
+desktop.ini
+__pycache__/
+*.py[cod]
+.claude/worktrees/
+/.claude/mode.lock
+/QUESTION-*.md
+*.md.question.md
+/.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/
+/.myagentkit/backends/
+/docs/reviews/????????T??????Z-*.md
+/docs/handoffs/*-claude-propose.json
+/docs/reviews/*-claude-review.json
+*/settings.local.json
+!/docs/reviews/*-summary.md
+'''
 INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
@@ -33,9 +53,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 235, 'test_agent_usage': 36, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 237, 'test_agent_usage': 36, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 209, 'test_agent_usage': 32, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 211, 'test_agent_usage': 32, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -185,6 +205,14 @@ def run_review_shard(manifest, report):
         skipped=[(test.id(), reason) for test, reason in result.skipped],
         successful=result.wasSuccessful())), encoding='utf-8')
     return 0 if result.wasSuccessful() else 1
+
+
+def keep_output_writable(stream):
+    """A failing shard's output holds characters (U+FFFD) a console code page such as cp1252
+    cannot encode: the write raised and hid the failure it was reporting (issue #163)."""
+    reconfigure = getattr(stream, 'reconfigure', None)
+    if reconfigure:
+        reconfigure(errors='replace')
 
 
 def run_review_shards(suite, out=sys.stdout, minimum=0, timeout=None):
@@ -337,7 +365,7 @@ class ReviewPreflightTests(unittest.TestCase):
         (repo / 'scripts').mkdir()
         shutil.copyfile(ROOT / 'review.sh', repo / 'scripts/review.sh')
         shutil.copyfile(ROOT / 'owns_check.py', repo / 'scripts/owns_check.py')
-        shutil.copyfile(ROOT.parent / '.gitignore', repo / '.gitignore')
+        (repo / '.gitignore').write_bytes(IGNORE_RULES)
         # Only the paid adapter boundary is replaced. The wrapper, dispatcher, snapshot,
         # scope validation and chain storage all run their shipped implementations.
         (repo / 'scripts/review_dispatch.py').write_text('''import os, sys
@@ -1451,7 +1479,7 @@ class BridgeTests(unittest.TestCase):
         self.git("init", "-q")
         # Git for Windows turns autocrlf on system-wide: archive and checkout bytes then differ.
         self.git("config", "core.autocrlf", "false")
-        (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
+        (self.repo / '.gitignore').write_bytes(IGNORE_RULES)
         for name in ["AGENTS.md", "docs/PHASES.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md"]:
             path = self.repo / name
             path.parent.mkdir(exist_ok=True)
@@ -3206,7 +3234,7 @@ class BridgeTests(unittest.TestCase):
         for case in ('missing_ignore', 'tracked_usage', 'tracked_review', 'unignored_review',
                      'unignored_backend', 'tracked_backend', 'tracked_backend_case'):
             with self.subTest(case=case):
-                (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
+                (self.repo / '.gitignore').write_bytes(IGNORE_RULES)
                 if case == 'missing_ignore':
                     (self.repo / '.gitignore').write_text('')
                 elif case == 'unignored_review':
@@ -3663,8 +3691,22 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("data.bin", bridge.snapshot(self.repo, "uncommitted", None)[2])
         self.git("checkout", "--", "data.bin")
         self.git("update-index", "--chmod=+x", "file.py")
+        # The snapshot diffs the working file against HEAD: with core.fileMode=true (ext4, APFS)
+        # the file itself needs the bit, or the index-only change shows nowhere (issue #92).
+        os.chmod(self.repo / "file.py", 0o755)
         diff = bridge.snapshot(self.repo, "uncommitted", None)[2]
         self.assertIn("new mode 100755", diff)
+
+    def test_a_shard_report_survives_a_console_that_cannot_encode_it(self):
+        console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        keep_output_writable(console)
+        console.write("shard output \N{REPLACEMENT CHARACTER} and \N{HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT}\n")  # raised UnicodeEncodeError before the fix
+        console.flush()
+
+    def test_fixtures_never_copy_the_projects_ignore_file(self):
+        # A project that ignores .env hid the planted secret files of the fixtures (issue #91).
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertNotIn("ROOT.parent / " + "'.gitignore'", source.split("def test_fixtures_never_copy", 1)[0])
 
     def test_proposal_is_returned_but_never_applied(self):
         task = self.root / "handoff.md"
@@ -3915,7 +3957,7 @@ if case == 'archive_failure':
     last.write_text('VERDICT: Accept\\n')
 ''')
         self.fake_codex = fake
-        (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
+        (self.repo / '.gitignore').write_bytes(IGNORE_RULES)
         reviews = self.repo / 'docs/reviews'
         reviews.mkdir(exist_ok=True)
         private = reviews / '20260101T000000Z-main.md'
@@ -6623,9 +6665,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 if __name__ == "__main__":
     if sys.argv[1:2] == ['--review-shard']:
         raise SystemExit(run_review_shard(*sys.argv[2:]))
+    keep_output_writable(sys.stdout)
+    keep_output_writable(sys.stderr)
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
-    minimums = WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS
+    minimums =WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS
     suites = []
     for case, name in ((BridgeTests, 'test_claude_bridge'), (UsageTests, 'test_agent_usage'),
                        (QuotaTests, 'test_codex_quota')):
