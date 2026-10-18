@@ -137,8 +137,10 @@ class ReviewRoundOneTests(GuardCase):
             "bash <<'EOF'\ngit reset --hard\nEOF", 'echo "git reset --hard" | sh',
             'sudo git reset --hard', 'xargs git reset --hard',
         ], 2)
-        result = self.run_hook("sh -lc 'git status'")
+        result = self.run_hook('git \\\nreset --hard')
         self.assertIn('run the git command directly', result.stderr.decode('utf-8'))
+        # #77: shell text inside shell text is parsed as shell, so a safe command in it passes.
+        self.assertVerdict(["sh -lc 'git status'", 'echo $(git status --short)', 'eval "git log -1"'], 0)
 
     def test_option_values_and_literals_are_read_as_git_reads_them(self):
         (self.repo / 'owner-notes.txt').write_text('only copy\n', encoding='utf-8')
@@ -364,7 +366,7 @@ class CloseReviewTests(GuardCase):
                 command = f"{interpreter} - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF"
                 result = self.run_hook(command)
                 self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn(b'cannot read', result.stderr)
+                self.assertIn(b'force push', result.stderr)  # #77: judged as the git command it holds
         self.assertVerdict([
             "python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
             "env FOO=bar python3 - <<'EOF'\nsubprocess.run(['git', 'stash', 'drop'])\nEOF",
@@ -458,9 +460,9 @@ class RoundOneFixTests(GuardCase):
             'git status && ruby -e "puts \'hello\'"',
             'git status && python -W ignore -c "print(\'hello\')"',
             'git status && node --eval="console.log(\'hello\')"',
+            'python -c "print(\'hello\')" git',  # #77: a bare git word names no command
         ], 0)
         self.assertVerdict([
-            'python -c "print(\'hello\')" git',  # Attempt 3: every interpreter argument is opaque.
             'git status && python -c "subprocess.run([\'git\', \'push\', \'--mirror\'])"',
             'python -c "print(\'hello\')"; ruby -e "system(\'git push --mirror\')"',
             'python -Ic"subprocess.run([\'git\', \'push\', \'--mirror\'])"',
@@ -509,7 +511,6 @@ class RoundTwoFixTests(GuardCase):
             "ruby -e \"system('git config core.hooksPath disabled')\"",
             'pwsh -Command "git config core.hooksPath disabled"',
             'powershell -Command "git config core.hooksPath disabled"',
-            'python script.py git', 'python3 -X git -c "print(1)"',
         ]
         for executable in ['deno', 'bun', 'php', 'osascript', 'lua', 'julia', 'Rscript', 'tclsh', 'awk', 'php8.3']:
             commands.append(f'{executable} --some-future-option "git config core.hooksPath disabled"')
@@ -517,7 +518,8 @@ class RoundTwoFixTests(GuardCase):
             with self.subTest(command=command):
                 result = self.run_hook(command)
                 self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn(b'cannot read', result.stderr)
+                self.assertIn(b'core.hooksPath', result.stderr)
+        self.assertVerdict(['python script.py git', 'python3 -X git -c "print(1)"'], 0)  # #77: no command named
 
     def test_interpreter_heredocs_and_pipes_are_flag_independent(self):
         for executable in ['python', 'node', 'deno', 'bun', 'perl', 'ruby', 'php', 'pwsh', 'powershell', 'osascript']:
@@ -592,12 +594,14 @@ class RoundTwoFixTests(GuardCase):
         command = '(cd ../b && git status --short); git config core.hooksPath .githooks'
         self.assert_gate_preserved(command, [shell, '-c', command])
 
-    def test_hookspath_writes_with_directory_routing_are_unreadable(self):
-        for command in [
+    def test_hookspath_writes_with_directory_routing_are_judged_in_every_folder(self):
+        # #77: doctor prints `cd <repo> && git config core.hooksPath .githooks`; with .githooks
+        # inside every folder the command may stand in, a routed write wires the project's gate.
+        self.assertVerdict(['popd; git config core.hooksPath .githooks'], 2)  # a folder it cannot name
+        self.assertVerdict([
             '(cd . && git status); git config core.hooksPath .githooks',
             'cd . && git config core.hooksPath .githooks',
             'pushd .; git config core.hooksPath .githooks',
-            'popd; git config core.hooksPath .githooks',
             '(git config core.hooksPath .githooks)',
             'git -C . config core.hooksPath .githooks',
             'git -C. config core.hooksPath .githooks',
@@ -609,17 +613,97 @@ class RoundTwoFixTests(GuardCase):
             'GIT_WORK_TREE=. git config core.hooksPath .githooks',
             'git config core.hooksPath .githooks; cd .',
             'git status && git config core.hooksPath .githooks',
-        ]:
-            with self.subTest(command=command):
-                result = self.run_hook(command)
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn(b'cannot read', result.stderr)
-        self.assertVerdict([
             'git config core.hooksPath .githooks',
             'git config --local --replace-all core.hooksPath .githooks',
             'git config set core.hooksPath .githooks',
             'cd . && git config --get core.hooksPath',
         ], 0)
+        outside = self.tmp / 'outside-hooks'
+        outside.mkdir()
+        self.link_hooks(outside)
+        self.assertVerdict(['cd . && git config core.hooksPath .githooks',
+                            'GIT_DIR=.git git config core.hooksPath .githooks'], 2)
+
+
+class V012GuardTests(GuardCase):
+    """v0.12: every shell tool (#93, #213), ref and object loss (#127), a dirty worktree's
+    force remove (#108), and git that appears only in data or code (#77)."""
+
+    def tool(self, tool, commands, code):
+        for command in commands:
+            with self.subTest(tool=tool, command=command):
+                payload = json.dumps({'tool_name': tool, 'tool_input': {'command': command}})
+                result = self.run_hook(command, payload=payload)
+                self.assertEqual(result.returncode, code, result.stderr.decode('utf-8', 'replace'))
+
+    def test_powershell_and_monitor_commands_are_judged(self):
+        self.tool('PowerShell', ['git commit --no-verify -m x', '$env:HUSKY = "0"; git commit -m x',
+                                 'git --% commit --no-verify -m x', 'git commit -m x `\n  --no-verify'], 2)
+        self.tool('Monitor', ['until false; do sleep 1; done; git commit --no-verify -m x'], 2)
+        self.tool('PowerShell', ['git status; git log --oneline -3', 'Set-Location sub\\dir; git status',
+                                 '& git diff --stat'], 0)
+        self.tool('Monitor', ['tail -f build.log | grep --line-buffered error'], 0)
+        self.dirty()
+        self.tool('PowerShell', ['git reset --hard', 'Set-Location .; git checkout -- f.txt'], 2)
+        self.tool('Monitor', ['sleep 5; git reset --hard'], 2)
+
+    def test_ref_and_object_loss_is_refused(self):
+        git(self.repo, 'branch', 'merged')
+        git(self.repo, 'checkout', '-q', '-b', 'feat')
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'only on feat')
+        git(self.repo, 'checkout', '-q', 'main')
+        main = git(self.repo, 'rev-parse', 'HEAD').stdout.strip()
+        lone = git(self.repo, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'only on t1').stdout.strip()
+        git(self.repo, 'tag', 't1', lone)
+        git(self.repo, 'tag', 't2')
+        self.assertVerdict([
+            'git branch -D feat', 'git branch -d -f feat', 'git branch --delete --force feat',
+            'git branch -f feat main', 'git branch -M merged feat', 'git update-ref -d refs/heads/feat',
+            'git update-ref refs/heads/feat ' + main, 'git update-ref --stdin', 'git tag -d t1',
+            'git tag -f -m moved t1 main', 'git reflog expire --expire=now --all',
+            'git reflog delete HEAD@{0}', 'git gc --prune=now', 'git prune',
+        ], 2)
+        self.assertVerdict([
+            'git branch -D merged', 'git branch -d feat', 'git branch -f merged main', 'git tag -d t2',
+            'git update-ref -d refs/heads/merged ' + main, 'git branch -D no-such-branch',
+            'git gc', 'git gc --prune=never', 'git prune -n', 'git branch -m merged renamed',
+        ], 0)
+
+    def test_index_commands_that_overwrite_are_dirty_sensitive(self):
+        commands = ['git rm -f f.txt', 'git rm -r -f .', 'git mv -f f.txt g.txt', 'git checkout-index -f -a',
+                    'git read-tree -u --reset HEAD']
+        self.assertVerdict(commands, 0)
+        self.dirty()
+        self.assertVerdict(commands, 2)
+        self.assertVerdict(['git rm --cached f.txt', 'git rm -f --cached f.txt'], 0)
+
+    def test_force_removing_a_worktree_that_holds_work_is_refused(self):
+        git(self.repo, 'worktree', 'add', '-q', '-b', 'wtb', str(self.tmp / 'wt'))
+        git(self.repo, 'worktree', 'add', '-q', '-b', 'wtc', str(self.tmp / 'clean'))
+        self.assertVerdict(['git worktree remove --force ../wt', 'git worktree remove -f -f ../clean'], 0)
+        (self.tmp / 'wt' / 'f.txt').write_text('worker output\n', encoding='utf-8')
+        self.assertVerdict(['git worktree remove --force ../wt', 'git worktree remove -f -f ../wt',
+                            'git -C .. worktree remove --force wt', 'cd .. && git worktree remove --force wt'], 2)
+        (self.tmp / 'wt' / 'f.txt').write_text('one\n', encoding='utf-8')
+        (self.tmp / 'wt' / 'new.txt').write_text('untracked\n', encoding='utf-8')
+        self.assertVerdict(['git worktree remove --force ../wt'], 2)
+        self.assertVerdict(['git worktree remove ../wt', 'git worktree list'], 0)  # git refuses itself
+
+    def test_git_in_data_or_code_is_judged_as_the_command_it_names(self):
+        (self.repo / 'note.md').write_text('x\n', encoding='utf-8')
+        self.assertVerdict([
+            "python - <<'EOF'\nopen('note.txt', 'w').write('see the git docs')\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git', 'status'])\nEOF",
+            'gh issue create --title "the git hook refuses a title" --body-file note.md',
+            'grep -c x $(git ls-files)', 'left=$(git ls-files --others --exclude-standard | wc -l)',
+            'for f in $(git ls-files); do wc -l "$f"; done', 'cd . && git config core.hooksPath .githooks',
+            'timeout 30 git fetch', 'xargs -n1 git log -1 --oneline',
+        ], 0)
+        self.assertVerdict([
+            "python - <<'EOF'\nsubprocess.run(['git', 'push', '--force'])\nEOF",
+            'gh issue create --title t --body "$(git push --force)"', 'sudo git push --force',
+            'nice git commit --no-verify -m x', 'gh api x -f note="git stash drop"',
+        ], 2)
 
 
 if __name__ == '__main__':

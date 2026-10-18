@@ -30,11 +30,11 @@ repository.
 | `CLAUDE.md` | One-line pointer to `AGENTS.md`. Content never goes here |
 | `.claude/settings.json` | Registers the hooks below (the guards with `onFailure: block`), allows without a prompt the gate (`scripts/check.sh` and `--self-test`, exactly) and read-only commands (`git status`, `git log/diff/show --no-textconv --no-ext-diff`, `git branch` in exact listing forms, `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`, `grep`, PowerShell `Get-Content`/`Get-ChildItem`; ending a process, deleting a file and every other command still ask), and turns on the ponytail plugin (minimal-code mode) for every session and worker unless the setup interview's question 11 was answered no. The allow rules guard only the command's own arguments. The repository's local git configuration, including `diff.submodule` and every submodule's own configuration, is trusted: `git status` and the gate already run what it names (`core.fsmonitor`). No allow rule can defend against a hostile local config. The plugin comes from its author's marketplace (`ponytail@ponytail`) at the latest version, the same id a user-level install has, so it loads once |
 | `.claude/hooks/gate_on_stop.sh` | Runs the gate if a turn left the watched paths dirty — early feedback, never the rule (a hook is deterministic, an instruction is advice: code.claude.com/docs/en/hooks-guide) |
-| `.claude/hooks/guard_boundaries.py` | Warns about a forbidden import right after the write (a PostToolUse hook cannot block, code.claude.com/docs/en/hooks; `scripts/check.sh` is the gate); Windows paths match too. Unconfigured, it says UNCONFIGURED instead of passing in silence (fail-safe defaults, Saltzer and Schroeder) |
+| `.claude/hooks/guard_boundaries.py` | Warns about a forbidden import right after the write (a PostToolUse hook cannot block, code.claude.com/docs/en/hooks; `scripts/check.sh` is the gate); Windows paths match too. It sees Edit and Write only: a write through the shell (sed, a here-document, a script) gets no early warning, and the gate still catches it. Unconfigured, it says UNCONFIGURED instead of passing in silence (fail-safe defaults, Saltzer and Schroeder) |
 | `.claude/hooks/context_size.py` | Names the context band once per 50k step past 200k tokens (yellow 200k, red 300k, ceiling 400k) and asks the agent to recommend `/compact` or a hand-off, whichever is cheaper (`docs/WORKFLOW.md`, "Worker cost", rule 8) |
 | `.claude/hooks/after_compact.txt` | Printed by a `SessionStart` hook after every compaction: what to re-read and the rules that still bind, since a summary is lossy. `autoCompactWindow` (450k) in `.claude/settings.json` is the safety valve for a session nobody stops |
-| `.claude/hooks/guard_destructive_git.py` | Always refuses `stash drop/clear`, force pushes (unless `--force-with-lease=ref:expected` or `--force-if-includes`), `remote set-url/add`, amending a pushed commit and a skipped gate (`--no-verify`, `commit -n`, `-c core.hooksPath=`, `--no-gpg-sign`, or moving/unsetting `core.hooksPath`); allows the project's gate wiring with `git config core.hooksPath .githooks`; refuses `reset --hard`, `checkout --`/`-f`, `restore` and `clean -f` while the tree is dirty, and prints what would be lost |
-| `.claude/hooks/guard_private_email.py` | Refuses a WebFetch, WebSearch or web-client Bash call (curl, wget, gh, a URL) that carries git's `user.email` or an address in `MYAGENTKIT_PRIVATE_EMAILS`; the API gets the project's Web contact from `docs/PROJECT.md` |
+| `.claude/hooks/guard_destructive_git.py` | Always refuses `stash drop/clear`, force pushes (unless `--force-with-lease=ref:expected` or `--force-if-includes`), `remote set-url/add`, amending a pushed commit and a skipped gate (`--no-verify`, `commit -n`, `-c core.hooksPath=`, `--no-gpg-sign`, or moving/unsetting `core.hooksPath`); allows the project's gate wiring with `git config core.hooksPath .githooks`; refuses a ref delete or forced move that loses commits no other ref reaches (`branch -D/-f/-M`, `tag -d`, `update-ref`, `remote remove`), `reflog expire/delete`, `gc --prune=<time>`, `prune`, and `worktree remove --force` of a worktree that holds work; refuses `reset --hard`, `checkout --`/`-f`, `restore`, `clean -f`, `rm -f`, `mv -f`, `checkout-index -f` and `read-tree -u --reset` while the tree is dirty, and prints what would be lost |
+| `.claude/hooks/guard_private_email.py` | Refuses a WebFetch, WebSearch or web-client shell call (Bash, PowerShell, Monitor: curl, wget, gh, a URL, Monitor's `ws.url`) that carries git's `user.email` (read in the project too) or an address in `MYAGENTKIT_PRIVATE_EMAILS`, or that runs what prints one (`git log/show`, `git var`, `git config -l`, `env`, `printenv`); the API gets the project's Web contact from `docs/PROJECT.md` |
 | `.claude/hooks/guard_worker_route.py` | Refuses an Agent call that names no model or no effort, which would inherit the lead's; a fork is exempt, as it cannot change either. The lead tells the owner the model, the effort and why before the start (`docs/WORKFLOW.md`, "Worker cost", rule 5) |
 | `.claude/hooks/plain_report.py` | Bounces a final message to the owner that names a session label (`D-1`, `r2`, `Accept-MC`) outside code, once per turn; the agent rewrites it in plain words (`docs/COMMUNICATION.md`, "Language and terms"). Its `LABELS` list is where a project adds its own shapes |
 | `.claude/hooks/progress_reminder.py` | After five tool calls with no visible line, adds one line of context asking the agent to say what it is doing; it reads only the transcript's tail (`docs/COMMUNICATION.md`, "Progress") |
@@ -48,19 +48,22 @@ repository.
 | `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
 | `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
 
+The git and e-mail guards judge every tool that runs a command (Bash, PowerShell, Monitor): the
+settings matcher is the one list, and the hooks read `tool_input.command` whatever the tool. A
+PowerShell command is read without backslash escapes and with `$env:NAME = v` as a variable for
+later commands; a backtick beside a git word is refused as unreadable.
 The git guard removes shell redirections before reading git arguments, and recognizes
-`checkout -` as the previous branch. A wrapper chain it cannot follow to git (including
-`env`/`exec` options and unlisted wrappers) is refused as unreadable. Shells and interpreters
-(`python*`, Node, Deno, Bun, Perl, Ruby, PHP, PowerShell, osascript and other common runtimes)
-are unreadable when any argument, their here-document or stdin pipeline holds a git word,
-regardless of flags. A separate `git status` does not taint a git-free interpreter segment.
-Gate wiring accepts exactly one `.githooks` value in the documented local config forms;
-extra operands, value-pattern forms and unknown options are refused. The hook resolves
-`.githooks` from its own cwd and refuses symlinks/junctions that leave the repository.
-A hooksPath write must be a single plain command: directory changes (`cd`, `pushd`, `popd`),
-subshells, compound commands, Git directory options (`-C`, `--git-dir`, `--work-tree`) and
-`GIT_DIR`/`GIT_WORK_TREE` alongside the write are unreadable. Run the wiring command alone
-from the intended repository. Read-only config queries retain their normal directory routing.
+`checkout -` as the previous branch. Shell text inside shell text (`$(...)`, backticks, `eval`,
+`sh -c`, a here-document a shell reads) is parsed as shell. In text it cannot parse as shell (an
+interpreter's code or here-document, any other program's arguments: a wrapper such as `sudo` or
+`xargs`, or data such as a `gh` title) each `git ...` is judged as the command it names, so a
+mention of `git status` passes and `git push --force` is refused. `env`/`exec` options, a
+backslash-newline, a here-string and shell or interpreter input piped from a git command stay
+unreadable. Gate wiring accepts exactly one `.githooks` value in the documented local config
+forms; extra operands, value-pattern forms and unknown options are refused. The hook resolves
+`.githooks` in every folder the command may stand in (its `cd`, `-C`, `--git-dir`, `GIT_DIR`) and
+refuses a symlink or junction that leaves a repository, so doctor's
+`cd <repo> && git config core.hooksPath .githooks` passes as printed.
 
 The four `permissions.deny` rules (`git *--out*`, `*--ext*`, `*--textc*`, `*--sub*`) are prefixes
 because git accepts any unambiguous abbreviation of a long option (git-scm.com/docs/gitcli).

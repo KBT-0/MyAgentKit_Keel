@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """PostToolUse(Edit|Write): warn about a forbidden import the moment it is written.
 
+It sees Edit and Write only: a write through the shell (sed, a here-document, a script run by
+Bash or PowerShell) names no file to the hook, so it gets no early warning here (#151); the gate
+below still catches it.
+
 It warns after the write; scripts/check.sh is the gate (a PostToolUse hook cannot block, the
 tool already ran: https://code.claude.com/docs/en/hooks).
 

@@ -111,7 +111,7 @@ die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo
 # remove it, as the audit keeps a worktree no worker committed in. Before that, cleanup removes it.
 stranded() {
   [ -n "${made:-}" ] && [ -n "${launched:-}" ] || return 0
-  printf '%s\n' "spawn_worker: the worktree $dir stays (locked: kit worker $name) while its session may run; once it has ended, run scripts/close_worker.sh $name, and if no work was done in it: git worktree remove --force $(q "$dir") && git branch -D worktree-$name" >&2
+  printf '%s\n' "spawn_worker: the worktree $dir stays (locked: kit worker $name) while its session may run; once it has ended, run scripts/close_worker.sh $name; it removes the worktree only when no work would be lost, so never remove it by hand with --force" >&2
 }
 # Quote one value for a POSIX shell: wrap it in '...' and write each ' inside as '\''.
 # The x keeps a trailing newline that $(...) would strip.
@@ -210,7 +210,7 @@ cleanup() {
     elif rmdir -- "$dir" 2>/dev/null; then
       printf '%s\n' "spawn_worker: removed the empty folder $dir it claimed; a branch worktree-$name, if any, is not this spawn's to delete" >&2
     else
-      printf '%s\n' "spawn_worker: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir"); git branch -D worktree-$name" >&2
+      printf '%s\n' "spawn_worker: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir") && git update-ref -d refs/heads/worktree-$name $base" >&2
     fi
   fi
 }

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash): refuse a git command that loses work, or one that skips the gate.
+"""PreToolUse(Bash|PowerShell|Monitor): refuse a git command that loses work, or one that skips the gate.
+
+Every tool that runs a command is judged: the settings matcher names them all (one list there),
+and the hook reads `tool_input.command` whatever the tool's name. A PowerShell command is read
+after two translations (no backslash escape in PowerShell, `$env:NAME = v` sets a variable for
+the commands after it); a backtick (PowerShell's escape and line continuation) beside a git word
+is refused as unreadable.
 
 Threat model: an agent's ACCIDENT, not an adversary; Claude Code's permissions and sandbox are
 the boundary. What the hook can parse it reads as the shell and git would; what it cannot parse
@@ -14,7 +20,10 @@ or stash before any command that discards work" still covers every destructive c
   `-c`/`--config-env` core.hooksPath, writing core.hooksPath away from `.githooks`, and a
   `GIT_CONFIG_*`, `HUSKY*`, `SKIP` or `PRE_COMMIT*` variable on a command that runs hooks. The
   gate's hatch is the owner's, typed in the owner's own terminal; this hook sees only an agent's
-  Bash calls.
+  tool calls. Also always: a ref delete or forced move (`branch -D/-f/-M/-C`, `tag -d/-f`,
+  `update-ref`, `remote remove`) when the ref holds commits no other ref reaches,
+  `reflog expire/delete`, `gc --prune=<time>` and `prune`, and `worktree remove --force` while
+  the worktree it names holds uncommitted or untracked work.
 - While the target tree has uncommitted work: `git reset --hard`, `git checkout` of paths or
   with `-f`, `git switch -f`, `git restore` (unless index-only: `--staged` without
   `--worktree`), `git clean` (unless `-n`/`--dry-run`; with `-x`/`-X` ignored files count) and
@@ -22,7 +31,8 @@ or stash before any command that discards work" still covers every destructive c
   they are gone. The tree checked is the one the command reaches (`cd X &&`, `git -C`,
   `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`), and the caller's folder is always
   checked too: a `cd` only adds a folder. A command after one that changes the tree (anything
-  but `cd`, `echo`, a read-only git command ...) is judged dirty.
+  but `cd`, `echo`, a read-only git command ...) is judged dirty. `git rm -f` (not `--cached`),
+  `mv -f`, `checkout-index -f` and `read-tree -u --reset` are judged the same way.
 
 The floor runs first: the base implementation's patterns (`git reset ... --hard`, `checkout --`,
 `checkout -f`, `restore` without `--staged`, `clean -f/-d/-x` without `-n`, `stash drop/clear`,
@@ -32,15 +42,19 @@ accepted: a command that only mentions such a pattern is refused while the tree 
 
 Read as git reads it: option values (`clean -e -n` excludes "-n"), `--` ends the options, the
 last of `--x`/`--no-x` wins, a unique abbreviation (`--no-veri`) counts, an alias is resolved,
-`GIT.EXE` is git on Windows. Refused as unreadable when it carries a git word: backticks, `$(...)`,
-`eval`, shell command strings or input, any interpreter argument or input (including python*,
-node, deno, bun, perl, ruby, php and PowerShell),
-a here-document on a line where a shell/interpreter appears (`cat <<EOF | sh`), a
-backslash-newline, a wrapper chain whose git command cannot be reached, and an unbalanced
-quote. Other here-documents are dropped before parsing, so a commit message may mention git.
-Shell redirections are removed before reading git arguments; quoted/escaped operators remain
-arguments. `git config core.hooksPath .githooks` wires the project's own gate only as a plain
-command without directory routing; containment is resolved from the hook's own cwd.
+`GIT.EXE` is git on Windows. Shell text inside shell text is parsed as shell: backticks, `$(...)`,
+`eval`, `sh -c` strings and a here-document a shell on its line may read. Text the hook cannot
+parse as shell (any interpreter argument or here-document: python*, node, deno, bun, perl, ruby,
+php, PowerShell ...; any argument of another program: a wrapper such as sudo or xargs may run it,
+data such as a gh title never does) has each `git ...` in it judged as the command it would be,
+so a mention of a safe command passes and a loss-certain one is refused (#77). Refused as
+unreadable when it carries a git word: shell or interpreter input piped from a command that holds
+git, a backslash-newline, a here-string, env/exec options, a command named by a variable, and an
+unbalanced quote. Other here-documents are dropped before parsing, so a commit message may
+mention git. Shell redirections are removed before reading git arguments; quoted/escaped
+operators remain arguments. `git config core.hooksPath .githooks` wires the project's own gate
+when `.githooks` stays inside the tree of every folder the command may stand in, through its own
+`cd`, `-C`, `--git-dir` and `GIT_DIR` routes (doctor's printed fix passes as printed).
 Sources: the vendor's default auto-mode block list
 (https://code.claude.com/docs/en/permission-modes), Bash rule limits
 (https://code.claude.com/docs/en/permissions), git-push, git-clean, git-restore, git-config,
@@ -49,7 +63,8 @@ githooks (https://git-scm.com/docs), anthropics/claude-code#40117 (an agent comm
 it cannot read also blocks, because any exit but 2 lets the call through
 (https://code.claude.com/docs/en/hooks).
 ponytail: the option tables below cover the subcommands this hook judges; an option missing
-from a table is read as a flag without a value. Add it there when one shows.
+from a table is read as a flag without a value. Add it there when one shows. Git assembled in
+code from parts (a variable holding the subcommand) and `rm -rf` of a worktree are not seen.
 
 Exit 2 blocks the call and returns the message to the agent (Claude Code hook protocol).
 """
@@ -158,6 +173,12 @@ SPEC = {
               dict(q="quiet", N="intent-to-add", p="patch")),
 }
 SPEC["revert"] = SPEC["cherry-pick"]  # the same options
+# Only the value-taking options, so a value is never read as the ref a ref command moves.
+SPEC["branch"] = ("set-upstream-to= format= sort= contains= no-contains= merged= no-merged= points-at= "
+                  "column=", dict(u="set-upstream-to="))
+SPEC["tag"] = ("message= file= local-user= cleanup= format= sort= contains= no-contains= merged= "
+               "no-merged= points-at= trailer=", dict(m="message=", F="file=", u="local-user="))
+SPEC["update-ref"] = ("", dict(m="m="))
 GIT_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"}
 
 
@@ -181,15 +202,17 @@ def interpreter(name):
 
 
 def strip_heredocs(text):
-    """The text without here-document bodies. A body that holds git is unreadable when any command
-    is a shell, or its receiving command/pipeline contains an interpreter (`cat <<EOF | python`)."""
+    """(the text without here-document bodies, [(read_by_a_shell, body)]). A body that holds git
+    is listed when any command is a shell (its body is judged as shell), or when its receiving
+    command/pipeline contains an interpreter (`cat <<EOF | python`: judged as loose text)."""
+    bodies = []
     while True:
         m = re.search(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2", text)
         if not m:
-            return text
+            return text, bodies
         start = text.find("\n", m.end())
         if start < 0:
-            return text[:m.start()] + text[m.end():]
+            return text[:m.start()] + text[m.end():], bodies
         end = start + 1
         lines = text[start + 1:].split("\n")
         for line in lines:
@@ -201,7 +224,9 @@ def strip_heredocs(text):
         commands = [w for seg in segments(outside) if base(seg[0]) not in CALM | {"git"} for w in seg]
         if GIT_WORD.search(body):
             if any(base(w) in SHELLS and not interpreter(base(w)) for w in commands):
-                raise Unreadable("a here-document a shell on the same line may read")
+                bodies.append((True, body))
+                text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
+                continue
             marker = "__guard_heredoc_input__"
             line = text.rfind("\n", 0, m.start()) + 1
             header = text[line:m.start()] + " " + marker + " " + text[m.end():start]
@@ -218,7 +243,8 @@ def strip_heredocs(text):
             for seg, ending in headers:
                 receiving = receiving or marker in seg
                 if receiving and base(seg[0]) not in CALM | {"git"} and any(interpreter(base(w)) for w in seg):
-                    raise Unreadable("a here-document an interpreter reads")
+                    bodies.append((False, body))
+                    break
                 receiving = receiving and ending in {"|", "|&"}
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
 
@@ -267,16 +293,60 @@ def segments(text, with_endings=False, strict=False):
             segment.append(token)
 
 
-def plain_hooks_command(command):
-    """A hooksPath write may have no compound syntax or directory-routing tokens anywhere."""
-    tokens = shell_tokens(command.strip(), strict=True)
-    return not any(
-        (token and set(token) <= SEPARATORS)
-        or base(token) in {"cd", "pushd", "popd"}
-        or token.startswith(("-C", "--git-dir", "--work-tree"))
-        or token.split("=", 1)[0].upper() in {"GIT_DIR", "GIT_WORK_TREE"}
-        for token in tokens
-    )
+def loose(text, cwds, changed=False):
+    """Findings for the git words in text the hook cannot parse as shell: code an interpreter runs,
+    or another program's arguments. Each `git ...` up to the line's end or a shell operator is
+    judged as the command it would be, quotes, brackets and commas read as word breaks
+    (`['git', 'push', '--mirror']` is `git push --mirror`)."""
+    for m in GIT_WORD.finditer(text):
+        tail = re.split(r"[;&|\n]", text[m.end():], maxsplit=1)[0]
+        g = Git(re.sub(r"[\"'`,\[\]{}()]", " ", tail).split(), {}, cwds)
+        found = verdict(g)
+        if found:
+            yield found[0], found[1], (g, found[2], changed)
+
+
+def unreached(g, refs):
+    """Whether deleting or moving `refs` loses commits: one is reachable from them and from no other
+    ref (None in refs, or a git error, = cannot tell = True). A ref that does not exist loses nothing."""
+    try:
+        alive = []
+        for ref in refs:
+            code = 2 if ref is None else g.ask("rev-parse", "--verify", "--quiet", ref)[0]
+            if code not in (0, 1):
+                return True
+            alive += [ref] * (code == 0)
+        if not alive:
+            return False
+        code, out = g.ask("rev-list", "-n1", *alive, "--not", *("--exclude=" + r for r in alive), "--all")
+        return code != 0 or bool(out)
+    except Exception:
+        return True
+
+
+def moved_refs(g, sub, names, words):
+    """The refs a branch, tag, update-ref or remote call deletes or overwrites."""
+    force = bool(names & {"f", "force"})
+    if sub == "branch":
+        prefix = "refs/remotes/" if names & {"r", "remotes"} else "refs/heads/"
+        if "D" in names or (names & {"d", "delete"} and force):
+            return [prefix + w for w in words]
+        if names & {"M", "C"} or (names & {"m", "move", "c", "copy"} and force):
+            return [prefix + words[-1]] if words else []
+        return [prefix + words[0]] if force and words else []
+    if sub == "tag":
+        if names & {"d", "delete"}:
+            return ["refs/tags/" + w for w in words]
+        return ["refs/tags/" + words[0]] if force and words else []
+    if sub == "update-ref":
+        return words[:1]
+    if sub == "remote" and words[:1] in (["remove"], ["rm"]) and len(words) > 1:
+        try:
+            code, out = g.ask("for-each-ref", "--format=%(refname)", f"refs/remotes/{words[1]}/")
+        except Exception:
+            code = 1
+        return out.split() if code == 0 else [None]
+    return []
 
 
 def resolve(name, names):
@@ -332,7 +402,6 @@ class Git:
     """One git invocation and how to ask git about the repository it reaches."""
 
     def __init__(self, tokens, env, cwds):
-        self.command = None  # Set by judge; hooksPath writes require the complete caller command.
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -402,19 +471,23 @@ def hooks_config_allowed(g):
         return False
     if action in {None, "get"} and len(operands) == 1:
         return True
-    if g.command is None or not plain_hooks_command(g.command):
-        raise Unreadable("directory routing or compound shell syntax alongside a hooksPath write")
     if (action not in {None, "set"} or len(operands) != 2 or operands[1] != ".githooks"
             or scope in {"--global", "--system"}):
         return False
     try:
-        # A fresh probe uses only the hook's own cwd: no inferred cd, git routes or local env.
-        code, root = Git([], {}, [g.cwds[0]]).ask("rev-parse", "--show-toplevel")
-        if code or not root:
-            return False
-        root = os.path.normcase(os.path.realpath(root))
-        hooks = os.path.normcase(os.path.realpath(os.path.join(root, operands[1])))
-        return os.path.commonpath([root, hooks]) == root
+        # The write lands in the repository of one of the folders the command may stand in,
+        # reached through the command's own routes and env: .githooks stays inside each one's tree.
+        for where in g.cwds:
+            if where is None:
+                return False
+            code, root = g.ask("rev-parse", "--show-toplevel", where=where)
+            if code or not root:
+                return False
+            root = os.path.normcase(os.path.realpath(root))
+            hooks = os.path.normcase(os.path.realpath(os.path.join(root, operands[1])))
+            if os.path.commonpath([root, hooks]) != root:
+                return False
+        return True
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
@@ -476,6 +549,31 @@ def verdict(g, depth=0):
         return False, "git restore overwrites the working copy", False
     if sub == "clean" and not names & {"dry-run", "interactive"}:
         return False, "git clean deletes untracked files", bool(names & {"x", "X"})
+    if sub == "update-ref" and "stdin" in names:
+        return True, "git update-ref --stdin changes refs this hook cannot read", False
+    if sub in ("branch", "tag", "update-ref", "remote") and unreached(g, moved_refs(g, sub, names, words)):
+        return True, (f"this git {sub} deletes or moves a ref whose commits no other branch or tag reaches, "
+                      "so they would be lost. Merge them into a kept branch first; a ref that only points "
+                      "where another ref already does can go (`git update-ref -d <ref> <expected-commit>`)"), False
+    if sub == "reflog" and first in ("expire", "delete"):
+        return True, "git reflog expire/delete removes the record that makes a lost commit recoverable", False
+    if (sub == "gc" and any(n == "prune" and v not in (None, "never") for n, v in opts)
+            or sub == "prune" and not names & {"n", "dry-run"}):
+        return True, "pruning unreachable objects now deletes commits and stashes only they still hold", False
+    if sub == "worktree" and first == "remove" and names & {"f", "force"}:
+        # The worktree named, from every folder the command may stand in and through each -C.
+        steps = [v for k, v in zip(g.route, g.route[1:]) if k == "-C"]
+        for c in g.cwds:
+            held = Git([], {}, [None if c is None or len(words) < 2 else
+                                os.path.join(c, *steps, os.path.expanduser(words[1]))]).dirty()
+            if held:
+                return True, (f"git worktree remove --force deletes the worktree with the work it holds:\n\n{held}\n\n"
+                              "Commit it there first. A kit worker's worktree is closed with "
+                              "scripts/close_worker.sh <name>, which keeps a worktree that holds work"), False
+    if (sub == "rm" and names & {"f", "force"} and "cached" not in names
+            or sub in ("mv", "checkout-index") and names & {"f", "force"}
+            or sub == "read-tree" and "u" in names and "reset" in names):
+        return False, f"git {sub} with this option overwrites or deletes uncommitted changes", False
     if sub and sub not in SPEC and sub not in READ_ONLY and sub not in ("stash", "add", "init", "clone"):
         try:
             code, alias = g.ask("config", "--get", "alias." + sub)
@@ -494,16 +592,19 @@ def verdict(g, depth=0):
     return None
 
 
-def judge(command, cwd):
-    """(always, why, git) findings; raises Unreadable."""
+def judge(command, cwds, changed=False):
+    """(always, why, (git, ignored, changed)) findings; raises Unreadable."""
     if (re.search(r"\\\r?\n", command) or "<<<" in command) and GIT_WORD.search(command):
         raise Unreadable("a backslash-newline or a here-string")
-    text = strip_heredocs(command)
-    if any(GIT_WORD.search(s) for s in substitutions(text)):
-        raise Unreadable("a command substitution (backticks or $(...))")
+    text, bodies = strip_heredocs(command)
+    for shell, body in bodies:
+        yield from (judge if shell else loose)(body, cwds, changed)
+    for inner in substitutions(text):  # shell text inside shell text: parsed as shell
+        if GIT_WORD.search(inner):
+            yield from judge(inner, cwds, changed)
     # Every folder the command may stand in. The caller's folder is always one: a `cd` may not run
     # (after `||`), may run in a subshell (`( )`, a pipeline, `&`), so it only adds a folder.
-    env, changed, cwds, pipeline_git = {}, False, [cwd], False
+    env, cwds, pipeline_git = {}, list(cwds), False
     for seg, ending in segments(text, with_endings=True):
         input_git = pipeline_git
         pipeline_git = ending in {"|", "|&"} and (input_git or any(GIT_WORD.search(t) for t in seg))
@@ -529,33 +630,32 @@ def judge(command, cwd):
         rest = seg[i:]
         name = base(rest[0]) if rest else ""
         has_git = any(GIT_WORD.search(t) for t in rest)
-        if name == "eval" and any(GIT_WORD.search(t) for t in rest):
-            raise Unreadable("eval")
-        if name in SHELLS and not interpreter(name) and any(GIT_WORD.search(t) for t in text.split()):
-            if any(re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I) for t in rest[1:]):
-                raise Unreadable(f"a command string run by {name} -c")
-            if not [t for t in rest[1:] if not t.startswith("-")]:
-                raise Unreadable(f"{name} reading commands from its input")
-        if interpreter(name):
-            if any(GIT_WORD.search(arg) for arg in rest[1:]) or input_git:
-                raise Unreadable(f"git in {name} arguments or piped input")
-        elif input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest):
-            raise Unreadable(f"interpreter input through {name}")
-        if name != "git" and name not in CALM and not interpreter(name) and has_git:
-            raise Unreadable(f"git run through {name}")
+        flag = next((k for k, t in enumerate(rest[1:], 1) if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
         if rest and rest[0].startswith("$") and any(t in SPEC or t in ("stash", "remote", "config") for t in rest[1:]):
             raise Unreadable("a command named by a variable")
+        if name == "eval" and has_git:
+            yield from judge(" ".join(rest[1:]), cwds, changed)
+        elif name in SHELLS and not interpreter(name) and flag and has_git:
+            yield from judge(" ".join(rest[flag + 1:]), cwds, changed)
+        elif (name in SHELLS and not interpreter(name) and any(GIT_WORD.search(t) for t in text.split())
+              and not [t for t in rest[1:] if not t.startswith("-")]):
+            raise Unreadable(f"{name} reading commands from its input")
+        elif input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest):
+            raise Unreadable(f"interpreter input through {name}")
+        elif name != "git" and name not in CALM and has_git:
+            # An interpreter's code, a wrapper's command (sudo, xargs) or another program's data.
+            yield from loose(" ".join(rest[1:]), cwds, changed)
         if name == "export":
             env.update(dict(t.split("=", 1) for t in rest[1:] if "=" in t))
-        if name in ("cd", "pushd"):
-            target = os.path.expanduser(os.path.expandvars(rest[1])) if len(rest) > 1 else None
+        if name in ("cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"):
+            args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
+            target = os.path.expanduser(os.path.expandvars(args[0])) if args and "pop" not in name else None
             moved = [None if target is None or "$" in target or target == "-" or c is None else os.path.join(c, target)
                      for c in cwds]
             cwds = list(dict.fromkeys(cwds + moved))
             continue
         if name == "git":
             g = Git(rest[1:], {**env, **local}, cwds)
-            g.command = command
             found = verdict(g)
             if found:
                 yield found[0], found[1], (g, found[2], changed)
@@ -567,21 +667,30 @@ def judge(command, cwd):
 def main():
     try:
         data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-        command = (data.get("tool_input") or {}).get("command", "") or "" if data.get("tool_name") == "Bash" else ""
+        # Any tool's command: the settings matcher picks the tools (Bash, PowerShell, Monitor).
+        command = (data.get("tool_input") or {}).get("command") or ""
+        if not isinstance(command, str):
+            raise ValueError("tool_input.command is not a string")
     except Exception as exc:
         return f"guard_destructive_git.py could not read the hook input ({exc}), so it cannot tell whether this command loses work. Report this to the owner"
     if not re.search("git", command, re.I):
         return None
+    unreadable = ("this command holds git inside {}, which this hook cannot read, so it cannot tell "
+                  "whether the command loses work; run the git command directly, as its own command")
+    if data.get("tool_name") == "PowerShell":
+        if "`" in command and GIT_WORD.search(command):
+            return unreadable.format("a PowerShell backtick (an escape or a line continuation)")
+        # PowerShell keeps a backslash (paths), and `$env:NAME = v` sets NAME for later commands.
+        command = re.sub(r"\$env:(\w+)\s*=\s*", r"export \1=", command.replace("\\", "/"), flags=re.I)
     floor = next((why for pattern, why in FLOOR if pattern.search(command)), None)
     if floor:  # the base rule, first and never cleared by the parser below
         dirty = Git([], {}, [os.getcwd()]).dirty()
         if dirty:
             return lost(floor, dirty)
     try:
-        found = list(judge(command, os.getcwd()))
+        found = list(judge(command, [os.getcwd()]))
     except Unreadable as exc:
-        return (f"this command holds git inside {exc}, which this hook cannot read, so it cannot tell "
-                "whether the command loses work; run the git command directly, as its own command")
+        return unreadable.format(exc)
     for always, why, _ in found:
         if always:
             return (f"{why}.\n\nThis is refused whatever the tree's state. If it is really needed, say so "

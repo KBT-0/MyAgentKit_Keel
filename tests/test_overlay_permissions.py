@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -18,6 +19,7 @@ SETTINGS = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/.cl
 DESTROYS = ('rm', 'mv', 'cp', 'kill', 'taskkill', 'pkill', 'git reset', 'git clean', 'git push', 'git checkout',
             'git restore', 'git stash', 'git rebase', 'git merge', 'git commit', 'git worktree remove',
             'Remove-Item', 'Stop-Process', 'Set-Content', 'Move-Item')
+SHELL_TOOLS = ('Bash', 'PowerShell', 'Monitor')  # every Claude Code tool that runs a command
 
 
 class OverlayPermissionsTests(unittest.TestCase):
@@ -139,7 +141,35 @@ class OverlaySettingsTests(unittest.TestCase):
             with self.subTest(hook=hook['command']):
                 self.assertEqual(hook.get('onFailure'), 'block')
         matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
-        self.assertIn('WebFetch|WebSearch|Bash', matchers)
+        self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
+
+    def test_every_command_guard_covers_every_shell_tool(self):
+        # #93, #213: a guard wired to "Bash" alone let PowerShell and Monitor calls through. The
+        # hooks read tool_input.command from any tool, so the matcher is the one list to extend.
+        for path in (SETTINGS, SETTINGS.parents[4] / '.claude/settings.json'):  # overlay, kit's own
+            for entry in json.loads(path.read_text(encoding='utf-8'))['hooks']['PreToolUse']:
+                command = entry['hooks'][0]['command']
+                if 'guard_destructive_git' in command or 'guard_private_email' in command:
+                    with self.subTest(path=str(path), hook=command):
+                        self.assertLessEqual(set(SHELL_TOOLS), set(entry['matcher'].split('|')))
+
+    def test_an_agent_whose_definition_pins_model_and_effort_needs_neither_on_the_call(self):
+        # #137: diff-reviewer and worker pin both; forcing call-site values could only downgrade them.
+        hook = SETTINGS.parent / 'hooks/guard_worker_route.py'
+        with tempfile.TemporaryDirectory() as project:
+            agents = Path(project) / '.claude/agents'
+            agents.mkdir(parents=True)
+            (agents / 'pinned.md').write_text('---\nname: pinned\nmodel: claude-opus-5-5\neffort: high\n---\nx\n')
+            (agents / 'half.md').write_text('---\nname: half\nmodel: claude-opus-5-5\n---\nx\n')
+            (agents / 'unset.md').write_text('---\nname: unset\nmodel: {{WORKER_MODEL}}\neffort: high\n---\nx\n')
+            env = {k: v for k, v in os.environ.items() if k not in ('HOME', 'USERPROFILE')}
+            env.update(CLAUDE_PROJECT_DIR=project, HOME=project, USERPROFILE=project)
+            for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('general-purpose', 2), ('fork', 0)]:
+                payload = json.dumps({'tool_name': 'Agent', 'tool_input': {'subagent_type': kind, 'prompt': 'p'}})
+                with self.subTest(kind=kind):
+                    result = subprocess.run([sys.executable, str(hook)], input=payload.encode(), env=env,
+                                            capture_output=True, timeout=60)
+                    self.assertEqual(result.returncode, code, result.stderr)
 
     def test_the_tool_adds_no_attribution(self):
         # The trailer is turned off at its source; .githooks/commit-msg stays the backstop.
