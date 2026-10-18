@@ -57,8 +57,10 @@ def is_poll(tool: str, inp) -> bool:
     return tool == 'Bash' and isinstance(inp, dict) and bool(POLL.search(inp.get('command', '')))
 
 
-def requests(path: Path) -> list[dict]:
-    """Deduplicated API requests of one transcript, sorted by time."""
+def requests(path: Path, seen: set | None = None) -> list[dict]:
+    """Deduplicated API requests of one transcript, sorted by time. A request id already in
+    `seen` (shared across the transcripts read together) is left out: a continued session's
+    transcript copies its parent's requests, billed to the parent (#253)."""
     reqs: dict = collections.OrderedDict()
     with open(path, errors='replace') as stream:
         for line in stream:
@@ -79,6 +81,10 @@ def requests(path: Path) -> list[dict]:
                 if isinstance(c, dict) and c.get('type') == 'tool_use':
                     q['tools'].append((c.get('name', '?'), c.get('input')))
     rows = []
+    for key in [key for key in reqs if seen is not None and key in seen]:
+        del reqs[key]
+    if seen is not None:
+        seen.update(reqs)
     for q in reqs.values():
         u = q['usage']
         cc = u.get('cache_creation') or {}
@@ -189,11 +195,12 @@ def main(argv: list[str]) -> int:
         sessions = [latest_session(Path(argv[1] if len(argv) > 1 else '.'))]
     else:
         sessions = [Path(a) for a in argv]
+    seen: set = set()
     for session in sessions:
         if not session.is_file():
             raise SystemExit(f'agent_cost: not a file: {session}')
         print(f'== {session}')
-        print(table([summarize(n, requests(p)) for n, p in session_agents(session)]))
+        print(table([summarize(n, requests(p, seen)) for n, p in session_agents(session)]))
     return 0
 
 

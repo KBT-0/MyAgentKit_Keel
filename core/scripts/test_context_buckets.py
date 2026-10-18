@@ -104,6 +104,34 @@ class ContextBucketsTests(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stderr.decode('utf-8', 'replace'))
             self.assertIn('session-İ compaction 1', run.stdout.decode('utf-8'))
 
+    def test_a_pasted_image_prompt_is_read_and_each_push_is_listed(self):
+        # #251: a prompt with an image is a list of blocks; its #fix and phrase count.
+        # #202: each push is listed with session, time and command for the owner to judge.
+        pasted = prompt([{'type': 'image', 'source': {}}, {'type': 'text', 'text': 'you forgot it #fix'}])
+        out = self.run_on([request('a', 250_000, 'git push origin master'), pasted])
+        self.assertEqual(self.row(out, '200-300k')[-4:], ['1', '(100.0)', '1', '(100.0)'])
+        self.assertIn('push s 2026-10-20T10:00:00Z 200-300k: git push origin master', out)
+        self.assertIn('owner-judged', out)
+
+    def test_records_a_continued_session_copies_count_once(self):
+        # #253: a continued session's transcript repeats its parent's requests and compaction.
+        boundary = {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'u1'}
+        parent = [request('a', 50_000, 'git push'), boundary, request('b', 40_000)]
+        child = [boundary, request('b', 40_000), request('c', 30_000)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, records in (('a', parent), ('b', child)):
+                paths.append(Path(tmp) / (name + '.jsonl'))
+                paths[-1].write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+            report = context_buckets.report(paths, '')
+            self.assertEqual(self.row(report, '0-100k')[:4], ['0-100k', '3', '0', '(0.0)'])
+            self.assertEqual(self.row(report, '0-100k')[6:8], ['1', '(33.3)'])
+            self.assertNotIn('b compaction', report)
+            import agent_cost
+            seen = set()
+            self.assertEqual(len(agent_cost.requests(paths[0], seen)), 2)
+            self.assertEqual(len(agent_cost.requests(paths[1], seen)), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

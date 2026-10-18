@@ -13,7 +13,8 @@ last request's input plus cache read plus cache write, zero after a compaction.
 Counted per bucket (0-100k, 100-200k, 200-300k, 300-400k, 400k+), per 100 lead requests:
   route   worker-route hook refusals (an Agent call without a model or an effort)
   attrib  commit-msg refusals of an AI-attribution trailer
-  push    `git push` commands; the owner judges which were not asked for
+  push    `git push` commands, each listed with its session, time and command; the owner
+          marks which were not asked for, and only those are errors
   fix     owner prompts carrying the hand mark `#fix`: the owner's explicit corrections
   phrase  informational phrase-matched correction proxy beside the explicit mark
 Then, for each compaction, report 20 requests before/after plus 5- and 30-request cuts.
@@ -64,9 +65,15 @@ def refusals(content) -> str:
                      and c.get('type') == 'tool_result' and c.get('is_error'))
 
 
-def events(path: Path, since: str) -> list[tuple[str, int]]:
-    """(kind, context) in transcript order; kind is 'request', 'compact' or one of KINDS."""
-    out, ctx, seen = [], 0, set()
+def events(path: Path, since: str, seen: set | None = None,
+           pushes: list | None = None) -> list[tuple[str, int]]:
+    """(kind, context) in transcript order; kind is 'request', 'compact' or one of KINDS.
+
+    `seen` is shared across the files read together: a continued session's transcript copies
+    the parent's records (same uuid, requestId and tool_use id), counted once (#253). Each
+    push is added to `pushes` as (session, timestamp, context, command) for the owner (#202)."""
+    out, ctx = [], 0
+    seen = set() if seen is None else seen
     with open(path, encoding='utf-8', errors='replace') as stream:
         for line in stream:
             try:
@@ -75,9 +82,15 @@ def events(path: Path, since: str) -> list[tuple[str, int]]:
                 continue
             if not isinstance(rec, dict) or rec.get('isSidechain') or str(rec.get('timestamp', '9')) < since:
                 continue
+            copied = rec.get('uuid') and ('uuid', rec['uuid']) in seen
+            if rec.get('uuid'):
+                seen.add(('uuid', rec['uuid']))
             if rec.get('type') == 'system' and rec.get('subtype') == 'compact_boundary':
                 ctx = 0
-                out.append(('compact', 0))
+                if not copied:
+                    out.append(('compact', 0))
+                continue
+            if copied:
                 continue
             msg = rec.get('message')
             if not isinstance(msg, dict):
@@ -88,22 +101,29 @@ def events(path: Path, since: str) -> list[tuple[str, int]]:
                     ctx = sum(usage.get(k) or 0 for k in
                               ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
                     # Streaming writes one request as several records.
-                    rid = rec.get('requestId') or msg.get('id') or id(rec)
+                    rid = ('request', rec.get('requestId') or msg.get('id') or id(rec))
                     if rid not in seen:
                         seen.add(rid)
                         out.append(('request', ctx))
                 for call in msg.get('content') or []:
-                    if isinstance(call, dict) and call.get('type') == 'tool_use' and \
-                            'git push' in str((call.get('input') or {}).get('command', '')):
+                    command = str((call.get('input') or {}).get('command', '')) if isinstance(call, dict) else ''
+                    if call_id := isinstance(call, dict) and call.get('id'):
+                        if ('tool', call_id) in seen:
+                            continue
+                        seen.add(('tool', call_id))
+                    if isinstance(call, dict) and call.get('type') == 'tool_use' and 'git push' in command:
                         out.append(('push', ctx))
+                        if pushes is not None:
+                            pushes.append((path.stem, str(rec.get('timestamp', '?')), ctx, ' '.join(command.split())))
             elif rec.get('type') == 'user':
                 body = refusals(msg.get('content'))
                 out += [(kind, ctx) for kind, sign in SIGNS.items() if sign in body]
-                if not rec.get('isMeta') and not rec.get('isCompactSummary') and \
-                        isinstance(msg.get('content'), str) and MARK in msg['content']:
+                # A prompt with a pasted image is a list of blocks; text() reads only their
+                # text fields, never a tool result's nested content (#251).
+                said = text(msg.get('content'))
+                if not rec.get('isMeta') and not rec.get('isCompactSummary') and MARK in said:
                     out.append(('fix', ctx))
-                if not rec.get('isMeta') and not rec.get('isCompactSummary') and \
-                        isinstance(msg.get('content'), str) and CORRECTION.search(msg['content']):
+                if not rec.get('isMeta') and not rec.get('isCompactSummary') and CORRECTION.search(said):
                     out.append(('phrase', ctx))
     return out
 
@@ -129,9 +149,9 @@ def per100(n: int, requests: int) -> str:
 
 def report(sessions: list[Path], since: str) -> str:
     total = {b: collections.Counter() for b in BUCKETS}
-    lines = []
+    lines, seen, pushes = [], set(), []
     for session in sessions:
-        evs = events(session, since)
+        evs = events(session, since, seen, pushes)
         for kind, ctx in evs:
             total[bucket(ctx)][kind] += 1
         for n, i in enumerate((i for i, (kind, _) in enumerate(evs) if kind == 'compact'), 1):
@@ -144,8 +164,13 @@ def report(sessions: list[Path], since: str) -> str:
     head = f'{"bucket":<10}{"requests":>10}' + ''.join(f'{k:>14}' for k in KINDS)
     rows = [f'{b:<10}{c["request"]:>10}' + ''.join(f'{per100(c[k], c["request"]):>14}' for k in KINDS)
             for b, c in total.items()]
-    return '\n'.join([head] + rows + ['count (per 100 requests); phrase is an informational correction proxy']
-                     + (lines or ['no compaction']))
+    # Every push is listed, so the owner can mark the ones nobody asked for; until then push
+    # is no error count for the decision rule (#202).
+    listed = [f'push {stem} {when} {bucket(ctx)}: {command[:160]}' for stem, when, ctx, command in pushes]
+    return '\n'.join([head] + rows + ['count (per 100 requests); phrase is an informational correction proxy;'
+                                      ' push counts every git push and is owner-judged: no error count'
+                                      ' until the owner marks the unasked ones listed below']
+                     + (lines or ['no compaction']) + listed)
 
 
 def main(argv: list[str]) -> int:
