@@ -16,7 +16,9 @@
 # with a line saying so: the rewrite would write outside the project (the kit's own review
 # finding, not a reported incident; harmless, so it stays: KARARLAR D07 inv3#82). A failed
 # rewrite or a failed `git ls-files` (a corrupt index) stops before anything is staged; a
-# temporary copy a SIGKILL left (`.crlf-*`) stops the next run.
+# temporary copy a SIGKILL left (`.crlf-*`) stops the next run. A file it would rewrite with a
+# change beyond line endings, staged or not, stops the run before anything changes and is named;
+# the files it staged are listed at the end.
 # A file added after the attributes checks out with LF, so this script itself can run.
 
 # Windows installs Python as `python` or `py`: the first that runs, as doctor.sh resolves it.
@@ -31,7 +33,7 @@ trap 'rm -f "$list"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 
 set -- '*.sh' '.githooks/*'
 git ls-files -z --eol -- "$@" > "$list" || { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
 $kit_python -I -c 'if 1:
-    import os, signal, stat, sys, tempfile
+    import os, signal, stat, subprocess, sys, tempfile
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
     def plain(name):
         # Every folder on the way and the file itself: no symlink, no junction (a reparse
@@ -42,7 +44,7 @@ $kit_python -I -c 'if 1:
             if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
                 return False
         return stat.S_ISREG(info.st_mode)
-    text_files = []
+    todo, text_files = [], []
     for entry in sys.stdin.buffer.read().split(b"\0"):
         if not entry:
             continue
@@ -58,17 +60,36 @@ $kit_python -I -c 'if 1:
             with open(name, "rb") as script:
                 data = script.read()
             if b"\r\n" in data:
-                handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
-                try:
-                    with os.fdopen(handle, "wb") as copy:
-                        copy.write(data.replace(b"\r\n", b"\n"))
-                    os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
-                    os.replace(new, name)
-                finally:
-                    if os.path.lexists(new):
-                        os.unlink(new)
-                text_files.append(name + b"\0")
+                todo.append((name, data))
+    def blob(rev):
+        found = subprocess.run(["git", "cat-file", "blob", rev], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)
+        return found.stdout.replace(b"\r\n", b"\n") if found.returncode == 0 else None
+    # `git add --renormalize` stages the whole working copy, so an edit beyond line endings in a
+    # file it rewrites, unstaged or staged, would ride into the line-ending commit (#207).
+    head = subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"],
+                          stdout=subprocess.DEVNULL).returncode == 0
+    dirty = [name for name, data in todo if blob(b":" + name) != data.replace(b"\r\n", b"\n")
+             or head and blob(b"HEAD:" + name) != blob(b":" + name)]
+    if dirty:
+        sys.stderr.write("STOP: commit or stash the changes in these files first; nothing was changed:\n"
+                         + "".join("  %s\n" % os.fsdecode(name) for name in dirty))
+        sys.exit(1)
+    for name, data in todo:
+        handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+        try:
+            with os.fdopen(handle, "wb") as copy:
+                copy.write(data.replace(b"\r\n", b"\n"))
+            os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+            os.replace(new, name)
+        finally:
+            if os.path.lexists(new):
+                os.unlink(new)
+        text_files.append(name + b"\0")
     with open(sys.argv[1], "wb") as paths:
         paths.write(b"".join(text_files))' "$list" < "$list" ||
-  { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
-if [ -s "$list" ]; then xargs -0 git add --renormalize -- < "$list"; fi
+  { echo "STOP: a script could not be rewritten or has changes (above); nothing was staged" >&2; exit 1; }
+if [ -s "$list" ]; then
+  xargs -0 git add --renormalize -- < "$list" || exit 1
+  echo "Rewritten to LF and staged:"; tr '\0' '\n' < "$list" | sed 's/^/  /'
+fi

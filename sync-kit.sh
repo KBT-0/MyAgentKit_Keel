@@ -118,10 +118,11 @@ put() {
 }
 
 # own_repo — true when the kit folder is the top of a git clone of its own. A kit vendored or
-# unpacked inside another repository answered with that repository's HEAD (round 1).
+# unpacked inside another repository answered with that repository's HEAD (round 1). Git
+# answers, not two path strings: on Windows a kit path in another letter case or on a `subst`
+# drive named the same folder, `pwd -P` kept the spelling, and no base was recorded.
 own_repo() {
-  _top=$(git -C "$kit" rev-parse --show-toplevel 2>/dev/null) &&
-    [ "$(CDPATH= cd -- "$_top" && pwd -P)" = "$(CDPATH= cd -- "$kit" && pwd -P)" ]
+  _prefix=$(git -C "$kit" rev-parse --show-prefix 2>/dev/null) && [ -z "$_prefix" ]
 }
 # owned_list — the project-owned files of the kit's HEAD under core/ (no KIT-OWNED header), one
 # path per line below core/, into $work_list. Read from the commit, never the working tree: a
@@ -187,9 +188,12 @@ if [ "$merge" -eq 1 ]; then
   # holds them: the copies of the commit it came from. A later base reads the kit's fixes in
   # between as the project's edits and keeps the old lines, with no conflict to show. The
   # working copies were no proof: a plain sync before --merge, or a stopped --merge, had
-  # already overwritten them, and the right base was refused (round 1). Only a file the
-  # project never committed is read from the working tree.
+  # already overwritten them, and the right base was refused (round 1). The commit is the one
+  # that last changed the version stamp, whose copies came with that version: a plain sync's
+  # copies committed after it are a later kit's, and the right base was refused again. Only a
+  # file that commit does not hold is read from the working tree.
   if [ -n "$named" ]; then
+    at=$(git -C "$target" log -1 --format=%H -- docs/kit/.kit-version 2>/dev/null) && [ -n "$at" ] || at=HEAD
     git -C "$kit" -c core.quotePath=false grep -lE '^(# |<!-- )KIT-OWNED:' "$base" -- core setup > "$work_list" ||
       [ $? -eq 1 ] || die "cannot list the kit-owned files at $base_ref"
     off=""
@@ -197,7 +201,7 @@ if [ "$merge" -eq 1 ]; then
       f=${f#"$base":}
       case "$f" in core/*) rel=${f#core/} ;; *) rel=$f ;; esac
       [ -z "$(blocked "$rel")" ] || continue
-      if git -C "$target" show "HEAD:./$rel" > "$mdir/proj" 2>/dev/null; then :
+      if git -C "$target" show "$at:./$rel" > "$mdir/proj" 2>/dev/null; then :
       elif [ -f "$target/$rel" ]; then cat "$target/$rel" > "$mdir/proj"
       else continue; fi
       git -C "$kit" show "$base:$f" > "$mdir/kit" || die "cannot read $f at $base_ref"
@@ -305,7 +309,7 @@ fi
 # exe FILE — the one place that decides which kit-owned files must be executable (the hooks
 # and scripts git or a gate runs directly), for a copied file and an identical one alike. A
 # hook git cannot run is skipped without a word, and a gate that cannot run is not there.
-executable() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) return 0 ;; esac; return 1; }
+executable() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*.py) return 0 ;; esac; return 1; }
 exe() { ! executable || chmod +x "$1"; }
 # The disk's executable bit does not reach git's index where core.fileMode is false (native
 # Windows): a hook the sync wrote was committed at 100644, and a POSIX clone skips it (#182).

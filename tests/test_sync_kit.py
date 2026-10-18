@@ -558,6 +558,37 @@ class SyncKitTests(unittest.TestCase):
                 self.assertNotIn('did not come from it', result.stderr)
                 self.assertEqual((project / 'docs/WORKFLOW.md').read_bytes(), b'a\nB kit\nc\nd\nmine\n')
 
+    def test_the_right_base_passes_after_a_plain_sync_was_committed_and_a_later_one_is_still_refused(self):
+        # The owner's manual check of #184: committing a plain sync's kit-owned copies before
+        # --merge made the check read the later kit's copies, and the right base was refused.
+        hook = '.githooks/commit-msg'
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, base, env = self.merge_kit(tmp, ACTION, {
+                hook: (b'# KIT-OWNED: x\none\n', b'# KIT-OWNED: x\ntwo\n'),
+                'docs/WORKFLOW.md': (b'a\nb\nc\nd\n', b'a\nB kit\nc\nd\n')})
+            (project / '.githooks').mkdir()
+            (project / hook).write_bytes(b'# KIT-OWNED: x\none\n')
+            (project / 'docs/WORKFLOW.md').write_bytes(b'a\nb\nc\nd\nmine\n')
+            pgit = lambda *a: subprocess.run(['git', '-C', str(project), '-c', 'user.name=F', '-c',
+                                              'user.email=f@example.invalid', *a], check=True, env=env,
+                                             capture_output=True)
+            for args in (['init', '-q'], ['add', '-A'], ['commit', '-qm', 'install']):
+                pgit(*args)
+            run = lambda *a: subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), *a], env=env,
+                                            capture_output=True, text=True, timeout=300)
+            first = run()
+            self.assertEqual(first.returncode, 2, first.stdout + first.stderr)
+            pgit('commit', '-qam', 'kit-owned files of the plain sync')
+            later = subprocess.run(['git', '-C', str(kit), 'rev-parse', 'HEAD'], check=True, env=env,
+                                   capture_output=True, text=True).stdout.strip()
+            result = run('--merge', '--base', later)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('did not come from it', result.stderr)
+            result = run('--merge', '--base', base)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn('did not come from it', result.stderr)
+            self.assertEqual((project / 'docs/WORKFLOW.md').read_bytes(), b'a\nB kit\nc\nd\nmine\n')
+
     def test_a_kit_inside_another_repository_records_no_kit_commit(self):
         # A vendored kit recorded the outer repository's HEAD as its own base (round 1).
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
@@ -568,6 +599,55 @@ class SyncKitTests(unittest.TestCase):
             result, stamp = self.sync(tmp, '- A change.\n', env=env)
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
             self.assertFalse((Path(tmp) / 'project/docs/kit/.kit-commit').exists())
+
+    def test_a_kit_path_spelled_in_another_case_still_records_the_kit_commit(self):
+        # The owner's manual check of #184: own_repo compared `pwd -P` strings, which keep the
+        # spelling given, so a kit run as c:/users/... (or from a `subst` drive) recorded no base.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            if not Path(tmp.swapcase()).is_dir():
+                self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
+            self.sync(tmp, '- A change.\n', '--dry-run')
+            kit = Path(tmp) / 'kit'
+            git = lambda *a: subprocess.run(['git', '-C', str(kit), *a], check=True, env=env,
+                                            capture_output=True, text=True).stdout.strip()
+            git('init', '-q')
+            git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'k')
+            result = subprocess.run(['sh', str(kit / 'sync-kit.sh').swapcase(), str(Path(tmp) / 'project')],
+                                    capture_output=True, text=True, env=env, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            recorded = Path(tmp) / 'project/docs/kit/.kit-commit'
+            self.assertTrue(recorded.exists(), 'no kit commit recorded')
+            self.assertEqual(recorded.read_text().strip(), git('rev-parse', 'HEAD'))
+
+    def test_bootstrap_records_the_commit_of_a_kit_clone_of_its_own_and_never_an_outer_one(self):
+        # bootstrap.sh holds the same test as own_repo: a vendored kit recorded the outer
+        # repository's HEAD as its base (round 1 of #184), and a kit path in another letter case
+        # recorded none. A fixture kit, its own clone or inside another repository.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        for case in ('inside another repository', 'own clone, path in another case'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp, \
+                    tempfile.TemporaryDirectory() as project:
+                kit = Path(tmp) / 'kit'
+                if case.startswith('own') and not Path(tmp.swapcase()).is_dir():
+                    self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
+                shutil.copytree(ROOT, kit, ignore=shutil.ignore_patterns('.git', '__pycache__', 'tests'))
+                repo = kit if case.startswith('own') else Path(tmp)
+                for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                             'commit', '-q', '--allow-empty', '-m', 'k']):
+                    subprocess.run(['git', '-C', str(repo), *args], check=True, env=env, capture_output=True)
+                script = str(kit / 'bootstrap.sh')
+                result = subprocess.run(['sh', script.swapcase() if case.startswith('own') else script, project],
+                                        capture_output=True, text=True, env=env, timeout=600)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                recorded = Path(project) / 'docs/kit/.kit-commit'
+                if case.startswith('own'):
+                    head = subprocess.run(['git', '-C', str(kit), 'rev-parse', 'HEAD'], check=True, env=env,
+                                          capture_output=True, text=True).stdout.strip()
+                    self.assertTrue(recorded.exists(), 'no kit commit recorded')
+                    self.assertEqual(recorded.read_text().strip(), head)
+                else:
+                    self.assertFalse(recorded.exists(), recorded.read_text() if recorded.exists() else '')
 
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
@@ -649,6 +729,23 @@ class SyncKitTests(unittest.TestCase):
         for fn in ('blocked', 'perms', 'stage', 'put'):
             with self.subTest(fn=fn):
                 self.assertEqual(body('sync-kit.sh', fn), body('bootstrap.sh', fn))
+
+    def test_bootstrap_and_sync_mark_the_same_files_executable_and_no_text_file(self):
+        # `.claude/hooks/*` matched after_compact.txt, so bootstrap staged a text file at 100755
+        # (#273). Each script's `executable` runs on the same paths.
+        paths = ['.githooks/pre-commit', 'scripts/check.sh', '.claude/hooks/py.sh', '.claude/hooks/plain_report.py',
+                 '.claude/hooks/after_compact.txt', 'scripts/usage_summary.py', 'docs/WORKFLOW.md']
+        marked = {}
+        for name, call in (('bootstrap.sh', 'executable "$rel"; [ -n "$executables" ]'), ('sync-kit.sh', 'executable')):
+            text = (ROOT / name).read_text()
+            start = text.index('\nexecutable() {')
+            fn = text[start:text.index('\n}\n', start) + 3] if name == 'bootstrap.sh' else text[start:text.index('\n', start + 1)]
+            script = fn + '\nfor rel in "$@"; do executables=""; if %s; then echo "$rel"; fi; done\n' % call
+            marked[name] = subprocess.run(['sh', '-c', script, 'sh', *paths], capture_output=True, text=True,
+                                          check=True).stdout.split()
+        self.assertEqual(marked['bootstrap.sh'], ['.githooks/pre-commit', 'scripts/check.sh', '.claude/hooks/py.sh',
+                                                  '.claude/hooks/plain_report.py'])
+        self.assertEqual(marked['sync-kit.sh'], marked['bootstrap.sh'])
 
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner
@@ -1017,6 +1114,51 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual(git('show', ':' + path), b'#!/bin/sh\ntrue\n')
                 self.assertEqual((project / path).read_bytes(), b'#!/bin/sh\necho owner-edit\n')
             self.assertEqual((project / paths[2]).read_bytes(), b'#!/bin/sh\ntrue\n')
+
+    def test_fix_crlf_refuses_a_crlf_script_with_an_unstaged_or_staged_edit_and_lists_what_it_staged(self):
+        # #207: `git add --renormalize` staged the owner's work in progress in a CRLF script with
+        # the line-ending fix, exit 0, and named no file. A checkout that is only CRLF over an LF
+        # index (autocrlf) is no edit and is repaired.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        crlf, edit = b'#!/bin/sh\r\ntrue\r\n', b'#!/bin/sh\r\ntrue\r\necho WIP\r\n'
+        for case in ('unstaged', 'staged', 'clean', 'index LF'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                wip, other = project / 'scripts/wip.sh', project / '.githooks/my hook.project'
+                for path in (wip, other):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b'#!/bin/sh\ntrue\n' if case == 'index LF' else crlf)
+                git = lambda *args: subprocess.run(['git', '-c', 'core.autocrlf=false', *args], cwd=project,
+                                                   check=True, capture_output=True, env=env).stdout
+                git('init', '-q')
+                git('add', '-A')
+                git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'fixture')
+                if case == 'index LF':
+                    wip.write_bytes(crlf)
+                elif case != 'clean':
+                    wip.write_bytes(edit)
+                    if case == 'staged':
+                        git('add', 'scripts/wip.sh')
+                indexed = git('show', ':scripts/wip.sh')
+                before = wip.read_bytes()
+                result = subprocess.run(['sh', '-c', textwrap_dedent_dev_setup()], cwd=project,
+                                        capture_output=True, text=True, env=env)
+                if case in ('clean', 'index LF'):
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(wip.read_bytes(), b'#!/bin/sh\ntrue\n')
+                    self.assertEqual(git('show', ':scripts/wip.sh'), b'#!/bin/sh\ntrue\n')
+                    listed = ['scripts/wip.sh'] if case == 'index LF' else ['.githooks/my hook.project',
+                                                                             'scripts/wip.sh']
+                    self.assertEqual(result.stdout, 'Rewritten to LF and staged:\n'
+                                     + ''.join('  %s\n' % name for name in listed))
+                    continue
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('STOP: commit or stash the changes in these files first', result.stderr)
+                self.assertIn('  scripts/wip.sh\n', result.stderr)
+                self.assertNotIn('my hook', result.stderr)
+                self.assertEqual(wip.read_bytes(), before)
+                self.assertEqual(other.read_bytes(), crlf, 'nothing is rewritten before the refusal')
+                self.assertEqual(git('show', ':scripts/wip.sh'), indexed)
 
     def test_fix_crlf_leaves_binary_hooks_and_scripts_unmodified_and_unstaged(self):
         # A tracked helper executable was corrupted and staged with every other hook.
