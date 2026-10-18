@@ -6,7 +6,8 @@ Usage: agent_cost.py SESSION.jsonl [...]        one or more session transcripts
        agent_cost.py --latest [PROJECT_DIR]     the newest transcript under
                                                ~/.claude/projects/<encoded project dir>/
 
-Reads the session file and its `subagents/` folder. Assistant records sharing one
+Reads the session file and its `subagents/` folder, Workflow-tool agents in
+`subagents/workflows/wf_<run>/` included. Assistant records sharing one
 `requestId` are ONE API request (streaming writes several records); usage is taken from
 the record with the largest output count. The columns that matter for routing, measured
 in the kit's founding project (docs/WORKFLOW.md, "Worker cost"):
@@ -113,15 +114,22 @@ def session_agents(session: Path) -> list[tuple[str, Path]]:
     """The lead transcript plus every sub-agent transcript of the session."""
     out = [('LEAD', session)]
     folder = session.with_suffix('')
-    for f in sorted(glob.glob(str(folder / 'subagents' / '*.jsonl'))):
+    # Workflow-tool agents sit one level deeper, in subagents/workflows/wf_<run>/ beside a
+    # journal.jsonl that holds no requests (#172).
+    for f in sorted(glob.glob(str(folder / 'subagents' / '**' / '*.jsonl'), recursive=True)):
+        if os.path.basename(f) == 'journal.jsonl':
+            continue
         meta = Path(f[:-6] + '.meta.json')
         name = os.path.basename(f)[:-6]
         if meta.exists():
             try:
-                name = (json.loads(meta.read_text(encoding="utf-8")).get('description') or name)[:40]
+                name = json.loads(meta.read_text(encoding="utf-8")).get('description') or name
             except ValueError:
                 pass
-        out.append((name, Path(f)))
+        run = os.path.basename(os.path.dirname(f))
+        if run.startswith('wf_'):
+            name = f'{run} {name}'
+        out.append((name[:40], Path(f)))
     return out
 
 

@@ -69,6 +69,19 @@ class AgentCostTests(unittest.TestCase):
             self.assertIn('cache hit 32% (alarm below 80%; owner\'s choice)', text)
             self.assertEqual(agent_cost.hit({'cr': 0, 'cw': 0, 'inp': 0}), '-')
 
+    def test_workflow_agents_are_listed_with_their_run_and_the_journal_is_skipped(self):
+        # #172: the Workflow tool writes its agents to subagents/workflows/wf_<run>/.
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / 'abc.jsonl'
+            session.write_text('')
+            run = Path(tmp) / 'abc' / 'subagents' / 'workflows' / 'wf_42'
+            run.mkdir(parents=True)
+            (run / 'agent-9.jsonl').write_text('')
+            (run / 'agent-9.meta.json').write_text(json.dumps({'description': 'audit'}))
+            (run / 'journal.jsonl').write_text('')
+            (run.parents[1] / 'agent-1.jsonl').write_text('')
+            self.assertEqual([n for n, _ in agent_cost.session_agents(session)], ['LEAD', 'agent-1', 'wf_42 audit'])
+
     def test_gap_writes_follow_each_recorded_ttl_and_legacy_fallback(self):
         # KARARLAR B03 inv2/(h): mixed TTLs must not turn every >5m write into a miss.
         cases = [(300, 100, 0, 0, 0), (301, 100, 0, 0, 100),
