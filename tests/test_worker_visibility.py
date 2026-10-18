@@ -668,8 +668,7 @@ class ResultTests(Base):
 
     def test_a_report_that_stdout_refuses_exits_3(self):
         if not HAS_DEV_FULL:
-            print('NOT RUN: no /dev/full on this host: a report refused by stdout is not tested')
-            return
+            self.skipTest('no /dev/full on this host: a report refused by stdout is not tested')
         self.commit(HEAD % ('completed', 'none'))
         for sessions, pane, word in (('w1', 'working-auto.txt', 'DONE'), ('', 'working-auto.txt', 'GONE'),
                                      ('w1', 'permission.txt', 'WAITING')):
@@ -679,6 +678,7 @@ class ResultTests(Base):
                 self.assertEqual(result.returncode, 3, result.stderr)
                 self.assertIn('could not write its report', result.stderr)
         self.assertIn('DONE: w1', self.watch().stdout, 'the refused report was marked as said')
+    test_a_report_that_stdout_refuses_exits_3._kit_platform_skip = not HAS_DEV_FULL
 
     def test_a_failed_write_of_the_waiting_pane_lines_exits_3(self):
         # Only the pane lines fail: the lines around them were written.
@@ -960,7 +960,7 @@ class ContextTests(Base):
     """The context figure is read from the status line, past a warning line, once per session."""
 
     def watch(self, status, *args, drop=False, quote=None, after=(), path_first=()):
-        text = (PANES / 'working-auto.txt').read_text()
+        text = (PANES / 'working-auto.txt').read_text(encoding='utf-8')
         self.assertIn(STATUS, text)
         lines = [line for line in text.replace(STATUS, status).splitlines() if not (drop and '│' in line)]
         lines = ([quote] if quote else []) + lines + list(after)

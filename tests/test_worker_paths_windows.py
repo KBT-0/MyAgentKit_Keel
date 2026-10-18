@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python -m unittest tests.NAME` too (#236)
 from test_spawn_worker import run_state_hook
 # Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run
 # side by side, and a fixed 60 s or 20 s ran out on a loaded host (#146).
@@ -39,8 +40,7 @@ class WorkerPathsOnWindows(unittest.TestCase):
 
     def paths(self, name, posix=False):
         if os.name != 'nt' and not posix:
-            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
-            return []
+            self.skipTest('native Windows only')
         target = self.scripts / name
         shutil.copyfile(SCRIPTS / name, target)
         forward = target.as_posix()
@@ -62,6 +62,7 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 result = self.run_script(path, '--list-patterns')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('KIND STATUS VERSION WHERE ERE', result.stdout)
+    test_watch_finds_its_patterns._kit_platform_skip = os.name != 'nt'
 
     def test_watch_reads_a_tabs_state_file_in_place_of_a_pane(self):
         # A Windows Terminal tab has no pane to read: the state line the worker's hooks write
@@ -264,6 +265,7 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 result = self.run_script(path, 'fixture', str(brief), '--model', 'fixture', '--effort', 'low', '--batch')
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("session 'fixture' exited before its input line showed", result.stderr)
+    test_spawn_finds_its_watcher._kit_platform_skip = os.name != 'nt'
 
     def test_close_finds_its_auditor_without_ending_any_process(self):
         paths = self.paths('close_worker.sh')
@@ -281,5 +283,6 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 self.assertIn('fixture: no worktree at .claude/worktrees/fixture; nothing to remove', result.stdout)
 
 
+    test_close_finds_its_auditor_without_ending_any_process._kit_platform_skip = os.name != 'nt'
 if __name__ == '__main__':
     unittest.main()

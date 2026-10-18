@@ -689,8 +689,7 @@ class CodexWorkerTests(unittest.TestCase):
 
     def test_posix_signals_stop_the_live_worker_group(self):
         if os.name == 'nt':
-            sys.stderr.write('\nNOT RUN: %s (live POSIX signals)\n' % self.id())
-            return
+            self.skipTest('live POSIX signals')
         for sig in (signal.SIGTERM, signal.SIGHUP):
             with self.subTest(sig=sig), tempfile.TemporaryDirectory() as tmp:
                 started, escaped = Path(tmp) / 'started', Path(tmp) / 'escaped'
@@ -722,6 +721,7 @@ class CodexWorkerTests(unittest.TestCase):
                     pid = Path(tmp) / 'pid'
                     if pid.exists():
                         module().posix_tree(int(pid.read_text()), True)
+    test_posix_signals_stop_the_live_worker_group._kit_platform_skip = os.name == 'nt'
 
     def test_normal_exit_status_is_preserved_and_no_question_is_invented(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -963,8 +963,7 @@ class CodexWorkerTests(unittest.TestCase):
             if os.name == 'nt':
                 # NTFS ids carry a sequence number; a held handle would block the publishing rename.
                 self.assertIsNone(held)
-                sys.stderr.write('\nNOT RUN: %s (POSIX inode reuse)\n' % self.id())
-                return
+                self.skipTest('POSIX inode reuse')
             try:
                 result.unlink()
                 fresh = result.with_suffix('.tmp')
@@ -975,8 +974,7 @@ class CodexWorkerTests(unittest.TestCase):
             finally:
                 os.close(held)
             if not Path('/proc/self/fd').is_dir():
-                sys.stderr.write('\nNOT RUN: %s (supervisor and waiter descriptors need /proc)\n' % self.id())
-                return
+                self.skipTest('supervisor and waiter descriptors need /proc')
             stale = result.stat().st_ino
             key = (result.stat().st_dev, stale)
             def holds(pid):
@@ -1010,6 +1008,7 @@ class CodexWorkerTests(unittest.TestCase):
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
+    test_the_stale_result_stays_allocated_while_supervisor_and_waiter_run._kit_platform_skip = os.name == 'nt' or not Path('/proc/self/fd').is_dir()
 
     def test_result_identity_and_contents_share_a_descriptor_during_a_publication(self):
         worker = module()
