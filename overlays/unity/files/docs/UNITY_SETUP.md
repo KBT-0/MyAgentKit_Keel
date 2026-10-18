@@ -247,6 +247,25 @@ tool definitions mid-session invalidates the prompt cache. [Anthropic, Prompt ca
 single kit rule on MCP servers is in `docs/WORKFLOW.md`, "MCP hygiene"; this section does not
 restate it.
 
+## 5. Running the gate: UNITY_PATH and UNITY_PROJECT
+
+`scripts/unity_gate.sh` runs `UNITY_PATH`, or `unity` from PATH when it is unset, and opens
+the project in `UNITY_PROJECT` (default `unity`; `.` for a project at the repository root).
+Unity Hub puts no editor on PATH, and Unity's separate command-line tool installs itself there
+as `unity`, so set `UNITY_PATH` to the editor itself. On Windows, in Git Bash:
+
+```sh
+export UNITY_PATH="/c/Program Files/Unity/Hub/Editor/<version>/Editor/Unity.exe"
+UNITY_PROJECT=unity ./scripts/unity_gate.sh
+```
+
+The spelling without `.exe` (`.../Editor/Unity`) works too. On macOS the editor is
+`/Applications/Unity/Hub/Editor/<version>/Unity.app/Contents/MacOS/Unity`. [Unity Manual,
+Editor command line arguments] Under WSL a Windows
+editor runs only by its `.exe` name. `./scripts/doctor.sh` reports an editor the gate cannot
+find, a `unity` on PATH that is not in an editor install, and a missing path converter
+(`cygpath` on Git Bash, `wslpath` in WSL); the gate names a program that rejects `-batchmode`.
+
 ## Done when
 
 - The assemblies above exist with the reference whitelist applied.

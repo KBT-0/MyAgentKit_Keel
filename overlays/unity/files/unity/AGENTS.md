@@ -24,8 +24,9 @@ listed with their URLs at the end of `docs/UNITY_SETUP.md`.
 ## The Unity gate
 
 **Unity-side work is not done until PlayMode tests pass.** Run `./scripts/unity_gate.sh`
-(Unity Test Framework, EditMode + PlayMode in batchmode; needs Unity installed, and
-`UNITY_PATH` set if `unity` is not on PATH).
+(Unity Test Framework, EditMode + PlayMode in batchmode; needs Unity installed, `UNITY_PATH`
+set to the editor executable and `UNITY_PROJECT` to a project folder other than `unity`:
+`docs/UNITY_SETUP.md` §5).
 
 It is separate from `./scripts/check.sh` on purpose: the fast gate runs on every commit, and
 the batchmode run's cost scales with project size (editor start and import), so it is not

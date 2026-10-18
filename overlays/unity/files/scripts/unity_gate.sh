@@ -14,7 +14,7 @@
 # results file, with a file that is not an NUnit document, and with every test skipped.
 #
 # Usage: unity_gate.sh
-#   UNITY_PATH   the editor executable, if `unity` is not on PATH
+#   UNITY_PATH    the editor executable, if `unity` is not on PATH (docs/UNITY_SETUP.md §5)
 #   UNITY_PROJECT the project folder (default: unity)
 #
 # CLOSE THE EDITOR FIRST. Unity cannot open a project in batch mode while an Editor has the
@@ -31,6 +31,12 @@ run_gate() {
     echo "FAIL [unity]: Unity not found. Set UNITY_PATH to the editor executable."
     return 1
   fi
+  # A folder without ProjectSettings is no Unity project: Logs was once made in a folder that
+  # did not exist, and the editor pointed at it (#175).
+  if [ ! -d "$project_dir/ProjectSettings" ]; then
+    printf '%s\n' "FAIL [unity]: $project_dir is not a Unity project (no ProjectSettings folder). Set UNITY_PROJECT to the project folder."
+    return 1
+  fi
 
   mkdir -p "$project_dir/Logs"
 
@@ -38,38 +44,61 @@ run_gate() {
   # resolved against (it says only that -projectPath may be relative to the current working
   # directory), so pass absolute paths and treat a missing results file as FAIL: a gate that
   # trusts the exit code can report PASS for a run whose results landed somewhere nobody
-  # looks. Paths are translated when a Windows .exe is driven from a POSIX shell.
-  # (docs/GOTCHAS.md)
+  # looks. Paths are translated when a Windows editor is driven from a POSIX shell.
+  # (docs/GOTCHAS.md) On Git for Windows, MSYS2 and Cygwin the editor is a Windows program
+  # however it is spelled (Unity.exe or Unity): cygpath, as the kit's other scripts do, and
+  # only where the host's own uname says so, as in check.sh. WSL runs a Windows editor only by
+  # its .exe name, and translates with wslpath. wslpath alone refused Unity.exe on Git Bash (#175).
   proj=$(CDPATH= cd -- "$project_dir" && pwd)
   logs="$proj/Logs"
-  case "$unity_bin" in
-    *.exe)
-      if ! command -v wslpath >/dev/null 2>&1; then
-        echo "FAIL [unity]: a Windows Unity.exe needs wslpath to translate paths."
+  case "$(uname -s 2>/dev/null)" in
+    MSYS*|MINGW*|CYGWIN*)
+      { proj=$(cygpath -m "$proj") && logs=$(cygpath -m "$logs"); } || {
+        printf '%s\n' "FAIL [unity]: cygpath cannot convert $proj for the Windows editor."
         return 1
-      fi
-      proj=$(wslpath -w "$proj" 2>/dev/null || printf '%s\n' "$proj")
-      logs=$(wslpath -w "$logs" 2>/dev/null || printf '%s\n' "$logs")
-      ;;
+      } ;;
+    *) case "$unity_bin" in
+         *.exe)
+           if ! command -v wslpath >/dev/null 2>&1; then
+             echo "FAIL [unity]: a Windows Unity.exe needs wslpath to translate paths."
+             return 1
+           fi
+           proj=$(wslpath -w "$proj" 2>/dev/null || printf '%s\n' "$proj")
+           logs=$(wslpath -w "$logs" 2>/dev/null || printf '%s\n' "$logs")
+           ;;
+       esac ;;
   esac
 
   cases=0
   for platform in EditMode PlayMode; do
     printf '%s\n' "unity: running $platform tests..."
     results="$project_dir/Logs/test-results-$platform.xml"
+    errors="$project_dir/Logs/unity-$platform.stderr"
     rm -f "$results"
     # -nographics is the documented headless flag (Unity does not initialise the graphics
     # device); `-logFile -` sends the log to the console, which -nographics would otherwise
     # leave off. Unity's manual does not say whether PlayMode tests run under -nographics:
     # drop it if they fail to start. -quit is NOT added: the manual says that with -runTests
     # it makes the Editor quit before in-progress tests complete.
+    # stderr is kept, then shown: Unity's separate command-line tool, also named `unity` and
+    # first on PATH on some machines, answers "error: unknown option '-batchmode'" there, which
+    # is the wrong program, not failed tests (#175). Read after the run, not probed before it:
+    # the editor opens a window on a probe, and a wrapper script cannot be told from the
+    # editor by its path.
     "$unity_bin" -batchmode -nographics -runTests -projectPath "$proj" \
       -testPlatform "$platform" \
       -testResults "$logs/test-results-$platform.xml" \
-      -logFile - || {
-        printf '%s\n' "FAIL [unity]: $platform tests failed — see $results"
-        fail=1
-      }
+      -logFile - 2>"$errors"
+    code=$?
+    cat "$errors" >&2
+    if [ "$code" -ne 0 ]; then
+      if grep -q "unknown option '-batchmode'" "$errors"; then
+        printf '%s\n' "FAIL [unity]: $unity_bin is not the Unity Editor (it rejected -batchmode; Unity's separate CLI is also named unity). Set UNITY_PATH to the editor executable (docs/UNITY_SETUP.md §5)."
+        return 1
+      fi
+      printf '%s\n' "FAIL [unity]: $platform tests failed — see $results"
+      fail=1
+    fi
 
     # A gate must not pass on ABSENT evidence. A run that executed nothing can still exit 0
     # (the exit code is not a contract, see the header), so the results file has to exist,

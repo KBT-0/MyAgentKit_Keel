@@ -822,7 +822,8 @@ class DoctorTests(unittest.TestCase):
                                           if d and not os.path.exists(os.path.join(d, 'claude')))
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn("MISSING: the second CLI 'claude'", red.stdout)
+            self.assertIn("MISSING: the claude CLI 'claude' that scripts/review.sh calls (the review runs on it)", red.stdout)
+            self.assertNotIn('second CLI', red.stdout)
             env['PATH'] = full_path
             (bin_dir / 'claude').write_text(CLI_STUB)
             (bin_dir / 'claude').chmod(0o755)
@@ -836,7 +837,7 @@ class DoctorTests(unittest.TestCase):
             env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep)
                                           if d and not os.path.exists(os.path.join(d, 'codex')))
             red = doctor()
-            self.assertIn("MISSING: the second CLI 'codex'", red.stdout)
+            self.assertIn("MISSING: the codex CLI 'codex' that scripts/review.sh calls (a second CLI, needed only for cross-model review)", red.stdout)
             (home / '.local/bin').mkdir(parents=True)
             (tmp / 'codex').rename(home / '.local/bin/codex')
             ready = doctor()
@@ -854,7 +855,7 @@ class DoctorTests(unittest.TestCase):
             for extra, missing in (({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': str(stub)}, None),
                                    ({'CLAUDE_CLI_BIN': str(stub)}, None),
                                    ({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': str(tmp / 'absent')},
-                                    "MISSING: the second CLI '%s'" % (tmp / 'absent'))):
+                                    "MISSING: the codex CLI '%s'" % (tmp / 'absent'))):
                 with self.subTest(extra=extra):
                     result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True,
                                             capture_output=True, env=dict(env, **extra))
@@ -1038,6 +1039,87 @@ class DoctorTests(unittest.TestCase):
         expected = review_runtime() | {'working_mode.py'}
         self.assertEqual(listed, expected)
         self.assertEqual(packaged, expected)
+
+    def doctor_section(self, start, end, cwd, env, prelude='', suffix=''):
+        """Run the part of doctor.sh from the line starting with `start` up to `end`, with miss() printing."""
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+        section = start + doctor.split('\n' + start, 1)[1].split('\n' + end, 1)[0]
+        result = subprocess.run([shutil.which('sh'), '-c', 'miss() { echo "MISSING: $1"; }; %s\n%s\n%s' % (prelude, section, suffix)],
+                                cwd=cwd, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_the_unity_gate_without_an_editor_or_its_path_converter_is_not_ready(self):
+        # #216: doctor said ready while the gate could find no editor, or only Unity's CLI.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            project, cli, editor, tools = tmp / 'project', tmp / 'cli', tmp / 'Editor', tmp / 'tools'
+            for directory in (project / 'scripts', cli, editor / 'Data', tools):
+                directory.mkdir(parents=True)
+            for stub in (cli / 'unity', editor / 'unity', editor / 'Unity.exe'):
+                stub.write_text('#!/bin/sh\nexit 0\n')
+                stub.chmod(0o755)
+            # This machine's own unity (or Unity's CLI) stays off PATH.
+            path = os.pathsep.join(d for d in os.environ['PATH'].split(os.pathsep) if d and not any(
+                os.path.exists(os.path.join(d, name)) for name in ('unity', 'unity.exe')))
+            base = {k: v for k, v in os.environ.items() if k != 'UNITY_PATH'}
+            run = lambda prelude='windows_sh=', **env: self.doctor_section(
+                '# --- the Unity gate', '# --- Node as a hook sees it', project, dict(base, **env), prelude)
+            self.assertEqual(run(PATH=path), '')  # no unity_gate.sh, no check
+            (project / 'scripts/unity_gate.sh').write_text('#!/bin/sh\n')
+            for name, env, prelude, expect in (
+                    ('no editor', dict(PATH=path), 'windows_sh=',
+                     "MISSING: the Unity Editor 'unity' that scripts/unity_gate.sh runs, not found"),
+                    ("Unity's CLI on PATH", dict(PATH=str(cli) + os.pathsep + path), 'windows_sh=',
+                     'is not in a Unity Editor install'),
+                    ('the editor on PATH', dict(PATH=str(editor) + os.pathsep + path), 'windows_sh=', None),
+                    ('UNITY_PATH set by the owner', dict(PATH=path, UNITY_PATH=(cli / 'unity').as_posix()),
+                     'windows_sh=', None),
+                    ('Unity.exe with no wslpath', dict(PATH=str(tools), UNITY_PATH=(editor / 'Unity.exe').as_posix()),
+                     'windows_sh=', 'MISSING: wslpath, which scripts/unity_gate.sh needs'),
+                    ('Windows sh with no cygpath', dict(PATH=str(tools), UNITY_PATH=(editor / 'unity').as_posix()),
+                     'windows_sh=1', 'MISSING: cygpath, which scripts/unity_gate.sh needs')):
+                with self.subTest(name):
+                    out = run(prelude, **env)
+                    if expect:
+                        self.assertIn(expect, out)
+                        self.assertEqual(out.count('MISSING:'), 1, out)
+                    else:
+                        self.assertEqual(out, '')
+
+    def test_a_missing_claude_reviewer_is_named_as_the_one_the_review_needs(self):
+        # The Claude CLI alone runs the review: calling it "the second CLI" named the wrong
+        # requirement. Run here too: the trap test's reviewer cases are POSIX-only.
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / 'empty'
+            empty.mkdir()
+            env = {k: v for k, v in os.environ.items() if k not in ('CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN')}
+            env.update(PATH=str(empty), HOME=tmp)
+            run = lambda reviewer: self.doctor_section(
+                '# The Claude CLI alone runs the review', 'elif [ "$reviewer" = claude ]; then', tmp, env,
+                'reviewer=%s' % reviewer, 'fi')
+            out = run('claude')
+            self.assertIn("MISSING: the claude CLI 'claude' that scripts/review.sh calls (the review runs on it)", out)
+            self.assertNotIn('second CLI', out)
+            self.assertIn("MISSING: the codex CLI 'codex' that scripts/review.sh calls (a second CLI, needed only for "
+                          'cross-model review)', run('codex'))
+
+    def test_git_lfs_without_its_pre_push_in_the_hooks_path_is_not_ready(self):
+        # #164: with core.hooksPath=.githooks the LFS hooks in .git/hooks never run.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / '.githooks').mkdir()
+            run = lambda: self.doctor_section('# With the hooks path at .githooks', "# --- tools the kit's own",
+                                              project, os.environ)
+            self.assertEqual(run(), '')
+            (project / '.gitattributes').write_text('# *.psd filter=lfs diff=lfs merge=lfs -text\n')
+            self.assertEqual(run(), '')
+            (project / '.gitattributes').write_text('*.sh text eol=lf\n*.bin filter=lfs diff=lfs merge=lfs -text\n')
+            self.assertIn('MISSING: .githooks/pre-push does not run Git LFS', run())
+            (project / '.githooks/pre-push').write_text('#!/bin/sh\nexit 0\n')
+            self.assertIn('MISSING: .githooks/pre-push does not run Git LFS', run())
+            (project / '.githooks/pre-push').write_text('#!/bin/sh\ngit lfs pre-push "$@"\n')
+            self.assertEqual(run(), '')
 
     def test_missing_mode_helper_names_the_command_not_the_gate(self):
         # Execute the installed required-file checks without bootstrapping an unrelated project.
