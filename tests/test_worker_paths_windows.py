@@ -10,6 +10,9 @@ import unittest
 from unittest.mock import patch
 
 from test_spawn_worker import run_state_hook
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run
+# side by side, and a fixed 60 s or 20 s ran out on a loaded host (#146).
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
@@ -47,7 +50,7 @@ class WorkerPathsOnWindows(unittest.TestCase):
 
     def run_script(self, path, *args):
         return subprocess.run(['sh', path, *args], cwd=self.tmp, env=self.env,
-                              capture_output=True, text=True, encoding='utf-8', timeout=20)
+                              capture_output=True, text=True, encoding='utf-8', timeout=20 * SCALE)
 
     def test_watch_finds_its_patterns(self):
         paths = self.paths('watch_workers.sh')

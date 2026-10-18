@@ -29,6 +29,19 @@ GIT = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', '
 MARKER = '{{' + 'GATE_TEST_MARKER}}'
 
 
+def symlinks_work():
+    """Windows makes a symlink only in Developer Mode or for an administrator."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.symlink(tmp, os.path.join(tmp, 'link'))
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+SYMLINKS = symlinks_work()
+
+
 def write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding='utf-8', newline='\n')
@@ -286,6 +299,8 @@ class BuildCacheTests(unittest.TestCase):
             self.assertEqual(count, want, out)
         self.assertIn('NOTE [build]: build_cache_inputs failed, so the build is not cached', out)
 
+    @unittest.skipUnless(SYMLINKS, 'this host may not make symlinks (Windows without Developer Mode or '
+                                   'administrator rights)')
     def test_a_link_to_a_file_the_key_does_not_hash_turns_the_cache_off(self):
         # A link to a file is hashed by its text: with cfg.h -> a file outside the tree, an edit
         # there that broke the build left the key unchanged and the next run passed from cache.
@@ -316,6 +331,8 @@ class BuildCacheTests(unittest.TestCase):
                 result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build),
                                         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+    # Declared, so the kit check prints its NOT RUN line and does not count it (issue #56).
+    test_a_link_to_a_file_the_key_does_not_hash_turns_the_cache_off._kit_platform_skip = not SYMLINKS
 
 
 if __name__ == '__main__':

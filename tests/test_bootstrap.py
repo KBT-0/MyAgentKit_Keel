@@ -724,13 +724,14 @@ class BootstrapTests(unittest.TestCase):
             rejected = commit(env=dict(os.environ, PROJECT_HOOK_EXIT='3'))
             self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
             self.assertNotIn('placeholder', rejected.stdout + rejected.stderr)
-            # A global scope that wins over the local setting stops the wiring too.
+            # A global scope that wins over the local setting stops the wiring too. The global
+            # file is named outright: check_kit sets GIT_CONFIG_GLOBAL to the null device (#147),
+            # which overrides $HOME/.gitconfig.
             git('config', '--unset', 'core.hooksPath')
-            home = Path(tmp) / 'home'
-            home.mkdir()
-            (home / '.gitconfig').write_text('[core]\n\thooksPath = /elsewhere/hooks\n')
+            glob = Path(tmp) / 'global.gitconfig'
+            glob.write_text('[core]\n\thooksPath = /elsewhere/hooks\n')
             shutil.rmtree(project / 'docs/kit')
-            env = dict(os.environ, HOME=str(home))
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=str(glob))
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('/elsewhere/hooks', result.stderr)

@@ -17,7 +17,7 @@ case " $* " in *" -h "*|*" --help "*) exec "$py" -B scripts/check_kit.py "$@" ;;
 passed=$(mktemp -d)
 trap 'rm -rf "$passed"' EXIT
 cancel() {
-  trap '' INT TERM
+  trap '' INT TERM HUP
   child=${child:-${!:-}}
   if [ -n "$child" ]; then
     kill -s "$1" -- -"$child" 2>/dev/null || :
@@ -27,6 +27,7 @@ cancel() {
 }
 trap 'cancel INT 130' INT
 trap 'cancel TERM 143' TERM
+trap 'cancel HUP 129' HUP
 # The kit check compares HEAD, index, status and file contents at its end: a test that writes
 # into this checkout fails a review running here as stale_checkout. It cannot catch a
 # non-ignored file that a test writes and removes meanwhile. Ignored files may change.
