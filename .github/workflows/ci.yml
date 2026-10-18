@@ -9,18 +9,26 @@ on:
 permissions:
   contents: read
 
+# Each OS and Python runs the kit check's two tiers as parallel jobs (docs/research/
+# kit-self-checks.md, findings 7 and 12): the fast tier, and the slow one (--slow: bootstrap,
+# acceptance, the review bridge and worker-spawn suites). A runner is slower than a developer
+# host (finding 9), so the tier budgets and unit caps run at three times their local seconds
+# here; timeout-minutes sits above that budget, so the kit check names the unit before GitHub
+# cancels the job.
+env:
+  MYAGENTKIT_TEST_TIMEOUT_SCALE: '3'
+
 jobs:
   acceptance:
-    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    name: ${{ matrix.os }} / Python ${{ matrix.python }} / ${{ matrix.tier }}
     runs-on: ${{ matrix.os }}
-    # macOS 3.14 was cancelled at the old 30 minutes (run 39065623063) while Ubuntu took 14: a
-    # limit that cuts a run short reads as a failure of the kit.
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.tier == 'slow' && 190 || 40 }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ['3.11', '3.14']
+        tier: [fast, slow]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -32,29 +40,27 @@ jobs:
       - name: tr_TR.UTF-8 for the locale suites (macOS ships it; the Ubuntu image does not)
         if: runner.os == 'Linux'
         run: sudo locale-gen tr_TR.UTF-8
-      - name: Run the kit check (scripts/check_kit.py through its launcher)
-        run: ./scripts/check.sh
+      - name: Run the kit check's ${{ matrix.tier }} tier (scripts/check_kit.py through its launcher)
+        run: ./scripts/check.sh ${{ matrix.tier == 'slow' && '--slow' || '' }}
 
   # Native Windows: Git for Windows' sh with a python.org CPython, the host the gate lock, a
-  # review run and the worktree clean-up are proven on. The kit check runs whole here: the
-  # Windows suites print NOT RUN and pass elsewhere, so only this job proves them, and it runs
-  # test_bootstrap, which a local Windows check leaves out for its twelve minutes. A case that
-  # needs a POSIX host prints NOT RUN here; the jobs above prove it.
+  # review run and the worktree clean-up are proven on. The Windows suites print NOT RUN and
+  # pass elsewhere, so only these jobs prove them. A case that needs a POSIX host prints NOT RUN
+  # here; the jobs above prove it.
   windows:
-    name: windows-latest / Python ${{ matrix.python }}
+    name: windows-latest / Python ${{ matrix.python }} / ${{ matrix.tier }}
     runs-on: windows-latest
-    # The same run took 59 of the old 60 minutes (3.14, serial tests); 90 keeps a green run from
-    # being cut short until the kit check runs its units sharded.
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.tier == 'slow' && 190 || 40 }}
     strategy:
       fail-fast: false
       matrix:
         python: ['3.11', '3.14']
+        tier: [fast, slow]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Run the kit check (scripts/check_kit.py through its launcher) on native Windows
+      - name: Run the kit check's ${{ matrix.tier }} tier (scripts/check_kit.py through its launcher) on native Windows
         shell: bash
-        run: sh scripts/check.sh
+        run: sh scripts/check.sh ${{ matrix.tier == 'slow' && '--slow' || '' }}

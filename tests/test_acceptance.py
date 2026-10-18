@@ -178,14 +178,15 @@ class AcceptanceTests(unittest.TestCase):
                 (root / 'tests/test_tool.py').write_text('', encoding='utf-8')
                 git('add', '-A')
                 self.assertEqual(gate.untested_guards(root), [])
-        # The wiring: the kit check asks, not only this test.
+        # The wiring: the kit check's structure unit asks, not only this test.
         with unittest.mock.patch.object(gate, 'untested_guards') as asked, \
                 unittest.mock.patch.object(gate, 'check_syntax'), \
+                unittest.mock.patch.object(gate, 'check_release'), \
+                unittest.mock.patch.object(gate, 'check_actions'), \
+                unittest.mock.patch.object(gate, 'validate_plugin'), \
                 unittest.mock.patch.object(gate, 'run', return_value=''), \
-                unittest.mock.patch.object(gate, 'run_units', return_value=False), \
-                unittest.mock.patch.object(gate.sys, 'argv', ['check_kit.py']), \
                 contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(gate.main(), 1)
+            self.assertEqual(gate.unit('structure'), 0)
         asked.assert_called_once_with(gate.ROOT)
 
     def test_a_moved_file_and_the_owners_diff_config_change_no_note(self):

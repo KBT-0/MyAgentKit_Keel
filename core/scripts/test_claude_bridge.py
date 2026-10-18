@@ -636,7 +636,14 @@ class BridgeTests(unittest.TestCase):
 
         cases = [(body, clean) for body, _, clean in self.continuation_review_cases()]
         cases.append(('No findings\n  established in this diff.', True))
+        # Each form against the verdict rule itself; the whole adapter runs once each way, for
+        # its record and evidence (a run per form took minutes and proved the same rule).
+        whole = [next(case for case in cases if case[1]), next(case for case in cases if not case[1])]
         for body, clean in cases:
+            final = '## Findings\n' + body + '\n## Manual checks\nNone.\nVERDICT: Accept\n'
+            with self.subTest(body=body):
+                self.assertEqual(codex_bridge.verdict_refused(final), not clean)
+        for body, clean in whole:
             final = '## Findings\n' + body + '\n## Manual checks\nNone.\nVERDICT: Accept\n'
             received, out = [], io.StringIO()
             with self.subTest(body=body), patch.dict(os.environ, self.review_env()), \
@@ -3386,7 +3393,12 @@ class BridgeTests(unittest.TestCase):
         completes += ('## Findings\n\nNone.\n\n## Verdict\n\nVERDICT: Accept\n',
                       '## **Findings**\n\n**Low** — x.py:1 a bold paragraph.\n\nVERDICT: Accept\n',
                       '## Findings\n\nLow: x.py:1 a note that\nwraps onto a second line.\n\nVERDICT: Accept\n')
+        import codex_bridge
         for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:
+            with self.subTest(final=final):
+                self.assertEqual(codex_bridge.verdict_refused(final), not completed)
+        # The whole wrapper once each way: the rule decides its exit and chain record.
+        for final, completed in ((completes[0], True), (refused[0], False)):
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
                                           REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
@@ -3549,8 +3561,11 @@ class BridgeTests(unittest.TestCase):
                              set(codex))
         task = self.root / 'handoff.md'
         task.write_text('Propose a fix and stop on ambiguity.\n')
+        # A 2 s bound only where the outcome is the timeout (its fixture sleeps 20 s). Every case
+        # got 2 s once, and on a loaded host the copy and the fake CLI's start outlasted it: an
+        # accept or a cli_error ended as 'timeout' (seen at 10 units at once, #95).
         env = dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_CAPTURE_QUOTA='0',
-                   REVIEW_TIMEOUT_SECONDS='2', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                   REVIEW_TIMEOUT_SECONDS='120', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    REVIEW_DOCS='AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md')
         pristine = self.repo
         runs = [('claude', case, kind) for case, kind in claude.items()]
@@ -3575,7 +3590,8 @@ class BridgeTests(unittest.TestCase):
                     extra = {'CODEX_FIXTURE_CASE': case}
                 else:
                     mode = 'propose' if case in ('proposal', 'questions') else 'review'
-                    command = [sys.executable, '-B', str(BRIDGE), mode, '--repo', str(repo), '--timeout', '2',
+                    command = [sys.executable, '-B', str(BRIDGE), mode, '--repo', str(repo),
+                               '--timeout', '2' if kind == 'timeout' else '120',
                                *(['--task-file', str(task)] if mode == 'propose' else []),
                                *(['--max-budget-usd', '7.5'] if case == 'explicit_budget' else [])]
                     extra = {'CLAUDE_CLI_BIN': str(self.fixture), 'FIXTURE_CASE': case}

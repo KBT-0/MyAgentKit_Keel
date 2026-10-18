@@ -33,7 +33,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager
 from threading import Lock
 
 # Native Windows reads text in the ANSI code page, and the kit's files are UTF-8: the kit check
@@ -101,10 +101,10 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 5 if os.name == 'nt' else 6,
               'test_scan_gate': 1, 'test_gate_checks': 12, 'test_unity_gate': 6, 'test_kit_wrapper': 6,
               'test_check_gate': 20, 'test_check_gate_windows': 36 if os.name == 'nt' else 10,
-              'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 3, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
+              'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 3, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 11, 'test_guard_destructive_git': 65, 'test_guard_boundaries': 1, 'test_guard_private_email': 10,
               'test_spawn_worker': 53 if os.name == 'nt' else 73, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
-              'test_kit_output': 1, 'test_kit_runner': 42, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 1, 'test_kit_runner': 44, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
               'test_close_worker': 30, 'test_python_fallback': 2},
 }
@@ -116,15 +116,28 @@ NOT_ON_WINDOWS = {
     'tests': {'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
               'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows'},
 } if os.name == 'nt' else {}
-# test_bootstrap passes on native Windows but starts thousands of processes there: measured
-# 2026-10-16 on an i7-12700H (20 logical CPUs), Python 3.13, Git 2.47.1, alone: 36 tests in 1580 s.
-# A local check leaves it to CI, whose Windows job runs it (CI is set there).
-if NOT_ON_WINDOWS and not os.environ.get('CI'):
-    NOT_ON_WINDOWS['tests']['test_bootstrap'] = "about 26 minutes on Windows; CI's Windows job runs it too"
 # Modules too long for one unit, each run as that many units (#146). A module name is unique
 # across the folders. ponytail: hand-set from measured seconds; a slow module added later only
 # lengthens the run until it is listed here.
-SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4}
+SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4, 'test_gate_checks': 3, 'test_check_gate_windows': 3,
+          'test_git_hooks': 3}
+# Two tiers (docs/research/kit-self-checks.md, findings 6 and 7: a commit stage of about ten
+# minutes, the long suites in a second stage). The fast tier is the default run, for every
+# change and before a push; `--slow` runs the slow tier alone, `--all` both (CI runs the two as
+# parallel jobs; a release runs both). Each unit is in exactly one tier: these slow units
+# (a module name, every shard of it, or "acceptance"), every other unit fast. Measured in
+# .myagentkit/v012/reports/tiers.md.
+# Unsharded modules that start right after the shards (their locale suites too): queued last, a
+# 240-280 s unit alone set the fast tier's tail (measured in the tiers report).
+LONG = ('test_close_worker', 'test_sync_kit', 'test_guard_destructive_git', 'test_claude_sandbox',
+        'test_close_worker_windows', 'test_worker_paths_windows', 'test_review_upgrade')
+SLOW = {'acceptance', 'test_bootstrap', 'test_claude_bridge', 'test_spawn_worker', 'test_spawn_codex',
+        'test_worker_visibility', 'test_doctor'}
+# Each tier's time budget (finding 8, Bazel's test-size timeouts): (per-unit cap, whole-tier
+# cap) in seconds, times SCALE on a slow host. A unit over its cap is stopped and fails; a tier
+# over its cap fails; each is named with its seconds. The measured times and headroom are in
+# the tiers report.
+CAPS = {'fast': (480, 600), 'slow': (3000, 3600)}
 
 
 # --timing: each phase's and each suite's seconds, and a suite's ten slowest tests.
@@ -411,10 +424,13 @@ def check_actions(root):
         print('NOT RUN: the ACTION check for project-owned kit files (no v* release tag)')
         return
     tag = found.stdout.strip()
-    # stdout alone: run() adds stderr, where git writes its line-ending warnings.
-    names = subprocess.run(git + ['diff', '--name-only', '--no-renames', tag, '--', 'core', 'setup', 'overlays'],
-                           capture_output=True, text=True, encoding='utf-8', errors='replace',
-                           check=True).stdout.splitlines()
+    # stdout alone: run() adds stderr, where git writes its line-ending warnings. A failed diff
+    # is a FAIL line, not a traceback.
+    diff = subprocess.run(git + ['diff', '--name-only', '--no-renames', tag, '--', 'core', 'setup', 'overlays'],
+                          capture_output=True, text=True, encoding='utf-8', errors='replace')
+    if diff.returncode:
+        raise RuntimeError('git diff against %s failed: %s' % (tag, diff.stderr.strip()))
+    names = diff.stdout.splitlines()
     owned = [name for name in names if not (root / name).is_file() or not re.search(
         r'^(# |<!-- )KIT-OWNED:', (root / name).read_text(encoding='utf-8', errors='replace'), re.M)]
     if not owned:
@@ -1152,6 +1168,23 @@ def posix_lock_cases(project, side, build, own_lock, gate):
 FAILURES = (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired)
 
 
+def structure():
+    """The structural checks, a fast-tier unit beside the suites, never a serial step before
+    them (#146). Their NOT RUN lines (shellcheck, the killing-test note) are repeated under the
+    summary, as every unit's are."""
+    check_syntax(ROOT)
+    check_release(ROOT)
+    check_actions(ROOT)
+    untested_guards(ROOT)
+    validate_plugin(ROOT)
+    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text(encoding='utf-8'))
+    # The name and skills path Codex's plugin scaffold writes; Codex documents no validator
+    # (developers.openai.com/codex/plugins/build/, read 2026-10-15).
+    if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
+        raise RuntimeError("Codex plugin manifest does not expose the expected package")
+    print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
+
+
 def unit(name, timing_file=None):
     """Run one unit in this process; 0 on a pass, 1 with the error printed on a failure."""
     try:
@@ -1160,7 +1193,9 @@ def unit(name, timing_file=None):
         # suite of it ("locale/test_x").
         directory, _, module = name.rpartition("/")
         module, _, index = module.partition("@")
-        if name == "acceptance":
+        if name == "structure":
+            structure()
+        elif name == "acceptance":
             acceptance()
         elif name == "locale":
             locale_matrix()
@@ -1187,10 +1222,23 @@ def unit(name, timing_file=None):
             Path(timing_file).write_text("".join(row + "\n" for row in rows), encoding='utf-8')
 
 
-def run_units(units, timing=False, parallel=None, said=()):
+def stop_tree(child):
+    """Kill a unit and, on Windows, every process below it: a shell or git it started keeps the
+    output pipe open, and reading it would wait for them. ponytail: off Windows only the unit is
+    killed; a descendant holding the pipe is waited for at most 30 s, then its output is dropped."""
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(child.pid)], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if child.poll() is None:
+        child.kill()
+
+
+def run_units(units, timing=False, parallel=None, said=(), caps=None):
     """Run the (name, command) units, `parallel` at once (default all); print each unit's whole
     output in the given order. Each unit's timeouts scale by `parallel` (see limit()). `said`:
     the NOT RUN lines the checks before the units printed, repeated under the summary first.
+    `caps`: each unit's wall-clock cap in seconds; a unit still running at its cap is stopped
+    and fails with its name and seconds (#146, run_units had no bound of its own).
 
     The units share no state: every suite and the acceptance phases work in temporary
     directories of their own, and each synthetic project has its own .git and so its own
@@ -1217,7 +1265,7 @@ def run_units(units, timing=False, parallel=None, said=()):
                             pass
             pool.shutdown(wait=True, cancel_futures=True)
 
-    def one(name, command, timing_file):
+    def one(name, command, timing_file, cap):
         started = time.monotonic()
         if timing_file:
             command = command + ["--timing-file", timing_file]
@@ -1228,7 +1276,17 @@ def run_units(units, timing=False, parallel=None, said=()):
                                      stderr=subprocess.STDOUT, text=True, errors="replace")
             children.append(child)
         with child:
-            output = child.communicate()[0]
+            try:
+                output = child.communicate(timeout=cap)[0]
+            except subprocess.TimeoutExpired:
+                stop_tree(child)
+                try:
+                    output = child.communicate(timeout=30)[0]
+                except subprocess.TimeoutExpired:
+                    output = ''
+                return 1, output + ("KIT CHECK: FAIL — unit %s ran over its cap of %.0f s and was stopped "
+                                    "at %.0f s\n" % (name, cap, time.monotonic() - started)), \
+                    time.monotonic() - started
         return child.returncode, output, time.monotonic() - started
 
     parallel = parallel or len(units)
@@ -1238,8 +1296,8 @@ def run_units(units, timing=False, parallel=None, said=()):
     with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
             ThreadPoolExecutor(max_workers=parallel) as pool, stop_units():
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
-        futures = [pool.submit(one, name, command, timing_file)
-                   for (name, command), timing_file in zip(units, files)]
+        futures = [pool.submit(one, name, command, timing_file, cap)
+                   for (name, command), timing_file, cap in zip(units, files, caps or [None] * len(units))]
         summary, failed, not_run = [], [], list(said)
         for (name, _), future, timing_file in zip(units, futures, files):
             code, output, seconds = future.result()
@@ -1273,6 +1331,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timing", action="store_true",
                         help="print each unit's, phase's and slowest test's seconds at the end")
+    tier = parser.add_mutually_exclusive_group()
+    tier.add_argument("--slow", action="store_true",
+                      help="run the slow tier alone (bootstrap, acceptance, the review bridge, doctor and worker-spawn suites)")
+    tier.add_argument("--all", action="store_true", help="run the fast and the slow tier (a release)")
     parser.add_argument("--unit", help=argparse.SUPPRESS)
     parser.add_argument("--timing-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -1283,7 +1345,8 @@ def main():
     # them run one after another, sets the wall time (#146): 3358 s for tests/ on Windows CI.
     # The sharded modules start first, right after acceptance: they are the longest units, and a
     # long unit queued last sets the wall time alone.
-    units, rest, not_here = ["acceptance"], [], []
+    # "structure" first: the structural checks run as a unit beside the suites, not before them.
+    units, rest, not_here = ["structure", "acceptance"], [], []
     for directory, required in REQUIRED_SUITES.items():
         uncounted = sorted({path.stem for path in (ROOT / directory).glob("test_*.py")} - set(required))
         if uncounted:
@@ -1300,34 +1363,34 @@ def main():
                     for suffix in (["@%d" % index for index in range(SHARDS[name])] if name in SHARDS else [""]))
     units += rest
     units += ["locale/" + name for name in LOCALE_SUITES]
+    module = lambda name: name.rpartition("/")[2].partition("@")[0]
+    stale = SLOW - {module(name) for name in units} - {name for required in NOT_ON_WINDOWS.values() for name in required}
+    if stale:
+        raise RuntimeError("SLOW names no unit of the kit check: " + ", ".join(sorted(stale)))
+    units.sort(key=lambda name: (name not in ("structure", "acceptance"), module(name) not in SHARDS,
+                                 module(name) not in LONG))
+    tiers = ["fast", "slow"] if args.all else ["slow"] if args.slow else ["fast"]
+    tier_of = lambda name: "slow" if module(name) in SLOW else "fast"
+    units = [name for name in units if tier_of(name) in tiers]
+    host = float(os.environ.get(SCALE, "1"))
+    budget = sum(CAPS[name][1] for name in tiers) * host
     cpus = os.cpu_count() or 1
     parallel = degree(cpus, len(units))
-    print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
-    # Their NOT RUN lines (shellcheck, the killing-test note) are repeated under the summary too.
-    early = io.StringIO()
-    try:
-        with redirect_stdout(early):
-            for line in not_here:
-                print(line)
-            check_syntax(ROOT)
-            check_release(ROOT)
-            check_actions(ROOT)
-            untested_guards(ROOT)
-            validate_plugin(ROOT)
-    finally:
-        sys.stdout.write(early.getvalue())
-    said = [line for line in early.getvalue().splitlines() if line.startswith("NOT RUN:")]
-    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text(encoding='utf-8'))
-    # The name and skills path Codex's plugin scaffold writes; Codex documents no validator
-    # (developers.openai.com/codex/plugins/build/, read 2026-10-15).
-    if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
-        raise RuntimeError("Codex plugin manifest does not expose the expected package")
-    print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
+    print("KIT CHECK: %s tier, %d of %d units at once (%d CPUs), %.0f s budget"
+          % (" and ".join(tiers), parallel, len(units), cpus, budget))
+    for line in not_here:
+        print(line)
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())]
-    if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=said):
+    if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
+                     caps=[CAPS[tier_of(name)][0] * host for name in units]):
         return 1
-    print("TIME: %.1f s in all" % (time.monotonic() - started))
+    seconds = time.monotonic() - started
+    print("TIME: %.1f s in all" % seconds)
+    if seconds > budget:
+        print("KIT CHECK: FAIL — the %s tier took %.0f s, over its budget of %.0f s; move a slow unit to the "
+              "slow tier or make it faster" % (" and ".join(tiers), seconds, budget), file=sys.stderr)
+        return 1
     if _PASSED_FILE:
         marker = Path(_PASSED_FILE)
         # A long native kit check outlived its empty temporary marker directory. Recover
