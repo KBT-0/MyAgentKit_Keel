@@ -22,6 +22,23 @@ from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            utf8_output)
 
 
+VERDICT = r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$"
+
+
+def verdict_refused(final):
+    """True when Codex's final text is no valid verdict: not exactly one VERDICT line, or a
+    verdict its findings and manual checks contradict. The same rules as claude_bridge.validate():
+    a plain Accept carries Lows and items outside the diff at most and no manual check; the other
+    Accept names one; a Reject names a finding (fix4 notes)."""
+    verdicts = re.findall(VERDICT, final, re.M)
+    if len(verdicts) != 1 or len(re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)) != 1:
+        return True
+    findings, checks = review_parts(final)
+    return bool(verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
+                or verdicts[0] == 'Accept with Manual Checks' and not checks
+                or verdicts[0] == 'Reject' and all(placeholder(f) for f in findings))
+
+
 def main(argv=None, result_sink=None, claims=None):
     """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -168,13 +185,13 @@ def main(argv=None, result_sink=None, claims=None):
             reason = agent_usage.failure("codex", execution, values)
             # Exit 0 and a turn that completed and did not fail: an error event in the stream is
             # one the CLI recovered from (a reconnect), kept in the usage record's raw output.
-            # It once failed a paid, completed review as cli_error. It decides the status only
-            # when a check below fails, exactly as before.
+            # It once failed a paid, completed review as cli_error. A check below that fails keeps
+            # its own kind: put back, a recovered 429 turned invalid_evidence into rate_limited
+            # and the dispatcher re-ran the review (#180).
             types = [value.get("type") for value in values]
-            recovered = None
             if (reason and execution["exit_code"] == 0 and not execution["termination"]
                     and "turn.completed" in types and "turn.failed" not in types):
-                recovered, reason = reason, None
+                reason = None
             final = ""
             try:
                 if last is not None and last.is_file():
@@ -196,21 +213,10 @@ def main(argv=None, result_sink=None, claims=None):
                        # printed copy_failed and no reason.
                        "\n\n## Failure\n\nCodex never ran: " + execution["stderr"][-4000:]
                        if reason == "copy_failed" else "")
-            verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
-            declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
-            if not reason and (len(verdicts) != 1 or len(declarations) != 1
+            verdicts = re.findall(VERDICT, final, re.M)
+            if not reason and (verdict_refused(final)
                                or not any(v.get("type") == "turn.completed" for v in values)):
                 reason = "invalid_evidence"
-            # The same rules as claude_bridge.validate(): a plain Accept carries Lows and items
-            # outside the diff at most and no manual check; the other Accept names one.
-            findings, checks = review_parts(final)
-            # A Reject names a finding, as claude_bridge.validate() requires (fix4 notes).
-            if not reason and (verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
-                               or verdicts[0] == 'Accept with Manual Checks' and not checks
-                               or verdicts[0] == 'Reject' and all(placeholder(f) for f in findings)):
-                reason = 'invalid_evidence'
-            if recovered and reason:
-                reason = recovered
             # A failed attempt that was cancelled is cancelled: its eligible failure once let
             # --fallback launch the other paid reviewer after the owner had stopped the review.
             if (cancelled or guard.noted) and reason:

@@ -26,6 +26,23 @@ class OverlayPermissionsTests(unittest.TestCase):
     def setUp(self):
         self.permissions = json.loads(SETTINGS.read_text(encoding='utf-8'))['permissions']
 
+    def test_only_the_lead_keeps_the_one_hour_cache(self):
+        # #116: sub-agents rarely wait five minutes, so a one-hour write (2x) buys them nothing;
+        # spawn_worker.sh sets the one-hour value on the long-job worker's own launch line.
+        settings = json.loads(SETTINGS.read_text(encoding='utf-8'))
+        self.assertEqual(settings.get('promptCacheTtl'), '1h')
+        self.assertNotIn('subagentPromptCacheTtl', settings)
+        self.assertNotIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', settings.get('env', {}))
+        # No text may still promise the one-hour cache to a sub-agent (round-1 review of #116).
+        root = SETTINGS.parents[4]
+        for path, stale in (('overlays/claude-code/files/.claude/agents/worker.md', 'Runs with a one-hour prompt cache'),
+                            ('core/docs/WORKFLOW.md', 'a worker definition needs no'),
+                            ('overlays/claude-code/README.md', 'one-hour sub-agents')):
+            with self.subTest(path=path):
+                text = ' '.join((root / path).read_text(encoding='utf-8').split())
+                self.assertNotIn(stale, text)
+                self.assertIn('spawn_worker.sh', text)
+
     def test_no_allowed_rule_names_a_command_that_destroys(self):
         for rule in self.permissions['allow']:
             command = rule[rule.index('(') + 1:-1].lstrip('./')
@@ -172,17 +189,17 @@ class OverlaySettingsTests(unittest.TestCase):
             (agents / 'sub').mkdir(parents=True)
             user.mkdir(parents=True)
             pin = '---\nname: {}\nmodel: {}\neffort: high\n---\nx\n'
-            (agents / 'pinned.md').write_text(pin.format('pinned', 'claude-opus-5-5'))
-            (agents / 'half.md').write_text('---\nname: half\nmodel: claude-opus-5-5\n---\nx\n')
-            (agents / 'unset.md').write_text(pin.format('unset', '{{WORKER_MODEL}}'))
-            (agents / 'quoted.md').write_text(pin.format('quoted', '"{{WORKER_MODEL}}"'))
-            (agents / 'inherit.md').write_text(pin.format('inherit', 'inherit'))
-            (agents / 'qinherit.md').write_text(pin.format('qinherit', '"inherit"'))
+            (agents / 'pinned.md').write_text(pin.format('pinned', 'claude-opus-5-5'), encoding='utf-8')
+            (agents / 'half.md').write_text('---\nname: half\nmodel: claude-opus-5-5\n---\nx\n', encoding='utf-8')
+            (agents / 'unset.md').write_text(pin.format('unset', '{{WORKER_MODEL}}'), encoding='utf-8')
+            (agents / 'quoted.md').write_text(pin.format('quoted', '"{{WORKER_MODEL}}"'), encoding='utf-8')
+            (agents / 'inherit.md').write_text(pin.format('inherit', 'inherit'), encoding='utf-8')
+            (agents / 'qinherit.md').write_text(pin.format('qinherit', '"inherit"'), encoding='utf-8')
             # Claude Code finds a definition by its name: field, in any folder under agents/.
-            (agents / 'renamed.md').write_text(pin.format('by-name', 'claude-opus-5-5'))
-            (agents / 'sub' / 'x.md').write_text(pin.format('renamed', 'inherit'))
-            (user / 'u.md').write_text(pin.format('user-pinned', 'claude-opus-5-5'))
-            (user / 'p.md').write_text(pin.format('half', 'claude-opus-5-5'))  # the project's half wins
+            (agents / 'renamed.md').write_text(pin.format('by-name', 'claude-opus-5-5'), encoding='utf-8')
+            (agents / 'sub' / 'x.md').write_text(pin.format('renamed', 'inherit'), encoding='utf-8')
+            (user / 'u.md').write_text(pin.format('user-pinned', 'claude-opus-5-5'), encoding='utf-8')
+            (user / 'p.md').write_text(pin.format('half', 'claude-opus-5-5'), encoding='utf-8')  # the project's half wins
             env = {k: v for k, v in os.environ.items() if k not in ('HOME', 'USERPROFILE')}
             env.update(CLAUDE_PROJECT_DIR=project, HOME=home, USERPROFILE=home)
             for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('quoted', 2), ('inherit', 2),

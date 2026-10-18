@@ -1,9 +1,5 @@
 {
   "promptCacheTtl": "1h",
-  "subagentPromptCacheTtl": "1h",
-  "env": {
-    "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h"
-  },
   "autoCompactWindow": 450000,
   "attribution": {
     "commit": "",

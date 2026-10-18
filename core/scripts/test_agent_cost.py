@@ -69,6 +69,19 @@ class AgentCostTests(unittest.TestCase):
             self.assertIn('cache hit 32% (alarm below 80%; owner\'s choice)', text)
             self.assertEqual(agent_cost.hit({'cr': 0, 'cw': 0, 'inp': 0}), '-')
 
+    def test_workflow_agents_are_listed_with_their_run_and_the_journal_is_skipped(self):
+        # #172: the Workflow tool writes its agents to subagents/workflows/wf_<run>/.
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / 'abc.jsonl'
+            session.write_text('')
+            run = Path(tmp) / 'abc' / 'subagents' / 'workflows' / 'wf_42'
+            run.mkdir(parents=True)
+            (run / 'agent-9.jsonl').write_text('')
+            (run / 'agent-9.meta.json').write_text(json.dumps({'description': 'audit'}))
+            (run / 'journal.jsonl').write_text('')
+            (run.parents[1] / 'agent-1.jsonl').write_text('')
+            self.assertEqual([n for n, _ in agent_cost.session_agents(session)], ['LEAD', 'agent-1', 'wf_42 audit'])
+
     def test_gap_writes_follow_each_recorded_ttl_and_legacy_fallback(self):
         # KARARLAR B03 inv2/(h): mixed TTLs must not turn every >5m write into a miss.
         cases = [(300, 100, 0, 0, 0), (301, 100, 0, 0, 100),
@@ -90,6 +103,21 @@ class AgentCostTests(unittest.TestCase):
                     result = agent_cost.summarize('worker', agent_cost.requests(session))
                     self.assertEqual(result['cw_gap'], expected)
                     self.assertIn('cWrite>TTL', agent_cost.table([result]))
+
+    def test_one_hour_writes_without_a_long_gap_are_reported_unused(self):
+        # #116: a sub-agent that never waits five minutes pays the 2x write for nothing.
+        from datetime import datetime, timedelta, timezone
+        start = datetime(2026, 10, 3, tzinfo=timezone.utc)
+        for gap, unused in ((299, 700), (301, 0)):
+            with self.subTest(gap=gap), tempfile.TemporaryDirectory() as tmp:
+                session = Path(tmp) / 's.jsonl'
+                session.write_text('\n'.join(
+                    rec((start + timedelta(seconds=gap * i)).isoformat(), str(i), {
+                        'cache_creation_input_tokens': 350, 'cache_creation': {'ephemeral_1h_input_tokens': 350}})
+                    for i in range(2)), encoding='utf-8')
+                result = agent_cost.summarize('explore', agent_cost.requests(session))
+                self.assertEqual(result['w1h_unused'], unused)
+                self.assertIn('1h unused %s' % agent_cost.fmt(unused), agent_cost.table([result]))
 
     def test_latest_finds_a_project_whose_path_has_an_underscore(self):
         # Claude Code encodes every non-alphanumeric character as '-'; --latest once encoded

@@ -422,30 +422,42 @@ runpy.run_path(%r, run_name='__main__')
 
     def test_main_runs_one_unit_per_module_and_refuses_a_module_without_a_count(self):
         # A module that does not run on this host gets its NOT RUN line, no unit ("ran 0 tests"),
-        # and the sharded modules start right after acceptance.
-        names, out, off_host = [], io.StringIO(), {'tests': {'test_doctor': 'a reason', 'test_bootstrap': 'r'}}
-        with unittest.mock.patch.object(check_kit, 'NOT_ON_WINDOWS', off_host), \
-                unittest.mock.patch.object(check_kit, 'check_syntax'), \
-                unittest.mock.patch.object(check_kit, 'check_release'), \
-                unittest.mock.patch.object(check_kit, 'untested_guards'), \
-                unittest.mock.patch.object(check_kit, 'validate_plugin'), \
-                unittest.mock.patch.object(check_kit, 'run', return_value=''), \
-                unittest.mock.patch.object(check_kit, 'run_units',
-                                           side_effect=lambda units, *a, **k: names.extend(n for n, _ in units)), \
-                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
-                contextlib.redirect_stdout(out):
-            self.assertEqual(check_kit.main(), 1)
-        self.assertIn('NOT RUN: tests/test_doctor on native Windows (a reason)', out.getvalue())
+        # and the sharded modules start right after acceptance. Each unit is in one tier: the
+        # default run is the fast tier, --slow the SLOW units, --all both.
+        off_host = {'tests': {'test_doctor': 'a reason', 'test_bootstrap': 'r'}}
+
+        def units(*argv, slow=check_kit.SLOW):
+            names, out = [], io.StringIO()
+            with unittest.mock.patch.object(check_kit, 'NOT_ON_WINDOWS', off_host),                     unittest.mock.patch.object(check_kit, 'SLOW', slow),                     unittest.mock.patch.object(check_kit, 'check_syntax'),                     unittest.mock.patch.object(check_kit, 'check_release'),                     unittest.mock.patch.object(check_kit, 'check_actions'),                     unittest.mock.patch.object(check_kit, 'untested_guards'),                     unittest.mock.patch.object(check_kit, 'validate_plugin'),                     unittest.mock.patch.object(check_kit, 'run', return_value=''),                     unittest.mock.patch.object(check_kit, 'run_units',
+                                               side_effect=lambda units, *a, **k: names.extend(n for n, _ in units)),                     unittest.mock.patch.object(sys, 'argv', ['check_kit.py', *argv]),                     contextlib.redirect_stdout(out):
+                self.assertEqual(check_kit.main(), 1)
+            return names, out.getvalue()
+
+        names, out = units('--all')
+        self.assertIn('NOT RUN: tests/test_doctor on native Windows (a reason)', out)
         sharded = ['%s/%s@%d' % (directory, name, index) for directory, required in check_kit.REQUIRED_SUITES.items()
                    for name in required if name in check_kit.SHARDS and name not in off_host.get(directory, {})
                    for index in range(check_kit.SHARDS[name])]
-        expected = ['acceptance'] + sharded + ['locale/' + name for name in check_kit.LOCALE_SUITES] + [
+        expected = ['structure', 'acceptance'] + sharded + ['locale/' + name for name in check_kit.LOCALE_SUITES] + [
             directory + '/' + name for directory, required in check_kit.REQUIRED_SUITES.items()
             for name in required if name not in check_kit.SHARDS and name not in off_host.get(directory, {})]
-        self.assertEqual(names[:len(sharded) + 1], ['acceptance'] + sharded)
+        self.assertEqual(names[:len(sharded) + 2], ['structure', 'acceptance'] + sharded)
         self.assertEqual(sorted(names), sorted(expected))
         self.assertTrue(set(check_kit.SHARDS) <= set(check_kit.REQUIRED_SUITES['tests'])
                         | set(check_kit.REQUIRED_SUITES['core/scripts']))
+        module = lambda name: name.rpartition('/')[2].partition('@')[0]
+        slow, out = units('--slow')
+        self.assertEqual(slow, [name for name in names if module(name) in check_kit.SLOW])
+        self.assertIn('slow tier', out)
+        fast, out = units()
+        self.assertEqual(fast, [name for name in names if module(name) not in check_kit.SLOW])
+        self.assertIn('fast tier', out)
+        self.assertTrue(slow and fast)
+        # A long unit starts right after the shards, never last.
+        self.assertTrue(set(check_kit.LONG) <= set(check_kit.REQUIRED_SUITES['tests']))
+        self.assertLess(fast.index('tests/test_close_worker'), fast.index('tests/test_packaging'))
+        with self.assertRaisesRegex(RuntimeError, 'SLOW names no unit of the kit check: test_gone'):
+            units(slow=check_kit.SLOW | {'test_gone'})
         (self.tmp / 'suite').mkdir()
         for name in ('test_kit_probe', 'test_new'):
             (self.tmp / 'suite' / (name + '.py')).write_text(PROBE % 'True')
@@ -579,7 +591,8 @@ runpy.run_path(%r, run_name='__main__')
         source = source.replace('ROOT = Path(__file__).resolve().parents[1]', 'ROOT = Path(%r)' % str(ROOT))
         begin, end = source.split('\ndef main():', 1)
         end = end[end.index('\nif __name__ == "__main__":'):]
-        for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+        # SIGHUP: a closed terminal. Each unit leads its own session, so only the runner can stop it.
+        for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130), (signal.SIGHUP, 129)):
             with self.subTest(signal=sig):
                 project = self.tmp / sig.name
                 (project / 'scripts').mkdir(parents=True)
@@ -665,7 +678,7 @@ def main():
                             unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
                             contextlib.redirect_stdout(io.StringIO()), \
                             self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
-                        check_kit.main()
+                        check_kit.structure()
         # A plugin whose version string stays the same is not updated where it is installed:
         # its MAJOR.MINOR is the kit's, three parts as the manifest reference shows them.
         (self.tmp / 'README.md').write_text('**v0.11.** The kit.\n', encoding='utf-8')
@@ -723,6 +736,95 @@ def main():
                                            encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'no newer version for their ACTION items: core/scripts/check.sh'):
             check()
+        # A diff git cannot make is a FAIL line, not a CalledProcessError traceback.
+        real = subprocess.run
+
+        def broken_diff(args, **kwargs):
+            if 'diff' in args:
+                return subprocess.CompletedProcess(args, 128, '', 'fatal: bad object v0.1')
+            return real(args, **kwargs)
+
+        with unittest.mock.patch.object(check_kit.subprocess, 'run', broken_diff), \
+                self.assertRaisesRegex(RuntimeError, 'git diff against v0.1 failed: fatal: bad object'):
+            check()
+
+    def test_a_unit_over_its_cap_is_stopped_and_fails_with_its_name_and_seconds(self):
+        # run_units waited for a unit without a bound: a hung test module hung the kit check. The
+        # hung unit starts a child that holds the output pipe, as a test's shell or git does.
+        hang = [sys.executable, '-c', 'import subprocess, sys, time\n'
+                'subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])\n'
+                'print("hang started", flush=True)\ntime.sleep(60)']
+        quick = [sys.executable, '-c', 'print("UNIT DONE: quick")']
+        started = time.monotonic()
+        passed, out = runner(('hang', hang), ('quick', quick), caps=[2, 2])
+        self.assertFalse(passed)
+        self.assertIn('hang started', out)
+        self.assertRegex(out, r'unit hang ran over its cap of 2 s and was stopped at \d+ s')
+        self.assertIn('failed: hang', out)
+        self.assertNotIn('quick (FAILED)', out)
+        # The child is stopped with the unit (Windows: its tree; POSIX: the unit's own process
+        # group), so its pipe closes at once; before, POSIX waited for the child's 20 s.
+        self.assertLess(time.monotonic() - started, 15)
+
+    def test_a_tier_over_its_budget_fails_with_its_seconds(self):
+        quiet = [sys.executable, '-c', 'import time; time.sleep(1.5); print("UNIT DONE: quiet")']
+        real = check_kit.run_units
+        for budget, code in ((1, 1), (600, 0)):
+            with self.subTest(budget=budget):
+                out = io.StringIO()
+                with unittest.mock.patch.dict(os.environ, {check_kit.SCALE: '1'}), \
+                        unittest.mock.patch.object(check_kit, 'CAPS', {'fast': (60, budget), 'slow': (60, 60)}), \
+                        unittest.mock.patch.object(check_kit, 'check_syntax'), \
+                        unittest.mock.patch.object(check_kit, 'check_release'), \
+                        unittest.mock.patch.object(check_kit, 'check_actions'), \
+                        unittest.mock.patch.object(check_kit, 'untested_guards'), \
+                        unittest.mock.patch.object(check_kit, 'validate_plugin'), \
+                        unittest.mock.patch.object(check_kit, 'run', return_value='packaged source matches'), \
+                        unittest.mock.patch.object(check_kit, 'run_units',
+                                                   side_effect=lambda units, *a, **kw: real([('quiet', quiet)], **kw)), \
+                        unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
+                        unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                        contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                    self.assertEqual(check_kit.main(), code, out.getvalue())
+                self.assertEqual(bool(re.search(r'the fast tier took \d+ s, over its budget of 1 s', out.getvalue())),
+                                 bool(code), out.getvalue())
+                self.assertEqual('KIT CHECK: PASS' in out.getvalue(), not code)
+
+    def test_the_tier_budget_stops_the_run_and_names_the_unit_still_running(self):
+        # The budget was checked only after every unit ended, so a CI job past its timeout-minutes
+        # was cancelled with no summary. Now a unit still running at the budget's end is stopped and
+        # named, and a queued unit does not start, well before the unit caps.
+        hang = [sys.executable, '-c', 'import time; print("hang started", flush=True); time.sleep(60)']
+        queued = [sys.executable, '-c', 'print("UNIT DONE: queued")']
+        started = time.monotonic()
+        passed, out = runner(('hang', hang), ('queued', queued), parallel=1, caps=[60, 60],
+                             deadline=time.monotonic() + 2)
+        self.assertFalse(passed)
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertIn('hang started', out)
+        self.assertRegex(out, r"unit hang was still running when the tier's budget ran out and was stopped at \d+ s")
+        self.assertIn("unit queued did not start: the tier's budget ran out", out)
+        self.assertIn('failed: hang, queued', out)
+
+    def test_the_gate_checks_count_drops_with_its_link_test_on_a_host_without_symlinks(self):
+        # Without symlink privilege (Windows without Developer Mode) BuildCacheTests' link test is a
+        # declared skip, which never counts: a fixed count of 12 turned every test_gate_checks unit red.
+        probe = ("import importlib.util, os, sys\n"
+                 "def refuse(*a, **k): raise OSError('no privilege')\n"
+                 "os.symlink = refuse\n"
+                 "spec = importlib.util.spec_from_file_location('check_kit', sys.argv[1])\n"
+                 "kit = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(kit)\n"
+                 "tests = kit.ROOT / 'tests'\n"
+                 "suite, found = kit.discover(tests, {p.stem for p in tests.glob('test_*.py')} - {'test_gate_checks'})\n"
+                 "skips = sum(bool(getattr(getattr(t, t._testMethodName), '_kit_platform_skip', False))"
+                 " for t in kit._cases(suite))\n"
+                 "print(skips, found['test_gate_checks'] - skips, kit.REQUIRED_SUITES['tests']['test_gate_checks'])\n")
+        result = subprocess.run([sys.executable, '-B', '-c', probe, str(ROOT / 'scripts/check_kit.py')],
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skips, countable, required = map(int, result.stdout.split())
+        self.assertEqual(skips, 1, result.stdout)
+        self.assertEqual(required, countable)
 
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
@@ -756,28 +858,25 @@ def main():
 
     def test_what_the_early_checks_could_not_run_is_repeated_under_the_summary_too(self):
         # The killing-test note's NOT RUN line (no upstream branch) and shellcheck's were printed
-        # before the units and never repeated, so a long output lost them.
-        real = check_kit.run_units
+        # before the units and never repeated, so a long output lost them. They now come from the
+        # structure unit, which runs beside the suites (#146).
+        code = ("import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('check_kit', %r)\n"
+                "ck = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(ck)\n"
+                "ck.check_syntax = lambda root: print('NOT RUN: shellcheck probe')\n"
+                "ck.check_release = ck.check_actions = lambda root: None\n"
+                "ck.untested_guards = lambda root: print('NOT RUN: killing-test probe')\n"
+                "ck.validate_plugin = lambda root: print('NOT RUN: validator probe')\n"
+                "ck.run = lambda *a, **k: 'packaged source matches'\n"
+                "sys.exit(ck.unit('structure'))\n") % check_kit.__file__
         quiet = [sys.executable, '-c', 'print("quiet output\\nUNIT DONE: quiet")']
-        out = io.StringIO()
-        with unittest.mock.patch.object(check_kit, 'check_syntax',
-                                        side_effect=lambda root: print('NOT RUN: shellcheck probe')), \
-                unittest.mock.patch.object(check_kit, 'check_release'), \
-                unittest.mock.patch.object(check_kit, 'untested_guards',
-                                           side_effect=lambda root: print('NOT RUN: killing-test probe')), \
-                unittest.mock.patch.object(check_kit, 'validate_plugin',
-                                           side_effect=lambda root: print('NOT RUN: validator probe')), \
-                unittest.mock.patch.object(check_kit, 'run', return_value='packaged source matches'), \
-                unittest.mock.patch.object(check_kit, 'run_units',
-                                           side_effect=lambda units, *args, **kw: real([('quiet', quiet)], **kw)), \
-                unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
-                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
-                contextlib.redirect_stdout(out):
-            self.assertEqual(check_kit.main(), 0)
-        tail = out.getvalue()[out.getvalue().index('UNIT DONE: quiet'):]
+        passed, out = runner(('structure', [sys.executable, '-c', code]), ('quiet', quiet))
+        self.assertTrue(passed, out)
+        tail = out[out.index('UNIT DONE: quiet'):]
         for line in ('NOT RUN: shellcheck probe', 'NOT RUN: killing-test probe', 'NOT RUN: validator probe'):
             self.assertIn('\n%s\n' % line, tail)
-            self.assertEqual(out.getvalue().count(line), 2, out.getvalue())
+            self.assertEqual(out.count(line), 2, out)
 
     def test_the_claude_plugin_is_validated_strictly_and_not_run_without_the_cli(self):
         # The vendor's validator (`claude plugin validate --strict`) over plugin/, where the

@@ -78,6 +78,9 @@ request, code.claude.com/docs/en/hooks).
 - While the owner is present, a decision goes through the tool's question feature (multiple
   choice, recommended option first), not as a question buried in chat text. Present, any
   ambiguity that changes the work stops it and is asked that way (`docs/HANDOFF.md`, item 7).
+  This holds for a question at the end of a report or a progress line too: it is asked with
+  the tool, never left in text or named as "an open question". The `plain_report.py` hook
+  bounces a final message that ends with a question or names one as open.
 - While the owner is away, nothing waits on a question. Away means {{OWNER_NAME}} said so
   (overnight, "I'm out"), or 45 minutes passed with no reply to an asked question; 45 is the
   owner's choice (KARARLAR B03 inv1#169), not a measured value, and it is separate from a

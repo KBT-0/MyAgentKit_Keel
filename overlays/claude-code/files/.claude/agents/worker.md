@@ -2,9 +2,10 @@
 name: worker
 description: >
   Implementation worker for {{PROJECT_NAME}}: one task in one module, briefed per
-  docs/HANDOFF.md. Spawn it instead of general-purpose for any task that runs a job
-  longer than a few minutes ({{LONG_JOBS}}). Runs with a one-hour prompt cache and ends
-  under about 150 turns. Inner checks stay with the worker; a gate finding goes back to
+  docs/HANDOFF.md. Spawn it instead of general-purpose for implementation work. As a
+  sub-agent it runs on the five-minute prompt cache: a job whose waits pass five minutes
+  ({{LONG_JOBS}}) goes to a scripts/spawn_worker.sh session, the only one with the
+  one-hour cache. Ends under about 150 turns. Inner checks stay with the worker; a gate finding goes back to
   the author's side (docs/WORKFLOW.md, "Worker cost", rule 2), and a fresh session reviews
   the fix; no session approves its own work.
 model: {{WORKER_MODEL}}
@@ -64,9 +65,11 @@ the rules below exist).
   Report "not run" for any check you did not run.
 - Review your own diff before you report, whether you run as a session or as a sub-agent
   (sub-agents nest three layers deep by default): a fresh `diff-reviewer` in every inner
-  round, then fix what it finds, until no Critical, High or Medium finding remains without an
-  argued disposition. List the inner rounds in the report (count, findings fixed,
-  dispositions). Where you cannot start a sub-agent (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
+  round, then fix what it finds. At most two inner rounds; round 2 runs only when round 1
+  left a Critical or High fix, confirms every finding the dispositions claim fixed, a Medium
+  included, and reports new Critical or High only. A Medium you cannot verify with a test, every Low and whatever
+  remains after round 2 go into the report for the lead. List the inner rounds in the report
+  (count, findings fixed, dispositions). Where you cannot start a sub-agent (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
   is 1, or you are at its limit), say so in the report; the lead then starts the review
   (`docs/WORKFLOW.md`, "Review rounds — early, inside the worker, in parallel").
 - Before you report, go through `docs/REVIEW_GATE.md`, "What a reviewer attacks first",

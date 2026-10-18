@@ -92,9 +92,14 @@ run_gate() {
     # `grep -c` prints 0 AND returns 1 when nothing matches, so a `|| echo 0` fallback
     # appends a SECOND zero and the arithmetic below dies with "Illegal number" — before
     # ever reaching the zero-test diagnostic. Take the count and validate it instead.
-    total=$(grep -c "<test-case " "$results" 2>/dev/null)
-    skipped=$(grep -o 'result="Skipped"' "$results" 2>/dev/null | grep -c .)
-    failed=$(grep -o 'result="Failed"' "$results" 2>/dev/null | grep -c .)
+    # Count only <test-case> tags: NUnit also puts result="Skipped" or "Failed" on the
+    # enclosing <test-suite> and <test-run>, and counting those drove `executed` negative,
+    # past the zero-test check below (#166). The lines are joined first: a tag may carry its
+    # result= on a later line.
+    tags=$(tr '\r\n\t' '   ' < "$results" | grep -o '<test-case [^>]*' 2>/dev/null)
+    total=$(printf '%s\n' "$tags" | grep -c '<test-case ')
+    skipped=$(printf '%s\n' "$tags" | grep -c 'result="Skipped"')
+    failed=$(printf '%s\n' "$tags" | grep -c 'result="Failed"')
     case "$total$skipped$failed" in
       *[!0-9]*|"") printf '%s\n' "FAIL [unity]: could not count test cases in $results."; fail=1; continue ;;
     esac
@@ -106,13 +111,17 @@ run_gate() {
     if [ "$failed" -gt 0 ]; then
       printf '%s\n' "FAIL [unity]: $platform reports $failed failed test(s) — see $results"
       fail=1
+    elif grep -q 'result="Failed"' "$results"; then
+      # Every case passed but a suite or the run failed, such as a OneTimeTearDown that threw.
+      printf '%s\n' "FAIL [unity]: $platform reports a failed suite or run — see $results"
+      fail=1
     fi
     cases=$((cases + executed))
   done
 
   # Zero tests on ONE platform is normal early on. Zero across BOTH means the tests stopped
   # running and nobody noticed, which is exactly what this catches.
-  if [ "$cases" -eq 0 ]; then
+  if [ "$cases" -le 0 ]; then
     echo "FAIL [unity]: no test executed on either platform — check the test assembly and its constraints."
     fail=1
   fi

@@ -20,6 +20,10 @@ from concurrent.futures import ThreadPoolExecutor
 import test_spawn_worker
 from test_spawn_worker import MARKERS, WT_TAB, shq
 
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run
+# side by side, and a fixed 60 s or 20 s ran out on a loaded host (#146).
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_codex.sh'
 WINDOWS = os.name == 'nt'
@@ -140,7 +144,7 @@ class SpawnCodexTests(unittest.TestCase):
             (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
             (self.bin / 'uname').chmod(0o755)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, timeout=60 * SCALE)
 
     def publisher(self, stdout):
         """The interpreter and codex_worker.py as spawn names them, read from its printed wait command."""
@@ -338,7 +342,7 @@ class SpawnCodexTests(unittest.TestCase):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home))
         pane = subprocess.run(['sh', '-c', (self.state / 'accepted').read_text()], cwd=self.repo,
-                              env=env, capture_output=True, text=True, timeout=20)
+                              env=env, capture_output=True, text=True, timeout=20 * SCALE)
         self.assertEqual(pane.returncode, 0, pane.stdout + pane.stderr)
         self.assertEqual(len(self.runs()), 1, 'the delayed pane could not start')
         self.assertEqual(list(tmpdir.iterdir()), [])
@@ -369,7 +373,7 @@ class SpawnCodexTests(unittest.TestCase):
                    SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home), TMPDIR=str(tmpdir))
         result = test_spawn_worker.run_with_launcher_pid('dash', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=20 * SCALE)
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
@@ -384,7 +388,7 @@ class SpawnCodexTests(unittest.TestCase):
                    SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home), TMPDIR=str(tmpdir))
         result = test_spawn_worker.run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, timeout=60 * SCALE)
         self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
@@ -410,7 +414,7 @@ esac
                    SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home))
         result = test_spawn_worker.run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high', '--result', '../outside.md'],
-                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
+                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=60 * SCALE)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.state / 'cleanup.log').read_text().splitlines(), ['release'])
         self.assertTrue((self.repo / '.myagentkit/workers/spawn.lock').is_dir())
@@ -433,7 +437,7 @@ exit 1
                    SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home))
         result = test_spawn_worker.run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, timeout=60 * SCALE)
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
         self.assertEqual([p.name for p in (self.repo / '.myagentkit/workers/spawn.lock').iterdir()],
                          ['.owner-other'])
@@ -625,7 +629,7 @@ if args[0] != 'resume':
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
         closed = subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), 'w16'],
-                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=45)
+                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=45 * SCALE)
         self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
         self.assertFalse(tree.exists())
         self.assertFalse(record.exists())
@@ -644,7 +648,7 @@ if args[0] != 'resume':
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'), **extra)
         return subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), name],
-                              cwd=self.repo, env=env, capture_output=True, text=True, timeout=45)
+                              cwd=self.repo, env=env, capture_output=True, text=True, timeout=45 * SCALE)
 
     def test_close_ends_the_codex_session_in_its_own_worktree_on_windows(self):
         # Owner 2026-10-16: a close that refused while Codex ran left its tab open for hours.
@@ -664,7 +668,7 @@ if args[0] != 'resume':
         dry = subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), '--dry-run', 'w18'], cwd=self.repo,
                              env=dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                                       SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub')),
-                             capture_output=True, text=True, timeout=45)
+                             capture_output=True, text=True, timeout=45 * SCALE)
         self.assertIn('dry run: would end the Codex session in', dry.stdout, dry.stdout + dry.stderr)
         self.assertFalse((self.state / 'taskkill.log').exists())
         # A session taskkill cannot end keeps everything, its resume id first.
@@ -831,7 +835,7 @@ if os.environ.get('SPAWN_HOLD'):
                     self.assertLess(time.monotonic(), deadline, 'first launch never reached the terminal')
                     time.sleep(.05)
                 second = pool.submit(self.spawn, *args)
-                refused = second.result(timeout=15)
+                refused = second.result(timeout=15 * SCALE)
                 self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
                 self.assertIn('spawn in progress', refused.stderr)
                 # A second name in the same checkout must not bypass the reservation either.
@@ -840,7 +844,7 @@ if os.environ.get('SPAWN_HOLD'):
                 self.assertIn('spawn in progress', refused.stderr)
             finally:
                 (self.state / 'release').touch()
-            started = first.result(timeout=30)
+            started = first.result(timeout=30 * SCALE)
         self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
         self.assertEqual(len(self.runs()), 1)
         self.assertEqual((self.repo / '.myagentkit/workers/w22.session').read_text().strip(), 'sess-0')
@@ -859,7 +863,7 @@ if os.environ.get('SPAWN_HOLD'):
         logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
         printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
                                   + shq(str(logger).replace('\\', '/')) + ' ' + command],
-                                 cwd=self.repo, capture_output=True, text=True, timeout=10)
+                                 cwd=self.repo, capture_output=True, text=True, timeout=10 * SCALE)
         self.assertEqual(printed.returncode, 0, printed.stderr)
         self.assertFalse(marker.exists(), 'following the printed command executed the model as shell code')
         argv = json.loads(printed.stdout)
@@ -883,7 +887,7 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
                        if 'background command for the uncommitted handoff: ' in line)
         waited = subprocess.run(['sh', '-c', command], cwd=self.repo, capture_output=True,
                                 env=dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH']),
-                                text=True, timeout=15)
+                                text=True, timeout=15 * SCALE)
         self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
         self.assertIn('EXITED', waited.stdout)
         self.assertNotIn('DONE', waited.stdout)
@@ -977,7 +981,7 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
         logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
         printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
                                   + shq(str(logger).replace('\\', '/')) + ' ' + command],
-                                 cwd=self.repo, capture_output=True, text=True, timeout=10)
+                                 cwd=self.repo, capture_output=True, text=True, timeout=10 * SCALE)
         self.assertEqual(printed.returncode, 0, printed.stderr)
         answer = self.tmp / 'answer.md'
         answer.write_text('Take option B.\n')
@@ -1040,7 +1044,7 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
                 # Log argv instead of invoking the destructive recovery command.
                 printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
                                           + shq(str(logger).replace('\\', '/')) + ' ' + operands],
-                                         cwd=self.repo, capture_output=True, text=True, timeout=10)
+                                         cwd=self.repo, capture_output=True, text=True, timeout=10 * SCALE)
                 self.assertEqual(printed.returncode, 0, printed.stderr)
                 self.assertEqual(json.loads(printed.stdout), [self.win(lock, '-m')])
                 self.assertTrue(lock.exists())
@@ -1084,7 +1088,7 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
         closed = subprocess.run(['sh', str(script), 'restore'], cwd=self.repo, env=env,
-                                capture_output=True, text=True, timeout=45)
+                                capture_output=True, text=True, timeout=45 * SCALE)
         self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
         self.assertEqual(report.read_text(), 'a newer report\n')
         restored = list(tree.glob('RESULT-restore-restored*.md'))
@@ -1114,7 +1118,7 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
         closed = subprocess.run(['sh', str(kit / 'close_worker.sh'), 'taken'], cwd=self.repo, env=env,
-                                capture_output=True, text=True, timeout=45)
+                                capture_output=True, text=True, timeout=45 * SCALE)
         self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
         self.assertIn('could not move its result RESULT-taken.md', closed.stdout)
         self.assertIn('the audit did not run, so a worktree stays', closed.stdout)
@@ -1135,7 +1139,7 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
                             str(result) + '.tmp', str(result), after)
                 worker = subprocess.run([sys.executable, str(SCRIPT.with_name('codex_worker.py')), str(question),
                                          str(result), '--', sys.executable, '-c', code], capture_output=True,
-                                        text=True, timeout=30, env=dict(os.environ, KIT_WORKER_RESUME='1',
+                                        text=True, timeout=30 * SCALE, env=dict(os.environ, KIT_WORKER_RESUME='1',
                                                                         KIT_WORKER_GRACE='0'))
                 self.assertEqual(worker.returncode, 1, worker.stderr)
                 self.assertFalse(question.exists(), 'the answered decision outlived the session that took it')
@@ -1149,7 +1153,7 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
         record = self.tmp / 'caller.exit'
         run = subprocess.run([sys.executable, '-B', str(Path(__file__).resolve()),
                               'SpawnCodexTests.test_a_resumed_worker_that_published_and_then_failed_can_be_closed'],
-                             capture_output=True, text=True, timeout=120,
+                             capture_output=True, text=True, timeout=120 * SCALE,
                              env=dict(os.environ, KIT_WORKER_EXIT=str(record)))
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertFalse(record.exists(), "a fixture wrote the calling worker's exit record")
@@ -1188,7 +1192,7 @@ class TmuxStubTests(unittest.TestCase):
                                              '-s', 'stub', '-c', str(state), '-x', '200', '-y', '50', command],
                                             env=dict(os.environ, SPAWN_STATE=str(state), REVIEW_SEGMENT='expanded',
                                                      REVIEW_PAYLOAD='touch INJECTED', REVIEW_BACKQUOTE='touch BACKQUOTED'),
-                                            capture_output=True, text=True, timeout=10)
+                                            capture_output=True, text=True, timeout=10 * SCALE)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('literal', result.stderr)
                     self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
