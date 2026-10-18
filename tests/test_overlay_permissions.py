@@ -26,6 +26,14 @@ class OverlayPermissionsTests(unittest.TestCase):
     def setUp(self):
         self.permissions = json.loads(SETTINGS.read_text(encoding='utf-8'))['permissions']
 
+    def test_only_the_lead_keeps_the_one_hour_cache(self):
+        # #116: sub-agents rarely wait five minutes, so a one-hour write (2x) buys them nothing;
+        # spawn_worker.sh sets the one-hour value on the long-job worker's own launch line.
+        settings = json.loads(SETTINGS.read_text(encoding='utf-8'))
+        self.assertEqual(settings.get('promptCacheTtl'), '1h')
+        self.assertNotIn('subagentPromptCacheTtl', settings)
+        self.assertNotIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', settings.get('env', {}))
+
     def test_no_allowed_rule_names_a_command_that_destroys(self):
         for rule in self.permissions['allow']:
             command = rule[rule.index('(') + 1:-1].lstrip('./')

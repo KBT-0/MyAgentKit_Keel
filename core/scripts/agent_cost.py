@@ -19,6 +19,8 @@ in the kit's founding project (docs/WORKFLOW.md, "Worker cost"):
               output check): each one re-reads the whole context for nothing.
   1h/5m       which cache lifetime the agent's writes used (`ephemeral_1h` is the
               one-hour cache; a worker meant to run with it must show it here).
+              TOTAL's "1h unused" sums the one-hour writes of agents with no gap over
+              five minutes: the 2x write paid for a lifetime they never needed (#116).
   hit         cache-read share of all input (read / (read + write + uncached)). The
               initial alarm is below 80% (owner's choice, KARARLAR B03 inv1#173).
               Compare the median of the kit's first ten workers as the baseline;
@@ -87,11 +89,12 @@ def requests(path: Path) -> list[dict]:
 
 
 def summarize(name: str, rows: list[dict]) -> dict:
-    gap_cw = polls = 0
+    gap_cw = polls = longest = 0
     prev = None
     for r in rows:
         if prev is not None and r['t']:
             gap = (r['t'] - prev).total_seconds()
+            longest = max(longest, gap)
             gap_cw += sum(r[key] for key, ttl in CACHE_TTLS.items() if gap > ttl)
             # Old transcripts lack TTL buckets; keep their five-minute assumption explicit.
             if gap > CACHE_TTLS['w5']:
@@ -105,6 +108,7 @@ def summarize(name: str, rows: list[dict]) -> dict:
             'inp': sum(r['inp'] for r in rows),
             'cw_gap': gap_cw, 'poll': polls,
             'w1h': sum(r['w1h'] for r in rows), 'w5': sum(r['w5'] for r in rows),
+            'w1h_unused': 0 if longest > CACHE_TTLS['w5'] else sum(r['w1h'] for r in rows),
             'ctx0': ctx(rows[0]) if rows else 0, 'ctxN': ctx(rows[-1]) if rows else 0,
             'models': sorted({str(r['model']) for r in rows})}
 
@@ -142,10 +146,11 @@ def table(summaries: list[dict]) -> str:
         lines.append(f'{s["agent"][:40]:40} {s["req"]:4} {s["tool"]:4} {fmt(s["cr"]):>8} {fmt(s["cw"]):>8} '
                      f'{fmt(s["cw_gap"]):>10} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
                      f'{fmt(s["ctx0"]):>6}->{fmt(s["ctxN"]):<6}')
-    tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'cw_gap', 'poll')}
+    tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'cw_gap', 'poll', 'w1h_unused')}
     share = 100 * tot['cw_gap'] / tot['cw'] if tot['cw'] else 0
     lines.append(f'TOTAL requests {tot["req"]}  cRead {fmt(tot["cr"])}  cWrite {fmt(tot["cw"])}  '
-                 f'after >TTL gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  poll-only requests {tot["poll"]}  '
+                 f'after >TTL gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  1h unused {fmt(tot["w1h_unused"])}  '
+                 f'poll-only requests {tot["poll"]}  '
                  f'cache hit {hit(tot)} (alarm below 80%; owner\'s choice)')
     return '\n'.join(lines)
 

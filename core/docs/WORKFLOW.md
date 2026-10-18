@@ -856,8 +856,10 @@ Rules, binding for whoever routes workers:
 1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that
    runs jobs longer than a few minutes runs with a one-hour cache: the Claude Code overlay
    sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` for every session it starts
-   (`scripts/spawn_worker.sh` passes it on the launch line; `.claude/settings.json` sets it
-   under `env` for the lead's own sub-agents), so a worker definition needs no cache field.
+   (`scripts/spawn_worker.sh` passes it on the launch line), so a worker definition needs no
+   cache field. The lead's own sub-agents keep the five-minute default: in one project they
+   wrote 4.56M one-hour cache tokens over 1,582 requests and only 11 gaps passed five
+   minutes (#116); a one-hour write costs 2x base input, a five-minute one 1.25x.
    The worker starts long jobs in the background and is re-invoked when they exit, and never
    runs `sleep`, `until`, `pgrep` or tail-the-log loops. To react to a log line or a state
    change, use the Monitor tool with a filtered command, not a loop

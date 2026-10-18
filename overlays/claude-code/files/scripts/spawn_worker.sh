@@ -53,8 +53,8 @@
 # Why a separate session and not a sub-agent: a sub-agent's prompt cache lives 5 minutes and
 # a separate session's lives an hour, so a worker that waits on a long job re-writes its
 # whole context after every wait as a sub-agent and does not as a session (docs/WORKFLOW.md,
-# "Worker cost"). The launch line below sets CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h, and
-# .claude/settings.json sets it for the lead's own sub-agents, so both cost the same; the
+# "Worker cost"). The launch line below sets CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h; the
+# lead's own sub-agents keep five minutes, since they rarely wait longer (#116). The
 # session adds visibility (`tmux attach -t NAME`) and survives the lead ending. It also sets
 # MYAGENTKIT_ROLE=worker: the worker's report is for the lead, so the plain-words Stop hook
 # (plain_report.py) steps aside (docs/COMMUNICATION.md, "Workers").
