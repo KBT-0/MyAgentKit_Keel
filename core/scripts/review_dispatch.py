@@ -346,10 +346,10 @@ def main(argv=None):
               "nothing. REVIEW_SHADOW=1 is set: unset REVIEW_SHADOW after the shadow run, or "
               "every later review is a shadow too.", flush=True)
 
-    def checkpoint():
+    def checkpoint(retrying=False):
         # Separate from provider records: usage reporting must not double-count a chain.
         chain["recovery"] = {"action": "inspect_result" if chain["status"] == "completed" else "continue_independent_work",
-                             "review_approved": False, "automatic_retry": False}
+                             "review_approved": False, "automatic_retry": retrying}
         path = repo / ".myagentkit/usage/chains" / (chain_id + "-%d.json" % len(chain["attempts"]))
         chain["chain_record"] = str(path)
         agent_usage.write_evidence(repo, path, json.dumps(chain, indent=2) + "\n", private=True)
@@ -472,7 +472,7 @@ def main(argv=None):
             chain["fallback_blocked"] = ("other reviewer %s model %s is the author's family (MYAGENTKIT_AUTHOR %s)"
                                          % (names[other], pins[other], author))
             eligible = False
-        checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
+        checkpoint(retry)  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
             # The result stands only when the chain completed; after a stale_checkout it did not.
             print("NOTE [review]: %s failed after it handed over its result (%s); %s %s%s"

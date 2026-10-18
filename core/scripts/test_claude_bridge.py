@@ -5656,6 +5656,43 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('earlier review evidence', refused['error'])
 
+    def test_a_round_whose_chain_failed_is_carried_but_not_counted(self):
+        # #258: the dispatcher can fail a chain (stale_checkout) after the adapter recorded a
+        # completed review. Only the checkpoint written after that same attempt, saying failed,
+        # takes it out of the count; it is still carried. Anything unclear counts (fail closed).
+        log = self.root / 'prompt.txt'
+        chains = self.repo / '.myagentkit/usage/chains'
+        chains.mkdir(parents=True)
+        failed_after = {'status': 'failed', 'failure_kind': 'stale_checkout', 'attempts': [{'status': 'completed'}]}
+        cases = (
+            ('stale', {'-1': failed_after}, False),
+            # a dispatcher killed after the review finished: only its pending checkpoint
+            ('killed', {'-0': {'status': 'pending', 'failure_kind': None, 'attempts': []}}, True),
+            # an earlier attempt failed, the record is attempt 2, its checkpoint never written
+            ('retried', {'-1': {'status': 'failed', 'failure_kind': 'rate_limited',
+                                'attempts': [{'status': 'failed'}]}}, True),
+            ('damaged', {'-1': '{'}, True))
+        for label, checkpoints, counted in cases:
+            with self.subTest(label=label):
+                task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'chain-' + label}
+                for chain in ('a', 'b'):
+                    chain = label + chain
+                    attempt = '2' if label == 'retried' else '1'
+                    code, _ = self.run_bridge('reject', env_extra=dict(
+                        task, MYAGENTKIT_REVIEW_CHAIN_ID=chain, MYAGENTKIT_REVIEW_ATTEMPT=attempt))
+                    self.assertEqual(code, 0)
+                    for suffix, value in checkpoints.items():
+                        (chains / (chain + suffix + '.json')).write_text(
+                            value if isinstance(value, str) else json.dumps(value))
+                code, result = self.run_bridge(env_extra=task)
+                if counted:
+                    self.assertEqual(code, 2, result)
+                    self.assertIn('already has 2 completed rounds', result['error'])
+                else:
+                    self.assertEqual(code, 0, result)
+                    self.assertIn('This is review round 1', log.read_text())
+                    self.assertIn('### Round 2', log.read_text())  # both stale rounds carried
+
     def test_default_reviewer_is_claude_and_codex_remains_explicit(self):
         result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
                                   REVIEW_CLAUDE_MODEL='claude-opus-5', REVIEW_REVIEWER='')
@@ -6682,16 +6719,27 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                               (3, '', [600, 1200], 'failed'),
                                               # "0 seconds" is a delay, not a missing one (batch 4 r1 High).
                                               (1, ' Please try again in 0 seconds.', [0], 'completed')):
-            calls, slept, out = [], [], io.StringIO()
+            calls, slept, flags, out = [], [], [], io.StringIO()
+
+            def sleep(delay):
+                # #280: the checkpoint written before the wait says a retry follows.
+                slept.append(delay)
+                chain_id = os.environ['MYAGENTKIT_REVIEW_CHAIN_ID']
+                newest = max((self.repo / '.myagentkit/usage/chains').glob(chain_id + '-*.json'),
+                             key=lambda path: int(path.stem.rpartition('-')[2]))
+                flags.append(json.loads(newest.read_text())['recovery']['automatic_retry'])
+
             with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
                     MYAGENTKIT_TASK_ID='capacity-%d' % failures,
                     REVIEW_ROUND_EXCEPTION='fixture: retries are rounds of one label')), \
                     patch('agent_process.run', side_effect=execution), \
-                    patch.object(review_dispatch, 'sleep', side_effect=slept.append), redirect_stdout(out):
+                    patch.object(review_dispatch, 'sleep', side_effect=sleep), redirect_stdout(out):
                 code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'codex',
                                              '--claude-model', 'claude-opus-5', '--codex-model', 'fixture-codex-model'])
                 chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
                 self.assertEqual(slept, waits)
+                self.assertEqual(flags, [True] * len(waits))
+                self.assertIs(chain['recovery']['automatic_retry'], False)
                 self.assertEqual(len(calls), len(waits) + 1)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'] * len(calls))
                 self.assertEqual(chain['status'], status, out.getvalue())

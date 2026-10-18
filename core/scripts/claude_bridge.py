@@ -905,6 +905,27 @@ def dispositions_text() -> str | None:
         raise BridgeError("REVIEW_DISPOSITIONS %s cannot be read as UTF-8 text (%s)" % (notes, error)) from error
 
 
+def chain_failure(usage: Path, chain, attempt) -> str | None:
+    """'failed/<failure_kind>' when the checkpoint the dispatcher wrote after this attempt
+    (chains/<chain>-<attempt>.json) says the chain failed although the attempt completed
+    (stale_checkout), else None. One rule for the usage summary and the two-round cap, and it
+    fails closed: a pending, missing or unreadable checkpoint, an earlier attempt's failure or
+    anything unclear is None, so the round counts. A dispatcher killed after the review
+    finished leaves only its pending checkpoint, and that round still counts (#258)."""
+    if not (isinstance(chain, str) and re.fullmatch(r"[0-9A-Za-z_.-]+", chain)
+            and isinstance(attempt, str) and attempt.isdigit()):
+        return None
+    try:
+        value = json.loads((usage / "chains" / ("%s-%d.json" % (chain, int(attempt)))).read_text(encoding="utf-8"))
+        attempts = value["attempts"]
+        if (value["status"] == "failed" and len(attempts) == int(attempt)
+                and attempts[-1]["status"] == "completed"):
+            return "failed/%s" % (value.get("failure_kind") or "-")
+    except Exception:  # damage of any kind is unclear, never a reason to drop a round
+        pass
+    return None
+
+
 def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | None,
                  head: str, diff: str, claims: str | None = None) -> tuple[str, dict]:
     """The earlier completed reviews of this change, oldest first, as archived, and the task
@@ -1026,7 +1047,11 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
                               "archived (its sha256 differs from the usage record): %s; restore "
                               "it or use a new task label" % (task_id, evidence))
         # Counted before the prompt filter below, so a round no prompt carries still counts.
-        if isinstance(task.get("focus"), str) and task["focus"]:
+        # A completed review the dispatcher failed afterwards (stale_checkout) is still carried,
+        # since its findings stand as archived, but is no round (chain_failure, #258).
+        if chain_failure(usage, value.get("review_chain_id"), value.get("review_attempt")):
+            pass
+        elif isinstance(task.get("focus"), str) and task["focus"]:
             counts[task["focus"]] = counts.get(task["focus"], 0) + 1
         else:
             unfocused += 1

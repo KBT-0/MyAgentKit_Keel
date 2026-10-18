@@ -3,7 +3,8 @@
 """Summarize the recorded review and proposal invocations by task and by model and effort.
 
 Only the review adapters write records, so worker and sub-agent errands are not counted here.
-A round is a completed review attempt whose dispatch chain, when it has one, also completed;
+A round is a completed review attempt unless the checkpoint its dispatcher wrote after it says
+the chain failed (claude_bridge.chain_failure, the rule of the two-round cap too);
 a shadow run (REVIEW_SHADOW=1) is listed apart and is no round. A verdict is read only from
 an archive whose bytes still match the record's sha256; the findings are counted from it.
 The author's dispositions carried by a round answer the earlier rounds under its label, so
@@ -23,7 +24,7 @@ import sys
 
 # The findings parser the review gate uses, found beside this file under `python -I` too.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from claude_bridge import review_parts  # noqa: E402
+from claude_bridge import chain_failure, review_parts  # noqa: E402
 
 CLAIM_KEYS = ('fixed', 'disproved', 'deferred')
 # Owner's choice, not measurements: KARARLAR B03 inv2#57/#58/(d), 2026-10-15.
@@ -83,29 +84,6 @@ def evidence_fields(repo, record):
     record['findings'] = sum(bool(re.match(r'(?i)(?:Critical|High|Medium|Low)\b', item))
                              for item in review_parts(content)[0])
     return effort, match and match[1], None
-
-
-def chain_status(usage, chain_id, cache):
-    """The status of the chain's last checkpoint: the dispatcher can fail a completed attempt."""
-    if chain_id not in cache:
-        checkpoints = []
-        for path in (usage / 'chains').glob('*.json'):
-            name, _, number = path.stem.rpartition('-')
-            if name == chain_id and number.isdigit():
-                checkpoints.append((int(number), path))
-        status = 'missing'
-        if checkpoints:
-            try:
-                chain = json.loads(max(checkpoints)[1].read_text(encoding='utf-8'))
-                if (not isinstance(chain, dict) or not isinstance(chain.get('status'), str)
-                        or (chain.get('failure_kind') is not None
-                            and not isinstance(chain['failure_kind'], str))):
-                    raise ValueError('invalid chain fields')
-                status = '%s/%s' % (chain['status'], chain.get('failure_kind') or '-')
-            except Exception:  # RecursionError on deep nesting is damage too
-                status = 'unreadable'
-        cache[chain_id] = status
-    return cache[chain_id]
 
 
 def printable(value):
@@ -170,9 +148,11 @@ def main():
     sys.stdout.reconfigure(errors='backslashreplace')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, default=Path.cwd())
+    parser.add_argument('--task', help='summarize only the records of this task label')
     args = parser.parse_args()
     usage = args.repo / '.myagentkit/usage'
-    rows, unreadable, chains = [], 0, {}
+    # One checkpoint read per record: a listing of chains/ per chain id grew quadratically.
+    rows, unreadable = [], 0
     # Not recursive: chains/ holds successive dispatch snapshots, not more paid invocations.
     for path in usage.glob('*.json'):
         try:
@@ -182,15 +162,16 @@ def main():
         if not valid_record(record):
             unreadable += 1
             continue
+        if args.task is not None and str(record['task'].get('id') or 'unknown') != args.task:
+            continue
         effort, verdict, why = evidence_fields(args.repo, record)
         completed = record.get('status') == 'completed'
         if not completed:
             verdict, why = None, '%s/%s' % (record.get('status'), record.get('failure_kind') or '-')
         chain = record.get('review_chain_id')
-        if completed and chain:
-            status = chain_status(usage, chain, chains)
-            if status.split('/')[0] != 'completed':
-                completed, verdict, why = False, None, 'chain ' + status
+        status = completed and chain_failure(usage, chain, record.get('review_attempt'))
+        if status:
+            completed, verdict, why = False, None, 'chain ' + status
         shadow = record['task'].get('shadow') == 'yes'
         measured = completed and record['task'].get('kind') == 'review'
         record.update(effort=effort, verdict=verdict, why=why, shadow=shadow, accepted=0, claimed=0,
@@ -200,6 +181,7 @@ def main():
     if not rows:
         print('No recorded invocations. This does not mean zero historical usage.')
     tasks, groups, behaviours, pairs = (defaultdict(list) for _ in range(4))
+    notes = []
     for record in rows:
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
         # A missing, null or empty value and the label 'unknown' are one group: equal printed
@@ -222,17 +204,35 @@ def main():
         # Each REVIEW_FOCUS keeps its own snapshot: a reviewer saw only its own focus's rounds and
         # the unfocused ones, an unfocused one only those (claude_bridge.prior_rounds); its file
         # answers what it saw.
-        earlier, snapshots = [], {}
+        earlier, snapshots, counts, unfocused = [], {}, {}, 0
         for record in records:
             claims = record['task'].get('dispositions')
             focus = focus_of(record)
             seen = [round_ for round_ in earlier if focus_of(round_) in (None, focus)]
             if claims and seen and record['round']:
                 # The file answers all earlier rounds, not just new findings. Use its
-                # latest cumulative snapshot once, or n grows on each re-review.
+                # latest cumulative snapshot once, or n grows on each re-review. Moved to the
+                # end, so the newest snapshot is credited last and wins a round two focuses answer.
+                # A cumulative file never answers fewer findings than the one before it did.
+                answers, before = (sum(value[key] for key in CLAIM_KEYS)
+                                   for value in (claims, snapshots.pop(focus, (None, claims))[1]))
+                if answers < before:
+                    notes.append(f'Note: task {printable(record["task"].get("id") or "unknown")}'
+                                 + (f' focus {printable(focus)}' if focus else '') +
+                                 f': a later REVIEW_DISPOSITIONS answers {answers} findings, an earlier'
+                                 f' one {before}; the file is cumulative (docs/USAGE.md), so the'
+                                 ' split over earlier rounds is wrong')
                 snapshots[focus] = (seen, claims)
             if record['round']:
                 earlier.append(record)
+                # Exactly as claude_bridge.prior_rounds counts toward the cap: an unfocused round
+                # counts toward every focus, and a focus not seen yet takes the highest count.
+                record['number'] = 1 + unfocused + (counts[focus] if focus in counts
+                                                    else max(counts.values(), default=0))
+                if focus:
+                    counts[focus] = counts.get(focus, 0) + 1
+                else:
+                    unfocused += 1
         for answered, latest_claims in snapshots.values():
             weights = [round_['findings'] for round_ in answered]
             if not sum(weights):
@@ -244,15 +244,15 @@ def main():
                 round_['claimed'] = total * weight / sum(weights)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
-        number = 0
         for record in records:
-            number += record['round']
+            focus = focus_of(record)
             duration = record.get('duration_ms')
             duration = f'{duration / 1000:.3f}s' if isinstance(duration, (int, float)) else 'unknown'
             verdict = record['verdict'] or f'none ({printable(record["why"] or "no verdict line")})'
             if record['shadow']:
                 verdict += ' (shadow)'
-            print(f'  {f"round={number}" if record["round"] else "not a round"}'
+            print(f'  {"round=%d" % record["number"] if record["round"] else "not a round"}'
+                  + (f' focus={printable(focus)}' if focus else '') +
                   f' kind={printable(record["task"]["kind"])}'
                   f' callee={printable(record["callee"])}'
                   f' model={printable(record["model_requested"])}'
@@ -274,6 +274,8 @@ def main():
         print(f'Behaviour {printable(behaviour)}: {totals(records)}')
     if unreadable:
         print(f'Unreadable records skipped: {unreadable}')
+    for note in notes:
+        print(note)
 
 
 if __name__ == '__main__':

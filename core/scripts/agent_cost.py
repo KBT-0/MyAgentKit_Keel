@@ -26,6 +26,8 @@ in the kit's founding project (docs/WORKFLOW.md, "Worker cost"):
               initial alarm is below 80% (owner's choice, KARARLAR B03 inv1#173).
               Compare the median of the kit's first ten workers as the baseline;
               cWrite>TTL and poll help investigate a low hit rate.
+  out         output tokens, priced above input: a reviewer or report writer
+              spends here, not in the cache columns.
 
 Not covered: the permission classifier and other requests that never reach a transcript.
 """
@@ -36,7 +38,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Source: code.claude.com/docs/en/prompt-caching, checked 2026-10-16;
@@ -55,8 +57,10 @@ def is_poll(tool: str, inp) -> bool:
     return tool == 'Bash' and isinstance(inp, dict) and bool(POLL.search(inp.get('command', '')))
 
 
-def requests(path: Path) -> list[dict]:
-    """Deduplicated API requests of one transcript, sorted by time."""
+def requests(path: Path, seen: set | None = None) -> list[dict]:
+    """Deduplicated API requests of one transcript, sorted by time. A request id already in
+    `seen` (shared across the transcripts read together) is left out: a continued session's
+    transcript copies its parent's requests, billed to the parent (#253)."""
     reqs: dict = collections.OrderedDict()
     with open(path, errors='replace') as stream:
         for line in stream:
@@ -77,6 +81,10 @@ def requests(path: Path) -> list[dict]:
                 if isinstance(c, dict) and c.get('type') == 'tool_use':
                     q['tools'].append((c.get('name', '?'), c.get('input')))
     rows = []
+    for key in [key for key in reqs if seen is not None and key in seen]:
+        del reqs[key]
+    if seen is not None:
+        seen.update(reqs)
     for q in reqs.values():
         u = q['usage']
         cc = u.get('cache_creation') or {}
@@ -85,7 +93,9 @@ def requests(path: Path) -> list[dict]:
                      'inp': u.get('input_tokens', 0), 'out': u.get('output_tokens', 0),
                      'cr': u.get('cache_read_input_tokens', 0), 'cw': u.get('cache_creation_input_tokens', 0),
                      'w5': cc.get('ephemeral_5m_input_tokens', 0), 'w1h': cc.get('ephemeral_1h_input_tokens', 0)})
-    rows.sort(key=lambda r: r['t'] or datetime.min.replace(tzinfo=None))
+    # Untimed requests (a damaged or foreign record) sort first; an aware minimum, since a
+    # naive one beside the aware timestamps raised TypeError (#255).
+    rows.sort(key=lambda r: r['t'] or datetime.min.replace(tzinfo=timezone.utc))
     return rows
 
 
@@ -106,7 +116,7 @@ def summarize(name: str, rows: list[dict]) -> dict:
     ctx = lambda r: r['inp'] + r['cr'] + r['cw']  # noqa: E731
     return {'agent': name, 'req': len(rows), 'tool': sum(len(r['tools']) for r in rows),
             'cr': sum(r['cr'] for r in rows), 'cw': sum(r['cw'] for r in rows),
-            'inp': sum(r['inp'] for r in rows),
+            'inp': sum(r['inp'] for r in rows), 'out': sum(r['out'] for r in rows),
             'cw_gap': gap_cw, 'poll': polls,
             'w1h': sum(r['w1h'] for r in rows), 'w5': sum(r['w5'] for r in rows),
             'w1h_unused': 0 if longest > CACHE_TTLS['w5'] else sum(r['w1h'] for r in rows),
@@ -147,17 +157,17 @@ def hit(s: dict) -> str:
 
 
 def table(summaries: list[dict]) -> str:
-    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>TTL":>10} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"ctx0->ctxN":>14}'
+    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>TTL":>10} {"out":>8} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"ctx0->ctxN":>14}'
     lines = [head]
     for s in sorted(summaries, key=lambda s: -s['cr']):
         bucket = f'{fmt(s["w1h"])}/{fmt(s["w5"])}'
         lines.append(f'{s["agent"][:40]:40} {s["req"]:4} {s["tool"]:4} {fmt(s["cr"]):>8} {fmt(s["cw"]):>8} '
-                     f'{fmt(s["cw_gap"]):>10} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
+                     f'{fmt(s["cw_gap"]):>10} {fmt(s["out"]):>8} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
                      f'{fmt(s["ctx0"]):>6}->{fmt(s["ctxN"]):<6}')
-    tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'cw_gap', 'poll', 'w1h_unused')}
+    tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'out', 'cw_gap', 'poll', 'w1h_unused')}
     share = 100 * tot['cw_gap'] / tot['cw'] if tot['cw'] else 0
     lines.append(f'TOTAL requests {tot["req"]}  cRead {fmt(tot["cr"])}  cWrite {fmt(tot["cw"])}  '
-                 f'after >TTL gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  1h unused {fmt(tot["w1h_unused"])}  '
+                 f'after >TTL gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  output {fmt(tot["out"])}  1h unused {fmt(tot["w1h_unused"])}  '
                  f'poll-only requests {tot["poll"]}  '
                  f'cache hit {hit(tot)} (alarm below 80%; owner\'s choice)')
     return '\n'.join(lines)
@@ -185,11 +195,12 @@ def main(argv: list[str]) -> int:
         sessions = [latest_session(Path(argv[1] if len(argv) > 1 else '.'))]
     else:
         sessions = [Path(a) for a in argv]
+    seen: set = set()
     for session in sessions:
         if not session.is_file():
             raise SystemExit(f'agent_cost: not a file: {session}')
         print(f'== {session}')
-        print(table([summarize(n, requests(p)) for n, p in session_agents(session)]))
+        print(table([summarize(n, requests(p, seen)) for n, p in session_agents(session)]))
     return 0
 
 

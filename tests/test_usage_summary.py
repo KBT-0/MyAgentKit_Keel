@@ -1,4 +1,5 @@
 """Summaries count completed review rounds once and read verdicts only from intact evidence."""
+import io
 import json
 import os
 from pathlib import Path
@@ -32,7 +33,7 @@ class UsageSummaryTests(unittest.TestCase):
         if report is not None:
             evidence = self.repo / 'docs/reviews' / (name + '.md')
             evidence.write_bytes(report)
-        with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
+        with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain, 'MYAGENTKIT_REVIEW_ATTEMPT': '1'}):
             path, _ = agent_usage.record(self.repo, callee, model, 'test',
                                          {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {}),
                                           **({'dispositions': dispositions} if dispositions else {}),
@@ -48,11 +49,11 @@ class UsageSummaryTests(unittest.TestCase):
         chains.mkdir(exist_ok=True)
         for number, value in enumerate(('pending', status)):
             (chains / f'{chain_id}-{number}.json').write_text(json.dumps(
-                {'chain_id': chain_id, 'task_id': 'T', 'attempts': [{}] * number,
+                {'chain_id': chain_id, 'task_id': 'T', 'attempts': [{'status': 'completed'}] * number,
                  'status': value, 'failure_kind': failure_kind if number else None}), encoding='utf-8')
 
-    def summary(self, env=None):
-        command = [sys.executable] + ([] if env else ['-I']) + [str(SCRIPT), '--repo', str(self.repo)]
+    def summary(self, env=None, *extra):
+        command = [sys.executable] + ([] if env else ['-I']) + [str(SCRIPT), '--repo', str(self.repo), *extra]
         result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
@@ -127,13 +128,14 @@ class UsageSummaryTests(unittest.TestCase):
                 elif site == 'chain':
                     self.record('deep', 'deep', b'VERDICT: Accept\n', chain='c1')
                     self.chain('c1', 'completed')
-                    (self.repo / '.myagentkit/usage/chains/c1-2.json').write_text(nested, encoding='utf-8')
+                    (self.repo / '.myagentkit/usage/chains/c1-1.json').write_text(nested, encoding='utf-8')
                 else:
                     self.record('deep', 'deep', ('{"effort": %s}' % nested).encode())
                 out = self.summary()
                 self.assertIn('Task healthy: invocations=1 rounds=1', out)
                 self.assertIn({'record': 'Unreadable records skipped: 1',
-                               'chain': 'verdict=none (chain unreadable)',
+                               # #258: a damaged checkpoint is unclear, so the round counts.
+                               'chain': 'Task deep: invocations=1 rounds=1',
                                'evidence': 'Task deep: invocations=1 rounds=1'}[site], out)
 
     def test_a_task_label_the_console_cannot_encode_is_escaped(self):
@@ -339,6 +341,64 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertIn('accepted=0/2 (0.00, author-claimed)', opus)
         self.assertIn('n=0 rated_rounds=0', next(line for line in out.splitlines()
                                                  if line.startswith('Pair unknown -> sol:')))
+
+    def test_chains_are_listed_once_and_task_filters_the_output(self):
+        # #201: a listing of chains/ per chain id grew with chains times checkpoints; now each
+        # record reads only its own attempt's checkpoint.
+        import usage_summary
+        for name in ('a', 'b', 'c'):
+            self.record(name, 'T' + name, b'VERDICT: Accept\n', chain='c' + name)
+            self.chain('c' + name, 'completed')
+        out = io.StringIO()
+        out.reconfigure = lambda **_: None
+        with mock.patch.object(usage_summary, 'chain_failure', wraps=usage_summary.chain_failure) as listing, \
+                mock.patch.object(sys, 'argv', ['usage_summary', '--repo', str(self.repo)]), \
+                mock.patch.object(sys, 'stdout', out):
+            usage_summary.main()
+        self.assertEqual(listing.call_count, 3)  # one checkpoint read per record, no listing
+        self.assertIn('Task Tc: invocations=1 rounds=1', out.getvalue())
+        out = self.summary(None, '--task', 'Tb')
+        self.assertIn('Task Tb: invocations=1 rounds=1', out)
+        self.assertNotIn('Task Ta', out)
+        self.assertIn('Total: invocations=1 ', out)
+
+    def test_a_shrinking_answer_file_is_flagged_as_not_cumulative(self):
+        # #200: the file answers every earlier round; a round-3 file that answers only the
+        # new findings is split over all of them, so the summary says so.
+        self.record('r1', 'T', b'VERDICT: Reject\n\n## Findings\n\n' + b'- High f\n' * 4)
+        self.record('r2', 'T', b'VERDICT: Reject\n\n## Findings\n\n' + b'- High g\n' * 2, model='sol',
+                    dispositions={'fixed': 4, 'disproved': 0, 'deferred': 0})
+        self.assertNotIn('Note:', self.summary())
+        self.record('r3', 'T', b'VERDICT: Accept\n', model='haiku',
+                    dispositions={'fixed': 0, 'disproved': 2, 'deferred': 0})
+        self.assertIn('Note: task T: a later REVIEW_DISPOSITIONS answers 2 findings, an earlier one 4;',
+                      self.summary())
+
+    def test_the_newest_answers_win_and_rounds_count_per_focus(self):
+        # #252 (a): two focuses answer the unfocused round; the newest file wins, not the
+        # focus that first appeared last.
+        self.record('u1', 'T', b'VERDICT: Reject\n\n## Findings\n\n' + b'- High f\n' * 4)
+        for name, focus, claims in (('a2', 'logic', {'fixed': 0, 'disproved': 4, 'deferred': 0}),
+                                    ('b2', 'portability', {'fixed': 0, 'disproved': 4, 'deferred': 0}),
+                                    ('a3', 'logic', {'fixed': 4, 'disproved': 0, 'deferred': 0})):
+            self.record(name, 'T', b'VERDICT: Accept\n', model='sol', focus=focus, dispositions=claims)
+        opus = next(line for line in self.summary().splitlines() if line.startswith('Pair unknown -> opus:'))
+        self.assertIn('accepted=4/4 (1.00, author-claimed)', opus)
+        # (b): round numbers count per focus, as the two-round cap does, and name the focus.
+        self.record('l1', 'U', b'VERDICT: Reject\n\n## Findings\n\n- High a\n', focus='logic')
+        self.record('p1', 'U', b'VERDICT: Reject\n\n## Findings\n\n- High b\n', focus='portability')
+        self.record('l2', 'U', b'VERDICT: Accept\n', focus='logic')
+        self.record('p2', 'U', b'VERDICT: Accept\n', focus='portability')
+        lines = [line.split(' kind=')[0] for line in self.summary().split('Task U:')[1].splitlines()[1:5]]
+        # A focus not seen yet takes the highest count so far, as the cap counts it.
+        self.assertEqual(lines, ['  round=1 focus=logic', '  round=2 focus=portability',
+                                 '  round=2 focus=logic', '  round=2 focus=portability'])
+
+    def test_a_chain_without_a_checkpoint_does_not_unmake_a_round(self):
+        # #258: one definition with claude_bridge.prior_rounds, which counts such a round
+        # toward the cap; only a recorded checkpoint that did not complete unmakes it.
+        self.record('a', 'T', b'VERDICT: Accept\n', chain='gone')
+        self.assertIn('Task T: invocations=1 rounds=1', self.summary())
 
     def test_a_large_sample_prints_whole_numbers(self):
         self.record('a', 'T', b'VERDICT: Reject\n\n## Findings\n\n- Low a\n')
