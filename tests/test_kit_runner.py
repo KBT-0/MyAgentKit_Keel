@@ -36,7 +36,7 @@ check_kit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_kit)
 check_kit.ROOT = Path(%r)
 check_kit.REQUIRED_SUITES = {'suite': {'test_kit_probe': %d}}
-sys.exit(check_kit.unit('suite', False, *sys.argv[2:3]))
+sys.exit(check_kit.unit('suite', *sys.argv[2:3]))
 '''
 
 
@@ -605,7 +605,7 @@ def main():
     ROOT = Path(__file__).resolve().parents[1]
     REQUIRED_SUITES = {'suite': {'test_kit_probe': 1}}
     if '--unit' in sys.argv:
-        return unit('suite', False)
+        return unit('suite')
     Path('cache').write_text(_PYCACHE)
     atexit.register(Path('stopped').touch)
     command = [sys.executable, '-B', '-u', __file__, '--unit', 'suite']

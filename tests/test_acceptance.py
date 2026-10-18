@@ -21,7 +21,7 @@ spec.loader.exec_module(gate)
 class AcceptanceTests(unittest.TestCase):
     def test_gate_launchers_refuse_python_3_10_and_accept_3_11(self):
         for path, marker in (('scripts/check.sh', '# Help ends'),
-                             ('core/scripts/check.sh', '# SELF-TEST SEAMS')):
+                             ('core/scripts/check.sh', '\nlock_path=')):
             source = (ROOT / path).read_text(encoding='utf-8').split(marker, 1)[0]
             # Keep the isolated POSIX probe in this shell so the Python stubs survive.
             source = source.replace('if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi\n', '')
@@ -45,96 +45,6 @@ class AcceptanceTests(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('Python 3.11 or newer', result.stdout + result.stderr)
-
-    def test_existing_file_python_launcher_preserves_paths_and_py3_arguments(self):
-        example = '\n'.join(line[4:] for line in
-            (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8').splitlines()
-            if line.startswith('# | ')) + '\n'
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / 'project'
-            (project / 'scripts').mkdir(parents=True)
-            (project / 'src/domain').mkdir(parents=True)
-            source = project / 'src/domain/existing.py'
-            source.write_text('original\n', encoding='utf-8')
-            tools = Path(tmp) / 'tools'
-            tools.mkdir()
-            spaced = tools / 'python with spaces'
-            spaced.write_text('#!/bin/sh\nexec %s "$@"\n' % shlex.quote(Path(sys.executable).as_posix()),
-                              encoding='utf-8')
-            spaced.chmod(0o755)
-            (tools / 'py').write_text('#!/bin/sh\n[ "$1" = -3 ] || exit 9\nshift\n'
-                                      'exec %s "$@"\n' % shlex.quote(Path(sys.executable).as_posix()),
-                                      encoding='utf-8')
-            (tools / 'py').chmod(0o755)
-            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'])
-            for launcher in (spaced.as_posix(), 'py -3'):
-                with self.subTest(launcher=launcher):
-                    # python3 is the enclosing gate's fallback function; probe_env
-                    # must invoke the resolved executable, including its argument.
-                    (project / 'scripts/check.sh').write_text(
-                        'if [ "${1:-}" = --self-test ]; then\nst_fail=0\n'
-                        'kit_python=%s\npython3() { %s "$@"; }\n' %
-                        (shlex.quote(launcher), shlex.quote(Path(sys.executable).as_posix())) +
-                        example + '\nexit "$st_fail"\nfi\n'
-                        "grep -q myapp.web src/domain/existing.py || exit 0\n"
-                        "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n",
-                        encoding='utf-8')
-                    gate.run(['git', 'init', '-q'], project)
-                    gate.run(['git', 'add', '.'], project)
-                    before = gate.run(['git', 'status', '--porcelain'], project)
-                    out = gate.run(['sh', 'scripts/check.sh', '--self-test'], project, env=env,
-                                   reason='  ok   — domain/web boundary gate rejects')
-                    self.assertNotIn('  FAIL — ', out)
-                    self.assertEqual(source.read_text(encoding='utf-8'), 'original\n')
-                    self.assertEqual(gate.run(['git', 'status', '--porcelain'], project), before)
-
-    def test_existing_file_example_reports_a_red_baseline_and_never_counts_it(self):
-        # Use the gate's own launcher selection, as WindowsBoundaryProbeTests does.
-        check = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
-        start = check.index("if python3 -I -c '' </dev/null")
-        resolve = check[start:check.index('\n', check.index('python3() { $kit_python "$@"; }'))]
-        example = '\n'.join(line[4:] for line in
-            (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8').splitlines()
-            if line.startswith('# | ')) + '\n'
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / 'project'
-            (project / 'scripts').mkdir(parents=True)
-            (project / 'src/domain').mkdir(parents=True)
-            source = project / 'src/domain/existing.py'
-            source.write_text('original\n', encoding='utf-8')
-            # A normal copied gate must explain its own failure. The probe must not
-            # treat an unrelated failure as proof that the injected boundary works.
-            # Use a supported python3-only host layout, independent of the caller's
-            # Python aliases. The wrappers run the real utilities, not test doubles.
-            tools = Path(tmp) / 'tools'
-            tools.mkdir()
-            shell = shutil.which('sh')
-            for name in ('sh', 'env', 'git', 'uname', 'mktemp', 'cp', 'awk', 'sed',
-                         'xargs', 'mkdir', 'mv', 'rm', 'cat', 'dirname', 'basename', 'ln', 'python3'):
-                program = sys.executable if name == 'python3' else shutil.which(name)
-                self.assertIsNotNone(program, name)
-                wrapper = tools / name
-                wrapper.write_text('#!/bin/sh\nexec %s "$@"\n' %
-                                   shlex.quote(Path(program).as_posix()), encoding='utf-8')
-                wrapper.chmod(0o755)
-            env = dict(os.environ, PATH=str(tools))
-            gate.run([shell, '-c', 'command -v python3 && ! command -v python && ! command -v py'],
-                     project, env=env)
-            (project / 'scripts/check.sh').write_text(
-                'if [ "${1:-}" = --self-test ]; then\n'
-                'st_fail=0\n' + resolve + '\n' +
-                example + '\nexit "$st_fail"\nfi\n' +
-                "echo 'FAIL [build]: diagnostic from the disposable baseline'\nexit 7\n",
-                encoding='utf-8')
-            gate.run(['git', 'init', '-q'], project)
-            gate.run(['git', 'add', '.'], project)
-            before = gate.run(['git', 'status', '--porcelain'], project)
-            out = gate.run([shell, 'scripts/check.sh', '--self-test'], project, env=env,
-                           expected=1, reason='the baseline is already red')
-            self.assertIn('FAIL [build]: diagnostic from the disposable baseline', out)
-            self.assertNotIn('  ok   — ', out)
-            self.assertEqual(source.read_text(encoding='utf-8'), 'original\n')
-            self.assertEqual(gate.run(['git', 'status', '--porcelain'], project), before)
 
     def test_required_suites_cannot_disappear_or_skip(self):
         for case in ('missing', 'empty', 'skipped', 'runtime_skip', 'pass'):
@@ -228,7 +138,7 @@ class AcceptanceTests(unittest.TestCase):
                    r'echo -n -e "$x"', r'echo FAIL: "$x"', r'echo "a" "$x"', r'echo >&2 "$x"', r'echo "$x">&2',
                    r'x=`echo "$y"`', r'echo "$(cmd)"', r'echo \"in a string $x\"', 'echo \\\n  "$x"',
                    'echo "text \\\n$x"', r'echo "C:\new"', r"echo 'a\nb'", r'echo a\\b',
-                   r'# |   probe_fail() { echo "  FAIL: $*"; exit 1; }',
+                   r'# >   probe_fail() { echo "  FAIL: $*"; exit 1; }',
                    r't=$(mktemp -p "$d")', r'mktemp --suffix .txt', r'mktemp --tmpdir x.XXXXXX',
                    r't=$(mktemp -dp "$d")', 'mktemp -d \\\n  -p "$d"', r'mktemp -t x']
         allowed = [r'# echo "$x"', r"echo '$x'", r'echo "no variable"', r"printf '%s\n' "'"$x"',
@@ -401,59 +311,8 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual((value, child), ('2', '2'), 'the kit check read the stale .pyc')
             self.assertFalse(os.path.exists(folder), 'the private pycache folder was left behind')
 
-    def test_windows_self_test_rejects_failures_outside_case_lines(self):
-        if os.name != 'nt':
-            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
-            return
-        real_run = gate.run
-        real_read = Path.read_text
-
-        class SelfTestAccepted(AssertionError):
-            pass
-
-        for boundary in ("echo 'FAIL [boundary]: regression'; st_fail=1\n", 'st_fail=1\n', ':\n'):
-            reached = []
-
-            def read(path, *args, **kwargs):
-                if reached and path.name == 'status.log':
-                    raise SelfTestAccepted('the kit accepted the self-test exit status')
-                return real_read(path, *args, **kwargs)
-
-            def run(args, cwd=gate.ROOT, **kwargs):
-                if reached:
-                    raise SelfTestAccepted('the kit accepted the self-test exit status')
-                if args == ['sh', 'scripts/check.sh', '--self-test']:
-                    reached.append(True)
-                    # Exercise the actual self-test tail, without running the unrelated,
-                    # expensive earlier cases or the prohibited existing-file example.
-                    gate = (cwd / 'scripts/check.sh').read_text()
-                    # The review self-test now runs natively too. This regression tests
-                    # boundary status propagation; acceptance separately runs the real
-                    # review suite, so start after that unrelated, expensive suite.
-                    start = gate.index('  if [ -f "$BOUNDARY_SELFTESTS_FILE" ]; then')
-                    tail = gate[start:gate.index('\n}\n', start)]
-                    script = cwd / '.git/tail.sh'
-                    script.write_text('work=$(mktemp -d)\ntrap \'rm -rf "$work"\' EXIT\n'
-                                      'BOUNDARY_CHECKS_FILE=scripts/boundary_checks.sh\n'
-                                      'BOUNDARY_SELFTESTS_FILE=scripts/boundary_selftests.sh\n'
-                                      'self_test() {\nst_fail=0\n' + tail + '\n}\nself_test\n')
-                    (cwd / 'scripts/boundary_selftests.sh').write_text(boundary)
-                    return real_run(['sh', str(script)], cwd, **kwargs)
-                return real_run(args, cwd, **kwargs)
-
-            with self.subTest(boundary=boundary), unittest.mock.patch.object(gate, 'run', side_effect=run), \
-                    unittest.mock.patch.object(Path, 'read_text', read), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                if boundary == ':\n':
-                    with self.assertRaises(SelfTestAccepted):
-                        gate.acceptance(True)
-                else:
-                    with self.assertRaisesRegex(RuntimeError, 'SELF-TEST: FAIL'):
-                        gate.acceptance(True)
-                self.assertEqual(reached, [True])
-
     def test_the_wrapper_fails_a_run_that_exits_0_without_its_pass_line(self):
-        # A self-test once exited 0 without printing KIT CHECK: PASS, and the caller saw a pass.
+        # A kit check once exited 0 without printing KIT CHECK: PASS, and the caller saw a pass.
         for case, body in (('silent', 'exit 0\n'), ('passed', ': > "$KIT_CHECK_PASSED"\n'),
                            ('failed', 'exit 3\n')):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:

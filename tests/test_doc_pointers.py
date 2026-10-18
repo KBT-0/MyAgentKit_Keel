@@ -83,7 +83,7 @@ class SectionPointerTests(unittest.TestCase):
         for rule in ('Paid reviews run one after the other (rule 1)',
                      'run together only when {{OWNER_NAME}} allows it for that round and two slots are free',
                      "heavy jobs already running take slots",
-                     'The self-test starts beside a review when the budget has a slot for it',
+                     'The acceptance gate run starts beside a review when the budget has a slot for it',
                      "Never reduce a tier's reviews: a high-tier round's floor is its two reviewers, a low or medium round's its one",
                      'the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.'):
             self.assertIn(rule, budget_rule)
@@ -101,13 +101,13 @@ class SectionPointerTests(unittest.TestCase):
                      "macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'`",
                      "Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing",
                      'The command-line listing is only a shortcut for the jobs it can see',
-                     "The project's gate holds the lock at `git rev-parse --git-path check.lock` and publishes `check-selftest` beside it; find the lock holder as described under ",
+                     "The project's gate holds the lock at `git rev-parse --git-path check.lock`; find the lock holder as described under ",
                      "A build server the gate started keeps the gate lock",
                      "A review holds no checkout lock; read its chain record as follows.",
-                     "The kit's own self-test (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock and publishes no checkout self-test marker.",
+                     "The kit's own check (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock.",
                      'It is visible only in the process listing: look for a `python` process whose arguments name `check_kit.py` under the checkout.',
                      "If those arguments are relative, confirm the checkout through the process's working directory.",
-                     'After a cut-off, look for this self-test before resuming heavy work; wait for any survivor or ask the owner.',
+                     'After a cut-off, look for this check before resuming heavy work; wait for any survivor or ask the owner.',
                      'For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in the record names its process.',
                      '`<chain>-0.json` always stays pending and is not evidence of a running review.',
                      'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (the attempt count equals the number of possible attempts, a `failure_kind` outside the dispatcher\'s unavailable set, `fallback_blocked` set, or `fallback_allowed` false, or the failed attempt has no `evidence` or `usage_record`: the dispatcher never falls over from such an attempt).',
@@ -130,14 +130,14 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('every other row is a survivor', gotchas)
         self.assertNotIn('It ignores its own rows', gotchas)
         self.assertNotIn("Only a review's own reviewer process holds no checkout lock.", gotchas)
-        self.assertNotIn('`.git/check.lock` and publishes `.git/check-selftest`', gotchas)
+        self.assertNotIn('check-selftest', gotchas)
         self.assertNotIn('the chain record has a completed or failed attempt', gotchas)
         self.assertNotIn('Never reduce the reviews or deliberately run the reviewers one after the other', budget_rule)
         self.assertNotIn('stop them with a reason', gotchas)
         self.assertNotIn('its own process by grepping the listing for `.myagentkit/usage`', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
         self.assertIn('The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel', running)
-        self.assertIn('start the self-test beside a review only when the memory budget permits', running)
+        self.assertIn('start the acceptance gate run beside a review only when the memory budget permits', running)
         self.assertIn('memory budget', running)
         self.assertIn('"Worker cost", rule 6', running)
         for old_launch in ('Independent reviews run at the same time, with each other and with the self-test',
@@ -146,7 +146,7 @@ class SectionPointerTests(unittest.TestCase):
                            'Start the self-test and two reviewers at once'):
             self.assertNotIn(old_launch, flat + ' ' + running)
         self.assertIn('The launch sequence follows "Worker cost", rule 6', flat)
-        self.assertIn('Start the self-test and the reviews on the same commit, following "Worker cost", rule 6', flat)
+        self.assertIn('Start the acceptance gate run (`./scripts/check.sh`) and the reviews on the same commit, following "Worker cost", rule 6', flat)
         self.assertNotIn("Where-Object CommandLine -like '*<checkout>*'", gotchas)
         self.assertNotIn('pgrep -af <checkout>', gotchas)
         self.assertNotIn('grep <checkout>', gotchas)
@@ -157,7 +157,7 @@ class SectionPointerTests(unittest.TestCase):
         for rule in ('effort is never carried up from the round before',
                      'Both start at the cheapest table row that fits',
                      'the lead never opens visible sessions to show the workflow',
-                     'The self-test runs once per batch',
+                     'The acceptance run is once per batch',
                      'Open issues are never closed to finish a release',
                      "never only into a lead's private memory",
                      'reviews are never reduced'):

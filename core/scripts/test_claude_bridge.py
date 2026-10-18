@@ -165,7 +165,7 @@ time.sleep(60)
 def run_quietly(suite, out=sys.stdout, minimum=0):
     """Run a suite; print its whole log on failure, declared skips and a summary otherwise.
 
-    The per-test lines of a passing run were about 17 KB in every gate self-test, read by the
+    The per-test lines of a passing run were about 17 KB in every gate run, read by the
     agent that ran it. A failing run still prints every line, the passing ones included.
     """
     allowed = platform_skips(suite)
@@ -4080,7 +4080,7 @@ if case == 'archive_failure':
         """The hard requirement of a role-neutral kit: swapping roles keeps records comparable.
 
         Two reviewers that archived two shapes would force every later reader — and the
-        self-test — to learn two formats, and no record could be lined up against the one
+        review suite — to learn two formats, and no record could be lined up against the one
         that came before it when the roles swapped mid-project.
         """
         claude = self.run_wrapper("--uncommitted", "--reviewer", "claude",

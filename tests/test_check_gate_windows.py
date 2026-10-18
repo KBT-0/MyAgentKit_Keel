@@ -94,27 +94,6 @@ def close_handle(handle):
     KERNEL32.CloseHandle(handle)
 
 
-def duplicate(handle):
-    """A second handle on the same open file, so closing its fd leaves handle open."""
-    out = wintypes.HANDLE()
-    me = KERNEL32.GetCurrentProcess()
-    if not KERNEL32.DuplicateHandle(me, handle, me, ctypes.byref(out), 0, False, 2):
-        raise ctypes.WinError(ctypes.get_last_error())
-    return out.value
-
-
-def write_handle(handle, text):
-    """Write text as the whole file through handle, as the gate's holder writes its token."""
-    import msvcrt
-    fd = msvcrt.open_osfhandle(duplicate(handle), os.O_RDWR)
-    try:
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, 0)
-        os.write(fd, text.encode())
-    finally:
-        os.close(fd)
-
-
 def children(pid):
     """(pid, image name) of each direct child of pid."""
     snapshot = KERNEL32.CreateToolhelp32Snapshot(2, 0)
@@ -130,41 +109,6 @@ def children(pid):
     finally:
         KERNEL32.CloseHandle(snapshot)
     return found
-
-
-def pid_descendants(pid):
-    """(pid, image name) of each process under pid, from snapshots; tests/test_stop_hook.py's
-    walk, which needs no handle on the root."""
-    found = children(pid)
-    for child, _ in found:
-        found.extend(children(child))
-    return found
-
-
-def lock_holder(pid):
-    """(holder, gate): the first python under pid whose direct child is an sh, and that sh.
-    A launcher (the WindowsApps alias, a venv redirector) can run between pid and the holder."""
-    return next((parent, child) for parent, image in pid_descendants(pid) if image.lower().startswith('python')
-                for child, name in children(parent) if name == 'sh.exe')
-
-
-def kill_process(pid):
-    """Terminate a fixture process directly; taskkill needs privileges absent in sandboxes."""
-    KERNEL32.OpenProcess.restype = ctypes.c_void_p
-    KERNEL32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
-    KERNEL32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))
-    handle = KERNEL32.OpenProcess(0x1001, False, pid)
-    if not handle:
-        if ctypes.get_last_error() == 87:  # The fixture already exited.
-            return
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        if not KERNEL32.TerminateProcess(handle, 1):
-            error, status = ctypes.get_last_error(), wintypes.DWORD()
-            if not KERNEL32.GetExitCodeProcess(handle, ctypes.byref(status)) or status.value == 259:
-                raise ctypes.WinError(error)
-    finally:
-        close_handle(handle)
 
 
 def set_reparse_point(path):
@@ -496,33 +440,6 @@ class WindowsGateLockTests(unittest.TestCase):
                               capture_output=True, text=True, check=True).stdout.strip()
 
     @windows_only
-    def test_a_linked_self_test_marker_never_changes_owner_data(self):
-        self.write_build('false\n')  # End at the baseline, without running the full self-test.
-        marker, owner = self.project / '.git/check-selftest', self.tmp / 'owner.txt'
-        owner.write_bytes(b'owner data\n')
-        for kind in ('hard link', 'symbolic link', 'reparse point'):
-            with self.subTest(kind=kind):
-                if kind == 'hard link':
-                    os.link(owner, marker)
-                elif kind == 'symbolic link':
-                    os.symlink(owner, marker)
-                else:
-                    set_reparse_point(marker)
-                try:
-                    proc = subprocess.Popen(['sh', 'scripts/check.sh', '--self-test'], cwd=self.project,
-                                            env=environment(self.build), text=True, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT)
-                    code, out = finish(proc)
-                    self.assertEqual(owner.read_bytes(), b'owner data\n', out)
-                    self.assertEqual(code, 1, out)
-                    self.assertIn('FAIL [self-test]:', out)
-                    self.assertEqual(list(marker.parent.glob('check-selftest-*')), [], 'temporary left')
-                finally:
-                    if os.path.lexists(marker):
-                        os.remove(marker)
-
-
-    @windows_only
     def test_the_gate_passes_holding_its_lock(self):
         # v0.9 failed every run here: "FAIL [lock]: python3 has no fcntl module".
         self.write_build('( : >> "$GATE_TEST_LOCK" ) 2>/dev/null && echo free > "$SIDE/during" '
@@ -533,7 +450,7 @@ class WindowsGateLockTests(unittest.TestCase):
         self.assertIn('CHECK: PASS', out)
         self.assertEqual((self.side / 'during').read_text().strip(), 'held',
                          'the build ran while a fresh open for writing could take the lock file')
-        # The lock is released when the gate ends, and the holder's token is cleared.
+        # The lock is released when the gate ends, and nothing was written into it.
         close_handle(open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ))
         self.assertEqual(self.lock.read_text(), '')
 
@@ -606,17 +523,14 @@ class WindowsGateLockTests(unittest.TestCase):
 
     @windows_only
     def test_a_handle_on_another_file_is_not_the_lock(self):
-        # The lock held with the holder's token, the token copied, and an inherited handle on
-        # another file under the number GATE_LOCK_FD names: without the identity check the
-        # seams turned a red build green.
+        # The lock held, and an inherited handle on another file under the number GATE_LOCK_FD
+        # names: without the identity check the run skipped the lock another gate held.
         self.write_build('false\n')
         held = open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ, inheritable=False)
         other = open_handle(self.tmp / 'another-file', GENERIC_READ | GENERIC_WRITE, SHARE_READ | SHARE_WRITE)
         try:
-            write_handle(held, 'token')
             code, out = gate(self.project, self.build, GATE_LOCK_HELD=self.lock_form(),
-                             GATE_LOCK_FD=str(other), GATE_SELFTEST_NESTED='token',
-                             GATE_BUILD_CMD_OVERRIDE='true', GATE_LOCK_WAIT='2')
+                             GATE_LOCK_FD=str(other), GATE_LOCK_WAIT='2')
         finally:
             close_handle(other)
             close_handle(held)
@@ -631,10 +545,8 @@ class WindowsGateLockTests(unittest.TestCase):
         held = open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ, inheritable=False)
         reader = open_handle(self.lock, GENERIC_READ, SHARE_READ | SHARE_WRITE)
         try:
-            write_handle(held, 'token')
             code, out = gate(self.project, self.build, GATE_LOCK_HELD=self.lock_form(),
-                             GATE_LOCK_FD=str(reader), GATE_SELFTEST_NESTED='token',
-                             GATE_BUILD_CMD_OVERRIDE='true', GATE_LOCK_WAIT='2')
+                             GATE_LOCK_FD=str(reader), GATE_LOCK_WAIT='2')
         finally:
             close_handle(reader)
             close_handle(held)
@@ -648,29 +560,18 @@ class WindowsGateLockTests(unittest.TestCase):
         self.write_build('false\n')
         plain = open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ | SHARE_WRITE)
         try:
-            write_handle(plain, 'token')
             code, out = gate(self.project, self.build, GATE_LOCK_HELD=self.lock_form(),
-                             GATE_LOCK_FD=str(plain), GATE_SELFTEST_NESTED='token',
-                             GATE_BUILD_CMD_OVERRIDE='true', GATE_LOCK_WAIT='2')
+                             GATE_LOCK_FD=str(plain), GATE_LOCK_WAIT='2')
         finally:
             close_handle(plain)
         self.assertEqual(code, 1, out)
         self.assertIn("FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit", out)
 
     @windows_only
-    def test_a_marker_that_is_not_the_holders_token_is_refused(self):
-        # A process the build starts inherits the handle, so the handle proof accepts it; only
-        # the marker check keeps a stray GATE_SELFTEST_NESTED from turning on the seams.
-        self.write_build('GATE_SELFTEST_NESTED=1 GATE_BUILD_CMD_OVERRIDE=true sh scripts/check.sh\n')
-        code, out = gate(self.project, self.build)
-        self.assertEqual(code, 1, out)
-        self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
-
-    @windows_only
     def test_variables_copied_out_of_a_killed_gate_are_refused(self):
-        # The holder's token stays in the lock file when the gate is killed. Copied with the
-        # handle number into a process that did not inherit the handle, it is refused.
-        self.write_build('cat "$GATE_TEST_LOCK" > "$SIDE/token"\necho "$GATE_LOCK_FD" > "$SIDE/fd"\n'
+        # The lock variables of a killed gate, copied into a process that did not inherit the
+        # handle, are refused.
+        self.write_build('echo "$GATE_LOCK_FD" > "$SIDE/fd"\n'
                          'echo "$GATE_LOCK_HELD" > "$SIDE/held.tmp"\nmv "$SIDE/held.tmp" "$SIDE/held"\n'
                          'sleep 30\n')
         proc = start(self.project, self.build, GATE_TEST_LOCK=self.lock.as_posix(), SIDE=self.side.as_posix())
@@ -682,16 +583,12 @@ class WindowsGateLockTests(unittest.TestCase):
             time.sleep(0.1)
         kill_tree(proc)
         proc.communicate()
-        token = (self.side / 'token').read_text()
-        self.assertTrue(token, 'the holder wrote no token into the lock file')
-        self.assertEqual(self.lock.read_text(), token, "the killed gate's token was not left in the lock file")
         self.write_build('false\n')
-        code, out = gate(self.project, self.build, GATE_SELFTEST_NESTED=token,
+        code, out = gate(self.project, self.build,
                          GATE_LOCK_HELD=(self.side / 'held').read_text().strip(),
-                         GATE_LOCK_FD=(self.side / 'fd').read_text().strip(),
-                         GATE_BUILD_CMD_OVERRIDE='true')
+                         GATE_LOCK_FD=(self.side / 'fd').read_text().strip())
         self.assertEqual(code, 1, out)
-        self.assertIn('FAIL [env]', out)
+        self.assertIn("FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit", out)
         self.assertNotIn('CHECK: PASS', out)
 
     @windows_only
@@ -797,6 +694,69 @@ class WindowsGateLockTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(runner), mode, str(program), str(handle), self.lock_form()],
                               capture_output=True, text=True, close_fds=False)
 
+    def lock_case(self, mode):
+        """Run one mode of tests/fixtures/windows_lockcase.py against a copy of the gate in a
+        throwaway repository; the copy stops, fails or kills itself right after it holds the lock
+        when the case asks it to, and otherwise passes there."""
+        case = self.tmp / ('lock-' + mode)
+        subprocess.run(['git', 'init', '-q', str(case)], check=True)
+        (case / 'scripts').mkdir()
+        text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        anchor = '\nwork=$(mktemp -d)'
+        self.assertIn(anchor, text)
+        inserted = (
+            '\n[ -z "${LOCKCASE_HOLD:-}" ] || { : > "$LOCKCASE_HOLD"; sleep 10; exit 0; }'
+            '\n[ -z "${LOCKCASE_KILL:-}" ] || { : > "$LOCKCASE_KILL"; kill -9 $$; }'
+            '\n[ -z "${LOCKCASE_FAIL:-}" ] || { : > "$LOCKCASE_FAIL"; exit 3; }'
+            '\n[ -z "${LOCKCASE_BUILD:-}" ] || { python3 -I -c "import os, sys, time; f = os.open(sys.argv[1] + chr(46)'
+            ' + chr(116), os.O_WRONLY | os.O_CREAT); os.write(f, str(os.getpid()).encode()); os.close(f);'
+            ' os.replace(sys.argv[1] + chr(46) + chr(116), sys.argv[1]); time.sleep(60)" "$LOCKCASE_BUILD"; exit 0; }'
+            '\necho "lockcase: the copy of the gate got past the lock"; exit 0')
+        copy = case / 'scripts/check.sh'
+        copy.write_text(text.replace(anchor, inserted + anchor, 1), encoding='utf-8', newline='\n')
+        lock = subprocess.run(['sh', '-c', 'cygpath -m "$(pwd -P)/.git/check.lock"'], cwd=case,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'LOCKCASE_'))}
+        result = subprocess.run([sys.executable, '-I', str(ROOT / 'tests/fixtures/windows_lockcase.py'), mode, lock,
+                                 copy.as_posix()], env=env, capture_output=True, text=True, errors='replace',
+                                timeout=240)
+        return result.returncode, result.stdout + result.stderr
+
+    @windows_only
+    def test_a_fresh_open_that_failed_for_another_reason_is_not_the_lock(self):
+        # Writable, on the lock file, nothing else holding it, the file then made read-only: a
+        # fresh open for writing fails with access denied (5), not a sharing violation (32).
+        code, out = self.lock_case('readonly')
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit", out)
+
+    @windows_only
+    def test_the_holder_passes_a_failing_gates_exit_status_on(self):
+        code, out = self.lock_case('failgate')
+        self.assertEqual(code, 0, out)
+        self.assertIn('lockcase: a gate that failed with 3 exited 3\n', out)
+
+    @windows_only
+    def test_the_holder_imports_no_stand_in_module_from_pythonpath(self):
+        code, out = self.lock_case('shadow')
+        self.assertEqual(code, 0, out)
+        self.assertIn('lockcase: stand-ins imported: none; the gate exited 0\n', out)
+
+    @windows_only
+    def test_ctrl_c_stops_the_gate_and_its_build_and_the_next_gate_takes_the_lock(self):
+        # The case gives the gate a hidden console of its own, with that console as sh's input,
+        # as a terminal window does, and sends it CTRL_C_EVENT; the holder must outlive it.
+        code, out = self.lock_case('interrupt')
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r'(?m)^lockcase: the interrupted gate exited [1-9][0-9]*; its holder exited 130; '
+                              r'its build stopped; the next gate exited 0$')
+
+    @windows_only
+    def test_a_ctrl_c_while_the_holder_waits_for_the_lock_starts_no_gate(self):
+        code, out = self.lock_case('earlyint')
+        self.assertEqual(code, 0, out)
+        self.assertIn('lockcase: a Ctrl-C before the gate started: its holder exited 130; the gate never ran\n', out)
+
     @windows_only
     def test_a_handle_whose_64_bit_identity_collides_is_not_the_lock(self):
         # The proof compared os.stat's (st_dev, st_ino). Before Python 3.12 that held 64 bits of
@@ -824,243 +784,6 @@ class WindowsGateLockTests(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertIn('FAIL [lock]:', result.stdout)
         self.assertIn('file id', result.stdout)
-
-
-WINDOWS_PROGRAM_VARIABLES = ('SYSTEMROOT', 'WINDIR', 'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'PATHEXT', 'COMSPEC')
-
-
-class WindowsBoundaryProbeTests(unittest.TestCase):
-    """The existing-file boundary example's probe on native Windows (issue #60): under `env -i` the
-    Python install manager's python3 alias, missing LOCALAPPDATA, downloaded and installed a Python.
-    Offline: python3 and python here are stubs, and the stub python runs this test's interpreter."""
-
-    def run_probe(self, **extra):
-        template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8')
-        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
-        # The fixture resolves its Python with check.sh's own lines, as the sourced example sees it.
-        check = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
-        start = check.index("if python3 -I -c '' </dev/null")
-        resolve = check[start:check.index('\n', check.index('python3() { $kit_python "$@"; }'))]
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            records, scratch, stubs = tmp / 'records', tmp / 'scratch', tmp / 'bin'
-            for folder in (records, scratch, stubs):
-                folder.mkdir()
-            # A python3 that does not run, as a Store alias exits 9009: check.sh resolves `python`.
-            # A run under the probe, recognised by the copy's HOME, is recorded, except the copied
-            # gate's own resolution (`python3 -I -c ''`).
-            (stubs / 'python3').write_text('#!/bin/sh\ncase "$HOME" in */tmp.*/home) [ "$#" = 3 ] && [ -z "$3" ] ||'
-                                           ' : > "%s/python3-ran" ;; esac\nexit 9009\n' % records.as_posix(),
-                                           newline='\n')
-            # The probe's own Python records what it was given.
-            (stubs / 'python').write_text('#!/bin/sh\ncase "$HOME" in */tmp.*/home) env > "%s/probe.env" ;; esac\n'
-                                          'exec "%s" "$@"\n' % (records.as_posix(), Path(sys.executable).as_posix()),
-                                          newline='\n')
-            for name, body in extra.items():
-                (stubs / name).write_text('#!/bin/sh\n' + body, newline='\n')
-            root = tmp / 'project'
-            (root / 'src/domain').mkdir(parents=True)
-            (root / 'src/domain/existing.py').write_bytes(b'committed original\n')
-            (root / 'scripts').mkdir()
-            (root / 'scripts/check.sh').write_text(
-                '#!/bin/sh\ncd "$(dirname "$0")/.."\n' + resolve + '\n'
-                'if [ "${1:-}" = --self-test ]; then\n  st_fail=0\n' + example + '\n  exit "$st_fail"\nfi\n'
-                "grep -q 'myapp.web' src/domain/existing.py || exit 0\n"
-                "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n",
-                encoding='utf-8', newline='\n')
-            for args in (('init', '-q'), ('config', 'core.autocrlf', 'false'), ('add', '.'),
-                         ('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
-                          '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')):
-                subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
-            # In lower case, still valid: the MSYS runtime adds its own SYSTEMROOT, WINDIR and
-            # USERPROFILE to a child that lacks them, so only the caller's spelling proves probe_env.
-            env = dict(os.environ, TMPDIR=str(scratch), PROBE_LEAK_CANARY='leaked',
-                       PATH=str(stubs) + os.pathsep + os.environ['PATH'],
-                       **{name: os.environ[name].lower() for name in WINDOWS_PROGRAM_VARIABLES})
-            env.pop('PYTHONNOUSERSITE', None)
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, env=env,
-                                    capture_output=True, encoding='utf-8', errors='replace', timeout=120)
-            recorded = (records / 'probe.env').read_text(errors='replace') if (records / 'probe.env').exists() else None
-            return result, recorded, (records / 'python3-ran').exists()
-
-    @windows_only
-    def test_the_probe_keeps_what_a_windows_program_needs_and_nothing_else(self):
-        result, recorded, _ = self.run_probe()
-        output = result.stdout + result.stderr
-        self.assertIsNotNone(recorded, 'the probe never ran its Python:\n' + output)
-        seen = dict(line.split('=', 1) for line in recorded.splitlines() if '=' in line)
-        for name in WINDOWS_PROGRAM_VARIABLES:
-            self.assertEqual(seen.get(name), os.environ[name].lower(), name + ' did not reach the probe:\n' + output)
-        # Still isolated: the copy's own HOME and TMPDIR, no user site in the real APPDATA (what the
-        # empty HOME is on POSIX), and nothing probe_env does not name.
-        self.assertRegex(seen.get('HOME', ''), r'/tmp\.[^/]+/home$')
-        self.assertRegex(seen.get('TMPDIR', ''), r'/tmp\.[^/]+/tmp$')
-        self.assertEqual(seen.get('PYTHONNOUSERSITE'), '1', output)
-        self.assertNotIn('PROBE_LEAK_CANARY', seen)
-        # And the case runs to its end on native Windows.
-        self.assertEqual(result.returncode, 0, output)
-        self.assertIn('  ok   — domain/web boundary gate rejects a forbidden import in an existing file', output)
-
-    @windows_only
-    def test_the_probe_runs_the_python_check_sh_resolved_not_bare_python3(self):
-        result, recorded, python3_ran = self.run_probe()
-        output = result.stdout + result.stderr
-        self.assertIsNotNone(recorded, 'the probe never ran the resolved Python:\n' + output)
-        self.assertFalse(python3_ran, 'the probe ran python3, not the Python check.sh resolved:\n' + output)
-
-    @windows_only
-    def test_a_host_that_cannot_make_symlinks_is_not_run_by_name(self):
-        # Without Developer Mode or the privilege, cp under winsymlinks:nativestrict fails on any
-        # link in the checkout; its raw error said nothing about why. Stubs stand for that host.
-        refused = "echo \"$(basename \"$0\"): cannot create symbolic link 'x': Operation not permitted\" >&2; exit 1\n"
-        result, _, _ = self.run_probe(cp=refused, ln=refused)
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
-        self.assertIn('  NOT RUN — existing-file probe: this host cannot make symbolic links; enable Developer Mode'
-                      ' or the privilege, or run the self-test on a host that can.', output)
-        self.assertNotIn('Operation not permitted', output)
-        # A copy that failed for another reason keeps cp's own error and names no privilege.
-        result, _, _ = self.run_probe(cp="echo 'cp: disk full' >&2; exit 1\n")
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
-        self.assertIn('cp: disk full', output)
-        self.assertNotIn('cannot make symbolic links', output)
-
-
-def probe_script(which):
-    """The existing-file example's own Python: 'delete' (probe_delete) or 'audit' (probe_audit)."""
-    template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8')
-    example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
-    scripts = re.findall(r"-I -c '\n(.*?)\n'", example, re.S)
-    return scripts[['delete', 'audit'].index(which)]
-
-
-class WindowsProbeCopyTests(unittest.TestCase):
-    """The existing-file probe's copy on native Windows: the audit and the delete never follow a
-    junction or a symlink out of the copy, the delete removes git's read-only object files, and a
-    file the copy shares with the checkout (a hard link) keeps its read-only attribute."""
-
-    def setUp(self):
-        if not WINDOWS:
-            return
-        self.tmp = Path(tempfile.mkdtemp(prefix='kit-probe-copy-'))
-        # rmdir /s removes a junction as a link and never goes through it.
-        self.addCleanup(subprocess.run, ['cmd', '/c', 'rmdir', '/s', '/q', str(self.tmp)], capture_output=True)
-        self.copy = self.tmp / 'copy'
-        self.outside = self.tmp / 'outside'
-        (self.copy / 'checkout/.git/objects/ab').mkdir(parents=True)
-        self.outside.mkdir()
-        (self.outside / 'keep.txt').write_text('outside the copy\n')
-
-    def delete(self, made=None):
-        made = made or os.lstat(self.copy)
-        return subprocess.run([sys.executable, '-I', '-c', probe_script('delete'), str(self.copy),
-                               '%d %d' % (made.st_dev, made.st_ino)],
-                              capture_output=True, encoding='utf-8', errors='replace', timeout=60)
-
-    def audit(self):
-        return subprocess.run([sys.executable, '-I', '-c', probe_script('audit'), str(self.copy / 'checkout')],
-                              capture_output=True, encoding='utf-8', errors='replace', timeout=60)
-
-    def read_only(self, path):
-        path.write_text('object\n')
-        os.chmod(path, 0o444)
-        self.assertTrue(os.stat(path).st_file_attributes & 1, 'no read-only attribute was set')
-
-    @windows_only
-    def test_the_delete_removes_a_junction_as_a_link_and_its_target_survives(self):
-        import _winapi
-        _winapi.CreateJunction(str(self.outside), str(self.copy / 'checkout/build'))
-        result = self.delete()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
-        self.assertEqual((self.outside / 'keep.txt').read_text(), 'outside the copy\n')
-
-    @windows_only
-    def test_the_delete_removes_a_folder_symlink_as_a_link_and_its_target_survives(self):
-        try:
-            os.symlink(self.outside, self.copy / 'checkout/linked', target_is_directory=True)
-        except OSError as error:
-            # Without Developer Mode or the privilege no symlink can exist here; the junction case stands.
-            sys.stderr.write('\nNOT RUN: %s (no symlink privilege: %s)\n' % (self.id(), error))
-            return
-        result = self.delete()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
-        self.assertEqual((self.outside / 'keep.txt').read_text(), 'outside the copy\n')
-
-    @windows_only
-    def test_the_audit_never_enters_a_junction_and_refuses_one_leading_out(self):
-        import _winapi
-        # A junction back to the audited root: entered, its .git would be a nested repository.
-        _winapi.CreateJunction(str(self.copy / 'checkout'), str(self.copy / 'checkout/self'))
-        result = self.audit()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r'^[0-9a-f]{64}\n$')
-        _winapi.CreateJunction(str(self.outside), str(self.copy / 'checkout/out'))
-        result = self.audit()
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('out is a symlink that leads out of the disposable copy', result.stderr)
-
-    @windows_only
-    def test_a_replaced_root_is_refused_and_nothing_is_deleted(self):
-        # A running gate cannot rename the folder that holds its working directory here, so the
-        # POSIX case's gate cannot build this; the root is replaced around the delete instead.
-        import _winapi
-        made = os.lstat(self.copy)
-        self.copy.rename(self.tmp / 'moved')
-        self.copy.mkdir()
-        (self.copy / 'kept').write_text('replacement\n')
-        result = self.delete(made)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('is no longer the directory made for the disposable copy; deleted nothing', result.stderr)
-        # In UTF-8, as sh prints the rest of the self-test: Windows Python wrote the ANSI code page.
-        self.assertIn('  FAIL — existing-file probe: ', result.stderr)
-        self.assertEqual((self.copy / 'kept').read_text(), 'replacement\n')
-        (self.copy / 'kept').unlink()
-        self.copy.rmdir()
-        _winapi.CreateJunction(str(self.outside), str(self.copy))
-        result = self.delete(made)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('deleted nothing', result.stderr)
-        self.assertEqual((self.outside / 'keep.txt').read_text(), 'outside the copy\n')
-
-    @windows_only
-    def test_the_delete_removes_read_only_git_objects(self):
-        self.read_only(self.copy / 'checkout/.git/objects/ab/cdef')
-        result = self.delete()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
-
-    @windows_only
-    def test_the_delete_removes_a_tree_whose_paths_pass_260_characters(self):
-        # A deep tree (node_modules) in the copy, under a longer temporary folder than the checkout's.
-        # Without the long-path prefix the scan and the delete fail on a host with LongPathsEnabled=0;
-        # on a host with it enabled this case passes either way and proves only that the prefix works.
-        deep = self.copy / 'checkout'
-        for _ in range(6):
-            deep = deep / ('d' * 50)
-        self.assertGreater(len(str(deep)), 260)
-        prefix = os.sep * 2 + '?' + os.sep
-        os.makedirs(prefix + str(deep))
-        (Path(prefix + str(deep)) / 'file.txt').write_text('deep\n')
-        result = self.delete()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
-
-    @windows_only
-    def test_a_file_hard_linked_with_the_checkout_keeps_its_read_only_attribute(self):
-        # Clearing the attribute to delete the copy's name would clear it on the checkout's file too.
-        checkout = self.tmp / 'checkout'
-        checkout.mkdir()
-        self.read_only(checkout / 'object')
-        os.link(checkout / 'object', self.copy / 'checkout/.git/objects/ab/linked')
-        result = self.delete()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
-        self.assertEqual((checkout / 'object').read_text(), 'object\n')
-        self.assertTrue(os.stat(checkout / 'object').st_file_attributes & 1, 'the read-only attribute was cleared')
-        os.chmod(checkout / 'object', 0o644)
 
 
 class GateRuleTests(unittest.TestCase):
@@ -1092,14 +815,6 @@ class GateRuleTests(unittest.TestCase):
                                 env=environment(self.build, **extra), capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=120)
         return result.returncode, result.stdout + result.stderr
-
-    def test_any_exported_self_test_prefix_fails_a_normal_run_by_name(self):
-        # A seam added later is refused without joining a list (KARARLAR D03 inv2#161).
-        code, out = self.run_gate(GATE_SELFTEST_SOMETHING_NEW='1')
-        self.assertEqual(code, 1, out)
-        self.assertIn('FAIL [env]: GATE_SELFTEST_SOMETHING_NEW is set', out)
-        code, out = self.run_gate(GATE_BUILD_CMD_OVERRIDE='true')
-        self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
 
     def test_a_file_named_dash_is_scanned_inside_and_outside_git(self):
         # grep takes a bare "-" as stdin, so a marker in a file named "-" passed (b7 review, round 2).
