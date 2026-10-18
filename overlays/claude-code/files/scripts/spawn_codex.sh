@@ -242,6 +242,11 @@ if [ -n "$worktree" ] && [ -z "$resume" ]; then
   made=1
   git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" "$base" >&2 ||
     die "git worktree add failed: $dir"
+# A resumed worker is locked again, as spawn_worker.sh does: a close lifted the lock, and the
+# audit must not remove the worktree under the new run (#240). A lock someone else set stays.
+elif [ -n "$worktree" ] && { ! gd=$(git -C "$dir" rev-parse --absolute-git-dir) ||
+       { [ ! -e "$gd/locked" ] && ! git worktree lock --reason "kit worker $name" "$dir"; }; }; then
+  die "--resume --worktree: cannot lock $dir for the resumed worker"
 fi
 
 # Codex is a native program on Windows: every path it is handed is Windows' own spelling.

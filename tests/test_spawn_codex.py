@@ -721,6 +721,17 @@ if args[0] != 'resume':
         # A closed worker leaves no locked worktree: the audit after a later merge decides.
         self.assertIsNone(self.lock(tree))
 
+    def test_a_resumed_worktree_worker_is_locked_again(self):
+        # #240: close_worker.sh unlocks the worktree and keeps it resumable; the resumed run then
+        # worked unlocked, and the post-merge close loop, which needs the lock, never closed it.
+        args = ('w30', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        self.assertEqual(self.spawn(*args).returncode, 0)
+        tree = self.repo / '.claude/worktrees/w30'
+        subprocess.run(['git', 'worktree', 'unlock', str(tree)], cwd=self.repo, check=True)
+        result = self.spawn(*args, '--resume')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.lock(tree), 'kit worker w30')
+
     def test_invalid_result_does_not_create_a_worktree_or_branch_and_retry_succeeds(self):
         (self.repo / 'docs').mkdir()
         (self.repo / 'docs/readme.md').write_text('tracked folder\n')
