@@ -451,6 +451,25 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             git('add', *(['--chmod=+x'] if WINDOWS else []), '.claude/hooks/gate_on_stop.sh')
 
+            # A project hook without a #! line: Git for Windows never runs it, and doctor
+            # skipped every file without one (#165).
+            own = project / '.githooks/pre-commit.project'
+            own.write_text('exec /its/old/path "$@"\n', newline='\n')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: .githooks/pre-commit.project has no #! line', red.stdout)
+            own.unlink()
+            # One with a #! line and no execute bit is switched off on purpose: a note, not red.
+            if not not_on_windows(self.id() + ' (a project hook switched off)', 'POSIX file modes'):
+                own.write_text('#!/bin/sh\nexit 1\n', newline='\n')
+                own.chmod(0o644)
+                git('add', '.githooks/pre-commit.project')
+                off = doctor()
+                self.assertEqual(off.returncode, 0, off.stdout)
+                self.assertIn('NOTE: .githooks/pre-commit.project is switched off', off.stdout)
+                git('rm', '-q', '--cached', '.githooks/pre-commit.project')
+                own.unlink()
+
             # A fresh directory of links to the resolved executables: a dangling link or a
             # repeated PATH entry on the host must not break the fixture.
             dangling = tmp / 'dangling-bin'

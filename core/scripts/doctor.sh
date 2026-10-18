@@ -133,7 +133,14 @@ done
 for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
   [ -f "$f" ] || continue
   first=""; IFS= read -r first < "$f" || true
-  case "$first" in '#!'*) ;; *) continue ;; esac
+  # A project hook is executed, never sourced: without a #! line Git for Windows never runs it (#165).
+  case "$first" in
+    '#!'*) ;;
+    *) case $f in
+         .githooks/*.project) miss "$f has no #! line (Git for Windows never runs it; the kit's hook refuses it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
+       esac
+       continue ;;
+  esac
   # A CR before a line feed (CRLF), not any CR: a lone CR inside a line runs, and the
   # line-ending repair keeps it. Read as bytes: Git for Windows' grep does not show a CR at
   # a line's end to a pattern.
@@ -143,6 +150,9 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
   mode=$(git ls-files -s -- "$f" 2>/dev/null | cut -d' ' -f1)
   if [ -z "$mode" ]; then
     miss "$f is not in the git index (the next clone will not have it)" "chmod +x $f && git add --chmod=+x $f"
+  elif [ ! -x "$f" ] && case $f in .githooks/*.project) true ;; *) false ;; esac; then
+    # chmod -x is the off switch of a project hook with a #! line: the kit's hook skips it.
+    echo "NOTE: $f is switched off (no execute bit); the kit's hook skips it. To switch it on: chmod +x $f && git update-index --chmod=+x $f"
   elif [ ! -x "$f" ] || [ "$mode" != 100755 ]; then
     miss "$f is not executable (disk or git index)" "chmod +x $f && git update-index --chmod=+x $f"
   fi
