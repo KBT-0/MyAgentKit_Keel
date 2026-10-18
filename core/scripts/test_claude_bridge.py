@@ -6679,7 +6679,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             'budget_or_turn_limit', 'output_limit', 'content_flagged'})
 
     def test_an_exhausted_codex_quota_switches_the_review_to_claude(self):
-        # Lead decision 7 (decisions.md; the single-model mandate): quota_exhausted switches the
+        # Lead decision of 2026-10-15 (the single-model mandate): quota_exhausted switches the
         # role to Claude automatically, recorded and reported; no --fallback is needed for it.
         result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

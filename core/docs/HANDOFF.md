@@ -19,8 +19,9 @@ state, open work, and details that are hard to reproduce.
 
 ## The brief
 
-Every brief includes `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`.
-Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside that line.
+Every brief includes `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`
+(`docs/WORKFLOW.md`, "Model routing", defines the values; critical work adds a
+mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside that line.
 
 1. **Task:** one paragraph, exact scope, explicit non-goals ("do not touch X").
 2. **Files:** full paths and member names — verified to exist RIGHT NOW with grep or a
@@ -45,7 +46,7 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    A task that writes an incremental-build planner quotes `docs/GOTCHAS.md`, "An incremental
    build misses its always-run inputs".
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
-   area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets one light review
+   area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets its tier's review
    (`docs/REVIEW_GATE.md`, "Risk tiers"); {{OWNER_NAME}}'s check or the manual check named here
    accepts it.
    **Review:** a worker reviews its own diff with fresh sub-agents before it reports, whether
@@ -101,7 +102,10 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    known sidecar and exits its separate session. A peer ends its turn and accepts SendMessage.
    The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
-End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. When
+End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. A
+worker on a branch or in a worktree writes `docs/worktree-notes/<branch>.md` instead and
+leaves `docs/STATE.md`, `docs/BACKLOG.md` and the `Done: <id>` trailer to the lead at the
+merge (`docs/WORKFLOW.md`, "Parallel work — where a branch agent writes its notes"). When
 the task belongs to an operation with its own file, `docs/<OPERATION>.md`, the detail and
 the result go straight into THAT file and `docs/STATE.md` gets one status line pointing at
 it — no separate note and no fold step. A project that folded every worker's note into
@@ -229,7 +233,9 @@ file's state rules (Anthropic, "Effective harnesses for long-running agents").
 ## Day-to-day task prompt
 
 The full brief above is for handing work across tools. For an ordinary task inside one
-session, the same skeleton compressed:
+session, the same skeleton compressed. A worker the lead manages on a branch gets the full
+brief instead: its gate review is the lead's (`docs/WORKFLOW.md`, "The lead's steps when a
+branch is ready").
 
 ```
 Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, <target folder>/AGENTS.md
@@ -241,15 +247,15 @@ DO NOT: <explicit non-goals — and everything docs/PHASES.md puts out of scope>
 PROOF:  <the cheapest check beyond the commit gate that proves this change; none: the gate>
         — never report a check you did not run
 DONE:   <the command or observation that proves it>
-REVIEW: <inner: you review your diff with fresh sub-agents before reporting, as a session or
-        as a sub-agent | lead: CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH is 1, so you cannot
-        start sub-agents; say so, and the lead reviews your branch>
+REVIEW: you review your diff with fresh sub-agents before the commit; where
+        CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH is 1 you cannot, so say so
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_RUNNING.md in a FRESH session that the working mode names
 (docs/REVIEW_GATE.md, "Invariant").
-Any other change gets one light review (docs/REVIEW_GATE.md, "Risk tiers").
+Any other change gets its tier's review (docs/REVIEW_GATE.md, "Risk tiers").
 
 When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
-docs/BACKLOG.md), then a short summary.
+docs/BACKLOG.md; on a branch or in a worktree, write docs/worktree-notes/<branch>.md
+instead), then a short summary.
 ```

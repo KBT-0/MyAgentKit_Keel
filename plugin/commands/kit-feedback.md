@@ -28,6 +28,20 @@ contribution costs the maintainer more than it costs you (generated contribution
 maintainers: ghostty-org/ghostty CONTRIBUTING.md ties pull requests to an accepted issue;
 "Defending Open Source from AI Slop", EuroPython 2026).
 
+Then search the kit's issues, open and closed, before drafting anything:
+
+```sh
+gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search "<keywords>"
+```
+
+The keywords are kit terms only (a kit file, script, rule or section name), never a name
+from this project: the search is a request to GitHub. It is not pre-approved on purpose, so
+the permission prompt shows the owner the words before they leave the machine; the search
+stays one approval away. Run two or three searches with
+different terms. When an issue matches, propose a comment on it, with the new evidence,
+instead of a new issue; an open duplicate splits the evidence for one defect in two (the
+tracker already held #88 and #141 for one defect).
+
 ## 2. Decide the shape
 
 - **Issue** — a problem, a question, or a suggestion you are not implementing. Cheap, and

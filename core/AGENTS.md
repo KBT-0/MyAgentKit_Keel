@@ -2,7 +2,9 @@
 
 Every agent — **any CLI tool, any model** — reads this file FIRST, every session. Every line is
 binding. It is a map: rules that apply only when one tree is edited live in that tree's
-`AGENTS.md` (`docs/AGENTS.md` for `docs/`), loaded with it.
+`AGENTS.md` (`docs/AGENTS.md` for `docs/`); read that file before you edit the tree. No tool
+loads it whole on its own: in Claude Code, `.claude/rules/state.md` points to it when a file
+under `docs/` is read.
 
 ## What this project is
 
@@ -91,8 +93,10 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
   (`close_worker.sh`, `agent_process`), never one process by name, and leave a one-line
   reason in the STATE line.
 - **A bug you can fix now is fixed now.** A defect you find inside the task's module and scope
-  goes into the task's commit, not into an issue; an issue or a `docs/BACKLOG.md` line is for
-  what is out of the task's reach or what {{OWNER_NAME}} deferred.
+  while you work goes into the task's commit, not into an issue; an issue or a `docs/BACKLOG.md`
+  line is for what is out of the task's reach or what {{OWNER_NAME}} deferred. A gate
+  reviewer's finding follows `docs/REVIEW_GATE.md`, "Verdicts and who decides" instead: its
+  Low goes to the backlog, since a fix in the round adds code no reviewer has seen.
 - No untested code enters {{TESTED_AREA}}. A logic change brings its test in the same change;
   writing the test first is advice, not a rule. An ordinary test needs no mandatory red proof;
   a gate check does (below). A generated-content pipeline validates its output (data
@@ -124,9 +128,10 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
 ### Review gate and validation honesty
 
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling — always) pass
-  the review gate before commit: `docs/REVIEW_GATE.md` is the protocol, `docs/REVIEW_RUNNING.md`
+  the review gate before they reach the main branch (when: `docs/REVIEW_GATE.md`, its opening
+  lines): `docs/REVIEW_GATE.md` is the protocol, `docs/REVIEW_RUNNING.md`
   runs one. The session that wrote a patch never reviews or approves it; the review runs in a
-  FRESH session. Any other change gets one light review (`docs/REVIEW_GATE.md`, "Risk tiers").
+  FRESH session. Any other change gets its tier's review (`docs/REVIEW_GATE.md`, "Risk tiers").
   The review its tier requires starts without asking; an extra review beyond it is
   {{OWNER_NAME}}'s call (`/myagentkit:cross-review`).
 - **AUTHOR and REVIEWER are roles, not vendors.** The author never reviews its own patch; who
@@ -191,7 +196,7 @@ an explicit "start it here".
 
 ### MENTION ONCE — one line in your closing summary, never mid-work
 
-- Risky area touched ({{RISKY_AREAS}}, or gate/CI code) → "review gate applies before commit"
+- Risky area touched ({{RISKY_AREAS}}, or gate/CI code) → "review gate applies before the merge (in a single session on the main branch, before the commit)"
   (the review its tier requires starts without asking:
   `docs/REVIEW_RUNNING.md`).
 - A second system doing the same job, a README that contradicts the API, or a file that does

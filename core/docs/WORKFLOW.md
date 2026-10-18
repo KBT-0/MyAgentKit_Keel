@@ -17,14 +17,20 @@ codebase grows.
 {{OWNER_NAME}} alone decides: OPEN design items, taste and balance calls, scope, and whether
 a risky change ships. Agents propose; {{OWNER_NAME}} decides.
 
-**If the task brief does not state a role, you are the WORKER.** A default falls to the
+**If the task brief does not state a role, you are the WORKER.** This default covers a session
+started from a brief and a sub-agent; the session {{OWNER_NAME}} opens and talks to has no
+brief and is the LEAD. A default falls to the
 narrowest role (a fail-safe default, Saltzer and Schroeder); the choice is the owner's, no
 study measured it.
 
-Every Claude-based role works with the same short appendix, `BEHAVIOUR.md`. It is a kit-owned
+Three Claude sessions get the same short appendix, `BEHAVIOUR.md`: a lead started with the
+command below, a worker session, and a bridged reviewer. It is a kit-owned
 file that a sync refreshes; the project changes it only through the kit. `scripts/spawn_worker.sh`
-passes it to every worker with `--append-system-prompt-file`. `scripts/claude_bridge.py` appends it
-to the reviewer's prompt. The lead starts a fresh enabled session with:
+passes it to every worker session with `--append-system-prompt-file`. `scripts/claude_bridge.py`
+appends the whole file to the reviewer's prompt, its author-only lines included. An Agent-tool
+sub-agent (the Claude Code overlay's `worker.md` and `diff-reviewer.md`, the inner review
+included) gets no appendix: its definition is its whole system prompt, so the A/B below
+covers spawned workers and bridged reviews only. The lead starts a fresh enabled session with:
 `env -u MYAGENTKIT_NO_BEHAVIOUR claude --append-system-prompt-file BEHAVIOUR.md`.
 The lead starts a fresh disabled session with:
 `MYAGENTKIT_NO_BEHAVIOUR=1 claude`.
@@ -63,8 +69,10 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    backstop, not the plan, and agents never bypass it with `--no-verify`.
 5. **Review by tier:** the brief's `Risk:` line names the tier, and the tier names the
    review (`docs/REVIEW_GATE.md`, "Risk tiers"): one light reviewer for low, one for medium,
-   two for high ({{RISKY_AREAS}}, gates, hooks, check scripts, review tooling).
-   It runs before commit, in a FRESH session. The author never approves their own patch.
+   two for high (gates, hooks, check scripts, review tooling); code in {{RISKY_AREAS}} is
+   medium.
+   It runs in a FRESH session before the change reaches the main branch (when exactly:
+   `docs/REVIEW_GATE.md`, its opening lines). The author never approves their own patch.
 6. **Document:** a changed public API updates its README in the same task (`AGENTS.md`,
    "Task discipline").
 7. **Update `docs/STATE.md`:** active work and what waits on {{OWNER_NAME}}, with a
@@ -93,7 +101,9 @@ deletion checkable.
   `Done: K4, K5` and an empty `Done:`, and such a value already in the history closes
   nothing (`check.sh` prints a NOTE naming the commit). Git reads the key in any case, so
   `done: K4` closes K4 too. For work done on a branch, the integrating session's merge
-  commit carries it. The trailer is git's own format (git-scm.com/docs/git-interpret-trailers).
+  commit carries it: `git merge --no-commit <branch>`, delete the id's line from
+  `docs/STATE.md` and stage it, then `git commit` with the trailer, because `commit-msg`
+  reads the staged STATE.md and a plain `git merge` commits before that line is gone. The trailer is git's own format (git-scm.com/docs/git-interpret-trailers).
 - `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
   it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
   when either file names an id that any commit in the history closed. The strong review
@@ -536,7 +546,7 @@ and review. Running everything high spends the scarce budget on work that did no
 |---|---|
 | Mechanical work and re-review of a small fix round | medium |
 | A new mechanism's first round, a gate/hook/review-tooling change, or a risky diff | high |
-| A review | medium; on a high-tier change one of the two reviewers at high (`REVIEW_RISK=high` sets the default); never xhigh or max |
+| A review | medium; on a high-tier change each of the two reviewers at high (`REVIEW_RISK=high` sets the default); never xhigh or max |
 | Work requiring xhigh/max | Only by the lead's decision, with the reason in the brief; never a review |
 
 Effort is chosen anew for every round from this table: effort is never carried up from the
@@ -546,9 +556,17 @@ default effort, and effort levels are compared in separate sessions ("Optimizing
 intelligence"; code.claude.com/docs/en/model-config, "Adjust effort level").
 
 Every brief carries `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`, plus
-the chosen model and effort. Route describes the task; risk determines the check list and
-the review tier: low means tests for touched files; medium means focused suites plus the
-package check; high means the full gate plus a careful diff read. The lead session changes
+the chosen model and effort. Route describes the task's shape: `quick` is a fully specified
+small change (a few lines, one file, no design block); `build` is an ordinary implementation
+task in one module, with the brief's five-to-ten-line design; `deep` needs a design decision
+or an investigation first (a new mechanism, a cross-module change, an unknown root cause),
+so its design is reviewed under its own label before code ("Design before code"). Risk names
+the review tier (`docs/REVIEW_GATE.md`, "Risk tiers"). `Checks:` lists what the worker runs
+on top of the gate, never instead of it (rule 9 of "Worker cost": the gate always runs): for
+low, the tests of the touched files; for medium, the focused suites, plus the project's
+packaging consistency check when it has one, a check of seconds such as the kit's
+`python scripts/package_codex_plugin.py --check` (the package build itself runs once after
+the merge, rule 9); for high, the full gate run by hand and a careful diff read. The lead session changes
 its model only at a task boundary, never mid-task, because a model switch rebuilds the prompt
 cache at full price; an effort switch keeps the cache on Claude, and still waits for the
 boundary so that a round's record names one configuration.
@@ -612,6 +630,8 @@ Rules for whoever routes work, binding with any table:
    back at once, unasked (`AGENTS.md`, "Duties toward {{OWNER_NAME}}").
 7. **Critical work is written by Opus until {{OWNER_NAME}} says otherwise** (owner decision,
    2026-10-15): architecture, a gate's or the review tooling's design, a security boundary.
+   The brief marks it `Risk: <tier> (critical)`; the mark keeps the tier
+   (`docs/REVIEW_GATE.md`, "Risk tiers").
    It never goes to the plugged family, in saver too. In solo, the subscription's stronger
    Claude tier (Fable today, rule 2's check) reviews it; on a plan without Fable, Opus reviews
    it in a fresh session, at high effort, one round, and {{OWNER_NAME}}'s diff read before the
@@ -834,7 +854,7 @@ cut any line whose removal would not cause a mistake), so a lesson that became a
 The lead reads this block before it briefs, spawns, merges or closes a worker and after a
 compaction; the full rule below, with its measurements and sources, when one is in doubt.
 
-1. A worker's cache outlives its waits (one-hour cache); long jobs run in the background; nobody polls.
+1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.
 2. A gate finding goes back to the author's side while its context is under the band and the
    fix is no redesign; otherwise a fresh worker takes it.
 3. One small task per worker, sized to end under the context band.
@@ -887,7 +907,11 @@ Rules, binding for whoever routes workers:
    one-hour cache tokens over 1,582 requests and only 11 gaps passed five minutes (#116); a
    one-hour write costs 2x base input, a five-minute one 1.25x.
    The worker starts long jobs in the background and is re-invoked when they exit, and never
-   runs `sleep`, `until`, `pgrep` or tail-the-log loops. To react to a log line or a state
+   runs `sleep`, `until`, `pgrep` or tail-the-log loops. `git commit` and `git merge` are long
+   jobs too: the pre-commit and pre-merge-commit hooks run the full gate. Claude Code's Bash
+   tool stops waiting on a foreground command after 120 seconds by default and moves it to
+   the background, so a commit runs in the background or with a `timeout` above the
+   project's measured gate time (in one project the gate took a median 167 s, at most 462 s). To react to a log line or a state
    change, use the Monitor tool with a filtered command, not a loop
    (code.claude.com/docs/en/tools-reference). Only a worker definition's
    `experimental.cacheTtl: 1h` is ignored while a subscription draws usage credits; the kit's
@@ -1525,6 +1549,9 @@ one names what would have to change before it is worth reopening.
 
 `AGENTS.md` is read every session, so its rules carry no source lines; their sources live
 here, by rule. A rule with no source below is the owner's choice or a lesson named beside it.
+A citation of `KARARLAR` (Turkish for "decisions"; an item such as `B03 inv2#31` or `D06`)
+names an entry of the kit maintainer's decision log, which the kit does not ship: it records
+that the rule is an owner decision, and the reason stands beside the citation.
 
 - **Reading order.** The constitution is loaded at session start, so opening it again adds a
   second copy (code.claude.com/docs/en/memory). `docs/ARCHITECTURE.md` is read only when the

@@ -7,6 +7,16 @@ architecture boundaries into things the compiler enforces.
 Claims here name their source in brackets; the URLs are in "Sources" at the end. Where a
 sentence is the kit's own inference or preference, it says so.
 
+**After installing, by hand.** Append `docs/kit/unity.gitignore-fragment` to `.gitignore`, in
+its "Stack-specific rules" section, and keep the re-include block at the very END of the file,
+because git applies the LAST matching rule; `bootstrap.sh` copies files and never merges
+into an existing `.gitignore`. Then paste the boundary check of §2 into
+`scripts/boundary_checks.sh`. The placeholders: `{{ASM_PREFIX}}` is the prefix of every
+assembly name, usually the product's name in PascalCase (`MyGame` gives `MyGame.Client`);
+`{{NET_LIB}}` is the networking library's root namespace as a `using` line names it (for
+example `Unity.Netcode` or `Mirror`). A project with no networking library deletes the
+`{{NET_LIB}}` line of `unity/AGENTS.md`, the `Net/Adapter` assembly and the boundary check.
+
 ## 1. Version control settings (do these first)
 
 - **Edit → Project Settings → Editor → Asset Serialization → Mode: Force Text.** This is
@@ -85,8 +95,9 @@ Two holes to close, or the compiler does not enforce what the table says:
 recognisable, because the grep gate below keys on the path. Swapping the networking library
 should then touch exactly one assembly — that is the entire reason for this split.
 
-If the project is Unity all the way down, with no pure core, skip this section and §3
-(the assembly split and the core wiring) and keep the rest (see `overlays/unity/README.md`, "What this overlay assumes").
+If the project is Unity all the way down, with no pure core, delete this section and §3
+(the assembly split and the core wiring), placeholders included, so the placeholder gate
+passes, and keep the rest: none of it depends on a core.
 
 ### The matching gate
 

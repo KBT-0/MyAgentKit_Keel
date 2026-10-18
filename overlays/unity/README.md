@@ -51,6 +51,6 @@ needs a running editor and a connected client, so it is not a repeatable one-com
 ## What this overlay assumes
 
 That the project keeps its game logic in a pure, engine-free core and treats Unity as one
-consumer of it. If the project is Unity all the way down, skip §2 and §3 of
+consumer of it. If the project is Unity all the way down, delete §2 and §3 of
 `docs/UNITY_SETUP.md` (the assembly split and the core wiring), but keep §1 (version control settings), §4 (MCP scope), the
 `unity/AGENTS.md` rules, the gate and the gitignore fragment: none of them depends on a core.

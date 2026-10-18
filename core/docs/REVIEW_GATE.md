@@ -1,7 +1,11 @@
 # Review Gate — Tool-Agnostic (CANONICAL)
 
-A risky diff passes this gate before commit. The reviewer reads this file; running a review
-is `docs/REVIEW_RUNNING.md`.
+A change passes this gate before it reaches the main branch: in a single session before its
+commit; for branch work, on the branch or the integration branch's merged commit, before that
+merges into the main branch or is pushed (`docs/WORKFLOW.md`, "The lead's steps when a
+branch is ready"). A worker may commit on its own branch before it. This is the one place
+the timing is written. The reviewer reads this file; running a review is
+`docs/REVIEW_RUNNING.md`.
 
 ## Invariant
 
@@ -14,7 +18,9 @@ backend) is pluggable, never required. No published measurement says how much an
 the same family adds. The lead names the author's model in `MYAGENTKIT_AUTHOR`;
 `scripts/review.sh` then refuses a reviewer pin of the author's tier, blocks a substitute of
 that tier, and records the author in the chain and the usage record. Without the variable the
-lead checks independence before launch.
+lead checks independence before launch. A project's copy states this rule here only: an
+upgrade replaces this whole section and deletes every other statement of who reviews whom,
+in this file and in `AGENTS.md`, rather than keeping an older paragraph beside it.
 Independence comes from the model family, not the CLI: a `claude@NAME` review of another
 family counts as the second model; its record says the model was requested, unattested. A green gate is
 necessary, not sufficient. The reviewer works in a throwaway copy without network or paid
@@ -29,17 +35,26 @@ with the reason in the brief; a working mode never lowers it.
 
 | Tier | What | Review |
 |---|---|---|
-| low | documentation, tests only, one file outside the rows below | one light reviewer, medium effort |
+| low | documentation (a behaviour-rule document such as `AGENTS.md`, `docs/WORKFLOW.md` or this file included), tests only, one file outside the rows below | one light reviewer, medium effort |
 | medium | code in {{RISKY_AREAS}} outside the high row | one reviewer, medium effort |
-| high | gates, hooks, check scripts, review tooling, the STATE helper, deleting or moving files, concurrency, CI, tool settings | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, one at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge |
+| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, each at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge |
 
 Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and the diff. When
 the diff is too long to read, a longer summary lists every changed file with its line counts,
 every open or deferred finding and every manual check, and {{OWNER_NAME}} may ask for the diff.
 
-A documentation change that alters a behaviour rule (`AGENTS.md`, `docs/WORKFLOW.md`, this
-file) gets one light pass, non-blocking; its Lows are capped as `REVIEW_PROMPT` caps them
-(`scripts/claude_bridge.py`), the only place the number is written.
+Every tier's review is a gate: the change does not pass without its result
+(`docs/REVIEW_RUNNING.md`, "Unavailable reviewer"). Every review's Lows are capped as
+`REVIEW_PROMPT` caps them (`scripts/claude_bridge.py`), the only place the number is written.
+
+- **Review tooling** is the code that runs a review: `scripts/review.sh`, the bridges and the
+  dispatcher (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
+  `scripts/review_dispatch.py`) and a reviewer's agent definition (the Claude Code overlay's
+  `diff-reviewer.md`). The review protocol documents are documentation, the low row.
+- **Critical work** is architecture, a gate's or the review tooling's design, and a security
+  boundary. It is a mark beside the tier, not a tier: the brief writes `Risk: <tier>
+  (critical)`, `REVIEW_RISK` stays the tier, and the mark changes only who writes and who
+  reviews it (`docs/WORKFLOW.md`, "Model routing", rule 7).
 
 ## Rounds
 
@@ -73,8 +88,9 @@ of the one release review. Time target: about 20 minutes per reviewer, the secto
 
 `Accept` / `Accept with Manual Checks` / `Reject`. Reject only on an open Critical or High.
 A Medium is fixed in the round when the lead can verify the fix with a test; otherwise it is
-an issue {{OWNER_NAME}} sees at the merge. A Low goes to `docs/BACKLOG.md` or an issue, never
-fixed in the round. Manual checks go into `docs/STATE.md` before the commit, so an
+an issue {{OWNER_NAME}} sees at the merge. A Low a reviewer reports goes to `docs/BACKLOG.md`
+or an issue, never fixed in the round, because a fix adds code no reviewer has seen; a defect
+the author finds while working is fixed in the task (`AGENTS.md`, "Task discipline"). Manual checks go into `docs/STATE.md` before the commit, so an
 unverifiable claim becomes a standing obligation (owner decision; this is the one place the
 rule is written). **A Reject is not closed by its fixes.** Round 2 reviews them. Sources:
 KARARLAR D06 inv2#18; Yin et al., "How Do Fixes Become Bugs?" (2011), and GitHub protected
