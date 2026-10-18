@@ -18,7 +18,8 @@ so a large tool result cannot hide a visible line between calls. Silent on any e
 
 It also adds context_size.py's band line, so a long autonomous turn meets the band when it
 crosses it, not at the owner's next prompt (#138). A sub-agent's call (`agent_id` in the
-input, code.claude.com/docs/en/hooks) skips it: the band is the lead's to act on.
+input, code.claude.com/docs/en/hooks) is skipped whole: the owner never reads a sub-agent's
+text, the band is the lead's to act on, and a nudge it took was the lead's (#214).
 """
 import json
 import os
@@ -71,8 +72,6 @@ def silent_calls(path: Path, saved: dict) -> tuple[int, object, int]:
 
 
 def band_notice(data: dict) -> str:
-    if data.get('agent_id'):
-        return ''
     try:
         sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -84,6 +83,8 @@ def band_notice(data: dict) -> str:
 
 def main() -> None:
     data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+    if data.get('agent_id'):
+        return  # a sub-agent's call: the owner never reads its text, and it spent the lead's nudge (#214)
     transcript = Path(data['transcript_path'])
     state = transcript.with_suffix('.progress-step')
     # The context_size.py lock: closing the file releases it, even on a kill.

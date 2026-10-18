@@ -205,6 +205,19 @@ class StopHookTests(unittest.TestCase):
             self.assertEqual(stop(hook, root).returncode, 0)
             self.assertTrue((root / '.git/gate-runs').exists(), 'a new file in a new directory ran no gate')
 
+    def test_a_name_git_quotes_is_gated(self):
+        # Porcelain quotes a name with a space or a non-ASCII letter (`?? "src/my file.py"`): the
+        # closing quote broke the pattern's `$`, and a turn that only added it ended ungated (#174).
+        for name in ('my file.py', 'çay.py'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                hook = gated_repo(root, 'echo ran >> .git/gate-runs\n')
+                subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q',
+                                '-m', 'base'], cwd=root, check=True, capture_output=True)
+                (root / 'src' / name).write_text('', newline='\n')
+                self.assertEqual(stop(hook, root).returncode, 0)
+                self.assertTrue((root / '.git/gate-runs').exists(), 'a quoted name ran no gate')
+
     def test_a_passed_tree_is_not_gated_again(self):
         # Stop fires after every reply: a dirty file ran a 217 s gate on each short answer (#81).
         with tempfile.TemporaryDirectory() as tmp:

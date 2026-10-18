@@ -5,9 +5,16 @@
 (`D-1`, `r2`, `Accept-MC`) never stands alone toward the owner. A written rule is forgotten
 after a few turns; this hook is not. It reads the turn's final text from the hook input
 (`last_assistant_message`), drops fenced blocks, backtick spans and words that are paths
-(a `/` or `\\` in them), and exits 2 with the labels it found. A label in parentheses passes
-once, beside its plain words ("the second review round (r2)"); a second one in parentheses
-does not. The agent then rewrites the message in plain words.
+(a `\\`, or a `/` between parts that are not all ids: "N4/M2" is two ids, #210), and exits 2
+with the labels it found. A backtick span that holds only a registered id is read as that id:
+the backticks do not explain it. A label in parentheses passes once, beside its plain words
+("the second review round (r2)"); a second one in parentheses does not. A compact id (K4, r2)
+is a label only when it leads an entry in docs/STATE.md or docs/BACKLOG.md; the dashed shapes
+(D-1) always are. Trade-offs, accepted: an unregistered sibling (B1 beside a registered B2)
+passes, a word that matches a registered id or the dashed shape ("an M2 chip", "F-35") is
+bounced, and an indented code block is read as prose. The Stop hook runs after the owner has
+read the message, so the agent sends one short line that explains each label, never the whole
+message again (#209). A project adds label shapes in `.claude/plain_report_labels.json`.
 
 It also bounces a final message whose last line ends with a question, or that names a
 question as open ("open question", "açık soru"), outside code (#289; `docs/COMMUNICATION.md`,
@@ -42,8 +49,9 @@ def task_patterns() -> tuple[str, str]:
     raise FileNotFoundError('canonical commit-msg task grammar is missing')
 
 
-# Legacy local LABELS additions still work. New project patterns live outside synced hooks
-# in .claude/plain_report_labels.json (a JSON list of regular-expression strings).
+# Legacy local LABELS additions still work. Project patterns live in
+# .claude/plain_report_labels.json (a JSON list of regular-expression strings), so a kit update
+# of this file never carries them away.
 LABELS = (r'\bAccept-MC\b',)
 # Any indent or blockquote marker: a fence inside a list item sits four or more spaces in.
 # A backtick fence's info string has no backtick (CommonMark), so "```sh``` is" is a span.
@@ -133,7 +141,15 @@ def bare_labels(text: str) -> list[str]:
         # Compact task ids (K4, L1b, r2) must head a project entry, just like P0 or H100.
         return bool(re.fullmatch(r'(?:[A-Z]-[0-9]+|v[0-9]+-[a-z][0-9]+)', label))
 
-    prose = ' '.join(word for word in without_code(text).split() if '/' not in word and '\\' not in word)
+    text = SPAN.sub(lambda m: m[0].strip('`') if m[0].strip('`').strip().lower() in registered else m[0], text)
+
+    def words():
+        for word in without_code(text).split():
+            if '\\' in word or '/' in word and not all(
+                    re.fullmatch(task, part) for part in word.strip('.,;:!?()').split('/')):
+                continue  # a path
+            yield word.replace('/', ' ')
+    prose = ' '.join(words())
     found = []
     for pattern, explicit in patterns:
         explained = []  # Overlapping task and project patterns must not count one mention twice.
@@ -173,18 +189,19 @@ def main() -> None:
     if unasked_question(text):
         said.append('BLOCKED: the message to the owner ends with a question or names one as open, in chat '
                     'text. While the owner is present, ask it with the question tool (AskUserQuestion: the '
-                    'options, the recommended one first) and drop it from the text; while the owner is away, '
-                    'park it in docs/STATE.md or an issue and say so without a question mark. Then send the '
-                    'message again (docs/COMMUNICATION.md, "Questions and approvals"; core/docs/ in the kit).')
+                    'options, the recommended one first); while the owner is away, park it in docs/STATE.md or an '
+                    'issue and say so in one line without a question mark. The owner has already read the '
+                    'message: do not send it again (docs/COMMUNICATION.md, "Questions and approvals"; '
+                    'core/docs/ in the kit).')
     try:
         found = bare_labels(text)
     except Exception:  # noqa: BLE001 - no commit-msg grammar: only the label check is off
         found = []
     if found:
         said.append('BLOCKED: the message to the owner names a session label with no plain words beside it: %s. '
-                    'Say what each one is in the chat language ("the second review round"), keep the label '
-                    'in parentheses at most once and only if the owner meets it in a file, then send the '
-                    'message again (docs/COMMUNICATION.md, "Language and terms"; core/docs/ in the kit).'
+                    'The owner has already read the message: do not send it again. Send one short line that says '
+                    'what each one is in the chat language ("r2 = the second review round"), and write the '
+                    'next messages that way (docs/COMMUNICATION.md, "Language and terms"; core/docs/ in the kit).'
                     % ', '.join(found))
     if said:
         print('\n'.join(said), file=sys.stderr)
