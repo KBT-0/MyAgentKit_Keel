@@ -21,6 +21,24 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-18 — v0.12 tiers: the budget is enforced during the run
+
+The tiers batch split check_kit into a fast and a slow tier (decision 23; findings 6 to 8).
+Measured on the maintainer's 20-CPU Windows host (`PYTHON_CPU_COUNT=16`): fast 589 s and 480 s
+(budget 600 s), slow 1802 s (budget 3600 s); the fast tier's wall clock follows its longest unit,
+locale/test_git_hooks (358-461 s), so its lever is sharding that unit, not a larger budget. The
+budget check moved from after the run into the run (round 1, two Opus high reviews, Accept with
+Manual Checks): units queue and each may run to its cap, so no fixed CI `timeout-minutes` can
+guarantee that the budget fires first and the summary is printed. Each unit leads its own POSIX
+session so that a cap kill reaches its test processes; the cost is that a signal to the runner's
+group no longer reaches the units, so SIGTERM, SIGINT and SIGHUP are forwarded to each unit's
+group. Known limit, by design: a `kill -9` of the runner or its group cannot be forwarded and the
+units run on (a Low, filed as an issue; decision 44). The owner's decision 44 makes a change in a
+slow-tier unit's area run `--slow` before its push, the path-filter pattern of finding 7, because
+otherwise the slow tier runs only in CI and before a release. The #95 bridge red was load only: a
+2 s whole-run bound per case, not a defective case. Source: `.myagentkit/v012/reports/tiers.md`,
+decisions 41, 42, 44.
+
 ### 2026-10-18 — v0.12: test rules kept only where a source holds them
 
 The owner ordered the kit's test rules checked against sources, under the rule that a practice
