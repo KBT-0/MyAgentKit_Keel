@@ -1,24 +1,42 @@
 # Negative tests for scripts/boundary_checks.sh — SOURCED by check.sh --self-test.
 #
-# One case per check. First require a green baseline, then construct the violation,
-# require both a nonzero exit and this check's specific diagnostic, and clean up.
+# One case per check. The self-test has already required a green baseline. Construct the
+# violation, require both a nonzero exit and this check's specific diagnostic, and clean up:
+# `expect_fail "<label>" "<diagnostic>" NAME=value ...` (defined in check.sh) does all three,
+# and reports a run that could not take the gate lock (exit 75) as NOT RUN.
 # Set `st_fail=1` when a gate did not reject what it claims to reject. An unrelated
 # failure or a diagnostic printed by a command that succeeded is not a passing test.
 # Print exactly `  ok   — <label>` for each case that passed: while boundary_checks.sh holds
 # any check, check.sh --self-test FAILS a file here that printed no such line, because a
-# self-test that ran nothing would otherwise count as a pass.
+# self-test that ran nothing would otherwise count as a pass, and prints a NOTE when fewer
+# cases passed than boundary_checks.sh has `fail=1` lines.
 #
 # `sh "$0"` re-runs the gate without the self-test flag, so it exits nonzero on a violation.
+# In that nested run the build is skipped once a check has failed, so a case costs seconds.
 #
 # REPLACE THIS WHOLE FILE alongside scripts/boundary_checks.sh.
 #
-# Worked example, matching the example check: the probe below. It runs the gate in a
+# Worked example A, for a check that reads the tree through scan_grep (the example check in
+# boundary_checks.sh does): a synthetic file outside the tree, scanned as if it sat at an
+# in-tree path. Nothing is written into the checkout and nothing is copied, so the case works
+# in a linked worktree too and costs one gate run without its build (#126). `$work` is the
+# self-test's scratch folder, outside the tree. For an edit of an existing file, give the
+# synthetic file that file's lines plus the violation, under that file's own path.
+#
+# > printf 'from myapp.web import router\n' > "$work/web-import.py"
+# > expect_fail "domain/web boundary gate rejects a forbidden import in a new file" \
+# >   'FAIL [boundary]: the domain layer imports the web layer:' \
+# >   GATE_SELFTEST_EXTRA_FILE="$work/web-import.py" GATE_SELFTEST_EXTRA_PATH=src/domain/injected.py
+#
+# Worked example B, for a check that reads files without scan_grep (a `[ -d ]` test, a tool
+# that opens files itself): the probe below. It runs the gate in a
 # disposable copy of the checkout, for a NEW file (set probe_target to a path that does not
 # exist yet) as for an edit of an existing one, so the injection is never in the checkout. A
 # case that wrote into the checkout, even a file it removed again, made a review running there
 # meanwhile fail as stale_checkout, and a concurrent `git add -A` or a SIGKILL could keep the
 # file (KARARLAR B02 inv2#39, 2026-10-15). In the copy no injection can collide with owner
-# content and no trap has to remove it: the copy is deleted whole.
+# content and no trap has to remove it: the copy is deleted whole. It copies the whole
+# checkout twice and runs two full gates, builds included: use example A wherever it fits.
 #
 # {{BOUNDARY_SELF_TESTS}}
 
@@ -126,7 +144,7 @@
 # Copying a large tree (dependencies, build output) costs time, twice: copy only what the
 # gate reads if that is known, but never let the probe write into the checkout.
 #
-# This worked example runs in a subshell so its traps do not replace the surrounding
+# Example B runs in a subshell so its traps do not replace the surrounding
 # self-test traps. `$0` is the checkout's gate; the copy's own gate, at the same relative
 # path, is the one it runs. Adapt the target and diagnostic to your gate.
 #

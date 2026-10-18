@@ -121,6 +121,104 @@ class ProjectSelfTestTests(unittest.TestCase):
         self.assertNotIn('ignored-out', out)
         self.assertIn('SELF-TEST: FAIL', out)
 
+    def counting_build(self):
+        runs = self.tmp / 'build-runs'
+        write(self.build, 'echo run >> "%s"\n' % runs.as_posix())
+        return lambda: len(runs.read_text(encoding='utf-8').splitlines()) if runs.exists() else 0
+
+    def test_the_real_build_runs_once_and_a_scoped_check_is_proven_without_a_copy(self):
+        # #80: each nested case ran the project's build, even after its injected failure had
+        # failed it; a 3.5-minute build made the self-test three hours. Only the baseline builds.
+        # #126: worked example A proves a path-scoped scan_grep check with a synthetic file
+        # scanned under an in-tree path: nothing is written into the tree, nothing is copied.
+        builds = self.counting_build()
+        example = '\n'.join(line[4:] for line in (ROOT / 'core/scripts/boundary_selftests.sh')
+                            .read_text(encoding='utf-8').splitlines() if line.startswith('# > '))
+        self.assertIn('GATE_SELFTEST_EXTRA_PATH=src/domain/', example)
+        check = ("hits=$(scan_grep 'from myapp\\.web' | grep '^src/domain/')\n"
+                 'if [ -n "$hits" ]; then\n'
+                 '  echo "FAIL [boundary]: the domain layer imports the web layer:"\n'
+                 '  echo "$hits"\n  fail=1\nfi\n')
+        write(self.project / 'scripts/boundary_checks.sh', check)
+        write(self.project / 'scripts/boundary_selftests.sh', example + '\n')
+        code, out = self.self_test()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(builds(), 1, out)
+        self.assertIn('ok   — domain/web boundary gate rejects a forbidden import in a new file', out)
+        self.assertIn('ok   — the build cache skips a build that passed on the same files and inputs', out)
+        self.assertIn('ok   — a synthetic file scanned as an in-tree path is reported under that path', out)
+        self.assertNotIn('NOTE — scripts/boundary_checks.sh sets fail=1', out)
+        self.assertFalse((self.project / 'src').exists())
+        # The same check scoped to another folder never sees the injection: the case goes red.
+        write(self.project / 'scripts/boundary_checks.sh', check.replace("'^src/domain/'", "'^src/other/'"))
+        code, out = self.self_test()
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL — domain/web boundary gate rejects a forbidden import in a new file: '
+                      'the gate stayed GREEN', out)
+
+    def test_expect_fail_needs_the_checks_own_line_and_a_busy_lock_is_not_run(self):
+        # #110: any nonzero exit counted as the check firing, a lock timeout (75) included.
+        write(self.project / 'scripts/boundary_checks.sh', ': || fail=1\n: || fail=1\n')
+        write(self.project / 'scripts/boundary_selftests.sh',
+              "expect_fail 'wrong line' 'FAIL [boundary]: never printed' GATE_SELFTEST_EXTRA_FILE=\"$inj\"\n"
+              "expect_fail 'busy lock' 'FAIL [setup]' GATE_LOCK_HELD= GATE_LOCK_WAIT=1\n"
+              "expect_fail 'right line' 'FAIL [setup]: unfilled placeholder markers remain' "
+              "GATE_SELFTEST_EXTRA_FILE=\"$inj\"\n")
+        code, out = self.self_test()
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL — wrong line: the gate exited 1 without the diagnostic 'FAIL [boundary]: never printed'", out)
+        self.assertIn('NOT RUN — busy lock: the gate lock was not free (exit 75)', out)
+        self.assertIn('ok   — right line', out)
+        # Two `fail=1` lines, one case that passed: told, not failed.
+        self.assertIn('NOTE — scripts/boundary_checks.sh sets fail=1 in 2 places', out)
+
+    def test_a_red_baseline_is_inconclusive_with_its_own_exit_code(self):
+        # #152: 2 meant both a usage error and a red baseline.
+        write(self.build, 'exit 1\n')
+        code, out = self.self_test()
+        self.assertEqual(code, 3, out)
+        self.assertIn('SELF-TEST INCONCLUSIVE', out)
+        result = subprocess.run(['sh', 'scripts/check.sh', '--no-such-flag'], cwd=self.project,
+                                env=environment(self.build), capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_the_build_cache_skips_only_a_build_that_passed_on_the_same_inputs(self):
+        # #82: the worker, the Stop hook and the commit hook each built the same files.
+        builds = self.counting_build()
+        script = self.project / 'scripts/check.sh'
+        text = script.read_text(encoding='utf-8')
+
+        def gate(**extra):
+            result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build, **extra),
+                                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+            out = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, out)
+            return out, builds()
+
+        for _ in range(2):
+            out, _ = gate()
+        self.assertEqual(builds(), 2, 'no build_cache_inputs, no cache:\n' + out)
+        self.assertIn('\nbuild_cache_inputs=""\n', text)
+        write(script, text.replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=\'echo "tool ${FIXTURE_TOOL-1}"\'\n'))
+        steps = ((dict(), 3, False), (dict(), 3, True),                          # recorded, then cached
+                 (dict(FIXTURE_TOOL='2'), 4, False), (dict(FIXTURE_TOOL='2'), 4, True),  # an input changed
+                 ('edit', 5, False), (dict(FIXTURE_TOOL='2'), 5, True),           # an untracked file changed
+                 (dict(FIXTURE_TOOL='2', CI='true'), 6, False),                   # CI never reads it
+                 (dict(FIXTURE_TOOL='2', GATE_CACHE='off'), 7, False))
+        for extra, want, cached in steps:
+            with self.subTest(extra=extra, want=want):
+                if extra == 'edit':
+                    write(self.project / 'existing.txt', 'after\n')
+                    extra = dict(FIXTURE_TOOL='2')
+                out, count = gate(**extra)
+                self.assertEqual(count, want, out)
+                self.assertEqual('CHECK: PASS (build cached: ' in out, cached, out)
+        write(script, text.replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=false\n'))
+        for want in (8, 9):
+            out, count = gate()
+            self.assertEqual(count, want, out)
+        self.assertIn('NOTE [build]: build_cache_inputs failed, so the build is not cached', out)
+
 
 class KitWrapperTests(unittest.TestCase):
     def assert_content_edit_fails(self, tracked, name='existing file.txt'):
@@ -240,8 +338,9 @@ class KitWrapperTests(unittest.TestCase):
         read = set(re.findall(r'\$\{([A-Z][A-Z0-9_]*)[:+-]', source))
         legacy = {'GATE_BUILD_CMD_OVERRIDE', 'BOUNDARY_CHECKS_FILE', 'BOUNDARY_SELFTESTS_FILE'}
         # Not seams: they change when a run starts or what CI prints, not what it checks; the
-        # marker; the caller's locale; the lock case script's own fixture variables.
-        other = {'CI', 'GATE_LOCK_FD', 'GATE_LOCK_HELD', 'GATE_LOCK_WAIT', 'GATE_SELFTEST_NESTED', 'LC_ALL'}
+        # marker; the caller's locale; the lock case script's own fixture variables. GATE_CACHE=off
+        # only forces a full build, it never skips one.
+        other = {'CI', 'GATE_CACHE', 'GATE_LOCK_FD', 'GATE_LOCK_HELD', 'GATE_LOCK_WAIT', 'GATE_SELFTEST_NESTED', 'LC_ALL'}
         unprefixed = sorted(name for name in read - legacy - other
                             if not name.startswith(('GATE_SELFTEST_', 'LOCKCASE_')))
         self.assertEqual(unprefixed, [], 'a seam without the GATE_SELFTEST_ prefix')

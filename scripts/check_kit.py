@@ -102,12 +102,12 @@ REQUIRED_SUITES = {
               'test_boundary_example': 2 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 44 if os.name == 'nt' else 11,
               'test_boundary_restore': 35 if os.name == 'nt' else 40,
-              'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
+              'test_sync_kit': 38, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 53 if os.name == 'nt' else 73, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
               'test_kit_output': 1, 'test_kit_runner': 42, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
-              'test_close_worker': 30, 'test_python_fallback': 2, 'test_selftest_status': 11},
+              'test_close_worker': 30, 'test_python_fallback': 2, 'test_selftest_status': 15},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
@@ -828,8 +828,10 @@ def acceptance(self_test):
                 gate.write_text(fixture_gate, encoding='utf-8')
                 status = ["git", "status", "--porcelain", "--untracked-files=all"]
                 before = run(status, project)
-                # Every nested gate run records the tree through the build command, so a case
-                # that writes into the tree and cleans up afterwards is still caught.
+                # Every nested gate run that reaches the project's build records the tree through
+                # the build command. Since #80 that is the baseline alone: a case's run skips the
+                # build once a check failed, and a quiet case passes GATE_BUILD_CMD_OVERRIDE=true.
+                # The status comparison after the run below still covers the whole self-test.
                 log = side / "status.log"
                 build.write_text(f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"\n', encoding='utf-8')
                 # GATE_LOCK_WAIT: a nested run that does not inherit the lock stops in seconds.

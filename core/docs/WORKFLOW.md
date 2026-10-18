@@ -229,6 +229,13 @@ breaks, everything keeps looking green.
   size of a gate; seeded failures measurably improved the tests developers wrote (Petrović et
   al., ICSE 2021, arxiv.org/abs/2103.07189), and a check that cannot fail does not fail
   securely (OWASP, "Fail securely").
+- **When the self-test is owed.** An edit that adds, removes or changes a check owes
+  `./scripts/check.sh --self-test`: the gate's own logic in `scripts/check.sh`,
+  `scripts/boundary_checks.sh`, `scripts/boundary_selftests.sh` or a hook in `.githooks/`.
+  An edit to what a check only reads owes none: a test added to the suite the build command
+  runs, a document, `docs/STATE.md`, the build command's value. The normal gate run proves
+  those. Several gate edits in one task owe one self-test at the task's end, not one each;
+  `sync-kit.sh` says whether a sync left a gate file changed.
 - **A self-test case never changes a tracked file**, and leaves nothing in the working tree
   but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
   --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
@@ -241,8 +248,13 @@ breaks, everything keeps looking green.
   commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
   a second gate run waits instead of racing; tests that write scratch files still use a
   unique temporary directory, never a fixed name in the build or working directory.
+- **Prove a scan-based check with a synthetic file, not a copy.** A check that reads files
+  through `scan_grep` is proven with `GATE_SELFTEST_EXTRA_FILE` (a file outside the tree)
+  and `GATE_SELFTEST_EXTRA_PATH` (the in-tree path it is scanned as), passed to `expect_fail`
+  with the check's own `FAIL [tag]` line. Nothing is written into the tree or copied, and it
+  works in a linked worktree (`scripts/boundary_selftests.sh` shows how).
 - **Run a probe that edits or creates a file in a disposable copy of the checkout**, never
-  in the checkout. Restoring the file from EXIT/INT/TERM traps was not enough: until the
+  in the checkout, for a check that does not read through `scan_grep`. Restoring the file from EXIT/INT/TERM traps was not enough: until the
   restore, a concurrent `git add -A` staged the injection, and SIGKILL or a power loss,
   which run no trap, left it in the tree. The existing-file example in
   `scripts/boundary_selftests.sh` copies the tree (uncommitted edits included), runs the

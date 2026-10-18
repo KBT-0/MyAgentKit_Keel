@@ -318,5 +318,17 @@ $latest
 EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
-echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."
-echo "          A sync that leaves the gate red or a gate unable to fail is not finished."
+# The self-test is owed only when a gate file changed (core/docs/WORKFLOW.md, "Writing a gate"):
+# this sync's hooks and the ACTION items applied to the gate both show against the last commit.
+if git -C "$target" rev-parse -q --verify HEAD >/dev/null 2>&1 &&
+   gate_status=$(git -C "$target" status --porcelain -- .githooks scripts/check.sh \
+                   scripts/boundary_checks.sh scripts/boundary_selftests.sh 2>/dev/null) &&
+   [ -z "$gate_status" ]; then
+  echo "sync-kit: now run ./scripts/check.sh. No gate file differs from the last commit (.githooks/,"
+  echo "          scripts/check.sh, scripts/boundary_*.sh), so this sync owes no --self-test."
+  echo "          A sync that leaves the gate red is not finished."
+else
+  echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test: a gate file differs"
+  echo "          from the last commit, or this is not a Git checkout with a commit."
+  echo "          A sync that leaves the gate red or a gate unable to fail is not finished."
+fi

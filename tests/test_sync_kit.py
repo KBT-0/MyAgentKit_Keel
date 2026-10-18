@@ -102,6 +102,26 @@ class SyncKitTests(unittest.TestCase):
         self.assertIn('sync-kit.sh . --dry-run', updating)
         self.assertNotIn('each version\'s entry ends with one ordered checklist', updating)
 
+    def test_the_self_test_is_asked_for_only_when_a_gate_file_changed(self):
+        # The sync asked for --self-test after every sync, which costs hours on a large project
+        # (#124): only a gate file that differs from the last commit owes one.
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false',
+               '-c', 'core.hooksPath=/dev/null']
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            (project / '.githooks').mkdir(parents=True)
+            (project / '.githooks/pre-commit').write_bytes(b'exit 0\n')
+            subprocess.run(['git', 'init', '-q', str(project)], check=True)
+            subprocess.run(git + ['add', '-A'], cwd=project, check=True)
+            subprocess.run(git + ['commit', '-qm', 'base'], cwd=project, check=True)
+            result, stamp = self.sync(tmp, '- A change.\n')
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertIn('so this sync owes no --self-test', result.stdout)
+            (project / 'docs/kit/.kit-version').write_bytes(b'0.1\n')
+            (project / '.githooks/pre-commit').write_bytes(b'exit 1\n')
+            result, _ = self.sync(tmp, '- A change.\n')
+            self.assertIn('and ./scripts/check.sh --self-test: a gate file differs', result.stdout)
+
     def test_sync_preserves_project_owned_plain_report_patterns(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.sync(tmp, '- A change.\n', '--dry-run')

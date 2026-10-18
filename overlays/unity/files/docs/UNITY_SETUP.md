@@ -104,14 +104,13 @@ fi
 And its negative test, in `scripts/boundary_selftests.sh` — not optional:
 
 ```sh
-mkdir -p unity/Assets/Client && printf 'using {{NET_LIB}};\n' > unity/Assets/Client/.selftest.cs
-if sh "$0" >/dev/null 2>&1; then
-  echo "  FAIL — {{NET_LIB}} confinement gate stayed green with a violation present."
-  st_fail=1
-else
-  echo "  ok   — {{NET_LIB}} confinement gate rejects an import outside the adapter"
-fi
-rm -f unity/Assets/Client/.selftest.cs
+# Nothing is written into the checkout: the import sits in a file outside the tree, scanned
+# as if it were unity/Assets/Client/Injected.cs. expect_fail (scripts/check.sh) requires a
+# nonzero exit AND this check's own FAIL line; the self-test already proved the baseline green.
+printf 'using {{NET_LIB}};\n' > "$work/net-import.cs"
+expect_fail "{{NET_LIB}} confinement gate rejects an import outside the adapter" \
+  'FAIL [boundary]: {{NET_LIB}} outside the adapter assembly:' \
+  GATE_SELFTEST_EXTRA_FILE="$work/net-import.cs" GATE_SELFTEST_EXTRA_PATH=unity/Assets/Client/Injected.cs
 ```
 
 ## 3. Consuming the pure core from Unity

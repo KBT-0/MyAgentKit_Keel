@@ -63,8 +63,11 @@ exactly the habit the review gate exists to prevent.
    migrations ("Two tiers of ownership" above: a silent merge of process rules is worse
    than none).
 
-Then run `./scripts/check.sh` and `./scripts/check.sh --self-test`. A sync that leaves the
-gate red, or leaves a gate that can no longer fail, is not finished.
+Then run `./scripts/check.sh`. Run `./scripts/check.sh --self-test` as well when a gate file
+differs from the last commit (`.githooks/`, `scripts/check.sh`, `scripts/boundary_*.sh`);
+the sync's last line says which applies (WORKFLOW, "Writing a gate", says when a self-test
+is owed). A sync that leaves the gate red, or leaves a gate that can no longer fail, is not
+finished.
 
 Overlay files are installed once and then belong to the project: the sync updates one only
 if it is kit-owned and the project already has it. The kit-owned ones are the Claude Code

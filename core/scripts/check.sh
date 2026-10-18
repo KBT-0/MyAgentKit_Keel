@@ -24,11 +24,19 @@
 # so a new seam needs no list entry, and an exported copy cannot turn the gate green in a normal
 # run. A test fails on a seam without the prefix (tests/test_selftest_status.py).
 #
-# EXIT CODES: 0 pass, 1 fail, 2 usage, 75 NOT RUN — another gate run held this checkout's
+# EXIT CODES: 0 pass, 1 fail, 2 usage, 3 self-test inconclusive (the baseline gate run on
+# this tree is red, so no case could prove anything: fix the gate's FAIL first), 75 NOT RUN —
+# another gate run held this checkout's
 # lock for longer than GATE_LOCK_WAIT=<seconds> allowed (unset: wait without limit, which is
 # what manual, CI and commit-hook runs want; the Stop hook sets about 500 so it answers
 # before its own timeout kills it). A caller reports 75 as "gate did not run", never as a
 # pass and never as a gate failure.
+#
+# WHEN THE SELF-TEST IS OWED: after an edit that adds, removes or changes a check (this file's
+# logic, scripts/boundary_checks.sh, scripts/boundary_selftests.sh, .githooks/). It is NOT owed
+# for an edit to what a check reads (a test added to the suite build_test_cmd runs, a document,
+# STATE.md), nor for a value the gate only passes on (build_test_cmd itself, toolchain_path):
+# the normal gate run proves those. Several gate edits in one task owe one self-test at its end.
 #
 # A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and leaves nothing in the working tree but
 # files Git ignores: the self-test FAILS when HEAD, the index, `git status --porcelain
@@ -37,7 +45,8 @@
 # cases writes nothing but files Git ignores (owner decision, 2026-10-12): this check cannot catch
 # a non-ignored file that a case writes and removes meanwhile, which fails the review as
 # stale_checkout. So no case writes one: point the gate at a synthetic file outside the tree
-# through a self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured
+# through a self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below, with
+# GATE_SELFTEST_EXTRA_PATH to scan that file under an in-tree name; honoured
 # only in the self-test's own nested runs, so the case passes it to expect_fail or
 # expect_pass), or run the case against a disposable copy of the tree outside it. A file
 # injected into the tree is seen by a concurrent `git add -A` and by another session's edits,
@@ -526,27 +535,49 @@ finally:
     echo "  Every case below would then pass for the wrong reason. Note that this only"
     echo "  tells you the command failed, not why — the output was:"
     printf '%s\n' "$baseline" | sed 's/^/    /' | tail -12
-    return 2
+    return 3
   fi
   echo "self-test: baseline is green; injecting failures..."
 
-  # helper: run the gate with an injected condition, expect FAILURE.
-  # usage: expect_fail "<label>" env=val ... -- (command run via env)
+  # The two helpers below; scripts/boundary_selftests.sh, sourced at the end, may use them too.
+  # expect_fail "<label>" "<diagnostic>" NAME=value ...: the gate, run with the NAME=value
+  # pairs, must exit nonzero AND print <diagnostic> (a fixed string, the check's own `FAIL [tag]: ...`
+  # line). Any nonzero exit once counted: a flaky build, a FAIL [env] or a NOT RUN [lock] (75)
+  # turned a check that never fired into `ok`. 75 is reported NOT RUN and fails the self-test.
+  # A nested run stops short of the build once a check has failed (section 4), so a case
+  # aimed at an earlier check costs seconds, not a build.
   expect_fail() {
-    label="$1"; shift
-    if env "$@" sh "$0" >/dev/null 2>&1; then
+    label="$1"; want="$2"; shift 2
+    case_out=$(env "$@" sh "$0" 2>&1); case_rc=$?
+    if [ "$case_rc" -eq 75 ]; then
+      printf '%s\n' "  NOT RUN — $label: the gate lock was not free (exit 75); nothing was proven."
+      st_fail=1
+    elif [ "$case_rc" -eq 0 ]; then
       printf '%s\n' "  FAIL — $label: the gate stayed GREEN with its failure condition present."
+      st_fail=1
+    elif ! printf '%s\n' "$case_out" | grep -qF -- "$want"; then
+      printf '%s\n' "  FAIL — $label: the gate exited $case_rc without the diagnostic '$want'; another check, or"
+      echo "         another cause, failed it. Its last lines:"
+      printf '%s\n' "$case_out" | tail -5 | sed 's/^/           /'
       st_fail=1
     else
       printf '%s\n' "  ok   — $label"
     fi
   }
+  # expect_pass "<label>" NAME=value ...: the gate must exit 0. A case that does not aim at the
+  # build passes GATE_BUILD_CMD_OVERRIDE=true: the build reads the tree, which the baseline above
+  # already built green, so running it again proves nothing about the check under test.
   expect_pass() {
     label="$1"; shift
-    if env "$@" sh "$0" >/dev/null 2>&1; then
+    case_out=$(env "$@" sh "$0" 2>&1); case_rc=$?
+    if [ "$case_rc" -eq 0 ]; then
       printf '%s\n' "  ok   — $label"
+    elif [ "$case_rc" -eq 75 ]; then
+      printf '%s\n' "  NOT RUN — $label: the gate lock was not free (exit 75); nothing was proven."
+      st_fail=1
     else
-      printf '%s\n' "  FAIL — $label: the gate fired when it should have stayed quiet (false positive)."
+      printf '%s\n' "  FAIL — $label: the gate fired when it should have stayed quiet (false positive). Its last lines:"
+      printf '%s\n' "$case_out" | tail -5 | sed 's/^/           /'
       st_fail=1
     fi
   }
@@ -555,10 +586,18 @@ finally:
   # The token is assembled at runtime on purpose: written literally, it would sit in this
   # file and the placeholder gate would flag its own source forever.
   printf 'injected by check.sh --self-test: %s%s\n' '{{SELF_TEST' '_TOKEN}}' > "$inj"
-  expect_fail "placeholder gate rejects an unfilled marker" GATE_SELFTEST_EXTRA_FILE="$inj"
+  expect_fail "placeholder gate rejects an unfilled marker" 'FAIL [setup]: unfilled placeholder markers remain' \
+    GATE_SELFTEST_EXTRA_FILE="$inj"
 
   # ...and does NOT fire on the two paths that carry markers forever by design.
-  expect_pass "placeholder gate ignores setup/ and the module template"
+  expect_pass "placeholder gate ignores setup/ and the module template" GATE_BUILD_CMD_OVERRIDE=true
+  # GATE_SELFTEST_EXTRA_PATH: the injected file is scanned under an in-tree name, which a
+  # path-scoped check filters on (scripts/boundary_selftests.sh uses it for boundary cases).
+  expect_fail "a synthetic file scanned as an in-tree path is reported under that path" \
+    'docs/injected.md:1:injected by check.sh --self-test' \
+    GATE_SELFTEST_EXTRA_FILE="$inj" GATE_SELFTEST_EXTRA_PATH=docs/injected.md
+  expect_pass "a synthetic file scanned as a path under setup/ is exempt there like a real one" \
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_EXTRA_FILE="$inj" GATE_SELFTEST_EXTRA_PATH=setup/injected.md
 
   # --- STATE.md: present, with its heading, and never measured ---------------
   long="$work/long.md"; noheading="$work/noheading.md"
@@ -569,9 +608,12 @@ finally:
   } > "$long"
   sed 's/^## Active work/## Current things/' "$long" > "$noheading"
 
-  expect_pass "state gate does not measure length: a long file with nothing active passes" GATE_SELFTEST_STATE_FILE="$long"
-  expect_fail "state gate rejects a MISSING state file"        GATE_SELFTEST_STATE_FILE="$work/absent.md"
-  expect_fail "state gate rejects a renamed 'Active work' heading" GATE_SELFTEST_STATE_FILE="$noheading"
+  expect_pass "state gate does not measure length: a long file with nothing active passes" \
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_STATE_FILE="$long"
+  expect_fail "state gate rejects a MISSING state file" "FAIL [state]: $work/absent.md does not exist" \
+    GATE_SELFTEST_STATE_FILE="$work/absent.md"
+  expect_fail "state gate rejects a renamed 'Active work' heading" "FAIL [state]: $noheading has no '## Active work' heading" \
+    GATE_SELFTEST_STATE_FILE="$noheading"
 
   # --- a finished task still named in the state files -----------------------
   # A history of its own, outside the tree, whose one commit closed K4; and one with none.
@@ -586,26 +628,30 @@ finally:
   printf '# STATE\n\n## Active work\n' > "$work/backlog/STATE.md"
   printf '# BACKLOG\n\n- K4 again\n' > "$work/backlog/BACKLOG.md"
   expect_fail "state gate rejects a task a Done: trailer closed that STATE.md still names" \
+    "FAIL [state]: $work/closed/STATE.md:4 names K4" \
     GATE_SELFTEST_STATE_FILE="$work/closed/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   expect_fail "state gate rejects a closed task that BACKLOG.md still names" \
+    "FAIL [state]: $work/backlog/BACKLOG.md:3 names K4" \
     GATE_SELFTEST_STATE_FILE="$work/backlog/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   expect_pass "state gate does not read K4b as the closed K4" \
-    GATE_SELFTEST_STATE_FILE="$work/other/STATE.md" GATE_SELFTEST_HISTORY="$hist"
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_STATE_FILE="$work/other/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   expect_pass "state gate passes a repository with no commit yet" \
-    GATE_SELFTEST_STATE_FILE="$work/closed/STATE.md" GATE_SELFTEST_HISTORY="$fresh"
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_STATE_FILE="$work/closed/STATE.md" GATE_SELFTEST_HISTORY="$fresh"
   mkdir -p "$work/strong-list" "$work/strong-report/reviews"
   printf '# STATE\n\n## Active work\n' | tee "$work/strong-list/STATE.md" > "$work/strong-report/STATE.md"
   printf '# STRONG_REVIEW\n\n- K4: accepted\n' > "$work/strong-list/STRONG_REVIEW.md"
   printf '# report\n\n- K4 (High): a finding\n' > "$work/strong-report/reviews/strong-2026-01-01-model.md"
   expect_fail "state gate rejects a closed task that STRONG_REVIEW.md still names" \
+    "FAIL [state]: $work/strong-list/STRONG_REVIEW.md:3 names K4" \
     GATE_SELFTEST_STATE_FILE="$work/strong-list/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   expect_fail "state gate rejects a closed task that a strong review report still names" \
+    "FAIL [state]: $work/strong-report/reviews/strong-2026-01-01-model.md:3 names K4" \
     GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   mkdir -p "$work/audit/audits"
   printf '# STATE\n\n## Active work\n' > "$work/audit/STATE.md"
   printf '# audit\n\n- K4: a finding\n' > "$work/audit/audits/2026-01.md"
   expect_pass "state gate permits historical audit mentions of closed tasks" \
-    GATE_SELFTEST_STATE_FILE="$work/audit/STATE.md" GATE_SELFTEST_HISTORY="$hist"
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_STATE_FILE="$work/audit/STATE.md" GATE_SELFTEST_HISTORY="$hist"
 
   # --- the strong review reminder: told, never failed ---------------------------
   # Two histories that added a report, 30 days ago and now, and one with none; the list in
@@ -632,7 +678,8 @@ finally:
   for case in "$work/strong-30|days ago" "$work/strong-0|" "$hist|no strong review report yet" \
               "$work/strong-tasks|$STRONG_REVIEW_TASKS tasks"; do
     repo=${case%%|*}; want=${case#*|}
-    out=$(env GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$repo" sh "$0" 2>&1)
+    out=$(env GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" \
+      GATE_SELFTEST_HISTORY="$repo" sh "$0" 2>&1)
     rc=$?; said=$(printf '%s\n' "$out" | grep -F 'NOTE [strong-review]')
     if [ "$rc" -ne 0 ]; then
       printf '%s\n' "  FAIL — the strong review reminder case turned the gate red ($repo)"; reminder_ok=0
@@ -649,13 +696,13 @@ finally:
   fi
 
   # --- the gates that used to be skippable ----------------------------------
-  expect_fail "boundary checks missing is a FAILURE, not a skip" \
+  expect_fail "boundary checks missing is a FAILURE, not a skip" "FAIL [boundary]: $work/absent.sh is missing" \
     BOUNDARY_CHECKS_FILE="$work/absent.sh"
-  expect_fail "an unconfigured build/test command is a FAILURE, not a warning" \
+  expect_fail "an unconfigured build/test command is a FAILURE, not a warning" 'FAIL [build]: no build/test command' \
     GATE_BUILD_CMD_OVERRIDE=" "
-  expect_fail "a failing build/test command fails the gate" \
+  expect_fail "a failing build/test command fails the gate" 'FAIL [build]: the build/test command exited 1' \
     GATE_BUILD_CMD_OVERRIDE="false"
-  expect_fail "an all-whitespace build/test command is unconfigured, not a no-op" \
+  expect_fail "an all-whitespace build/test command is unconfigured, not a no-op" 'FAIL [build]: no build/test command' \
     GATE_BUILD_CMD_OVERRIDE="  "
 
   # --- a seam outside the self-test ---------------------------------------------
@@ -680,7 +727,7 @@ finally:
       mkdir "$work/fakebin" &&
         printf '#!/bin/sh\n: > "%s"\necho C:/not-the-lock\n' "$work/cygpath-called" > "$work/fakebin/cygpath" &&
         chmod +x "$work/fakebin/cygpath"
-      if env PATH="$work/fakebin:$PATH" GATE_LOCK_WAIT=5 sh "$0" >/dev/null 2>&1 && [ ! -e "$work/cygpath-called" ]; then
+      if env PATH="$work/fakebin:$PATH" GATE_LOCK_WAIT=5 GATE_BUILD_CMD_OVERRIDE=true sh "$0" >/dev/null 2>&1 && [ ! -e "$work/cygpath-called" ]; then
         echo "  ok   — a cygpath on a POSIX PATH is never run and the nested run keeps its lock"
       else
         echo "  FAIL — a cygpath on a POSIX PATH was run, or the nested run beside it did not pass."
@@ -694,7 +741,7 @@ finally:
   mkdir "$shadow" &&
     printf 'open(__file__ + ".imported", "w").close()\nraise ImportError("a stand-in fcntl")\n' > "$shadow/fcntl.py"
   case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) shadow=$(cygpath -m "$shadow") ;; esac
-  if env PYTHONPATH="$shadow" GATE_LOCK_WAIT=5 sh "$0" >/dev/null 2>&1 && [ -f "$work/shadow/fcntl.py" ] &&
+  if env PYTHONPATH="$shadow" GATE_LOCK_WAIT=5 GATE_BUILD_CMD_OVERRIDE=true sh "$0" >/dev/null 2>&1 && [ -f "$work/shadow/fcntl.py" ] &&
      [ ! -e "$work/shadow/fcntl.py.imported" ]; then
     echo "  ok   — a fcntl.py on PYTHONPATH is never imported by the gate lock, and the nested run passes"
   else
@@ -1071,12 +1118,17 @@ LOCKCASE
     echo "## 1. Money"; echo "unlisted"; echo; echo "## 11. Money"; echo "listed"
   } > "$work/project_prefix.md"
 
-  expect_pass "PROJECT gate accepts a file whose Contents lists every section" GATE_SELFTEST_PROJECT_FILE="$proj_ok"
-  expect_fail "PROJECT gate rejects a section missing from the Contents"       GATE_SELFTEST_PROJECT_FILE="$proj_bad"
+  expect_pass "PROJECT gate accepts a file whose Contents lists every section" \
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_PROJECT_FILE="$proj_ok"
+  expect_fail "PROJECT gate rejects a section missing from the Contents" "FAIL [project]: $proj_bad has numbered sections missing" \
+    GATE_SELFTEST_PROJECT_FILE="$proj_bad"
   expect_fail "PROJECT gate is not fooled by a section number that prefixes another" \
+    "FAIL [project]: $work/project_prefix.md has numbered sections missing" \
     GATE_SELFTEST_PROJECT_FILE="$work/project_prefix.md"
-  expect_fail "PROJECT gate rejects a MISSING project file"                    GATE_SELFTEST_PROJECT_FILE="$work/absent.md"
-  expect_pass "PROJECT gate stays quiet on a young file with no sections yet"  GATE_SELFTEST_PROJECT_FILE="$proj_young"
+  expect_fail "PROJECT gate rejects a MISSING project file" "FAIL [project]: $work/absent.md does not exist" \
+    GATE_SELFTEST_PROJECT_FILE="$work/absent.md"
+  expect_pass "PROJECT gate stays quiet on a young file with no sections yet" \
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_PROJECT_FILE="$proj_young"
 
   # --- the module map names every module folder ------------------------------
   # The project's own top-level folders stand in for modules (root "."): a map naming them all
@@ -1087,10 +1139,12 @@ LOCKCASE
   first_module=$(sed -n 's/^- //p' "$work/arch-full.md" | head -1)
   grep -vxF -- "- $first_module" "$work/arch-full.md" > "$work/arch-missing.md"
   expect_pass "module map gate accepts a map that names every module folder" \
-    GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
+    GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
   expect_fail "module map gate rejects a module folder the map does not name" \
+    "FAIL [architecture]: $first_module is a module folder that the '## Module map' of $work/arch-missing.md does not name" \
     GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-missing.md"
   expect_fail "module map gate rejects a module root that holds no file" \
+    'FAIL [architecture]: the module root no-such-root in scripts/check.sh holds no file the gate sees' \
     GATE_SELFTEST_MODULE_ROOTS=no-such-root GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
 
   # --- the commit hook --------------------------------------------------------
@@ -1103,7 +1157,7 @@ LOCKCASE
     if [ ! -f "$hook" ]; then
       printf '%s\n' "  FAIL — $hook is missing: nothing enforces the gate on those commits."
       st_fail=1
-    elif ! sh "$hook" >/dev/null 2>&1; then
+    elif ! env GATE_BUILD_CMD_OVERRIDE=true sh "$hook" >/dev/null 2>&1; then
       printf '%s\n' "  FAIL — $hook rejected a GREEN tree; every such commit would be blocked."
       st_fail=1
     elif env GATE_SELFTEST_EXTRA_FILE="$inj" sh "$hook" >/dev/null 2>&1; then
@@ -1271,11 +1325,45 @@ LOCKCASE
     st_fail=1
   fi
 
+  # --- the build cache ------------------------------------------------------------
+  # A build that passed on these files and inputs is not run again; a changed file, a changed
+  # build_cache_inputs output or CI runs it. The build counts its runs in a file beside the
+  # case's own cache folder; the changed file is the injected one, which the key covers as it
+  # covers every scanned file. Native Windows Python reads that path from the file list, so it
+  # gets the C:/ form there, which the MSYS tools read too.
+  cache_extra="$work/cache-extra.md"
+  case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) cache_extra=$(cygpath -m "$cache_extra") ;; esac
+  cache_ok=1
+  echo one > "$cache_extra"
+  for step in "v1|one||1|ran" "v1|one||1|cached" "v2|one||2|ran" "v2|two||3|ran" "v2|two|true|4|ran"; do
+    IFS='|' read -r cache_input cache_content cache_ci cache_want cache_how <<EOF
+$step
+EOF
+    echo "$cache_content" > "$cache_extra"
+    out=$(env CI="$cache_ci" GATE_SELFTEST_CACHE_DIR="$work/cache" GATE_SELFTEST_CACHE_INPUTS="echo $cache_input" \
+            GATE_SELFTEST_EXTRA_FILE="$cache_extra" \
+            GATE_BUILD_CMD_OVERRIDE='echo built >> "$GATE_SELFTEST_CACHE_DIR.builds"' sh "$0" 2>&1)
+    cache_rc=$?
+    cache_builds=$(wc -l < "$work/cache.builds" 2>/dev/null | tr -d ' ')
+    if [ "$cache_rc" -ne 0 ] || [ "$cache_builds" != "$cache_want" ] ||
+       { [ "$cache_how" = cached ] && ! printf '%s\n' "$out" | grep -q '^CHECK: PASS (build cached: '; }; then
+      printf '%s\n' "  FAIL — build cache, step '$step': exit $cache_rc, $cache_builds builds ($cache_want wanted). Its last lines:"
+      printf '%s\n' "$out" | tail -5 | sed 's/^/           /'
+      cache_ok=0
+    fi
+  done
+  if [ "$cache_ok" -eq 1 ]; then
+    echo "  ok   — the build cache skips a build that passed on the same files and inputs, and runs it for a changed input, a changed file or CI"
+  else
+    st_fail=1
+  fi
+
   # --- scanner integrity ------------------------------------------------------
   # The switch makes scan_grep report failure the way a broken grep would. This proves the
   # flag-file plumbing end to end — a failed scan cannot end in CHECK: PASS — though not a
   # genuine grep crash.
-  expect_fail "a failed scanner cannot report a clean scan" GATE_SELFTEST_BREAK_SCANNER=1
+  expect_fail "a failed scanner cannot report a clean scan" 'FAIL [scan]: a scanner failed to run somewhere above' \
+    GATE_SELFTEST_BREAK_SCANNER=1
 
   # --- project boundary self-tests ------------------------------------------
   # One case per check in the boundary checks file. Sourced, so it can set st_fail.
@@ -1301,6 +1389,14 @@ LOCKCASE
       echo "         (none printed '  ok   — <label>'). A self-test that did not run is not a pass."
       st_fail=1
     fi
+    # One case per check: a count of the `fail=1` lines (outside comments) against the cases that
+    # printed ok. A heuristic, so a NOTE, never a FAIL: a check may set fail=1 in two branches.
+    boundary_checks=$(grep -v '^[[:space:]]*#' "$BOUNDARY_CHECKS_FILE" 2>/dev/null | grep -c 'fail=1')
+    boundary_cases=$(grep -c '^  ok   — ' "$work/boundary_selftests.out")
+    if [ "$boundary_cases" -lt "$boundary_checks" ]; then
+      printf '%s\n' "  NOTE — $BOUNDARY_CHECKS_FILE sets fail=1 in $boundary_checks places, and $BOUNDARY_SELFTESTS_FILE"
+      printf '%s\n' "         passed $boundary_cases cases: a check without its own case has never been seen failing."
+    fi
   else
     printf '%s\n' "  FAIL — $BOUNDARY_SELFTESTS_FILE is missing: the project's boundary checks have"
     echo "         no negative tests, so they have never been observed rejecting anything."
@@ -1323,9 +1419,9 @@ LOCKCASE
 
   echo
   if [ "$st_fail" -eq 0 ]; then
-    echo "SELF-TEST: PASS — each case above was observed making the gate exit nonzero."
-    echo "  Exit-only generic cases do not prove which check caused failure. The worked"
-    echo "  boundary example also requires its own diagnostic. The scanner case breaks the"
+    echo "SELF-TEST: PASS — each failure case above was observed making the gate exit nonzero"
+    echo "  with its own check's diagnostic. A project boundary case proves as much as it"
+    echo "  asserts (expect_fail requires the diagnostic). The scanner case breaks the"
     echo "  scanner through a test switch, not by making grep itself crash."
     return 0
   fi
@@ -1416,6 +1512,7 @@ if ! xargs -0 sh -c '
       if [ -d "$p" ]; then
         printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
         printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
+        : > "$scan_work/scan_unhashed"
       elif [ ! -e "$p" ]; then
         printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
       fi
@@ -1425,6 +1522,7 @@ if ! xargs -0 sh -c '
     elif [ -d "$p" ] && { case "$p" in */) true ;; *) false ;; esac ||
                           [ "$(git ls-files -s -- ":(literal)$p" | cut -c1-6)" = 160000 ]; }; then
       printf "%s\n" "NOTE [scan]: skipped $p, a submodule or a repository inside this one; its files belong to that repository." >&3
+      : > "$scan_work/scan_unhashed"
     elif [ ! -e "$p" ]; then
       printf "%s\n" "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
       printf "%s\n" "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
@@ -1447,7 +1545,11 @@ if [ ! -s "$filelist" ] && [ ! -s "$work/symlink-text" ]; then
   exit 1
 fi
 # Test switch: the self-test's injected file lives outside the tree and joins the scan here.
-[ -z "${GATE_SELFTEST_EXTRA_FILE:-}" ] || printf '%s\0' "$GATE_SELFTEST_EXTRA_FILE" >> "$filelist"
+# With GATE_SELFTEST_EXTRA_PATH as well, scan_grep reports its lines under that in-tree path
+# instead (a path-scoped check such as `scan_grep ... | grep '^src/domain/'` then sees it), so a
+# case proves such a check without writing into the tree or copying it (#126).
+[ -z "${GATE_SELFTEST_EXTRA_FILE:-}" ] || [ -n "${GATE_SELFTEST_EXTRA_PATH:-}" ] ||
+  printf '%s\0' "$GATE_SELFTEST_EXTRA_FILE" >> "$filelist"
 
 # scan_grep <extended-regex> — prints path:line:text for every match.
 # Returns 0 on match, 1 on no match. When grep itself FAILS, it drops a flag file that the
@@ -1484,6 +1586,15 @@ scan_grep() {
     grep -hE -e "$1" -- "$work/symlink-text"
     case "$?" in
       0) : > "$work/scan_matched" ;;
+      1) ;;
+      *) : > "$work/scan_failed" ;;
+    esac
+  fi
+  if [ -n "${GATE_SELFTEST_EXTRA_PATH:-}" ]; then
+    extra_hits=$(grep -InE -e "$1" -- "${GATE_SELFTEST_EXTRA_FILE:-}")
+    case "$?" in
+      0) printf '%s\n' "$extra_hits" | awk '{ print ENVIRON["GATE_SELFTEST_EXTRA_PATH"] ":" $0 }'
+         : > "$work/scan_matched" ;;
       1) ;;
       *) : > "$work/scan_failed" ;;
     esac
@@ -1831,6 +1942,70 @@ build_test_cmd="{{BUILD_TEST_COMMAND}}"
 # every scan and check above has run. A project's gate built for minutes on every such commit.
 # 1: on. 0: off, for a project whose build reads markdown (a documentation site, doc tests).
 docs_only_skip_build=1
+# BUILD CACHE. One change ran the same build three or four times on the same files: the
+# worker, the Stop hook, the commit hook, the merge hook (#82). A build that passed is recorded
+# under a key, and a later run whose key matches skips the build and says so in its PASS line;
+# every other check above still runs. The key is a SHA-256 over every file the scanners read
+# (path, content, executable bit, symlink text: tracked and untracked files Git does not
+# ignore, read from disk, so uncommitted edits count), the build command, the caller's LC_ALL,
+# and the output of build_cache_inputs. That is a VALUE: a command that prints whatever else
+# the build depends on, which the tree does not hold, e.g.
+#   "cmake --version; c++ --version; python3 -m pip freeze; echo \"CC=$CC\""
+# Ignored files (fetched dependencies, a build folder) and environment variables are NOT in the
+# key unless this command prints them. Empty, there is no cache: an input nobody fingerprinted
+# would otherwise pass on a stale result. Use "true" for a build that reads nothing but the
+# tree. The cache is never read on CI, nor in the self-test's nested runs, nor when the
+# command fails, the tree holds a submodule, a nested repository or a symlink to a folder (its
+# files are not hashed), or GATE_CACHE=off. Entries sit in the repository's common git folder
+# (shared by its worktrees: the key names content, not a checkout) and expire after
+# cache_days days.
+build_cache_inputs=""
+cache_days=7
+build_cache_inputs="${GATE_SELFTEST_CACHE_INPUTS:-$build_cache_inputs}"
+cache_dir="" cache_record=""
+if [ -n "${CI:-}" ] || [ "${GATE_CACHE:-}" = off ]; then
+  :
+elif [ -n "${GATE_SELFTEST_CACHE_DIR:-}" ]; then
+  # The self-test's case for the cache: a folder of its own, outside the tree.
+  cache_dir=$GATE_SELFTEST_CACHE_DIR
+elif [ -z "$selftest_nested" ]; then
+  case "$lock_path" in */.check.lock) ;; *) cache_dir="$(git rev-parse --git-common-dir 2>/dev/null)/check-cache" ;; esac
+fi
+[ -n "$build_cache_inputs" ] && [ ! -e "$work/scan_unhashed" ] || cache_dir=""
+# build_cache_key: prints "hit <key>" when cache_dir holds an entry for the key younger than
+# cache_days, else "miss <key>", and deletes the older entries; fails when an input cannot be
+# read. Python, not find(1): on native Windows a PATH can name Windows' own FIND.EXE first.
+build_cache_key() {
+  inputs=$( ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+              exec sh -c "$build_cache_inputs" ) 2>&1 ) || {
+    printf '%s\n' "NOTE [build]: build_cache_inputs failed, so the build is not cached: $build_cache_inputs" >&2; return 1; }
+  printf '%s\0%s\0%s' "$build_test_cmd" "${caller_lc_all_set:+set:$caller_lc_all}" "$inputs" |
+    python3 -I -c '
+import hashlib, os, sys, time
+key = hashlib.sha256(b"keel build cache 1\0" + sys.stdin.buffer.read() + b"\0")
+for path in sorted(p for p in open(sys.argv[1], "rb").read().split(b"\0") if p):
+    content = hashlib.sha256()
+    with open(os.fsdecode(path), "rb") as data:
+        for chunk in iter(lambda: data.read(1 << 20), b""):
+            content.update(chunk)
+    executable = b"x" if os.stat(os.fsdecode(path)).st_mode & 0o111 else b"-"
+    key.update(path + b"\0" + executable + content.digest())
+if os.path.exists(sys.argv[2]):
+    key.update(b"symlinks\0" + open(sys.argv[2], "rb").read())
+key, found, now = key.hexdigest(), "miss", time.time()
+if os.path.isdir(sys.argv[3]):
+    for name in os.listdir(sys.argv[3]):
+        entry = os.path.join(sys.argv[3], name)
+        try:  # a gate in another worktree may delete it first
+            if now - os.stat(entry).st_mtime > float(sys.argv[4]) * 86400:
+                os.remove(entry)
+            elif name == key:
+                found = "hit"
+        except FileNotFoundError:
+            pass
+print(found, key)
+' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days"
+}
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.
 case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
@@ -1881,7 +2056,13 @@ print(len(fields) // 2)
 ' "${GATE_SELFTEST_COMMIT_REPO:-.}" 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
-    if [ -n "$docs_only" ]; then
+    if [ -n "$selftest_nested" ] && { [ "$fail" -ne 0 ] || [ -e "$work/scan_failed" ]; }; then
+      # A self-test case whose injected failure a check above already caught: its verdict is
+      # FAIL whatever the build does, and expect_fail reads only that verdict and the check's
+      # line. A self-test of about 50 cases ran a 3.5-minute build in each, three hours in all
+      # (#80). Only the self-test's own authenticated nested runs (selftest_nested) skip it.
+      echo "NOTE [build]: not run: a check above already failed this self-test case."
+    elif [ -n "$docs_only" ]; then
       if [ "$docs_only" = 1 ]; then unit=file; else unit=files; fi
       pass_note=" (build not run: documentation-only commit, $docs_only $unit)"
       printf '%s\n' "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
@@ -1896,9 +2077,26 @@ print(len(fields) // 2)
       # 150 lines: about the 10000 characters a tool result shows whole; Claude Code cuts a Bash
       # result at 30000 characters (BASH_MAX_OUTPUT_LENGTH, code.claude.com/docs/en/settings).
       build_tail=150
-      ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
-        exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
-      rc=$?
+      cache_key=""
+      [ -z "$cache_dir" ] || cache_key=$(build_cache_key) || cache_key=""
+      cache_found=${cache_key%% *} cache_key=${cache_key#* }
+      if [ "$cache_found" = hit ]; then
+        cache_short=$(printf '%.12s' "$cache_key")
+        pass_note=" (build cached: $cache_short)"
+        printf '%s\n' "NOTE [build]: not run: the build passed on these exact files and build inputs ($cache_short)."
+        echo "             GATE_CACHE=off runs it anyway."
+        rc=0
+      else
+        ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+          exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
+        rc=$?
+        # Recorded only if the files are the same after the build as before it: an edit made
+        # while it ran would otherwise be recorded as built.
+        if [ "$rc" -eq 0 ] && [ -n "$cache_key" ] && cache_after=$(build_cache_key) &&
+           [ "${cache_after#* }" = "$cache_key" ]; then
+          cache_record=$cache_key
+        fi
+      fi
       if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
         printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
         cat "$build_log"
@@ -1924,4 +2122,10 @@ if [ -e "$work/scan_failed" ]; then
   fail=1
 fi
 
-if [ "$fail" -eq 0 ]; then printf '%s\n' "CHECK: PASS${pass_note:-}"; else echo "CHECK: FAIL"; exit 1; fi
+if [ "$fail" -ne 0 ]; then echo "CHECK: FAIL"; exit 1; fi
+# The build cache (section 4) records a build only for a run that passed. A record that cannot be
+# written costs the next run its build, nothing else.
+if [ -n "$cache_record" ]; then
+  { mkdir -p "$cache_dir" && : > "$cache_dir/$cache_record"; } 2>/dev/null || :
+fi
+printf '%s\n' "CHECK: PASS${pass_note:-}"
