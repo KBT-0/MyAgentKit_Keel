@@ -82,6 +82,28 @@ class GitHookTests(unittest.TestCase):
             git('commit', '-q', '--no-edit')
             self.assertEqual(runs(), before + 3)
 
+    def test_a_staged_submodule_bump_and_an_ours_merge_run_the_gate(self):
+        # diff.ignoreSubmodules=all hid a staged submodule bump from the no-op check, and git
+        # committed it ungated; a clean merge whose result is HEAD's tree has no MERGE_HEAD at
+        # pre-merge-commit, so only --merge keeps its gate (round-1 review).
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            runs = lambda: (root / '.git/gate-runs').read_text(encoding='utf-8').count('ran')
+            git('update-index', '--add', '--cacheinfo', '160000,%s,sub' % ('1' * 40))
+            git('commit', '-q', '-m', 'add sub')
+            before = runs()
+            git('update-index', '--cacheinfo', '160000,%s,sub' % ('2' * 40))
+            git('-c', 'diff.ignoreSubmodules=all', 'commit', '-q', '-m', 'bump', check=False)
+            self.assertEqual(runs(), before + 1, 'a staged submodule bump skipped the gate')
+            git('checkout', '-q', '-b', 'side', 'HEAD~1')
+            (root / 'side').write_text('s\n', encoding='utf-8')
+            git('add', 'side')
+            git('commit', '-q', '-m', 'side')
+            git('checkout', '-q', 'main')
+            before = runs()
+            git('merge', '-q', '-s', 'ours', '--no-edit', 'side')
+            self.assertEqual(runs(), before + 1, 'a merge whose result is HEAD skipped the gate')
+
     def test_a_project_hook_without_a_shebang_stops_the_operation_loudly(self):
         # Git for Windows never runs a file without a #! line, chmod +x or not: the documented
         # one-line .project hook was skipped in silence (#165). Mode 644 makes the file

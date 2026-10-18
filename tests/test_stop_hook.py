@@ -124,11 +124,69 @@ class StopHookTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn('gate says red', result.stderr)
             self.assertEqual(runs(), 3)
-            # A new turn on the unchanged red tree: blocked with that run's output, not re-run.
+            # A new turn on the unchanged red tree runs the gate again: a failure is never replayed.
             result = stop(hook, root)
-            self.assertEqual((result.returncode, runs()), (2, 3), result.stderr)
+            self.assertEqual((result.returncode, runs()), (2, 4), result.stderr)
             self.assertIn('gate says red', result.stderr)
-            self.assertIn('it has not changed since', result.stderr)
+
+    def test_a_continued_stop_ignores_a_file_outside_the_gated_code(self):
+        # A background process that keeps writing a log made every continued stop a new tree,
+        # so a red gate ran and blocked again up to the vendor's cap (round-1 review).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\nexit 1\n')
+            runs = lambda: (root / '.git/gate-runs').read_text().count('ran')
+            self.assertEqual(stop(hook, root).returncode, 2)
+            for line in ('one\n', 'two\n'):
+                (root / 'server.log').write_text(line, newline='\n')
+                result = stop(hook, root, '{"stop_hook_active":true}')
+                self.assertEqual((result.returncode, runs()), (0, 1), result.stderr)
+            (root / 'src/new.py').write_text('fix\n', newline='\n')
+            self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (2, 2))
+
+    def test_a_failure_is_run_again_on_a_new_turn(self):
+        # A replayed failure blocked every new turn although the gate would now pass: a flaky
+        # test, or a gate that regenerates a file and then fails (round-1 review).
+        for gate in ('echo ran >> .git/gate-runs\n[ "$(grep -c ran .git/gate-runs)" -gt 1 ]\n',
+                     'echo ran >> .git/gate-runs\n[ -e src/gen.py ] || { echo x > src/gen.py; echo stale; exit 1; }\n'):
+            with self.subTest(gate=gate), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                hook = gated_repo(root, gate)
+                runs = lambda: (root / '.git/gate-runs').read_text().count('ran')
+                self.assertEqual(stop(hook, root).returncode, 2)
+                self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (0, 1))
+                result = stop(hook, root)
+                self.assertEqual((result.returncode, runs()), (0, 2), result.stderr)
+
+    def test_a_commit_names_a_new_tree(self):
+        # check.sh reads HEAD's history (Done: trailers): a commit that leaves the index, the
+        # diff and the untracked files as they were must not reuse a PASS (round-1 review).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\n')
+            git = lambda *a: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                                             *a], cwd=root, check=True, capture_output=True)
+            git('commit', '-q', '-m', 'base')
+            (root / 'src/app.py').write_text('dirty again\n', newline='\n')
+            runs = lambda: (root / '.git/gate-runs').read_text().count('ran')
+            self.assertEqual((stop(hook, root).returncode, stop(hook, root).returncode, runs()), (0, 0, 1))
+            git('commit', '-q', '--allow-empty', '-m', 'close', '-m', 'Done: K1')
+            self.assertEqual((stop(hook, root).returncode, runs()), (0, 2))
+
+    def test_a_tree_with_a_submodule_is_never_remembered(self):
+        # Edits inside a submodule are not in the diff (one "-dirty" line, or nothing under
+        # ignore=all): such a tree cannot be named, so every new turn runs the gate, and a
+        # continued stop ends, or the session would loop (round-1 review).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\n[ ! -e .git/red ]\n')
+            subprocess.run(['git', 'update-index', '--add', '--cacheinfo', '160000,%s,sub' % ('1' * 40)],
+                           cwd=root, check=True)
+            runs = lambda: (root / '.git/gate-runs').read_text().count('ran')
+            self.assertEqual((stop(hook, root).returncode, stop(hook, root).returncode, runs()), (0, 0, 2))
+            (root / '.git/red').write_text('', newline='\n')
+            self.assertEqual((stop(hook, root).returncode, runs()), (2, 3))
+            self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (0, 3))
 
     def test_a_passed_tree_is_not_gated_again(self):
         # Stop fires after every reply: a dirty file ran a 217 s gate on each short answer (#81).

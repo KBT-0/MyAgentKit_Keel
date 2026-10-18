@@ -35,8 +35,10 @@ CDPATH= cd -- "$root" || exit 1
 # tree, a forgotten `git add` and a message-only amend each ran the whole gate, then git said
 # "nothing to commit" (#232). When the index equals HEAD the commit records HEAD's tree, which
 # the gate vouched for when HEAD was committed. A merge always runs it; a first commit too.
+# --merge is the only sign of a clean merge: git writes no MERGE_HEAD before pre-merge-commit
+# (git 2.47). Submodules are never ignored: diff.ignoreSubmodules=all hid a staged bump.
 if [ "${1:-}" != --merge ] && ! git rev-parse -q --verify MERGE_HEAD >/dev/null &&
-   git diff --cached --quiet HEAD -- 2>/dev/null; then
+   git diff --cached --quiet --ignore-submodules=none HEAD -- 2>/dev/null; then
   echo "pre-commit: nothing staged differs from HEAD, so the gate did not run: this commit records HEAD's tree." >&2
   exit 0
 fi

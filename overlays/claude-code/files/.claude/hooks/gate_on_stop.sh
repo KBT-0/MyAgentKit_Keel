@@ -32,44 +32,46 @@ if [ -z "$(git status --porcelain -- $gated_paths 2>/dev/null | grep -E "$gated_
   exit 0
 fi
 
-# The last result, kept per tree: Stop fires after every reply, and a dirty file once ran a
-# 217 s gate on each short answer (#81). The tree is named by its content: the index, the
-# unstaged diff and every untracked, not ignored file with its content, so any edit runs the
-# gate again. The state file in the git directory holds "<result> <tree>", then a failed
-# run's output. A tree that cannot be named (a quoted or unreadable untracked path) is
-# never remembered: every stop runs the gate.
-# ponytail: ignored files and the environment are not in the tree's name; a PASS stays until
-# the tree changes. The commit hook runs the gate again, so the commit stays gated.
+# The last run, kept by content: Stop fires after every reply, and a dirty file once ran a
+# 217 s gate on each short answer (#81). Two names, each a hash:
+#   code  HEAD, the index, the unstaged diff, and the untracked files under the gated paths
+#         that the gated pattern matches, with their content;
+#   tree  the code plus every other untracked, not ignored file, with its content.
+# A new turn skips the gate only on the tree that last passed. A failure is never replayed:
+# its cause can lie outside the names (a flaky test, a tool installed since). A stop that
+# continues a blocked turn (stop_hook_active) runs the gate only when the code changed since
+# the last run: that is the loop guard, and a background process that keeps writing a log
+# cannot defeat it (#208). The vendor's cap of 8 continuations resets at every tool call, so
+# it is only a backstop.
+# A tree that cannot be named is never remembered: every new turn runs the gate and a
+# continued stop ends. That is a tree with a submodule (what changes inside one is not in
+# the diff) or with an untracked path git quotes or cannot hash (a nested repository).
+# The state file in the git directory holds "<result> <code> <tree>".
+# ponytail: ignored files and the environment are not in the names; a PASS stays until the
+# tree changes. The commit hook runs the gate again, so the commit stays gated.
 state=$(git rev-parse --git-path kit-stop-gate 2>/dev/null) || state=""
-tree_name() {
+hashed() { printf '%s\n' "$1"; [ -z "$1" ] || printf '%s\n' "$1" | git hash-object --stdin-paths; }
+names() {
   [ -n "$state" ] || return 1
-  untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard) &&
-    { git ls-files --stage && git diff --binary --no-ext-diff --no-textconv --no-color &&
-      printf '%s\n' "$untracked" &&
-      if [ -n "$untracked" ]; then printf '%s\n' "$untracked" | git hash-object --stdin-paths; fi
-    } > "$state.tree" && git hash-object -- "$state.tree"
+  # shellcheck disable=SC2086
+  code_untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard -- $gated_paths | grep -E "$gated_pattern")
+  untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard) || return 1
+  { git rev-parse -q --verify HEAD || echo none; } > "$state.tree" &&
+    git ls-files --stage >> "$state.tree" && ! grep -q '^160000 ' "$state.tree" &&
+    git diff --binary --no-ext-diff --no-textconv --no-color >> "$state.tree" &&
+    hashed "$code_untracked" >> "$state.tree" && code=$(git hash-object -- "$state.tree") &&
+    hashed "$untracked" >> "$state.tree" && tree=$(git hash-object -- "$state.tree") &&
+    printf '%s %s\n' "$code" "$tree"
 }
-failed() {
-  echo "" >&2
-  echo "GATE FAILED (Stop hook): the gated paths have uncommitted changes and ./scripts/check.sh is red$1." >&2
-  echo "Fix the cause before finishing the task (AGENTS.md). Do not report the gate as passing." >&2
-  exit 2
-}
-now=$(tree_name 2>/dev/null) || now=""
-last="" last_tree=""
-[ -z "$now" ] || IFS=' ' read -r last last_tree 2>/dev/null < "$state" || true
-if [ -n "$now" ] && [ "$now" = "$last_tree" ]; then
-  [ "$last" != pass ] || exit 0
-  # The loop guard: a turn this hook continued, on the tree it already judged, ends. The
-  # vendor's cap of 8 continuations resets at every tool call, so it is only a backstop.
+now=$(names 2>/dev/null) || now=""
+last="" last_code="" last_tree=""
+[ -z "$now" ] || IFS=' ' read -r last last_code last_tree 2>/dev/null < "$state" || true
+if [ -z "$now" ]; then
   [ "$continued" -eq 0 ] || exit 0
-  # A new turn on a tree that failed: blocked again with that run's output, without a re-run.
-  if [ "$last" = fail ]; then
-    tail -n +2 -- "$state" >&2
-    failed " (this tree's last run, above; it has not changed since)"
-  fi
-elif [ -z "$now" ] && [ "$continued" -eq 1 ]; then
-  exit 0  # Nothing to compare: the stop a block continued ends, or the session would loop.
+elif [ "$continued" -eq 1 ]; then
+  [ "${now% *}" != "$last_code" ] || exit 0
+elif [ "$last" = pass ] && [ "${now#* }" = "$last_tree" ]; then
+  exit 0
 fi
 
 gate_wait="${GATE_LOCK_WAIT:-500}"
@@ -83,21 +85,21 @@ gate_wait="${GATE_LOCK_WAIT:-500}"
 # hits the hook timeout, so keep the hook's gate short.
 out=$(GATE_LOCK_WAIT="$gate_wait" ./scripts/check.sh 2>&1)
 rc=$?
-# Kept under the tree as the run left it. A PASS counts only for a tree that did not change
-# while the gate ran; a failure or a gate that did not run counts for the loop guard alone.
-after=$(tree_name 2>/dev/null) || after=""
+# Kept under the names the run left. A PASS counts only for a tree that did not change while
+# the gate ran; any other result counts for the loop guard alone.
+after=$(names 2>/dev/null) || after=""
 case $rc in 0) result=pass ;; 75) result=busy ;; *) result=fail ;; esac
 [ "$rc" -ne 0 ] || [ "$after" = "$now" ] || result=ran
-if [ -n "$after" ]; then
-  { printf '%s %s\n' "$result" "$after"; [ "$result" != fail ] || printf '%s\n' "$out"; } > "$state"
-fi
+[ -z "$after" ] || printf '%s %s\n' "$result" "$after" > "$state"
 [ "$rc" -eq 0 ] && exit 0
 
 printf '%s\n' "$out" >&2
+echo "" >&2
 if [ "$rc" -eq 75 ]; then
-  echo "" >&2
   echo "GATE DID NOT RUN (Stop hook): another gate run held this checkout's lock past the wait." >&2
   echo "Run ./scripts/check.sh yourself before finishing; do not report the gate as passing or failing." >&2
   exit 2
 fi
-failed ""
+echo "GATE FAILED (Stop hook): the gated paths have uncommitted changes and ./scripts/check.sh is red." >&2
+echo "Fix the cause before finishing the task (AGENTS.md). Do not report the gate as passing." >&2
+exit 2
