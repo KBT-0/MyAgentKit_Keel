@@ -145,6 +145,32 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   **ACTION** (kit maintainers): tag each release `vMAJOR.MINOR` at the release, when its
   CHANGELOG heading is renamed from Unreleased; an earlier tag turns this check red.
 
+- **Kit check in two tiers** (`scripts/check_kit.py`, kit-only; #146, kit-self-checks findings
+  6 to 8). The default run is the fast tier (structural checks, unit and fixture suites, within
+  600 s on a 20-CPU Windows host), for every change and before a push; `--slow` runs the slow
+  tier alone (`SLOW`: acceptance, bootstrap, the review bridge, doctor and the worker-spawn
+  suites), `--all` runs both, and a release runs `--all`. CI runs the two tiers as parallel jobs
+  (`MYAGENTKIT_TEST_TIMEOUT_SCALE: '3'`). A change that touches a slow-tier unit's area runs
+  `./scripts/check.sh --slow` before its push (CONTRIBUTING). Each unit has a cap and each tier
+  a budget (`CAPS`: fast 480/600 s, slow 3000/3600 s, times the scale); the budget is enforced
+  during the run: a unit over its cap, or still running when the budget ends, is stopped and
+  named with its seconds, a queued unit does not start, and the run is red with a summary
+  before CI's `timeout-minutes`. Each unit leads its own process group on POSIX: a cap kill,
+  SIGTERM/SIGINT and a closed terminal (SIGHUP, in `scripts/check.sh` and the runner) stop the
+  unit's test processes too. A local Windows run now runs `test_bootstrap` (slow tier) instead
+  of NOT RUN. The `test_gate_checks` count drops to 11 on a host that cannot make symlinks, whose
+  link test is a declared skip. A failed `git diff` in the ACTION check prints a KIT CHECK: FAIL
+  line, not a traceback (#134 follow-up). Test fixes: test_bootstrap names its global git config
+  with `GIT_CONFIG_GLOBAL` (#147 follow-up); test_spawn_codex and test_worker_paths_windows scale
+  their bounds; test_overlay_permissions writes with an encoding; stale guard counts in
+  `REQUIRED_SUITES`.
+
+- **The review bridge test of every record outcome no longer times out on a loaded host:** only
+  its timeout cases keep the 2 s bound (#95 follow-up). `codex_bridge.py`'s verdict rule is one
+  function, `verdict_refused()`; its forms are tested in-process instead of one full wrapper
+  run each.
+  **ACTION:** re-copy `scripts/test_claude_bridge.py` and `scripts/codex_bridge.py`.
+
 - **Kit CI and test isolation** (ci, redfix): CONTRIBUTING's release rule: a release is
   announced only after CI is green on every job of the release commit (`gh run list`,
   `gh run view`); red means not released. Job time limits raised (macOS/Ubuntu 60 min, Windows

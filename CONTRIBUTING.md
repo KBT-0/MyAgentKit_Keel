@@ -94,7 +94,11 @@ the slow tier alone: bootstrap and acceptance, the review bridge, doctor and wor
 `--all` runs both. CI runs the two tiers as parallel jobs. Each tier has a time budget and each
 unit a cap (`CAPS` in `scripts/check_kit.py`): a run over either is red with the unit's name and
 seconds, so a slow test moves to the slow tier or gets faster, and never grows the commit stage
-unseen. A slow host raises both with `MYAGENTKIT_TEST_TIMEOUT_SCALE` (CI sets 3).
+unseen. A slow host raises both with `MYAGENTKIT_TEST_TIMEOUT_SCALE` (CI sets 3). A change
+that touches the area of a slow-tier unit (the `SLOW` set in `scripts/check_kit.py`:
+`acceptance`, `test_bootstrap`, `test_claude_bridge`, `test_spawn_worker`, `test_spawn_codex`,
+`test_worker_visibility`, `test_doctor`) also runs `./scripts/check.sh --slow` before its push
+(finding 7, path-filtered runs).
 
 A release runs `./scripts/check.sh --all` on the maintainer's host first. It is not announced,
 and no project is told to sync or update the plugin, before the kit's CI is green on every job
