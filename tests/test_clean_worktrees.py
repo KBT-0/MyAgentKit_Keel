@@ -2403,8 +2403,8 @@ class CleanWorktreesTests(unittest.TestCase):
     def test_a_symlink_is_kept(self):
         path = self.worktree('done')
         (path / 'link').symlink_to('a')
-        self.assertKept(path, self.run_script('--apply'), 'not a regular file (a symlink, FIFO, socket, device or '
-                        'nested repository), outside a disposable folder: link')
+        self.assertKept(path, self.run_script('--apply'), 'not a regular file (a symlink, FIFO, socket or device), '
+                        'outside a disposable folder: link')
 
     def test_a_fifo_git_does_not_list_is_kept(self):
         path = self.worktree('done')

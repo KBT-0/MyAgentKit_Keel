@@ -324,6 +324,72 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertTrue((path / 'src/build/scratch.py').is_file())
 
     @windows_only
+    @windows_only
+    def test_paths_print_and_log_with_single_separators(self):
+        # #243: show() escaped every Windows separator as \\, in the output and the log.
+        path = self.worktree('sep')
+        (path / 'notes.txt').write_text('only here\n')
+        out = self.run_script()
+        self.assertIn('keep   .claude/worktrees/sep\n', out)
+        (path / 'notes.txt').unlink()
+        out = self.run_script('--apply')
+        self.assertFalse(path.exists(), out)
+        self.assertNotIn('\\\\', out)
+        log = (self.main / '.git/kit-worktree-removals.log').read_text(encoding='utf-8')
+        self.assertIn('\toutcome\t%s\tremoved' % os.path.realpath(path).replace('\\', '/'), log)
+
+    @windows_only
+    def test_a_nested_repository_is_named_as_one(self):
+        # #244: its .git internals were listed as unique files, the cause never named.
+        path = self.worktree('nest')
+        (path / 'vendor/lib').mkdir(parents=True)
+        self.git('init', '-q', cwd=path / 'vendor/lib')
+        out = self.run_script('--all-reasons')
+        self.assertKept(path, out, 'holds a nested repository (a .git of its own), outside a disposable folder, '
+                        'whose history this script does not judge: vendor/lib\n')
+        self.assertNotIn('vendor/lib/.git/', out)
+
+    @windows_only
+    def test_a_worktree_kept_for_its_files_is_never_read_byte_for_byte(self):
+        # #196: the byte check read every tracked file (LFS and CRLF ones twice) before the
+        # untracked files kept the worktree, after every merge. It now runs last.
+        path = self.worktree('built')
+        (path / 'a').write_bytes(b'an edit the stat cache hides\n')
+        self.git('update-index', '--assume-unchanged', 'a', cwd=path)
+        (path / 'notes.txt').write_text('only here\n')
+        out = self.run_script()
+        self.assertKept(path, out, 'files with no identical copy in main, outside a disposable folder: notes.txt')
+        self.assertNotIn('byte for byte', out)
+        (path / 'notes.txt').unlink()
+        self.assertKept(path, self.run_script(), 'not byte for byte what its index records')
+
+    @windows_only
+    def test_a_file_held_open_from_outside_keeps_it_whole_and_a_leftover_folder_is_reported(self):
+        # #193: a holder whose working directory is elsewhere went unseen; `git worktree remove`
+        # deleted part of the worktree and failed, and every later run said nothing of the rest.
+        (self.main / '.claude').mkdir()
+        (self.main / '.claude/worktree-disposable').write_text('build\n')
+        path = self.worktree('held')
+        (path / 'build').mkdir()
+        (path / 'build/vc140.pdb').write_bytes(b'x' * 1024)
+        self.start_inside([sys.executable, '-c', 'import sys; f = open(sys.argv[1], "rb"); sys.stdin.read()',
+                           str(path / 'build/vc140.pdb')], self.tmp)
+        out = self.run_script('--apply')
+        self.assertIn('Windows refuses to move its folder', out)
+        self.assertTrue((path / '.git').is_file(), out)
+        self.assertTrue((path / 'held.txt').is_file(), out)
+        self.assertIn('held', self.git('worktree', 'list'))
+        stray = self.main / '.claude/worktrees/stray'
+        stray.mkdir()
+        (stray / 'x.txt').write_text('left over\n')
+        out = self.run_script()
+        self.assertIn('clean_worktrees: left as it is: .claude/worktrees/stray is a folder no registered worktree '
+                      'names', out)
+        result = subprocess.run(['sh', str(SCRIPT), '--apply', '--only=stray'], cwd=self.main, env=self.env,
+                                capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue((stray / 'x.txt').is_file())
+
     def test_a_path_with_a_newline_is_kept_as_not_printable(self):
         # NTFS refuses a newline in a name, so git and the folder are stood in for, git answering
         # rev-parse as it does, one line per flag. Split on newlines, the answer once judged such a
