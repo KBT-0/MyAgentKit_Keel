@@ -761,8 +761,9 @@ def main():
         self.assertRegex(out, r'unit hang ran over its cap of 2 s and was stopped at \d+ s')
         self.assertIn('failed: hang', out)
         self.assertNotIn('quick (FAILED)', out)
-        if os.name == 'nt':  # the child's tree is stopped, so its pipe closes at once
-            self.assertLess(time.monotonic() - started, 15)
+        # The child is stopped with the unit (Windows: its tree; POSIX: the unit's own process
+        # group), so its pipe closes at once; before, POSIX waited for the child's 20 s.
+        self.assertLess(time.monotonic() - started, 15)
 
     def test_a_tier_over_its_budget_fails_with_its_seconds(self):
         quiet = [sys.executable, '-c', 'import time; time.sleep(1.5); print("UNIT DONE: quiet")']

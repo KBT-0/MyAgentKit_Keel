@@ -1235,13 +1235,25 @@ def unit(name, timing_file=None):
             Path(timing_file).write_text("".join(row + "\n" for row in rows), encoding='utf-8')
 
 
+def signal_unit(child, sig):
+    """Signal a unit's whole process group (POSIX: each unit leads its own session). The unit
+    is not reaped yet, so its group id is still its own."""
+    try:
+        os.killpg(child.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 def stop_tree(child):
-    """Kill a unit and, on Windows, every process below it: a shell or git it started keeps the
-    output pipe open, and reading it would wait for them. ponytail: off Windows only the unit is
-    killed; a descendant holding the pipe is waited for at most 30 s, then its output is dropped."""
+    """Kill a unit and every process below it: a shell or git it started keeps the output pipe
+    open, and reading it would wait for them. Windows stops the tree, POSIX the unit's group.
+    ponytail: a descendant that left the group (setsid) is waited for at most 30 s, then its
+    output is dropped."""
     if os.name == 'nt':
         subprocess.run(['taskkill', '/T', '/F', '/PID', str(child.pid)], stdin=subprocess.DEVNULL,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        signal_unit(child, signal.SIGKILL)
     if child.poll() is None:
         child.kill()
 
@@ -1266,16 +1278,20 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None):
         try:
             yield
         finally:
-            # The wrapper signals the whole group. Stop queued units too, and a child that
+            # The wrapper signals the runner's group, which no unit is in (each leads its own
+            # session): pass it on to each unit's group. Stop queued units too, and a child that
             # started just after that signal, before the executor waits for its workers.
             with lock:
                 cancelled = True
                 for child in children:
                     if child.poll() is None:
-                        try:
-                            child.terminate()
-                        except ProcessLookupError:
-                            pass
+                        if os.name == 'nt':
+                            try:
+                                child.terminate()
+                            except ProcessLookupError:
+                                pass
+                        else:
+                            signal_unit(child, signal.SIGTERM)
             pool.shutdown(wait=True, cancel_futures=True)
 
     def one(name, command, timing_file, cap):
@@ -1285,7 +1301,8 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None):
         with lock:
             if cancelled:
                 return 1, '', time.monotonic() - started
-            child = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, env=env,
+            # Its own session: a cap or a cancel stops the unit's test processes with it.
+            child = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, env=env, start_new_session=True,
                                      stderr=subprocess.STDOUT, text=True, errors="replace")
             children.append(child)
         with child:
