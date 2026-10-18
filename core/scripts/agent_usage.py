@@ -42,9 +42,17 @@ def require_private_storage(repo: Path, archive: Path | None = None) -> None:
                                   'docs/reviews/*-claude-review.json',
                                   'docs/handoffs/*-claude-propose.json')),
                               ':(exclude,icase)docs/reviews/*-summary.md'], capture_output=True)
-    if tracked.returncode != 0 or tracked.stdout:
-        raise ValueError('private evidence is tracked or Git could not verify storage; '
-                         'untrack private records before review')
+    if tracked.returncode != 0:
+        raise ValueError('Git could not verify private storage: '
+                         + tracked.stderr.decode('utf-8', 'replace').strip())
+    if tracked.stdout:
+        # Named: a project that committed its review reports (the pre-v0.11 convention) saw only
+        # "is tracked" and could not tell which records, or that it was a convention, not a leak.
+        found = [p for p in tracked.stdout.decode('utf-8', 'surrogateescape').split('\0') if p]
+        raise ValueError('private evidence is tracked (%d path(s): %s%s); untrack these records with '
+                         '`git rm --cached` (the files stay on disk) or keep a final review as '
+                         'docs/reviews/*-summary.md before review; see docs/DEV_SETUP.md'
+                         % (len(found), ', '.join(found[:5]), ', ...' if len(found) > 5 else ''))
 
 
 def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
