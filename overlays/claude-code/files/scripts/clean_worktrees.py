@@ -285,15 +285,16 @@ def worktrees(cwd):
     return records
 
 
-def read_disposable(main_root):
-    """The project's disposable entries, the lines refused, and the quiet period in minutes. A
-    quiet-minutes line given twice or not valid refuses the whole list (fail closed). A place that
-    holds work is refused under any spelling (fold)."""
-    try:
-        with open(os.path.join(main_root, DISPOSABLE_FILE), 'rb') as handle:
-            data = handle.read()
-    except FileNotFoundError:
-        return [], [], QUIET_DEFAULT
+def read_disposable(main_root, data=None):
+    """The project's disposable entries, the lines refused, and the quiet period in minutes, from
+    DATA, else the main worktree's file. A quiet-minutes line given twice or not valid refuses the
+    whole list (fail closed). A place that holds work is refused under any spelling (fold)."""
+    if data is None:
+        try:
+            with open(os.path.join(main_root, DISPOSABLE_FILE), 'rb') as handle:
+                data = handle.read()
+        except FileNotFoundError:
+            return [], [], QUIET_DEFAULT
     entries, refused, quiet = [], [], None
     for line in data.split(b'\n'):
         line = line.strip()
@@ -308,11 +309,11 @@ def read_disposable(main_root):
             quiet = int(value.group(1))
             continue
         entry = line.rstrip(b'/')
-        parts = entry.split(b'/')
-        # An absolute path has an empty first part.
+        # A leading / anchors the entry at the root: /build is the root's build only (#288).
+        parts = (entry[1:] if entry.startswith(b'/') else entry).split(b'/')
         if (b'' in parts or b'.' in parts or b'..' in parts
                 or {fold(r) for r in REFUSED}.intersection(fold(p) for p in parts)):
-            refused.append((line, '(empty, absolute, "..", or a place that holds work: %s)'
+            refused.append((line, '(empty, "//", "." or "..", or a place that holds work: %s)'
                             % ', '.join(sorted(r.decode() for r in REFUSED))))
         else:
             entries.append(entry)
@@ -322,12 +323,14 @@ def read_disposable(main_root):
 def disposable(rel, entries):
     """Whether REL lies inside a disposable directory, compared folder by folder: a NAME entry
     matches a folder of that name with no place that holds work (REFUSED, under any spelling)
-    above it; a PATH entry matches its own subtree from the root. Entries match byte for byte."""
+    above it; a PATH entry (app/build, or /build for the root's alone) matches its own subtree
+    from the root. Entries match byte for byte."""
     folders = rel.split(b'/')[:-1]
     refused = {fold(r) for r in REFUSED}
     for entry in entries:
-        parts = entry.split(b'/')
-        if len(parts) > 1:
+        anchored = entry.startswith(b'/')
+        parts = (entry[1:] if anchored else entry).split(b'/')
+        if anchored or len(parts) > 1:
             if folders[:len(parts)] == parts:
                 return True
             continue
@@ -1310,6 +1313,19 @@ def main():
     main_root = os.path.realpath(records[0]['worktree'])
     common = os.path.realpath(git(here, 'rev-parse', '--git-common-dir').stdout.rstrip(b'\n'))
     entries, refused, quiet = read_disposable(main_root)
+    # An uncommitted edit of the list took effect at the next merge, before anyone reviewed it
+    # (#288); following the committed list alone then removed what a narrowing edit protects.
+    # So only the entries in both lists count, with the higher quiet period, in the dry run too.
+    # ponytail: a list that was never committed (an untracked install) applies as it is.
+    committed = git(main_root, 'cat-file', 'blob', 'HEAD:' + DISPOSABLE_FILE.decode(), codes=(0, 128))
+    if committed.returncode == 0 and read_disposable(main_root, committed.stdout) != (entries, refused, quiet):
+        c_entries, c_refused, c_quiet = read_disposable(main_root, committed.stdout)
+        entries = [e for e in entries if e in c_entries]
+        refused += [r for r in c_refused if r not in refused]
+        quiet = max(quiet, c_quiet)
+        say('clean_worktrees: %s differs from its committed version; only the entries in both apply, with the '
+            'higher quiet-minutes: a narrowing protects at once, a widening applies once committed'
+            % show(DISPOSABLE_FILE))
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),

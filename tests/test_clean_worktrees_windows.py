@@ -281,6 +281,49 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertEqual((sentinel / 'keep.txt').read_text(), 'shared\n')
 
     @windows_only
+    def test_a_disposable_entry_takes_effect_only_committed_and_slash_names_the_root_alone(self):
+        # #288 (tests/test_clean_worktrees.py proves it on POSIX): an uncommitted `build` entry
+        # removed a worktree with an uncopied build/ scratch file at the next merge; and no entry
+        # could name the root's build alone.
+        disposable = self.main / '.claude/worktree-disposable'
+        disposable.parent.mkdir()
+        disposable.write_text('cache\n')
+        self.git('add', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        disposable.write_text('build\n')
+        path = self.worktree('done')
+        (path / 'build').mkdir()
+        (path / 'build/out.o').write_text('o\n')
+        (path / 'src/build').mkdir(parents=True)
+        (path / 'src/build/scratch.py').write_text('only here\n')
+        out = self.run_script('--apply')
+        self.assertIn('differs from its committed version; only the entries in both apply', out)
+        self.assertKept(path, out, 'outside a disposable folder: build/out.o')
+        disposable.write_text('/build\n')
+        self.git('commit', '-q', '-am', 'the root build is disposable')
+        self.assertKept(path, self.run_script('--apply'), 'outside a disposable folder: src/build/scratch.py')
+        (path / 'src/build/scratch.py').unlink()
+        out = self.run_script('--apply')
+        self.assertFalse(path.exists(), out)
+
+    @windows_only
+    def test_an_uncommitted_narrowing_of_the_disposable_list_protects_at_once(self):
+        # Round-1 review of #288: following the committed list alone, a removal took uncopied
+        # scratch that the owner had just taken off the list, before the edit was committed.
+        disposable = self.main / '.claude/worktree-disposable'
+        disposable.parent.mkdir()
+        disposable.write_text('build\n')
+        self.git('add', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        disposable.write_text('')
+        path = self.worktree('done')
+        (path / 'src/build').mkdir(parents=True)
+        (path / 'src/build/scratch.py').write_text('only here\n')
+        self.assertKept(path, self.run_script(), 'outside a disposable folder: src/build/scratch.py')
+        self.assertKept(path, self.run_script('--apply'), 'outside a disposable folder: src/build/scratch.py')
+        self.assertTrue((path / 'src/build/scratch.py').is_file())
+
+    @windows_only
     def test_a_path_with_a_newline_is_kept_as_not_printable(self):
         # NTFS refuses a newline in a name, so git and the folder are stood in for, git answering
         # rev-parse as it does, one line per flag. Split on newlines, the answer once judged such a

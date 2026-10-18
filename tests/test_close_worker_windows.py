@@ -578,6 +578,8 @@ os.link = link
         path = main / '.claude/worktrees/w1'
         git('worktree', 'add', '-q', str(path), '-b', 'worktree-w1')
         (tmp / 'claude-procs').write_text('100 C:\\npm\\claude.exe "Read b.md and follow it." -n w1\n')
+        (main / '.myagentkit/workers').mkdir(parents=True)
+        (main / '.myagentkit/workers/w1.pid').write_text('100\n')  # recorded at spawn (#171)
         lock = git('rev-parse', '--path-format=absolute', '--git-path', 'check.lock', cwd=path)
         holder = subprocess.Popen([sys.executable, '-c', HOLD, lock], stdout=subprocess.PIPE, text=True)
         self.addCleanup(holder.wait)

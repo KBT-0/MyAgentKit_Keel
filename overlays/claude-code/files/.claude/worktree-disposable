@@ -8,9 +8,15 @@
 # One entry per line, `#` starts a comment line:
 #   a NAME (build, node_modules, dist, target, .venv) matches a folder of that name anywhere,
 #     except below a place that holds work (docs/build is not disposable);
-#   a root-relative PATH (app/build) matches that folder only, compared folder by folder.
+#   a root-relative PATH (app/build) matches that folder only, compared folder by folder;
+#   /NAME (/build) matches the folder of that name at the root only, never a deeper one
+#     (src/build). List no folder where workers keep scratch or proof files: what is in a
+#     listed folder is removed with the worktree, with no copy anywhere.
 # Entries are matched exactly, case included (build is not Build).
-# Refused: an empty entry, an absolute path, "." or "..", and the places that hold work:
+# While this file differs from its committed version, only the entries in both count, with the
+# higher quiet-minutes: an uncommitted narrowing protects at once, a widening applies once
+# committed. The dry run (clean_worktrees.sh without options) shows what a removal would take.
+# Refused: an empty entry, "//", "." or "..", and the places that hold work:
 # .git, docs, .claude, .myagentkit, scripts. The content of these folders must also be
 # git-ignored: `git worktree remove` refuses untracked files, and the worktree is then kept.
 #
