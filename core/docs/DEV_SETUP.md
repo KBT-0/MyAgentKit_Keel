@@ -43,7 +43,9 @@ git config core.hooksPath        # -> .githooks
 ```
 
 `git commit --no-verify` skips the gate. That hatch exists for {{OWNER_NAME}}'s WIP commits.
-Agents must not use it (`AGENTS.md`).
+Agents must not use it (`AGENTS.md`). The hook also skips the gate when nothing staged
+differs from HEAD, as the commit then records HEAD's tree (#232), so a message-only
+`git commit --amend` of a `--no-verify` commit stays as ungated as that commit already was.
 
 **Recommended: the same gate in CI, as a required check.** A git hook is local and can be
 skipped ([githooks](https://git-scm.com/docs/githooks)); the hook is the local backstop, and

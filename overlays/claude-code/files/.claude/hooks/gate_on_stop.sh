@@ -23,12 +23,13 @@ CDPATH= cd -- "$root" || exit 0
 
 # Only work in these paths needs the gate; documentation and tooling turns skip it, which is
 # why the hook is cheap in practice. Untracked files count — `git status` reports them where
-# `git diff` would not.
+# `git diff` would not, each by itself: without --untracked-files=all a new directory is one
+# `?? src/pkg/` line, which the pattern does not match.
 gated_paths="{{GATED_PATHS}}"
 gated_pattern="{{GATED_FILE_PATTERN}}"
 
 # shellcheck disable=SC2086
-if [ -z "$(git status --porcelain -- $gated_paths 2>/dev/null | grep -E "$gated_pattern" || true)" ]; then
+if [ -z "$(git status --porcelain --untracked-files=all -- $gated_paths 2>/dev/null | grep -E "$gated_pattern" || true)" ]; then
   exit 0
 fi
 
@@ -43,9 +44,11 @@ fi
 # the last run: that is the loop guard, and a background process that keeps writing a log
 # cannot defeat it (#208). The vendor's cap of 8 continuations resets at every tool call, so
 # it is only a backstop.
-# A tree that cannot be named is never remembered: every new turn runs the gate and a
-# continued stop ends. That is a tree with a submodule (what changes inside one is not in
-# the diff) or with an untracked path git quotes or cannot hash (a nested repository).
+# A tree that cannot be named ("-") is never remembered: every new turn runs the gate. That
+# is a tree with a submodule (what changes inside one is not in the diff) or with an
+# untracked path git quotes or cannot hash (a nested repository). Its code is still named,
+# so a continued stop after a fix to the gated code still runs the gate (#208); edits inside
+# a submodule do not change the code, so they cannot loop. With no code name, it ends.
 # The state file in the git directory holds "<result> <code> <tree>".
 # ponytail: ignored files and the environment are not in the names; a PASS stays until the
 # tree changes. The commit hook runs the gate again, so the commit stays gated.
@@ -55,13 +58,15 @@ names() {
   [ -n "$state" ] || return 1
   # shellcheck disable=SC2086
   code_untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard -- $gated_paths | grep -E "$gated_pattern")
-  untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard) || return 1
   { git rev-parse -q --verify HEAD || echo none; } > "$state.tree" &&
-    git ls-files --stage >> "$state.tree" && ! grep -q '^160000 ' "$state.tree" &&
+    git ls-files --stage >> "$state.tree" &&
     git diff --binary --no-ext-diff --no-textconv --no-color >> "$state.tree" &&
-    hashed "$code_untracked" >> "$state.tree" && code=$(git hash-object -- "$state.tree") &&
-    hashed "$untracked" >> "$state.tree" && tree=$(git hash-object -- "$state.tree") &&
-    printf '%s %s\n' "$code" "$tree"
+    hashed "$code_untracked" >> "$state.tree" && code=$(git hash-object -- "$state.tree") || return 1
+  tree=-
+  if ! grep -q '^160000 ' "$state.tree" &&
+    untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard) &&
+    hashed "$untracked" >> "$state.tree"; then tree=$(git hash-object -- "$state.tree") || tree=-; fi
+  printf '%s %s\n' "$code" "$tree"
 }
 now=$(names 2>/dev/null) || now=""
 last="" last_code="" last_tree=""
@@ -70,7 +75,7 @@ if [ -z "$now" ]; then
   [ "$continued" -eq 0 ] || exit 0
 elif [ "$continued" -eq 1 ]; then
   [ "${now% *}" != "$last_code" ] || exit 0
-elif [ "$last" = pass ] && [ "${now#* }" = "$last_tree" ]; then
+elif [ "$last" = pass ] && [ "${now#* }" != - ] && [ "${now#* }" = "$last_tree" ]; then
   exit 0
 fi
 

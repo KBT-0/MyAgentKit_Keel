@@ -175,8 +175,9 @@ class StopHookTests(unittest.TestCase):
 
     def test_a_tree_with_a_submodule_is_never_remembered(self):
         # Edits inside a submodule are not in the diff (one "-dirty" line, or nothing under
-        # ignore=all): such a tree cannot be named, so every new turn runs the gate, and a
-        # continued stop ends, or the session would loop (round-1 review).
+        # ignore=all): such a tree is never remembered as passed, so every new turn runs the
+        # gate (round-1 review). The loop guard still sees the gated code: a continued stop
+        # after an edit to it runs the gate (#208), one without an edit ends (round-2 review).
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             hook = gated_repo(root, 'echo ran >> .git/gate-runs\n[ ! -e .git/red ]\n')
@@ -187,6 +188,22 @@ class StopHookTests(unittest.TestCase):
             (root / '.git/red').write_text('', newline='\n')
             self.assertEqual((stop(hook, root).returncode, runs()), (2, 3))
             self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (0, 3))
+            (root / 'src/app.py').write_text('fix attempt\n', newline='\n')
+            self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (2, 4))
+            self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (0, 4))
+
+    def test_a_new_file_in_a_new_directory_is_gated(self):
+        # `git status --porcelain` folds a new directory into `?? src/pkg/`, which the gated
+        # pattern does not match: a turn that only added src/pkg/__init__.py ended ungated.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\n')
+            subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q',
+                            '-m', 'base'], cwd=root, check=True, capture_output=True)
+            (root / 'src/pkg').mkdir()
+            (root / 'src/pkg/__init__.py').write_text('', newline='\n')
+            self.assertEqual(stop(hook, root).returncode, 0)
+            self.assertTrue((root / '.git/gate-runs').exists(), 'a new file in a new directory ran no gate')
 
     def test_a_passed_tree_is_not_gated_again(self):
         # Stop fires after every reply: a dirty file ran a 217 s gate on each short answer (#81).
