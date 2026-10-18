@@ -1,4 +1,5 @@
 """The context hook must speak once per 50k step past 200k, choose nothing itself, and never block."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -99,10 +100,10 @@ class ContextHookTests(unittest.TestCase):
         wrapper = self.tmp / 'held_hook.py'
         wrapper.write_text('import runpy, time\n'
                            'hook = runpy.run_path(%r)\n'
-                           'def held(path):\n'
+                           'def held(path, saved=None):\n'
                            '    print("held", flush=True)\n'
                            '    time.sleep(60)\n'
-                           'hook["main"].__globals__["context"] = held\n'
+                           'hook["main"].__globals__["scan"] = held\n'
                            'hook["main"]()\n' % str(HOOK), encoding='utf-8')
         self.transcript.write_text(json.dumps(request(260_000)) + '\n', encoding='utf-8')
         holder = subprocess.Popen([sys.executable, str(wrapper)], stdin=subprocess.PIPE,
@@ -186,6 +187,41 @@ class ContextHookTests(unittest.TestCase):
         self.assertIn('Context is 210k tokens', self.run_hook(turns))
         self.transcript = other / self.transcript.name
         self.assertIn('Context is 210k tokens', self.run_hook(turns))
+
+    def test_a_large_transcript_resumes_at_the_saved_offset(self):
+        # A full read of a 33 MB transcript took 0.9 s, too slow for every tool call (#138).
+        spec = importlib.util.spec_from_file_location('context_size_under_test', HOOK)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.RECOUNT = 0
+        first = json.dumps(request(210_000)) + '\n'
+        self.transcript.write_bytes(first.encode())
+        self.assertEqual(module.scan(self.transcript), (210_000, 0, True, len(first)))
+        with self.transcript.open('ab') as stream:
+            stream.write((json.dumps(request(260_000)) + '\n' + '{"type": "system", "subtype": "compact_bou').encode())
+        size = len(first) + len(json.dumps(request(260_000))) + 1
+        saved = {'offset': len(first), 'last': 1, 'compactions': 5, 'known': True}
+        # The saved compaction count proves the prefix was not read again; a partial record waits.
+        self.assertEqual(module.scan(self.transcript, saved), (260_000, 5, True, size))
+        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (260_000, 0, True, size))
+
+    def run_progress(self, records, **extra):
+        self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(HOOK.with_name('progress_reminder.py'))],
+                                input=json.dumps({'transcript_path': str(self.transcript), **extra}),
+                                text=True, encoding='utf-8', capture_output=True, timeout=30, env=self.env)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        return json.loads(result.stdout)['hookSpecificOutput']['additionalContext'] if result.stdout else ''
+
+    def test_a_tool_call_names_the_band_inside_a_long_turn(self):
+        # #138: a long autonomous turn crossed 300k and 400k with no notice until the next prompt.
+        self.assertEqual(self.run_progress([request(250_000)], agent_id='a1'), '')  # a sub-agent's call
+        said = self.run_progress([request(250_000)])
+        self.assertIn('Context is 250k tokens, yellow (200k)', said)
+        self.assertNotIn('tool calls since', said)
+        self.assertEqual(self.run_progress([request(250_000), request(260_000)]), '')  # same step
+        self.assertEqual(self.run_hook([request(260_000)]), '')  # the prompt hook shares the step
+        self.assertIn('Context is 310k tokens, red (300k)', self.run_progress([request(250_000), request(310_000)]))
 
 
 if __name__ == '__main__':

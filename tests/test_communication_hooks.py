@@ -229,6 +229,36 @@ class PlainReportTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn('D-5', result.stderr)
 
+    def test_a_question_left_in_chat_text_is_bounced(self):
+        # #289: a lead twice ended a report with an open question instead of asking it with the tool.
+        for message in ('Tests pass. Shall I push the branch?', 'Bitti.\n\nPush edeyim mi? 🙂',
+                        'Done; one question is still open: the release date.',
+                        'Rapor hazır. Bir açık soru kaldı: sürüm tarihi.', '**Open question:** the date.'):
+            with self.subTest(message=message):
+                result = self.stop(message)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('AskUserQuestion', result.stderr)
+        # Without the commit-msg grammar the label check is off, the question check is not.
+        alone = self.project / 'hooks/plain_report.py'
+        alone.parent.mkdir()
+        shutil.copy(HOOKS / 'plain_report.py', alone)
+        for message, code in (('D-5 is done.', 0), ('Shall I push?', 2)):
+            result = subprocess.run([sys.executable, str(alone)], input=json.dumps({'last_assistant_message': message}),
+                                    encoding='utf-8', capture_output=True, timeout=30,
+                                    env={**os.environ, 'CLAUDE_PROJECT_DIR': str(self.project), 'MYAGENTKIT_ROLE': ''})
+            self.assertEqual(result.returncode, code, result.stderr)
+        for message in ('Why did it fail? The cache was stale; fixed and tested.', 'No open questions; done.',
+                        'Açık soru yok, iş bitti.', 'Testler geçti. Açık sorun yok.', 'Açık sorunlar: #83',
+                        'Done.\n\nOpen questions: none.', 'No questions are open.',
+                        'All open questions are answered.','Run:\n```\nls -la ?\n```', 'Is `x?` set: yes.'):
+            with self.subTest(passes=message):
+                result = self.stop(message)
+                self.assertEqual((result.returncode, result.stderr), (0, ''), message)
+        both = self.stop('D-5 is done. Shall I push?')
+        self.assertEqual(both.returncode, 2, both.stderr)
+        self.assertIn('AskUserQuestion', both.stderr)
+        self.assertIn('D-5', both.stderr)
+
     def test_a_worker_session_is_not_checked(self):
         result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')
         self.assertEqual((result.returncode, result.stderr), (0, ''))

@@ -9,6 +9,13 @@ after a few turns; this hook is not. It reads the turn's final text from the hoo
 once, beside its plain words ("the second review round (r2)"); a second one in parentheses
 does not. The agent then rewrites the message in plain words.
 
+It also bounces a final message whose last line ends with a question, or that names a
+question as open ("open question", "açık soru"), outside code (#289; `docs/COMMUNICATION.md`,
+"Questions and approvals"): an owner's question goes through the question tool, and a call
+to it never ends a turn, so a turn's final text holds no asked question. The hook cannot see
+whether the owner is present; the message it prints says what to do in either case. This
+check needs no commit-msg grammar: a missing one turns off only the label check.
+
 Once per turn: `stop_hook_active` is true when the turn already continued because of a stop
 hook, and the hook steps aside (Claude Code also caps consecutive blocks at eight). A worker
 session started by `scripts/spawn_worker.sh` (MYAGENTKIT_ROLE=worker) writes for the lead and
@@ -43,6 +50,13 @@ LABELS = (r'\bAccept-MC\b',)
 FENCE = re.compile(r'[ \t>]*(`{3,}(?=[^`]*$)|~{3,}).*')
 SPAN = re.compile(r'(`+)[^\n]*?(?<!`)\1(?!`)')
 PARENS = re.compile(r'\([^()]*\)')
+# "soru" but never "sorun" (a problem): "Açık sorun yok." is no question.
+OPEN_QUESTION = re.compile(r'\bopen questions?\b|\bquestions? (?:is |are |remains? |still )+open\b'
+                           r'|\baçık (?:bir )?soru(?!n)|\bsoru(?:lar)?(?:ı|ım)? (?:hâlâ |hala )?açık', re.I)
+NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen questions?\W*(?:none|no)\b'
+                              r'|\bno questions? (?:is |are |remains? )*open\b'
+                              r'|\ball (?:the )?open questions? (?:are |were |have been )*(?:answered|closed|resolved)\b'
+                              r'|\baçık (?:bir )?soru(?!n)\w*\W*(?:yok|kalmadı)', re.I)
 
 
 def without_code(text: str) -> str:
@@ -140,21 +154,41 @@ def bare_labels(text: str) -> list[str]:
     return found
 
 
+def unasked_question(text: str) -> bool:
+    prose = without_code(text)
+    lines = [line for line in prose.splitlines() if line.strip()]
+    # The last line ends with ? or ？ followed only by marks, emoji or spaces.
+    return bool(lines and re.search(r'[?？][^\w?？]*$', lines[-1])) \
+        or bool(OPEN_QUESTION.search(NO_OPEN_QUESTION.sub(' ', prose)))
+
+
 def main() -> None:
     if os.environ.get('MYAGENTKIT_ROLE') == 'worker':
         return
     data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
     if data.get('stop_hook_active'):
         return
-    found = bare_labels(data.get('last_assistant_message') or '')
-    if not found:
-        return
-    print('BLOCKED: the message to the owner names a session label with no plain words beside it: %s. '
-          'Say what each one is in the chat language ("the second review round"), keep the label '
-          'in parentheses at most once and only if the owner meets it in a file, then send the '
-          'message again (docs/COMMUNICATION.md, "Language and terms"; core/docs/ in the kit).'
-          % ', '.join(found), file=sys.stderr)
-    sys.exit(2)
+    text = data.get('last_assistant_message') or ''
+    said = []
+    if unasked_question(text):
+        said.append('BLOCKED: the message to the owner ends with a question or names one as open, in chat '
+                    'text. While the owner is present, ask it with the question tool (AskUserQuestion: the '
+                    'options, the recommended one first) and drop it from the text; while the owner is away, '
+                    'park it in docs/STATE.md or an issue and say so without a question mark. Then send the '
+                    'message again (docs/COMMUNICATION.md, "Questions and approvals"; core/docs/ in the kit).')
+    try:
+        found = bare_labels(text)
+    except Exception:  # noqa: BLE001 - no commit-msg grammar: only the label check is off
+        found = []
+    if found:
+        said.append('BLOCKED: the message to the owner names a session label with no plain words beside it: %s. '
+                    'Say what each one is in the chat language ("the second review round"), keep the label '
+                    'in parentheses at most once and only if the owner meets it in a file, then send the '
+                    'message again (docs/COMMUNICATION.md, "Language and terms"; core/docs/ in the kit).'
+                    % ', '.join(found))
+    if said:
+        print('\n'.join(said), file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == '__main__':

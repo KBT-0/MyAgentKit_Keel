@@ -2,9 +2,10 @@
 name: worker
 description: >
   Implementation worker for {{PROJECT_NAME}}: one task in one module, briefed per
-  docs/HANDOFF.md. Spawn it instead of general-purpose for any task that runs a job
-  longer than a few minutes ({{LONG_JOBS}}). Runs with a one-hour prompt cache and ends
-  under about 150 turns. Inner checks stay with the worker; a gate finding goes back to
+  docs/HANDOFF.md. Spawn it instead of general-purpose for implementation work. As a
+  sub-agent it runs on the five-minute prompt cache: a job whose waits pass five minutes
+  ({{LONG_JOBS}}) goes to a scripts/spawn_worker.sh session, the only one with the
+  one-hour cache. Ends under about 150 turns. Inner checks stay with the worker; a gate finding goes back to
   the author's side (docs/WORKFLOW.md, "Worker cost", rule 2), and a fresh session reviews
   the fix; no session approves its own work.
 model: {{WORKER_MODEL}}

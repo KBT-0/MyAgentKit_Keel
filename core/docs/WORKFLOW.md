@@ -880,10 +880,12 @@ request, and a controlled experiment ran the same task in six setups). What the 
 Rules, binding for whoever routes workers:
 
 1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that
-   runs jobs longer than a few minutes runs with a one-hour cache: the Claude Code overlay
-   sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` for every session it starts
-   (`scripts/spawn_worker.sh` passes it on the launch line; `.claude/settings.json` sets it
-   under `env` for the lead's own sub-agents), so a worker definition needs no cache field.
+   waits on jobs past five minutes runs as a `scripts/spawn_worker.sh` session, the only one
+   with the one-hour cache: the session has the project's `promptCacheTtl`, and the launch
+   line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h`. The `worker` sub-agent and the lead's
+   other sub-agents run on the five-minute default: in one project sub-agents wrote 4.56M
+   one-hour cache tokens over 1,582 requests and only 11 gaps passed five minutes (#116); a
+   one-hour write costs 2x base input, a five-minute one 1.25x.
    The worker starts long jobs in the background and is re-invoked when they exit, and never
    runs `sleep`, `until`, `pgrep` or tail-the-log loops. To react to a log line or a state
    change, use the Monitor tool with a filtered command, not a loop
@@ -995,7 +997,8 @@ Rules, binding for whoever routes workers:
    `docs/research/context-limit.md`). A symptom cuts at any size: the owner corrected the
    same rule twice, or the worker-route hook refused twice. The Claude Code overlay's
    `context_size.py` hook names the band once per 50k step past 200k (the step is the owner's
-   choice, like the band); the lead then
+   choice, like the band), at a prompt and after a tool call, so a long turn meets it too;
+   the lead then
    recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
    of 450k is only a safety valve for a session nobody stops, never the cut; after any
    compaction its `after_compact.txt` hook names what to re-read. **Compact** when
