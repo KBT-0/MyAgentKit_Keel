@@ -477,7 +477,13 @@ the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md
 6. **Stage and hand off for fresh review before commit.** If the repository has no commit
    gate yet, wire it with `git config core.hooksPath .githooks`. Stage the intended setup
    files and follow `docs/REVIEW_GATE.md` in a fresh reviewer session. This setup writes
-   gate code, so the setup author cannot approve it. Record the pending review and any
+   gate code, so the setup author cannot approve it. `scripts/review.sh` cannot take a first
+   setup: it diffs against a commit, a new repository has none, and a whole install can be
+   several times the diff one review takes (a Unity install measured 1.35 MB). So review it
+   with a fresh reviewer that reads the staged files directly (the Claude Code overlay's
+   `diff-reviewer` subagent), and give it the list of files this setup wrote or changed: you
+   know them from this session. Every other staged file is the release's unchanged copy, and
+   the reviewer reads those only for context. Record the pending review and any
    manual checks in `docs/STATE.md`; do not commit until the review requirement is met.
    If review cannot run, leave the staged work and an explicit handoff rather than treating
    setup as an exemption. Commit only after verified acceptance and required manual checks.

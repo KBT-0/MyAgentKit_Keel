@@ -686,7 +686,13 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     Also returns the commit the reference resolved to, for every later use in the review: a
     reference resolved again could have moved, giving a record keyed to another commit.
     """
-    head = git(repo, "rev-parse", "HEAD").decode().strip()
+    # A repository with no commit (a first setup) has no HEAD to diff against: a bare
+    # rev-parse died with "ambiguous argument 'HEAD'" and named no way on (#176).
+    head = git(repo, "rev-parse", "--verify", "-q", "HEAD", allowed=(0, 1)).decode().strip()
+    if not head:
+        raise BridgeError("the repository has no commit yet, and a review diffs against one; "
+                          "for a first setup follow setup/INTERVIEW.md, Phase 4 step 6 (a reviewer "
+                          "subagent reads the staged files directly)")
     resolved = resolve(repo, scope, reference)
     # Old reports used <timestamp>-<branch>.md. Also inspect the reference tree so
     # removing an old tracked archive cannot send its entire transcript to a reviewer.
