@@ -14,15 +14,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## Unreleased — v0.12
 
 This heading becomes `## v0.12 — <date>` at the release, together with README's bold version
-and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11.
+and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, and sync-kit
+prints none of these entries to a project. Tag v0.11 only together with that rename: while
+this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
-- **Test rules rest on a binding report** (decision 37; `docs/research/test-rules.md`). A logic
+- **Test rules rest on a binding report** (`docs/research/test-rules.md`; decision 37). A logic
   change brings its test in the same change; writing the test first is advice, not a rule. A
   gate check keeps its red proof by a bad-input fixture test; an ordinary new test needs no
   mandatory red proof, and the review asks whether it breaks when the code is reverted.
-  Existing tests stay; only tests measured as redundant or slow are consolidated. A
-  generated-content pipeline validates its output (data validation, captures) and needs no
-  unit tests of the generator. `docs/gates-must-be-proven-red.md` says the rule is for gate
+  Existing tests stay; only tests measured as redundant or slow are consolidated, and a
+  reviewer does not count such a measured consolidation as a deleted test. Recommended, from
+  the leeway project's decision: a generated-content pipeline validates its output (data
+  validation, captures); unit tests of the generator are not mandatory. `docs/gates-must-be-proven-red.md` says the rule is for gate
   checks; the setup interview says "a check never seen failing".
   **ACTION:** merge the new test rule into your copies of `AGENTS.md` (the "No untested code"
   bullet), `docs/WORKFLOW.md` (Task lifecycle step 4, the first bullet of "Writing a gate", and
@@ -39,9 +42,12 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11.
   the overlay allow list loses its two `--self-test` rules, and the "self-test owed" rule and
   `sync-kit.sh`'s demand for it are gone. `review.sh --self-test`, the review suite runner,
   stays. (#80, #110, #124, #126, #152, #125, #84, #81 in part)
-  **ACTION:** (1) Take the new `scripts/check.sh` whole and re-apply your filled values
-  (`build_test_cmd`, `build_cache_inputs`, `module_roots`); stop calling `check.sh --self-test`
-  anywhere (scripts, CI, docs, agent briefs). (2) Delete `scripts/boundary_selftests.sh`. For
+  **ACTION:** (1) Take the new `scripts/check.sh` whole and re-apply every value you filled
+  (for example `toolchain_path`, `module_roots`, `architecture_file`, `build_test_cmd`,
+  `docs_only_skip_build`, `STRONG_REVIEW_DAYS`/`STRONG_REVIEW_TASKS`); new: `build_cache_inputs`; stop calling `check.sh --self-test`
+  anywhere (scripts, CI, docs, agent briefs). (2) Delete `scripts/boundary_selftests.sh`, and in the header comment of your
+  `scripts/boundary_checks.sh` replace "needs a matching case in scripts/boundary_selftests.sh"
+  with the kit's fixture-test paragraph. For
   each check in `scripts/boundary_checks.sh` write a fixture test instead, as the example at the
   end of the kit's `boundary_checks.sh` header shows (`expect red '<FAIL line>' <path> '<line>'`
   and `expect green - <path> '<line>'`), and run it from your build command (for example
@@ -136,7 +142,8 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11.
   overlays/ without a `KIT-OWNED` header) changed since the last release tag fails the check
   unless an ACTION item of the newest version names it; NOT RUN without a tag. CI runs the kit
   check only. (#146 in part, #111, #96, #134)
-  **ACTION** (kit maintainers): tag each release `vMAJOR.MINOR`.
+  **ACTION** (kit maintainers): tag each release `vMAJOR.MINOR` at the release, when its
+  CHANGELOG heading is renamed from Unreleased; an earlier tag turns this check red.
 
 - **Kit CI and test isolation** (ci, redfix): CONTRIBUTING's release rule: a release is
   announced only after CI is green on every job of the release commit (`gh run list`,

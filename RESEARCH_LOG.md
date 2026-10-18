@@ -33,10 +33,11 @@ the only study that measured test-first ordering found no effect (Fucci et al., 
 evidence-backed question is whether a test breaks when the code is reverted or mutated
 (findings 4, 5); a gate check's bad-input fixture is the standard (finding 6); studios validate
 generated content on its output, never by unit tests of the generator (findings 9 to 11). The
-owner's decision 37 follows the report: the test comes in the same change and test-first is
-advice; only gate checks keep a mandatory red proof; existing tests stay and only measured
-redundant or slow ones are consolidated; content pipelines validate their output. It matches
-leeway's own rule change (leeway b9732d5).
+owner's decision 37 follows the report for (a) and (b): the test comes in the same change and
+test-first is advice; only gate checks keep a mandatory red proof; existing tests stay and only
+measured redundant or slow ones are consolidated. (c) is the leeway project's decision (leeway
+b9732d5): a content pipeline validates its output and generator unit tests are not mandatory;
+the kit adopts it as a recommendation.
 
 ### 2026-10-18 — v0.12: two parallel reviewers for the high tier
 
