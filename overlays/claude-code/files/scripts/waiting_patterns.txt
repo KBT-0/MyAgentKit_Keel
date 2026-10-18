@@ -1,7 +1,9 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # What a Claude Code pane looks like when it waits for a person. Kit-owned: read by
 # scripts/watch_workers.sh, and through it by scripts/spawn_worker.sh, so the folder-trust
-# dialog and every other wait are defined once, here.
+# dialog and every other wait are defined once, here. The rules describe Claude Code panes
+# only: Codex panes are not covered (spawn_codex.sh runs Codex with -a never, so it shows no
+# approval prompt).
 #
 # One rule per line: KIND STATUS VERSION WHERE ERE (the ERE is the rest of the line).
 #   KIND     what waits; a session is WAITING on KIND when one `last` rule of KIND matches the
@@ -42,6 +44,10 @@ permission  VERIFIED    2.1.285  near  ^ *(❯ )?[0-9]+\. (Yes|No)
 # A question the model asks with its question tool (numbered options, free-text option).
 question    VERIFIED    2.1.285  last  ^ *Enter to select · ↑/↓ to navigate · Esc to cancel$
 question    VERIFIED    2.1.285  near  ^ *(❯ )?[0-9]+\. [^ ]
+# The same hint with another middle part: `Tab/Arrow keys to navigate` with several questions,
+# `ctrl+g to edit in <editor>` before `Esc to cancel` with an editor set. Read from the
+# installed 2.1.302 bundle, not a captured pane (#237).
+question    UNVERIFIED  2.1.302  last  ^ *Enter to select · .* · Esc to cancel$
 # Any other numbered choice that ends in a cancel hint (an edit prompt, a plan approval).
 dialog      UNVERIFIED  -        last  Esc to cancel
 dialog      UNVERIFIED  -        near  ^ *❯ [0-9]+\. [^ ]

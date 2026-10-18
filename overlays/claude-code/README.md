@@ -146,7 +146,7 @@ Attaching resizes the tmux window to the new tab, and the worker's TUI redraws t
 **`scripts/watch_workers.sh NAME [NAME...]`** is run by the lead as a BACKGROUND command. It
 returns, and so re-invokes the lead, as soon as a named session is GONE or WAITING on a
 person; for WAITING it prints what waits and the last lines of the pane, so the lead can tell
-the owner. Otherwise it ends after `--max-minutes` (110) with one line saying nothing waited.
+the owner. Otherwise it ends after `--max-minutes` (55) with one line saying nothing waited.
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
 which costs the worker nothing. Exit 3, never "nothing waiting", means the watcher could not
 observe: a pane of a session that exists could not be read, or tmux could not say whether it exists

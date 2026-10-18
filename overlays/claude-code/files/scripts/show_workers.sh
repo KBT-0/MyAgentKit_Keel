@@ -29,7 +29,11 @@
 #       macOS: iTerm2 (when the lead runs in it, or it is installed and the lead does not run
 #         in Terminal.app): a new window with one tab per session. Terminal.app: one WINDOW
 #         per session, because adding a tab there needs accessibility permission.
-#       anything else: opens nothing and prints `attach by hand: tmux attach -t NAME`.
+#       a Linux desktop (DISPLAY or WAYLAND_DISPLAY set): the first of $TERMINAL and
+#         x-terminal-emulator found on PATH, one window per session (`TERM -e tmux attach -t
+#         =NAME`), started in the background: xterm and its kind run until the window closes.
+#       anything else (a headless or SSH host): opens nothing and prints `attach by hand:
+#         tmux attach -t NAME`.
 #   - Proves it: a session counts as shown only once `tmux list-clients` lists a client for
 #     it within 8 seconds; for any other it prints the attach line. Every launch is bounded
 #     (5 seconds, then SIGTERM, then SIGKILL 2 seconds later: the stop pattern of `timeout -k`
@@ -153,6 +157,22 @@ terminal() {
   launch / "$@" -e 'end tell'
 }
 
+# The first of $TERMINAL and x-terminal-emulator on PATH; none prints nothing.
+x_terminal() {
+  for t in "${TERMINAL-}" x-terminal-emulator; do
+    [ -n "$t" ] && command -v "$t" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# One window per session from one bounded launch: the shell that starts them returns at once.
+x_term() {
+  set -- sh -c 't=$1 x=$2; shift 2; for n in "$@"; do "$t" -e "$x" attach -t "=$n" >/dev/null 2>&1 </dev/null & done' \
+    sh "$1" "$tmux_bin"
+  for n in $show; do set -- "$@" "$n"; done
+  launch / "$@"
+}
+
 if [ -n "${WSL_DISTRO_NAME-}" ]; then
   wsl_wt
 elif [ "$(uname -s)" = Darwin ] && command -v osascript >/dev/null; then
@@ -161,8 +181,10 @@ elif [ "$(uname -s)" = Darwin ] && command -v osascript >/dev/null; then
     Apple_Terminal) terminal ;;
     *) if [ -d /Applications/iTerm.app ]; then iterm; else terminal; fi ;;
   esac
+elif [ -n "${DISPLAY-}${WAYLAND_DISPLAY-}" ] && term=$(x_terminal); then
+  x_term "$term"
 else
-  by_hand "no supported terminal here (WSL with Windows Terminal, or macOS)"
+  by_hand "no supported terminal here (WSL with Windows Terminal, macOS, or a Linux desktop with \$TERMINAL or x-terminal-emulator on PATH)"
 fi
 
 # Shown only once a client is attached: the launcher returning proves nothing.
