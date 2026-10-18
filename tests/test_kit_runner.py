@@ -283,7 +283,7 @@ runpy.run_path(%r, run_name='__main__')
                 (self.tmp / 'suite/test_kit_probe.py').write_text(source)
                 passed, out = runner(('suite', command))
                 self.assertEqual(passed, expected, out)
-                if declared:
+                if declared and expected:
                     self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
 
     def test_platform_wrappers_do_not_satisfy_suite_minimums(self):
@@ -311,7 +311,8 @@ runpy.run_path(%r, run_name='__main__')
                     (self.tmp / 'suite/test_kit_probe.py').write_text(source)
                     passed, out = runner(('suite', command))
                     self.assertEqual(passed, expected, out)
-                    self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
+                    # A declared skip is left out before the run: at 2 nothing runs.
+                    self.assertEqual('NOT RUN: test_kit_probe.Probe.test_maybe' in out, expected, out)
 
     def test_a_nested_only_failing_module_fails_the_run(self):
         command = self.suite_unit('True', 2)
@@ -407,6 +408,17 @@ runpy.run_path(%r, run_name='__main__')
         self.assertTrue(passed, out)
         self.assertIn('suite ran 2 tests', out)
         self.assertNotIn('other module imported', out)
+        # A shard checks the module's whole count and runs every second test: test_maybe
+        # (failing here) runs in shard 0 alone.
+        (self.tmp / 'suite/test_kit_probe.py').write_text(PROBE % 'False')
+        text = script.read_text()
+        for index, expected in ((0, False), (1, True)):
+            with self.subTest(shard=index):
+                script.write_text(text.replace("sys.exit(", "check_kit.SHARDS = {'test_kit_probe': 2}\nsys.exit(")
+                                  .replace("unit('suite/test_kit_probe'", "unit('suite/test_kit_probe@%d'" % index))
+                passed, out = runner(('suite/test_kit_probe@%d' % index, command))
+                self.assertEqual(passed, expected, out)
+                self.assertIn('probe failure message' if index == 0 else 'suite ran 1 tests', out)
 
     def test_main_runs_one_unit_per_module_and_refuses_a_module_without_a_count(self):
         names = []
@@ -421,8 +433,13 @@ runpy.run_path(%r, run_name='__main__')
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(check_kit.main(), 1)
         expected = ['acceptance'] + ['locale/' + name for name in check_kit.LOCALE_SUITES] + [
-            directory + '/' + name for directory, required in check_kit.REQUIRED_SUITES.items() for name in required]
+            directory + '/' + name for directory, required in check_kit.REQUIRED_SUITES.items()
+            for name in required if name not in check_kit.SHARDS] + [
+            directory + '/%s@%d' % (name, index) for directory, required in check_kit.REQUIRED_SUITES.items()
+            for name in required if name in check_kit.SHARDS for index in range(check_kit.SHARDS[name])]
         self.assertEqual(sorted(names), sorted(expected))
+        self.assertTrue(set(check_kit.SHARDS) <= set(check_kit.REQUIRED_SUITES['tests'])
+                        | set(check_kit.REQUIRED_SUITES['core/scripts']))
         (self.tmp / 'suite').mkdir()
         for name in ('test_kit_probe', 'test_new'):
             (self.tmp / 'suite' / (name + '.py')).write_text(PROBE % 'True')

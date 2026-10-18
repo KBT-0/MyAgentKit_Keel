@@ -122,6 +122,10 @@ NOT_ON_WINDOWS = {
 # A local check leaves it to CI, whose Windows job runs it (CI is set there).
 if NOT_ON_WINDOWS and not os.environ.get('CI'):
     NOT_ON_WINDOWS['tests']['test_bootstrap'] = "about 26 minutes on Windows; CI's Windows job runs it too"
+# Modules too long for one unit, each run as that many units (#146). A module name is unique
+# across the folders. ponytail: hand-set from measured seconds; a slow module added later only
+# lengthens the run until it is listed here.
+SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4}
 
 
 # --timing: each phase's and each suite's seconds, and a suite's ten slowest tests.
@@ -195,13 +199,15 @@ def _cases(suite):
             yield item
 
 
-def run_tests(root, directory, required):
+def run_tests(root, directory, required, shard=None):
     """Require executed suite minimums; only declared platform exclusions may skip.
 
     A skipped test never counts toward a minimum: a run that skipped or collected nothing is
     no pass (pytest exits 5 when it collects nothing, docs.pytest.org/en/stable/reference/
     exit-codes.html; unittest keeps skips apart from success, TestResult.skipped). A declared
-    platform skip says so in its NOT RUN line (issue #56)."""
+    platform skip says so in its NOT RUN line (issue #56), and never counts, whether or not it
+    skips here. `shard`, (index, total): the module's count is checked whole, and its tests
+    index, index + total, ... run, so one long module spreads over `total` units (#146)."""
     folder = root / directory
     for name in required:
         if not (folder / (name + '.py')).is_file():
@@ -215,32 +221,27 @@ def run_tests(root, directory, required):
     # Only the required modules are imported: a unit names one module (main refuses a module
     # without a count), so one folder's modules run in units at once, none running another's.
     suite, found = discover(folder, {path.stem for path in folder.glob('test_*.py')} - set(required))
-    counts = {name: found.get(name, 0) for name in required}
-    for name, minimum in required.items():
-        if counts[name] < minimum:
-            raise RuntimeError('required test suite is incomplete: ' + name)
     allowed = {test.id() for test in _cases(suite)
                if getattr(getattr(test, test._testMethodName), '_kit_platform_skip', False)}
+    counts = {name: found.get(name, 0) - sum(test.split('.')[0] == name for test in allowed) for name in required}
+    for name, minimum in required.items():
+        if counts[name] < minimum:
+            raise RuntimeError('required test suite is incomplete: %s (%d tests that can run here, %d required)'
+                               % (name, counts[name], minimum))
+    if shard:
+        suite = unittest.TestSuite(list(_cases(suite))[shard[0]::shard[1]])
     output = io.StringIO()
     # Verbosity 1: a failure shows its FAIL and ERROR blocks and the count, not a line for each
     # passing test (a red CI job once carried about 45k tokens of those lines, #111).
     result = unittest.TextTestRunner(stream=output, verbosity=1, resultclass=TimedResult).run(suite)
-    unexpected = []
+    unexpected = [test.id() for test, _ in result.skipped if test.id() not in allowed]
     for test, reason in result.skipped:
-        if test.id() not in allowed:
-            unexpected.append(test.id())
-        else:
-            name = test.id().split('.')[0]
-            if name in counts:
-                counts[name] -= 1
+        if test.id() in allowed:
             print('NOT RUN: %s (%s)' % (test.id(), reason))
-    insufficient = [name for name, minimum in required.items() if counts[name] < minimum]
-    if not result.wasSuccessful() or unexpected or insufficient:
+    if not result.wasSuccessful() or unexpected:
         raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue()
                            + ''.join('skipped without a platform declaration: %s\n' % name
-                                     for name in unexpected)
-                           + ''.join('%s ran %d tests, %d required\n' % (name, counts[name], required[name])
-                                     for name in insufficient))
+                                     for name in unexpected))
     # A pass prints one line, a failure only what failed: the per-test lines were kilobytes nobody read.
     passed('%s ran %d tests, each suite at or above its minimum (%s)'
            % (directory, result.testsRun - len(result.skipped),
@@ -404,7 +405,7 @@ def check_actions(root):
     through an ACTION item. Changes since the tag include uncommitted ones; a removed file
     counts as project-owned. Without a v* tag (a shallow CI checkout has none) it is NOT RUN."""
     git = ['git', '-C', str(root), '-c', 'core.quotePath=false']
-    found = subprocess.run(git + ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*'],
+    found = subprocess.run(git + ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*.[0-9]*'],
                            capture_output=True, text=True, encoding='utf-8', errors='replace')
     if found.returncode:
         print('NOT RUN: the ACTION check for project-owned kit files (no v* release tag)')
@@ -1281,9 +1282,11 @@ FAILURES = (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpir
 def unit(name, self_test, timing_file=None):
     """Run one unit in this process; 0 on a pass, 1 with the error printed on a failure."""
     try:
-        # A unit is a whole folder of REQUIRED_SUITES, one of its modules ("tests/test_x"),
-        # acceptance, the locale matrix, or one suite of it ("locale/test_x").
+        # A unit is a whole folder of REQUIRED_SUITES, one of its modules ("tests/test_x"), one
+        # shard of a module in SHARDS ("tests/test_x@1"), acceptance, the locale matrix, or one
+        # suite of it ("locale/test_x").
         directory, _, module = name.rpartition("/")
+        module, _, index = module.partition("@")
         if name == "acceptance":
             acceptance(self_test)
         elif name == "locale":
@@ -1293,7 +1296,8 @@ def unit(name, self_test, timing_file=None):
         elif name in REQUIRED_SUITES:
             run_tests(ROOT, name, REQUIRED_SUITES[name])
         else:
-            run_tests(ROOT, directory, {module: REQUIRED_SUITES[directory][module]})
+            run_tests(ROOT, directory, {module: REQUIRED_SUITES[directory][module]},
+                      (int(index), SHARDS[module]) if index else None)
         # The completion line run_units requires: a unit that exited 0 before this point (a
         # test module calling os._exit(0) while it was discovered) did not finish its checks.
         # An exit code alone is no evidence of a finished run (pytest's exit code 5; Claude Code
@@ -1408,7 +1412,8 @@ def main():
         uncounted = sorted({path.stem for path in (ROOT / directory).glob("test_*.py")} - set(required))
         if uncounted:
             raise RuntimeError("%s: no count in REQUIRED_SUITES for %s" % (directory, ", ".join(uncounted)))
-        units += [directory + "/" + name for name in required]
+        units += [directory + "/" + name + suffix for name in required
+                  for suffix in (["@%d" % index for index in range(SHARDS[name])] if name in SHARDS else [""])]
     units += ["locale/" + name for name in LOCALE_SUITES]
     cpus = os.cpu_count() or 1
     parallel = degree(cpus, len(units))
