@@ -97,7 +97,9 @@ test-integrity floor below rests on it.
 3. State: nothing half-written, duplicated or lost on a crash or retry.
 4. Determinism: no ambient clock, randomness or hidden global state.
 5. Test integrity: a weakened, skipped or deleted test, or untested core logic, is High at least.
-6. Gate integrity: observed RED, kept so by a negative test.
+   A logic change carries its test in the same change. A new test needs no red-proof record;
+   ask whether it breaks when the code is reverted (the kit's `docs/research/test-rules.md`).
+6. Gate integrity: a gate check observed RED, kept so by its bad-input fixture test.
 7. Blast radius: every caller of every changed public member.
 8. Scope creep: "Pre-existing", never fixed by the reviewer.
 9. Design conformance with `docs/PROJECT.md` and `docs/PHASES.md`.

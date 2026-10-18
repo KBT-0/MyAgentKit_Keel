@@ -93,9 +93,11 @@ worker.
 - **A bug you can fix now is fixed now.** A defect you find inside the task's module and scope
   goes into the task's commit, not into an issue; an issue or a `docs/BACKLOG.md` line is for
   what is out of the task's reach or what {{OWNER_NAME}} deferred.
-- No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
-  `./scripts/check.sh` must PASS before you finish. A test runs in its own command and its
-  result is read before a commit: never `test; git commit`, never a test piped through a
+- No untested code enters {{TESTED_AREA}}. A logic change brings its test in the same change;
+  writing the test first is advice, not a rule. An ordinary test needs no red proof; a gate
+  check does (below). A generated-content pipeline is checked on its output (data validation,
+  captures), not by unit tests of the generator. `./scripts/check.sh` must PASS before you
+  finish. A test runs in its own command and its result is read before a commit: never `test; git commit`, never a test piped through a
   filter (`| grep`, `| tail`) ahead of the commit, since both hide a red result.
 - The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
   abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). **Agents

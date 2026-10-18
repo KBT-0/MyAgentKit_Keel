@@ -21,6 +21,23 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-18 — v0.12: test rules kept only where a source holds them
+
+The owner ordered the kit's test rules checked against sources, under the rule that a practice
+with no source goes (v0.12 decision 34); the kit lead researched (a) tests with or before the
+code and (b) a red proof for every test and gate check, the leeway project (c) tests of a
+generated-content pipeline. The merged binding report is `docs/research/test-rules.md`.
+Findings: a test in the same change is backed by SWE at Google, DORA and Anthropic (finding 1);
+the only study that measured test-first ordering found no effect (Fucci et al., finding 2);
+"see every test fail once" is practitioner convention with no measurement, and the
+evidence-backed question is whether a test breaks when the code is reverted or mutated
+(findings 4, 5); a gate check's bad-input fixture is the standard (finding 6); studios validate
+generated content on its output, never by unit tests of the generator (findings 9 to 11). The
+owner's decision 37 follows the report: the test comes in the same change and test-first is
+advice; only gate checks keep a mandatory red proof; existing tests stay and only measured
+redundant or slow ones are consolidated; content pipelines validate their output. It matches
+leeway's own rule change (leeway b9732d5).
+
 ### 2026-10-18 — v0.12: two parallel reviewers for the high tier
 
 The owner kept two focus reviewers, logic and portability, running in parallel for a high-tier

@@ -457,7 +457,7 @@ the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md
    runs: an input that breaks the rule turns the check red with its own `FAIL` line, a clean
    one leaves it green, and nothing touches the checkout or runs the build. A gate you have
    only seen pass has not been tested; it is an untested branch that runs on every commit (a
-   test never seen failing does not show what it checks; Google checks the same at scale with
+   check never seen failing does not show what it checks; Google checks the same at scale with
    mutants in code review: "Practical Mutation Testing at Scale"). The file ships a worked
    example of both.
 2. **Run `./scripts/check.sh`.** Show the owner the real output. If it fails, fix the cause.

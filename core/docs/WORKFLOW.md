@@ -50,7 +50,14 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    list — needing something on it is a STOP, not a reason to widen the phase.
 3. **Implement:** a small, focused change (`AGENTS.md`, "Task discipline": no drive-by
    refactors).
-4. **Test and gate:** write or update tests, then run `./scripts/check.sh` before finishing.
+4. **Test and gate:** a logic change brings its test in the same change; writing the test
+   first is advice, not a rule (a bug fix starts well from a failing test that reproduces
+   it). An ordinary test needs no red proof; the review asks whether it breaks when the code
+   is reverted. Only a gate check proves red, by its fixture test ("Writing a gate"). A
+   generated-content pipeline validates its output (data validation, captures) and needs no
+   unit tests of the generator. Existing tests stay; only tests measured as redundant or slow
+   are consolidated (the kit's `docs/research/test-rules.md`). Then run `./scripts/check.sh`
+   before finishing.
    The same script is wired into git as `.githooks/pre-commit`, so a failing gate aborts the
    commit for every tool — but running it yourself is still the rule. The hook is the
    backstop, not the plan, and agents never bypass it with `--no-verify`.
@@ -225,8 +232,9 @@ breaks, everything keeps looking green.
 
 - **Prove it RED, and keep it red with a fixture test.** Construct the failure condition,
   watch the check reject it, undo it, and add a fixture test for the check to the project's
-  test suite in the same task (the kit's `docs/gates-must-be-proven-red.md`). It is TDD's red
-  step at the size of a gate; seeded failures measurably improved the tests developers wrote
+  test suite in the same task (the kit's `docs/gates-must-be-proven-red.md`). This red proof
+  is for gate checks; an ordinary test needs none (the kit's `docs/research/test-rules.md`,
+  findings 4 to 6). It is TDD's red step at the size of a gate; seeded failures measurably improved the tests developers wrote
   (Petrović et al., ICSE 2021, arxiv.org/abs/2103.07189), and a check that cannot fail does
   not fail securely (OWASP, "Fail securely").
 - **One fixture test per check, never a run of the whole gate.** The test feeds the check a
@@ -1529,6 +1537,13 @@ here, by rule. A rule with no source below is the owner's choice or a lesson nam
 - **No AI attribution in git:** the owner's policy; the tool's `attribution` setting turns
   the trailer off at its source (code.claude.com/docs/en/settings). Why the trace lives in
   STATE.md: "The state, backlog and phase files".
+- **A test in the same change; red proof for gate checks only:** Software Engineering at
+  Google, ch. 11 (every change includes its tests); DORA, "Test automation"; the only study
+  that measured test-first ordering found no effect (Fucci et al., IEEE TSE, arxiv.org/abs/1611.05994);
+  a red proof of every ordinary test is practitioner convention only, and the evidence-backed
+  question is whether the test breaks when the code is reverted or mutated (Petrović et al.,
+  "Practical Mutation Testing at Scale"); studios validate generated content on its output
+  (the kit's `docs/research/test-rules.md`, findings 1 to 11; owner decision 2026-10-18).
 - **Search before writing a system:** code.claude.com/docs/en/best-practices; duplicated
   code rose with AI assistants (GitClear's 2025 code-quality report).
 - **A changed public API updates its README:** Google Engineering Practices, "What to look

@@ -16,6 +16,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 This heading becomes `## v0.12 — <date>` at the release, together with README's bold version
 and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11.
 
+- **Test rules rest on a binding report** (decision 37; `docs/research/test-rules.md`). A logic
+  change brings its test in the same change; writing the test first is advice, not a rule. A
+  gate check keeps its red proof by a bad-input fixture test; an ordinary new test needs no
+  mandatory red proof, and the review asks whether it breaks when the code is reverted.
+  Existing tests stay; only tests measured as redundant or slow are consolidated. A
+  generated-content pipeline validates its output (data validation, captures) and needs no
+  unit tests of the generator. `docs/gates-must-be-proven-red.md` says the rule is for gate
+  checks; the setup interview says "a check never seen failing".
+  **ACTION:** merge the new test rule into your copies of `AGENTS.md` (the "No untested code"
+  bullet), `docs/WORKFLOW.md` (Task lifecycle step 4, the first bullet of "Writing a gate", and
+  the sources under "Where the constitution's rules come from") and `docs/REVIEW_GATE.md`
+  (priorities 5 and 6), and take the report line of `.claude/agents/worker.md`.
+
 - **The project gate's whole-gate `check.sh --self-test` is gone; each check is proven by its
   own fixture test** (decision 23; `docs/research/kit-self-checks.md`, findings 1 and 2). A
   fixture test feeds one check a small input in a throwaway folder, red with its own FAIL line
