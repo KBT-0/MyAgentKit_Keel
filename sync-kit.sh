@@ -1,7 +1,10 @@
 #!/usr/bin/env sh
 # MyAgentKit_Keel — propagate kit updates into a project that already installed it.
 #
-# Usage: sync-kit.sh [TARGET_DIR] [--dry-run] [--actions-applied]
+# Usage: sync-kit.sh [TARGET_DIR] [--dry-run] [--actions-applied] [--merge [--base KIT_COMMIT]]
+#
+# --merge also merges the kit's changes into the project-owned files (git merge-file, from the
+# kit commit recorded in docs/kit/.kit-commit or named with --base) and lists what is left.
 #
 # Two tiers of ownership, and the line between them is drawn in the files themselves:
 #
@@ -41,6 +44,8 @@ kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 target="."
 dry=0
 applied=0
+merge=0
+base_ref=""
 
 die() { printf '%s\n' "sync-kit: $1" >&2; exit 1; }
 
@@ -48,13 +53,17 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
     --actions-applied) applied=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    --merge) merge=1; shift ;;
+    --base) [ $# -ge 2 ] || die "--base needs a kit commit"; base_ref=$2; shift 2 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     -*)        die "unknown option: $1" ;;
     *)         target="$1"; shift ;;
   esac
 done
 
 target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
+[ "$merge" -eq 0 ] || [ "$dry" -eq 0 ] || die "--merge writes the project's files; run it without --dry-run"
+[ -z "$base_ref" ] || [ "$merge" -eq 1 ] || die "--base is the base of --merge; pass both"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
 # blocked REL [dir] — the one check for every path the sync reads or writes (the kit-owned
@@ -124,7 +133,8 @@ pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp 
 copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}' EXIT
+mdir=""
+trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}; [ -z "$mdir" ] || rm -rf "$mdir"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -138,6 +148,39 @@ printf '%s\n' "sync-kit: project has v$have, kit is v$latest"
 if [ "$have" = "$latest" ]; then
   echo "sync-kit: already current. Nothing to do."
   exit 0
+fi
+
+# The base of --merge is checked before anything is written: a run that stops on it changes
+# nothing.
+if [ "$merge" -eq 1 ]; then
+  named=$base_ref
+  if [ -z "$base_ref" ]; then
+    why=$(blocked docs/kit/.kit-commit)
+    [ -n "$why" ] || [ ! -f "$target/docs/kit/.kit-commit" ] ||
+      base_ref=$(tr -d '[:space:]' < "$target/docs/kit/.kit-commit")
+  fi
+  [ -n "$base_ref" ] ||
+    die "--merge needs the kit commit this project's v$have came from: no docs/kit/.kit-commit, so pass --base <commit> (the changelog's upgrade section names the release commit)"
+  base=$(git -C "$kit" rev-parse -q --verify "$base_ref^{commit}") ||
+    die "the kit has no commit $base_ref (a shallow clone?); clone the kit whole"
+  mdir=$(mktemp -d) || die "cannot create a temp folder"
+  # A base named by hand is checked against the project's kit-owned files, which are still the
+  # copies of the commit it came from (tier 1 has not run yet). A later base reads the kit's
+  # fixes in between as the project's edits and keeps the old lines, with no conflict to show.
+  if [ -n "$named" ]; then
+    git -C "$kit" -c core.quotePath=false grep -lE '^(# |<!-- )KIT-OWNED:' "$base" -- core setup > "$work_list" ||
+      [ $? -eq 1 ] || die "cannot list the kit-owned files at $base_ref"
+    off=""
+    while IFS= read -r f; do
+      f=${f#"$base":}
+      case "$f" in core/*) rel=${f#core/} ;; *) rel=$f ;; esac
+      [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ] || continue
+      git -C "$kit" show "$base:$f" > "$mdir/kit" || die "cannot read $f at $base_ref"
+      git diff --no-index --quiet --ignore-cr-at-eol -- "$mdir/kit" "$target/$rel" || off="$off
+    $rel"
+    done < "$work_list"
+    [ -z "$off" ] || die "the project's kit-owned files below differ from the kit's at $base_ref, so the project did not come from it, and a merge from it would drop the kit's changes since the real base without a conflict. Pass the commit it came from (git -C <kit> log --format=%h -- core/<file> lists the candidates):$off"
+  fi
 fi
 
 # --- tier 1: overwrite the kit-owned files ------------------------------------------
@@ -328,6 +371,61 @@ if [ -s "$pending" ]; then
   cat "$pending"
 fi
 
+# --- tier 3, with --merge: the kit's changes merged into the project-owned files ---------
+# Each project-owned file the kit has under core/ (ignored files aside) and changed since the base commit is
+# merged with `git merge-file` (the project's copy, the kit's copy at the base, the kit's copy
+# now) and written whole with its mode; a file the kit did not change is not opened. Left for
+# a person or an agent are the conflict regions alone, printed by line. One upgrade that merged
+# five docs whole, one agent each, read 8.3M cache tokens (#184); the conflict regions of a
+# v0.8 -> v0.12 merge of the same docs and check.sh measured 14% of one read of the whole files.
+# The base is the kit commit the project's version came from: a later one reads the kit's own
+# changes in between as the project's. This run never records the version: the merged files
+# are read first (git diff), their conflicts resolved, then --actions-applied records it.
+if [ "$merge" -eq 1 ]; then
+  git -C "$kit" -c core.quotePath=false ls-files --cached --others --exclude-standard -- core | while IFS= read -r f; do
+    grep -qE '^(# |<!-- )KIT-OWNED:' "$kit/$f" 2>/dev/null || printf '%s\n' "${f#core/}"
+  done > "$work_list" || die "cannot list the kit's project-owned files"
+  echo
+  printf '%s\n' "PROJECT-OWNED files, the kit's changes since ${base%"${base#???????}"} merged in:"
+  open=0
+  while IFS= read -r rel; do
+    why=$(blocked "$rel")
+    if [ -n "$why" ]; then
+      printf '%s\n' "  skipped:  $rel ($why); merge it by hand"; open=1; continue
+    fi
+    if ! git -C "$kit" show "$base:core/$rel" > "$mdir/base" 2>/dev/null; then
+      if [ -e "$target/$rel" ]; then
+        printf '%s\n' "  no base:  $rel (the kit had no such file at the base); merge it by hand"; open=1
+      else
+        printf '%s\n' "  kit-new:  $rel (not in the project; the changelog says whether to copy it)"
+      fi
+      continue
+    fi
+    # Removed by the project, or not changed by the kit: nothing to merge.
+    [ -e "$target/$rel" ] && ! cmp -s "$mdir/base" "$kit/core/$rel" || continue
+    if grep -q '^<<<<<<< ' "$target/$rel"; then
+      printf '%s\n' "  unresolved: $rel (conflict markers of an earlier merge); resolve them first"; open=1; continue
+    fi
+    rc=0
+    git merge-file -p -L project -L "kit base" -L "kit v$latest" \
+      "$target/$rel" "$mdir/base" "$kit/core/$rel" > "$mdir/merged" || rc=$?
+    [ "$rc" -lt 128 ] || die "could not merge $rel; it and the files after it are unchanged"
+    put "$target/$rel" "$mdir/merged" || die "could not write $rel; it and the files after it are unchanged"
+    if [ "$rc" -eq 0 ]; then
+      printf '%s\n' "  merged:   $rel"
+    else
+      open=1
+      printf '%s\n' "  conflict: $rel, lines $(awk '/^<<<<<<< /{s=NR} /^>>>>>>> /{printf "%s%d-%d", c, s, NR; c=", "}' "$target/$rel")"
+    fi
+  done < "$work_list"
+  echo
+  printf '%s\n' "sync-kit: version left at v$have. Read each merged file's diff (git diff) and account for"
+  echo "          every removed line; resolve each conflict listed (read only those lines);"
+  printf '%s\n' "          then rerun with --actions-applied, without --merge, to record v$latest."
+  [ "$open" -eq 0 ] || echo "          Files are listed above as conflict, unresolved, skipped or no base."
+  exit 2
+fi
+
 if [ "$dry" -eq 1 ]; then
   echo
   printf '%s\n' "sync-kit: dry run — nothing written, version left at v$have."
@@ -342,6 +440,18 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
+# The kit commit this version came from, the base of the next --merge (a kit that is no git
+# clone has none, and that --merge is given --base).
+if commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
+  why=$(blocked docs/kit/.kit-commit)
+  if [ -n "$why" ]; then
+    printf '%s\n' "sync-kit: NOTE: docs/kit/.kit-commit not recorded ($why)"
+  else
+    put "$target/docs/kit/.kit-commit" <<EOF || die "could not write docs/kit/.kit-commit; version left at v$have"
+$commit
+EOF
+  fi
+fi
 put "$stamp" <<EOF || die "could not write $stamp; version left at v$have"
 $latest
 EOF

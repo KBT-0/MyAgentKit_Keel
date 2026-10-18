@@ -411,6 +411,72 @@ class SyncKitTests(unittest.TestCase):
                 else:
                     self.assertEqual(staged[new][0], '100755')
 
+    def test_merge_merges_only_what_the_kit_changed_and_lists_conflicts_by_line(self):
+        # Merging project-owned docs whole, one agent each, read 8.3M cache tokens in one
+        # upgrade (#184): the script merges, skips what the kit left alone, and names only the
+        # conflict lines for a reader.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, '- A change.\n', '--dry-run')
+            files = {'docs/WORKFLOW.md': ('a\nb\nc\nd\ne\n', 'a\nB kit\nc\nd\ne\n', 'a\nb\nc\nd\nE mine\n'),
+                     'docs/GOTCHAS.md': ('x\ny\n', 'x\nY kit\n', 'x\nY mine\n'),
+                     'docs/STATE.md': ('same\n', 'same\n', 'mine\n'),
+                     '.githooks/commit-msg': ('# KIT-OWNED: x\none\n', '# KIT-OWNED: x\ntwo\n',
+                                              '# KIT-OWNED: x\r\none\r\n')}
+            for rel, (base, _, mine) in files.items():
+                (kit / 'core' / rel).parent.mkdir(parents=True, exist_ok=True)
+                (kit / 'core' / rel).write_bytes(base.encode())
+                if mine is not None:
+                    (project / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (project / rel).write_bytes(mine.encode())
+            git = lambda *a: subprocess.run(['git', '-C', str(kit), *a], check=True, env=env,
+                                            capture_output=True, text=True).stdout.strip()
+            git('init', '-q')
+            git('add', '-A')
+            git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.1')
+            base = git('rev-parse', 'HEAD')
+            for rel, (_, now, _) in files.items():
+                (kit / 'core' / rel).write_bytes(now.encode())
+            (kit / 'core/scripts').mkdir()
+            (kit / 'core/scripts/new.sh').write_bytes(b'echo new\n')
+            run = lambda *a: subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), *a], env=env,
+                                            capture_output=True, text=True, timeout=60)
+            result = run('--merge')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('pass --base <commit>', result.stderr)
+            # A later base than the project's own: its kit-owned copies give it away, and a
+            # merge from it would keep the old lines without a conflict.
+            git('add', '-A')
+            git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.2')
+            result = run('--merge', '--base', 'HEAD')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('did not come from it', result.stderr)
+            self.assertIn('    .githooks/commit-msg', result.stderr)
+            self.assertNotIn('docs/WORKFLOW.md', result.stderr)
+            self.assertEqual((project / 'docs/WORKFLOW.md').read_bytes(), b'a\nb\nc\nd\nE mine\n')
+            self.assertEqual((project / '.githooks/commit-msg').read_bytes(), b'# KIT-OWNED: x\r\none\r\n',
+                             'a stopped --merge wrote nothing')
+            result = run('--merge', '--base', base)
+            out = result.stdout
+            self.assertEqual(result.returncode, 2, out + result.stderr)
+            self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
+            self.assertEqual((project / 'docs/WORKFLOW.md').read_bytes(), b'a\nB kit\nc\nd\nE mine\n')
+            self.assertIn('  merged:   docs/WORKFLOW.md', out)
+            self.assertIn('  conflict: docs/GOTCHAS.md, lines 2-6', out)
+            self.assertIn('Y mine', (project / 'docs/GOTCHAS.md').read_text())
+            self.assertIn('  kit-new:  scripts/new.sh', out)
+            self.assertNotIn('docs/STATE.md', out)
+            self.assertEqual((project / 'docs/STATE.md').read_bytes(), b'mine\n')
+            self.assertNotIn('.githooks/commit-msg', out.split('PROJECT-OWNED')[1])
+            # The recorded base is read without --base; a file still holding markers is refused.
+            (project / 'docs/kit/.kit-commit').write_bytes(base.encode() + b'\n')
+            result = run('--merge')
+            self.assertIn('  unresolved: docs/GOTCHAS.md', result.stdout)
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((project / 'docs/kit/.kit-commit').read_text().strip(), git('rev-parse', 'HEAD'))
+
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
         # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync

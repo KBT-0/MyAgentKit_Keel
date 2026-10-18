@@ -215,6 +215,9 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(self._hooks_path(project), '.githooks')
             self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+            # The base of a later `sync-kit.sh --merge` (#184).
+            self.assertEqual((project / 'docs/kit/.kit-commit').read_text().strip(),
+                             subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip())
             for name, source in (('spawn_codex.sh', 'overlays/claude-code/files/scripts'),
                                  ('codex_worker.py', 'overlays/claude-code/files/scripts'),
                                  ('working_mode.py', 'core/scripts')):
@@ -453,7 +456,8 @@ class BootstrapTests(unittest.TestCase):
         for case, rel, needle, flags in (
                 ('copied file', '.githooks/commit-msg', '*/.githooks/commit-msg:*', ()),
                 ('note', 'docs/kit/BOOTSTRAP_NOTE.md', '"-:# Bootstrap note"*', ('--note', 'new agenda')),
-                ('stamp', 'docs/kit/.kit-version', '-:[0-9]*', ())):
+                # A dot: the version has one, the kit commit written before it (#184) has none.
+                ('stamp', 'docs/kit/.kit-version', '-:[0-9]*.*', ())):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
                 dest = project / rel

@@ -66,6 +66,25 @@ exactly the habit the review gate exists to prevent.
    migrations ("Two tiers of ownership" above: a silent merge of process rules is worse
    than none).
 
+**Merging the project-owned files.** `sync-kit.sh . --merge` also merges the kit's changes
+into the project-owned files with `git merge-file`: the project's copy, the kit's copy at the
+base commit, the kit's copy now. A file the kit did not change since the base is not opened.
+A clean merge is written and listed as `merged:`. A conflicted one is written with its markers
+and listed with the line ranges of its conflicts, so a reader opens only those lines, never the
+whole file. Files the kit added since the base are listed as `kit-new:` for the changelog to
+decide. The base is the kit commit recorded in `docs/kit/.kit-commit`, which every sync that
+records a version writes. A project synced before v0.12 has no record yet, so it passes
+`--base <commit>` once: the release commit that the changelog's upgrade section names. Use
+the commit the project really came from, because a later commit makes the kit's own changes in
+between read as the project's, and they are dropped without a conflict. So a base passed with
+`--base` is checked first against the project's kit-owned files, which still hold that commit's
+copies (line endings aside). If any of them differs, the run stops before it writes anything
+and names those files. A `--merge` run never records the version. Read each merged
+file's `git diff`, resolve the listed conflicts, then rerun with `--actions-applied`. One
+upgrade that instead merged five docs whole, one agent per doc, read 8.3M cache tokens (#184).
+On the kit's own history, v0.8 to v0.12, the conflict regions of the same docs and `check.sh`
+come to about 14% of one read of the whole files.
+
 Then run `./scripts/check.sh`. The project's own fixture tests for its boundary checks run
 inside it, in the build command (WORKFLOW, "Writing a gate"). A sync that leaves the gate red,
 or leaves a check without its fixture test, is not finished.
