@@ -107,8 +107,8 @@ check the pipeline after pushing (`core/scripts/check.sh`, header).
 ```sh
 tmp=$(mktemp -d) && ./bootstrap.sh "$tmp" && cd "$tmp" && git init -q && git add -A
 ./scripts/check.sh                # expect FAIL: markers remain, no build command
-# fill the placeholders and write the two boundary files, then:
-./scripts/check.sh                # expect PASS
+# fill the placeholders, write the boundary checks and their fixture test, then:
+./scripts/check.sh                # expect PASS; the fixture test runs in the build command
 ```
 
 A contribution that leaves the gate red, or leaves a gate that can no longer fail, is the

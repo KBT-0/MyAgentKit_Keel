@@ -303,7 +303,8 @@ Once, on a fresh clone:
 
 Each check the project adds has a fixture test in the suite the build command runs
 (`docs/WORKFLOW.md`, "Writing a gate"): an input that breaks the rule turns the check red
-with its own `FAIL` line, a clean one leaves it green. So a green `CHECK: PASS` also says
-that every check could have told you otherwise.
+with its own `FAIL` line, a clean one leaves it green. The gate does not check that those
+tests exist or that the build command runs them: a green `CHECK: PASS` says the checks found
+nothing, and only the fixture tests show that each check can fail.
 
 {{PROJECT_SETUP_STEPS}}

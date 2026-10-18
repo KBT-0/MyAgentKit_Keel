@@ -1345,8 +1345,10 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    authored by whoever resolved it, so the final review covers it. A member branch rejected
    or abandoned after the merge leaves by rebuilding the integration branch without it.
 2. Start the acceptance gate run (`./scripts/check.sh`) and the reviews on the same commit,
-   following "Worker cost", rule 6. The gate writes nothing but files Git ignores, so it may
-   share the reviews' worktree (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
+   following "Worker cost", rule 6. The gate runs the project's build, so it may share the
+   reviews' worktree only when that run writes nothing but files Git ignores (owner decision,
+   2026-10-12); otherwise it runs in its own worktree of that commit, or after the reviews
+   (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
    The acceptance run is once per batch, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait. CI runs on the same commit.
