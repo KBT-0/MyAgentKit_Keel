@@ -85,7 +85,8 @@ issue and goes on.
 ## Findings and dispositions
 
 A finding opens with its severity (defined in `scripts/claude_bridge.py`, `REVIEW_PROMPT`)
-and names file and line, trigger and wrong outcome. The author answers round 1 in
+and names file and line, trigger and wrong outcome. The author answers every earlier round
+(round 1 by default; a third round answers rounds 1 and 2 again) in
 `REVIEW_DISPOSITIONS`, one line per finding: `<id> fixed:<commit>`, `disproved:<evidence>`
 or `deferred:<issue or decision>`. They are claims: a disproved finding counts only after
 the reviewer has checked it against the code, and a deferred one stays open under Manual

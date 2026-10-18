@@ -5639,6 +5639,30 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('earlier review evidence', refused['error'])
 
+    def test_a_round_whose_chain_failed_is_not_carried_or_counted(self):
+        # #258: the dispatcher can fail a chain (stale_checkout) after the adapter recorded a
+        # completed review; prior_rounds and usage_summary share one definition of a round.
+        log = self.root / 'prompt.txt'
+        task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'stale-task'}
+        chains = self.repo / '.myagentkit/usage/chains'
+        for chain in ('s1', 's2'):
+            self.assertEqual(self.run_bridge('reject', env_extra=dict(task, MYAGENTKIT_REVIEW_CHAIN_ID=chain))[0], 0)
+            chains.mkdir(parents=True, exist_ok=True)
+            (chains / (chain + '-1.json')).write_text(json.dumps({'status': 'failed', 'failure_kind': 'stale_checkout'}))
+        code, result = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 0, result)
+        self.assertNotIn('### Round', log.read_text())
+        # A completed chain stands as before; a damaged one is refused, not read as failed.
+        # s1 and the run above are two rounds now, so the next one needs the exception.
+        task['REVIEW_ROUND_EXCEPTION'] = 'test'
+        (chains / 's1-2.json').write_text(json.dumps({'status': 'completed'}))
+        self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
+        self.assertIn('This is review round 3', log.read_text())
+        (chains / 's1-3.json').write_text('{')
+        code, refused = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('s1-3.json', refused['error'])
+
     def test_default_reviewer_is_claude_and_codex_remains_explicit(self):
         result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
                                   REVIEW_CLAUDE_MODEL='claude-opus-5', REVIEW_REVIEWER='')
@@ -6665,16 +6689,27 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                               (3, '', [600, 1200], 'failed'),
                                               # "0 seconds" is a delay, not a missing one (batch 4 r1 High).
                                               (1, ' Please try again in 0 seconds.', [0], 'completed')):
-            calls, slept, out = [], [], io.StringIO()
+            calls, slept, flags, out = [], [], [], io.StringIO()
+
+            def sleep(delay):
+                # #280: the checkpoint written before the wait says a retry follows.
+                slept.append(delay)
+                chain_id = os.environ['MYAGENTKIT_REVIEW_CHAIN_ID']
+                newest = max((self.repo / '.myagentkit/usage/chains').glob(chain_id + '-*.json'),
+                             key=lambda path: int(path.stem.rpartition('-')[2]))
+                flags.append(json.loads(newest.read_text())['recovery']['automatic_retry'])
+
             with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
                     MYAGENTKIT_TASK_ID='capacity-%d' % failures,
                     REVIEW_ROUND_EXCEPTION='fixture: retries are rounds of one label')), \
                     patch('agent_process.run', side_effect=execution), \
-                    patch.object(review_dispatch, 'sleep', side_effect=slept.append), redirect_stdout(out):
+                    patch.object(review_dispatch, 'sleep', side_effect=sleep), redirect_stdout(out):
                 code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'codex',
                                              '--claude-model', 'claude-opus-5', '--codex-model', 'fixture-codex-model'])
                 chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
                 self.assertEqual(slept, waits)
+                self.assertEqual(flags, [True] * len(waits))
+                self.assertIs(chain['recovery']['automatic_retry'], False)
                 self.assertEqual(len(calls), len(waits) + 1)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'] * len(calls))
                 self.assertEqual(chain['status'], status, out.getvalue())

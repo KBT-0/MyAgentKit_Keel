@@ -35,8 +35,10 @@ In the kit checkout, use `core/scripts/agent_usage.py`; an installed Codex plugi
 default. A lack of records means no recorded evidence, not zero historical usage.
 
 `python3 scripts/usage_summary.py --repo .` lists the recorded invocations per task and per
-model and effort: review rounds, verdicts, duration and rejects. A round is a completed
-review whose dispatch chain also completed; a verdict is read only from an archive that
+model and effort: review rounds, verdicts, duration and rejects; `--task LABEL` limits it to
+one label. Rounds are numbered per `REVIEW_FOCUS`, as the two-round cap counts them. A round
+is a completed review whose dispatch chain's last checkpoint, when one is recorded, says
+completed, the same rule the two-round cap uses; a verdict is read only from an archive that
 still matches its record's sha256. Worker and sub-agent errands write no record, so they
 are not in it.
 
@@ -66,7 +68,9 @@ The summary also measures each reviewer configuration (model, effort, backend):
   [NIST, section 7.2.4.1](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm).
   The latest completed round's cumulative answers replace earlier snapshots under its label
   and `REVIEW_FOCUS` (a focus answers its own and the unfocused rounds, an unfocused round
-  only the unfocused ones), so answering the same findings again cannot increase `n`. Allocation across earlier
+  only the unfocused ones), so answering the same findings again cannot increase `n`; the
+  newest file wins a round two focuses answer. A file that answers fewer findings than the
+  one before it is not cumulative, and the summary prints a `Note:` line for it. Allocation across earlier
   configurations follows their finding counts; fractional `n` and its Wilson interval are
   descriptive estimates, not independent, individually matched finding outcomes.
   The owner reads the archives and how later reviewers treated disproved claims before

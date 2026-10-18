@@ -899,6 +899,31 @@ def dispositions_text() -> str | None:
         raise BridgeError("REVIEW_DISPOSITIONS %s cannot be read as UTF-8 text (%s)" % (notes, error)) from error
 
 
+def chain_checkpoints(usage: Path) -> dict:
+    """Each dispatch chain's last checkpoint (chains/<id>-N.json) by chain id, in one listing."""
+    last = {}
+    for path in (usage / "chains").glob("*.json"):
+        name, _, number = path.stem.rpartition("-")
+        if number.isdigit():
+            last[name] = max(last.get(name, (-1, path)), (int(number), path))
+    return {name: path for name, (_, path) in last.items()}
+
+
+def chain_status(path: Path) -> str:
+    """'status/failure_kind' of a chain checkpoint, or 'unreadable'. One definition of a round
+    for the usage summary and prior_rounds: a completed review stands only while its chain's
+    last checkpoint, when one is recorded, says completed; the dispatcher can fail the chain
+    after the attempt recorded a completed review (stale_checkout)."""
+    try:
+        chain = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(chain, dict) or not isinstance(chain.get("status"), str)
+                or (chain.get("failure_kind") is not None and not isinstance(chain["failure_kind"], str))):
+            raise ValueError("invalid chain fields")
+        return "%s/%s" % (chain["status"], chain.get("failure_kind") or "-")
+    except Exception:  # RecursionError on deep nesting is damage too
+        return "unreadable"
+
+
 def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | None,
                  head: str, diff: str, claims: str | None = None) -> tuple[str, dict]:
     """The earlier completed reviews of this change, oldest first, as archived, and the task
@@ -938,7 +963,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
                               shlex.quote(aside.relative_to(repo).as_posix())))
     # Path.glob() swallows a listing error: a usage directory the owner could write but not
     # list read as "no earlier rounds". Only an absent directory has none.
-    usage, names = repo / ".myagentkit/usage", []
+    usage, names, checkpoints = repo / ".myagentkit/usage", [], None
     try:
         names = os.listdir(usage) if task_id else []
     except FileNotFoundError:
@@ -974,7 +999,14 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             continue
         if task.get("shadow") == "yes":
             continue  # a shadow run measures a configuration; it is no round of the change
-        if value["status"] != "completed":
+        status, chain = value["status"], value.get("review_chain_id")
+        if status == "completed" and isinstance(chain, str) and chain:
+            checkpoints = chain_checkpoints(usage) if checkpoints is None else checkpoints
+            if chain in checkpoints:
+                status = chain_status(checkpoints[chain]).split("/")[0]
+                if status == "unreadable":
+                    raise damaged(checkpoints[chain], "is a chain checkpoint that cannot be read")
+        if status != "completed":
             # Never carried, but its archive is checked: a cancel relabel that could not replace
             # the archive left one its record does not match, and later rounds passed it
             # silently. An archive that was never written (evidence_unavailable) has nothing to

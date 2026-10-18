@@ -217,16 +217,28 @@ EXHAUSTED = ("quota", "usage limit", "session limit", "weekly limit", "opus limi
 RATE_LIMITED = ("rate limit", "rate_limit", "429", "529", "overloaded", "at capacity", "too many requests")
 
 
+RETRY_PART = r"(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)(?![a-z])"
+# A retry waits what the tool reports (KARARLAR B01 (6)); only a sub-second hint, read as
+# milliseconds, is raised to one second. ponytail: a fixed floor, not a measured one.
+MIN_RETRY_SECONDS = 1
+
+
 def retry_after(values: list[dict]) -> float | None:
-    """Seconds an error event says to wait ("try again in 30 seconds", "retry after 2m"), or None."""
+    """Seconds an error event says to wait ("try again in 30 seconds", "retry after 1m30.5s",
+    "2h"), a sub-second one raised to MIN_RETRY_SECONDS, or None. An hours-long hint passes the dispatcher's
+    wait cap, which blocks the retry (retry_blocked)."""
     for value in values:
         if value.get("type") not in ("error", "turn.failed"):
             continue
-        found = re.search(r"(?i)(?:try again|retry)(?: in| after)\s+(\d+(?:\.\d+)?)\s*"
-                          r"(ms|s|secs?|seconds?|m|mins?|minutes?)\b", str(value.get("error", value.get("message", ""))))
+        found = re.search(r"(?i)(?:try again|retry)(?: in| after)\s+((?:%s[\s,]*(?:and\s+)?)+)" % RETRY_PART,
+                          str(value.get("error", value.get("message", ""))))
         if found:
-            number, unit = float(found[1]), found[2].lower()
-            seconds = number / 1000 if unit == "ms" else number * 60 if unit.startswith("m") else number
+            seconds = 0.0
+            for number, unit in re.findall("(?i)" + RETRY_PART, found[1]):
+                unit = unit.lower()
+                seconds += float(number) * (0.001 if unit.startswith(("ms", "milli")) else 3600
+                                            if unit.startswith("h") else 60 if unit.startswith("m") else 1)
+            seconds = MIN_RETRY_SECONDS if 0 < seconds < MIN_RETRY_SECONDS else seconds
             return int(seconds) if seconds == int(seconds) else seconds
     return None
 
@@ -323,8 +335,11 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
         status, reason = "failed", "evidence_unavailable"
     values = decode(provider, execution.get("stdout", ""))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
+    # A rate-limited attempt inside a dispatch chain may be retried by the dispatcher, which
+    # decides after this record is written: unknown here, its chain checkpoint says (#280).
+    retry = None if os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID") and reason == "rate_limited" else False
     recovery = {"action": "inspect_result" if status == "completed" else "continue_independent_work",
-                "review_approved": False, "automatic_retry": False,
+                "review_approved": False, "automatic_retry": retry,
                 "instruction": "Keep required review pending; do not approve, commit, or push its protected diff."}
     value = {"schema_version": 1, "invocation_id": stamp,
              "review_chain_id": os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID"),
@@ -397,9 +412,22 @@ def main():
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--task-id")
     args = parser.parse_args()
-    rows = []
+    rows, unreadable = [], 0
     for path in sorted((args.repo / ".myagentkit/usage").glob("*.json")):
-        value = json.loads(path.read_text(encoding="utf-8"))
+        # One damaged record is skipped and counted, as usage_summary.py does, not a traceback
+        # that hides every other row.
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # RecursionError on deep nesting is damage too
+            value = None
+        if (not isinstance(value, dict) or not isinstance(value.get("task"), dict)
+                or not isinstance(value.get("usage"), dict)
+                or any(key not in value for key in ("invocation_id", "requester_reported", "callee",
+                                                    "model_requested", "status", "failure_kind"))
+                or any(key not in value["usage"] for key in ("input_tokens", "cache_read_tokens",
+                                                             "output_tokens", "api_cost_usd_reported"))):
+            unreadable += 1
+            continue
         if args.task_id and value["task"].get("id") != args.task_id:
             continue
         rows.append({k: v for k, v in value.items() if not k.startswith("raw_")})
@@ -412,8 +440,11 @@ def main():
             u = row["usage"]
             print(f'{row["invocation_id"]} {row["task"].get("id")} '
                   f'{row["requester_reported"]} -> {row["callee"]}/{row["model_requested"]} '
-                  f'{row["status"]}/{row["failure_kind"]} input={u["input_tokens"]} '
-                  f'cache_read={u["cache_read_tokens"]} output={u["output_tokens"]} '
+                  f'{row["status"]}/{row["failure_kind"]} input={u["input_tokens"]}'
+                  # Codex input already counts the cache reads (docs/USAGE.md): never add them.
+                  f'{" (includes cache_read)" if u.get("input_includes_cache") else ""} '
+                  f'cache_read={u["cache_read_tokens"]} cache_write={u.get("cache_creation_tokens")} '
+                  f'output={u["output_tokens"]} '
                   f'api_usd={u["api_cost_usd_reported"]} subscription%=unknown')
             snapshots = u.get("account_quota_snapshots") or {}
             for when in ("before", "after"):
@@ -425,6 +456,9 @@ def main():
                             print(f'  quota_{when} {bucket}/{window} plan={value.get("plan_type")} '
                                   f'used={observed["used_percent"]}% window={observed["window_minutes"]}m '
                                   '(account observation; not a per-call debit)')
+    if unreadable:
+        # stderr under --json, so the JSON on stdout stays one parseable document.
+        print(f"Unreadable records skipped: {unreadable}", file=sys.stderr if args.json else sys.stdout)
 
 
 if __name__ == "__main__":
