@@ -789,6 +789,22 @@ def main():
                                  bool(code), out.getvalue())
                 self.assertEqual('KIT CHECK: PASS' in out.getvalue(), not code)
 
+    def test_the_tier_budget_stops_the_run_and_names_the_unit_still_running(self):
+        # The budget was checked only after every unit ended, so a CI job past its timeout-minutes
+        # was cancelled with no summary. Now a unit still running at the budget's end is stopped and
+        # named, and a queued unit does not start, well before the unit caps.
+        hang = [sys.executable, '-c', 'import time; print("hang started", flush=True); time.sleep(60)']
+        queued = [sys.executable, '-c', 'print("UNIT DONE: queued")']
+        started = time.monotonic()
+        passed, out = runner(('hang', hang), ('queued', queued), parallel=1, caps=[60, 60],
+                             deadline=time.monotonic() + 2)
+        self.assertFalse(passed)
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertIn('hang started', out)
+        self.assertRegex(out, r"unit hang was still running when the tier's budget ran out and was stopped at \d+ s")
+        self.assertIn("unit queued did not start: the tier's budget ran out", out)
+        self.assertIn('failed: hang, queued', out)
+
     def test_the_gate_checks_count_drops_with_its_link_test_on_a_host_without_symlinks(self):
         # Without symlink privilege (Windows without Developer Mode) BuildCacheTests' link test is a
         # declared skip, which never counts: a fixed count of 12 turned every test_gate_checks unit red.

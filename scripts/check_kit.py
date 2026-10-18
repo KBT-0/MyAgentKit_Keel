@@ -117,7 +117,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 3, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 11, 'test_guard_destructive_git': 65, 'test_guard_boundaries': 1, 'test_guard_private_email': 10,
               'test_spawn_worker': 53 if os.name == 'nt' else 73, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
-              'test_kit_output': 1, 'test_kit_runner': 45, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 1, 'test_kit_runner': 46, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
               'test_close_worker': 30, 'test_python_fallback': 2},
 }
@@ -1258,12 +1258,15 @@ def stop_tree(child):
         child.kill()
 
 
-def run_units(units, timing=False, parallel=None, said=(), caps=None):
+def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=None):
     """Run the (name, command) units, `parallel` at once (default all); print each unit's whole
     output in the given order. Each unit's timeouts scale by `parallel` (see limit()). `said`:
     the NOT RUN lines the checks before the units printed, repeated under the summary first.
     `caps`: each unit's wall-clock cap in seconds; a unit still running at its cap is stopped
     and fails with its name and seconds (#146, run_units had no bound of its own).
+    `deadline`: the tier budget's end (time.monotonic()); a unit still running then is stopped
+    and named, and a unit queued after it does not start, so a CI job's timeout never cancels
+    the run before it says what ran over.
 
     The units share no state: every suite and the acceptance phases work in temporary
     directories of their own, and each synthetic project has its own .git and so its own
@@ -1301,22 +1304,27 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None):
         with lock:
             if cancelled:
                 return 1, '', time.monotonic() - started
+            if deadline is not None and started >= deadline:
+                return 1, "KIT CHECK: FAIL — unit %s did not start: the tier's budget ran out\n" % name, 0.0
             # Its own session: a cap or a cancel stops the unit's test processes with it.
             child = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, env=env, start_new_session=True,
                                      stderr=subprocess.STDOUT, text=True, errors="replace")
             children.append(child)
+        left = None if deadline is None else max(deadline - started, 0)
+        budget_first = left is not None and (cap is None or left < cap)
         with child:
             try:
-                output = child.communicate(timeout=cap)[0]
+                output = child.communicate(timeout=left if budget_first else cap)[0]
             except subprocess.TimeoutExpired:
                 stop_tree(child)
                 try:
                     output = child.communicate(timeout=30)[0]
                 except subprocess.TimeoutExpired:
                     output = ''
-                return 1, output + ("KIT CHECK: FAIL — unit %s ran over its cap of %.0f s and was stopped "
-                                    "at %.0f s\n" % (name, cap, time.monotonic() - started)), \
-                    time.monotonic() - started
+                why = ("was still running when the tier's budget ran out" if budget_first
+                       else "ran over its cap of %.0f s" % cap)
+                return 1, output + ("KIT CHECK: FAIL — unit %s %s and was stopped at %.0f s\n"
+                                    % (name, why, time.monotonic() - started)), time.monotonic() - started
         return child.returncode, output, time.monotonic() - started
 
     parallel = parallel or len(units)
@@ -1412,14 +1420,16 @@ def main():
         print(line)
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())]
-    if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
-                     caps=[CAPS[tier_of(name)][0] * host for name in units]):
-        return 1
+    passed = run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
+                       caps=[CAPS[tier_of(name)][0] * host for name in units], deadline=started + budget)
     seconds = time.monotonic() - started
-    print("TIME: %.1f s in all" % seconds)
+    if passed:
+        print("TIME: %.1f s in all" % seconds)
     if seconds > budget:
         print("KIT CHECK: FAIL — the %s tier took %.0f s, over its budget of %.0f s; move a slow unit to the "
               "slow tier or make it faster" % (" and ".join(tiers), seconds, budget), file=sys.stderr)
+        return 1
+    if not passed:
         return 1
     if _PASSED_FILE:
         marker = Path(_PASSED_FILE)

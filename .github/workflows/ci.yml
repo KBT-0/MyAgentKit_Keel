@@ -13,8 +13,10 @@ permissions:
 # kit-self-checks.md, findings 7 and 12): the fast tier, and the slow one (--slow: bootstrap,
 # acceptance, the review bridge and worker-spawn suites). A runner is slower than a developer
 # host (finding 9), so the tier budgets and unit caps run at three times their local seconds
-# here; timeout-minutes sits above that budget, so the kit check names the unit before GitHub
-# cancels the job.
+# here (fast 30 min, slow 180 min). The kit check enforces the budget during the run: at its end
+# it stops and names the units still running and starts no more. timeout-minutes sits 10 minutes
+# above it, for the job's setup steps and that summary, so the kit check fails by name before
+# GitHub cancels the job.
 env:
   MYAGENTKIT_TEST_TIMEOUT_SCALE: '3'
 
