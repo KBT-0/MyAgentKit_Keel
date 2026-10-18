@@ -421,8 +421,11 @@ runpy.run_path(%r, run_name='__main__')
                 self.assertIn('probe failure message' if index == 0 else 'suite ran 1 tests', out)
 
     def test_main_runs_one_unit_per_module_and_refuses_a_module_without_a_count(self):
-        names = []
-        with unittest.mock.patch.object(check_kit, 'check_syntax'), \
+        # A module that does not run on this host gets its NOT RUN line, no unit ("ran 0 tests"),
+        # and the sharded modules start right after acceptance.
+        names, out, off_host = [], io.StringIO(), {'tests': {'test_doctor': 'a reason', 'test_bootstrap': 'r'}}
+        with unittest.mock.patch.object(check_kit, 'NOT_ON_WINDOWS', off_host), \
+                unittest.mock.patch.object(check_kit, 'check_syntax'), \
                 unittest.mock.patch.object(check_kit, 'check_release'), \
                 unittest.mock.patch.object(check_kit, 'untested_guards'), \
                 unittest.mock.patch.object(check_kit, 'validate_plugin'), \
@@ -430,13 +433,16 @@ runpy.run_path(%r, run_name='__main__')
                 unittest.mock.patch.object(check_kit, 'run_units',
                                            side_effect=lambda units, *a, **k: names.extend(n for n, _ in units)), \
                 unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
-                contextlib.redirect_stdout(io.StringIO()):
+                contextlib.redirect_stdout(out):
             self.assertEqual(check_kit.main(), 1)
-        expected = ['acceptance'] + ['locale/' + name for name in check_kit.LOCALE_SUITES] + [
+        self.assertIn('NOT RUN: tests/test_doctor on native Windows (a reason)', out.getvalue())
+        sharded = ['%s/%s@%d' % (directory, name, index) for directory, required in check_kit.REQUIRED_SUITES.items()
+                   for name in required if name in check_kit.SHARDS and name not in off_host.get(directory, {})
+                   for index in range(check_kit.SHARDS[name])]
+        expected = ['acceptance'] + sharded + ['locale/' + name for name in check_kit.LOCALE_SUITES] + [
             directory + '/' + name for directory, required in check_kit.REQUIRED_SUITES.items()
-            for name in required if name not in check_kit.SHARDS] + [
-            directory + '/%s@%d' % (name, index) for directory, required in check_kit.REQUIRED_SUITES.items()
-            for name in required if name in check_kit.SHARDS for index in range(check_kit.SHARDS[name])]
+            for name in required if name not in check_kit.SHARDS and name not in off_host.get(directory, {})]
+        self.assertEqual(names[:len(sharded) + 1], ['acceptance'] + sharded)
         self.assertEqual(sorted(names), sorted(expected))
         self.assertTrue(set(check_kit.SHARDS) <= set(check_kit.REQUIRED_SUITES['tests'])
                         | set(check_kit.REQUIRED_SUITES['core/scripts']))
@@ -869,7 +875,8 @@ def main():
         unit = [sys.executable, '-c', 'import os, time; s = time.time(); time.sleep(0.5); '
                 'print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time()); '
                 'import sys; print("UNIT DONE: " + sys.argv[1])']
-        for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True)):
+        # The factor stops at 4: at 10 at once a hung 1800 s phase ran five hours (#146).
+        for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True), (6, 8.0, True)):
             with self.subTest(parallel=parallel), \
                     unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '2'}):
                 passed, out = runner(('a', unit + ['a']), ('b', unit + ['b']), parallel=parallel)

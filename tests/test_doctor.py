@@ -24,6 +24,9 @@ def not_on_windows(case, why):
     return WINDOWS
 
 ROOT = Path(__file__).resolve().parents[1]
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run
+# side by side, and a loaded host took over 11 s for a 10 s probe (#146).
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 sys.path.insert(0, str(ROOT / 'core/scripts'))
 import claude_bridge  # noqa: E402
 
@@ -182,7 +185,7 @@ class DoctorTests(unittest.TestCase):
                 with self.subTest(said=said):
                     try:
                         result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=dict(env, PATH=path),
-                                                capture_output=True, text=True, timeout=20)
+                                                capture_output=True, text=True, timeout=20 * SCALE)
                     except subprocess.TimeoutExpired:
                         self.fail('doctor.sh ran claude --help without a time limit')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -191,16 +194,17 @@ class DoctorTests(unittest.TestCase):
             # The CLI exits, but its child keeps stdout open: capture must also be bounded,
             # and where setsid exists the child is killed with the probe's process group.
             pid_file = root / 'child.pid'
-            (old / 'claude').write_text('#!/bin/sh\nsleep 12 &\necho $! > "%s"\necho --effort\nexit 0\n'
-                                        % pid_file.as_posix())
+            (old / 'claude').write_text('#!/bin/sh\n(cd / && exec sleep %d) &\necho $! > "%s"\necho --effort\nexit 0\n'
+                                        % (12 * SCALE, pid_file.as_posix()))
             started = time.monotonic()
             result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
                                     env=dict(env, PATH=str(old) + os.pathsep + bare),
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, timeout=20 * SCALE)
             elapsed = time.monotonic() - started
             # doctor.sh bounds its probe at 10 s; the child sleeps 12 s. Allow 11 s for
-            # the probe and fixture overhead, still failing if capture waits for the child.
-            self.assertLess(elapsed, 11, 'doctor.sh waited %.2f s for the CLI child' % elapsed)
+            # the probe and fixture overhead, still failing if capture waits for the child
+            # (all three times SCALE, so the child still outlasts the allowance).
+            self.assertLess(elapsed, 11 * SCALE,'doctor.sh waited %.2f s for the CLI child' % elapsed)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('DOCTOR: ready', result.stdout)
             if shutil.which('setsid', path=bare):
@@ -220,7 +224,7 @@ class DoctorTests(unittest.TestCase):
             (no_mktemp / 'mktemp').chmod(0o755)
             result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
                                     env=dict(env, PATH=os.pathsep.join((str(no_mktemp), str(old), bare))),
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, timeout=20 * SCALE)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('NOTE: Claude CLI --effort probe skipped, cannot create a temp file', result.stdout)
 
@@ -231,7 +235,7 @@ class DoctorTests(unittest.TestCase):
             interrupt = ('sh scripts/doctor.sh >/dev/null & pid=$!; n=0\n'
                          'while [ -z "$(ls "$TMPDIR")" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done\n'
                          'ls "$TMPDIR"; kill -s TERM $pid; wait $pid\n')
-            seen = subprocess.run(['sh', '-c', interrupt], cwd=root, timeout=30, capture_output=True, text=True,
+            seen = subprocess.run(['sh', '-c', interrupt], cwd=root, timeout=30 * SCALE, capture_output=True, text=True,
                                   env=dict(env, TMPDIR=tmpdir.as_posix(), PATH=str(old) + os.pathsep + bare))
             self.assertTrue(seen.stdout.strip(), 'the probe never created its temp file')
             self.assertEqual(list(tmpdir.iterdir()), [], 'an interrupted probe left its temp file')
@@ -276,19 +280,20 @@ class DoctorTests(unittest.TestCase):
                                                   ' *) echo "--effort <level>" ;; esac\n' % version)
                     (tools / 'claude').chmod(0o755)
                     result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=env,
-                                            capture_output=True, text=True, timeout=60)
+                                            capture_output=True, text=True, timeout=60 * SCALE)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('DOCTOR: ready', result.stdout)
                     (self.assertIn if told else self.assertNotIn)(note, result.stdout)
             # --version exits but leaves a child holding its stdout: the 10 s bound still holds and the
             # version is read (b7 review, round 1: a pipe made doctor wait for the child's EOF).
-            (tools / 'claude').write_text('#!/bin/sh\ncase "$1" in --version) (cd / && exec sleep 15) &'
-                                          ' echo "2.1.218 (Claude Code)" ;; *) echo "--effort <level>" ;; esac\n')
+            (tools / 'claude').write_text('#!/bin/sh\ncase "$1" in --version) (cd / && exec sleep %d) &'
+                                          ' echo "2.1.218 (Claude Code)" ;; *) echo "--effort <level>" ;; esac\n'
+                                          % (15 * SCALE))
             started = time.monotonic()
             result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=env,
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, timeout=60 * SCALE)
             elapsed = time.monotonic() - started
-            self.assertLess(elapsed, 12, 'doctor.sh waited %.2f s for the --version child' % elapsed)
+            self.assertLess(elapsed, 12 * SCALE,'doctor.sh waited %.2f s for the --version child' % elapsed)
             self.assertIn(note, result.stdout)
             # Exercise the installed doctor's floor with both boundary versions.
             old_python = root / 'old-python'
@@ -303,7 +308,7 @@ class DoctorTests(unittest.TestCase):
                            shlex.quote(Path(sys.executable).as_posix())))
                     (old_python / 'python3').chmod(0o755)
                     result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
-                                            capture_output=True, text=True, timeout=60,
+                                            capture_output=True, text=True, timeout=60 * SCALE,
                                             env=dict(env, PATH=str(old_python) + os.pathsep + env['PATH']))
                     self.assertEqual(result.returncode, status, result.stdout + result.stderr)
                     if status:
@@ -518,7 +523,7 @@ class DoctorTests(unittest.TestCase):
             shell.write_text('#!/bin/sh\nsleep 60\n')
             try:
                 skipped = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
-                                         text=True, env=dict(env, PATH=no_timeout), timeout=20)
+                                         text=True, env=dict(env, PATH=no_timeout), timeout=20 * SCALE)
             except subprocess.TimeoutExpired:
                 self.fail('doctor.sh ran the shell probe without a time limit')
             self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
@@ -550,7 +555,7 @@ class DoctorTests(unittest.TestCase):
                         try:
                             probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project,
                                                     env=dict(env, PATH=fixture_path),
-                                                    capture_output=True, text=True, timeout=20)
+                                                    capture_output=True, text=True, timeout=20 * SCALE)
                             if pid_file.exists() and group_kill:
                                 self.assertFalse(alive(int(pid_file.read_text())),
                                                  'a child the rc file started outlived doctor.sh')
@@ -572,16 +577,16 @@ class DoctorTests(unittest.TestCase):
             os.mkfifo(fifo)
             reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
             self.addCleanup(os.close, reader)
-            shell.write_text('#!/bin/sh\nexec 3>%s\necho started >&3\nsleep 60 &\necho $! > %s\nwait\n'
-                             % (fifo, pid_file))
+            shell.write_text('#!/bin/sh\nexec 3>%s\necho started >&3\nsleep %d &\necho $! > %s\nwait\n'
+                             % (fifo, 60 * SCALE, pid_file))
             started = time.monotonic()
             try:
                 try:
                     probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
-                                            capture_output=True, text=True, timeout=30)
+                                            capture_output=True, text=True, timeout=30 * SCALE)
                 except subprocess.TimeoutExpired:
                     self.fail('a foreground-blocked rc file held doctor.sh past its bound')
-                self.assertLess(time.monotonic() - started, 15, 'the probe bound is 5 s plus 1 s to kill')
+                self.assertLess(time.monotonic() - started, 15 * SCALE,'the probe bound is 5 s plus 1 s to kill')
                 self.assertIn('NOTE: grep probe did not complete', probed.stdout)
                 self.assertEqual(os.read(reader, 64), b'started\n')
                 if shutil.which('setsid', path=env['PATH']):
@@ -596,7 +601,7 @@ class DoctorTests(unittest.TestCase):
             # child the rc file left running is not stopped: doctor says so.
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
             no_setsid = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
-                                       text=True, env=dict(env, PATH=no_setsid_path), timeout=20)
+                                       text=True, env=dict(env, PATH=no_setsid_path), timeout=20 * SCALE)
             self.assertEqual(no_setsid.returncode, 0, no_setsid.stdout + no_setsid.stderr)
             self.assertIn('NOTE: no setsid on this machine', no_setsid.stdout)
 
@@ -611,7 +616,7 @@ class DoctorTests(unittest.TestCase):
             (fake_setsid / 'setsid').write_text('#!/bin/sh\necho %d\n' % victim.pid)
             (fake_setsid / 'setsid').chmod(0o755)
             reused = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
-                                    text=True, timeout=20,
+                                    text=True, timeout=20 * SCALE,
                                     env=dict(env, PATH=str(fake_setsid) + os.pathsep + env['PATH']))
             self.assertTrue(alive(victim.pid), 'doctor killed a process group it did not start')
             self.assertIn('NOTE: grep probe did not complete', reused.stdout)

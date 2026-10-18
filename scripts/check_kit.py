@@ -105,7 +105,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 53 if os.name == 'nt' else 73, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
-              'test_kit_output': 1, 'test_kit_runner': 40, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 1, 'test_kit_runner': 42, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
               'test_close_worker': 30, 'test_python_fallback': 2, 'test_selftest_status': 11},
 }
@@ -253,7 +253,8 @@ SCALE = "MYAGENTKIT_TEST_TIMEOUT_SCALE"
 
 def limit(seconds):
     """A wall-clock bound on a child, times SCALE: a slow host sets it, and run_units multiplies
-    it by the units running at once (three units on one CPU each take about three times as long)."""
+    it by the units running at once, at most 4 (three units on one CPU each take about three
+    times as long)."""
     return seconds * float(os.environ.get(SCALE, "1"))
 
 
@@ -1359,7 +1360,9 @@ def run_units(units, timing=False, parallel=None, said=()):
         return child.returncode, output, time.monotonic() - started
 
     parallel = parallel or len(units)
-    env = dict(os.environ, **{SCALE: str(float(os.environ.get(SCALE, "1")) * parallel)})
+    # Capped at 4: under load a unit ran 1.2-1.7x slower (#146), and 10x at 20 CPUs let a hung
+    # acceptance phase (1800 s) run for five hours before it failed.
+    env = dict(os.environ, **{SCALE: str(float(os.environ.get(SCALE, "1")) * min(parallel, 4))})
     with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
             ThreadPoolExecutor(max_workers=parallel) as pool, stop_units():
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
@@ -1407,13 +1410,24 @@ def main():
     started = time.monotonic()
     # One unit per test module and per locale suite, so the slowest module, not a folder of
     # them run one after another, sets the wall time (#146): 3358 s for tests/ on Windows CI.
-    units = ["acceptance"]
+    # The sharded modules start first, right after acceptance: they are the longest units, and a
+    # long unit queued last sets the wall time alone.
+    units, rest, not_here = ["acceptance"], [], []
     for directory, required in REQUIRED_SUITES.items():
         uncounted = sorted({path.stem for path in (ROOT / directory).glob("test_*.py")} - set(required))
         if uncounted:
             raise RuntimeError("%s: no count in REQUIRED_SUITES for %s" % (directory, ", ".join(uncounted)))
-        units += [directory + "/" + name + suffix for name in required
-                  for suffix in (["@%d" % index for index in range(SHARDS[name])] if name in SHARDS else [""])]
+        reasons = NOT_ON_WINDOWS.get(directory, {})
+        # A module that does not run on this host gets its NOT RUN line, not a unit that
+        # passed with "ran 0 tests".
+        not_here += ["NOT RUN: %s/%s on native Windows (%s); CI's Linux and macOS jobs run it"
+                     % (directory, name, reasons[name]) for name in required if name in reasons]
+        for name in required:
+            if name not in reasons:
+                (units if name in SHARDS else rest).extend(
+                    directory + "/" + name + suffix
+                    for suffix in (["@%d" % index for index in range(SHARDS[name])] if name in SHARDS else [""]))
+    units += rest
     units += ["locale/" + name for name in LOCALE_SUITES]
     cpus = os.cpu_count() or 1
     parallel = degree(cpus, len(units))
@@ -1422,6 +1436,8 @@ def main():
     early = io.StringIO()
     try:
         with redirect_stdout(early):
+            for line in not_here:
+                print(line)
             check_syntax(ROOT)
             check_release(ROOT)
             check_actions(ROOT)
