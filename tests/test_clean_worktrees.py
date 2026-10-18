@@ -2308,14 +2308,47 @@ class CleanWorktreesTests(unittest.TestCase):
                         'untracked and not ignored inside a disposable folder (`git worktree remove` refuses them')
 
     def test_a_refused_disposable_entry_counts_for_nothing(self):
-        self.disposable('docs\n/abs\n../up\nok/../docs\n.claude\nscripts/\na//b\n./c\n')
+        self.disposable('docs\n//abs\n/docs\n../up\nok/../docs\n.claude\nscripts/\na//b\n./c\n')
         path = self.worktree('done')
         (path / 'docs').mkdir()
         (path / 'docs/notes.md').write_text('work\n')
         out = self.run_script('--apply')
         self.assertKept(path, out, 'disposable folder: docs/notes.md')
-        for entry in ('docs', '/abs', '../up', 'ok/../docs', '.claude', 'scripts/', 'a//b', './c'):
-            self.assertIn('refused .claude/worktree-disposable line %s (empty, absolute' % entry, out)
+        for entry in ('docs', '//abs', '/docs', '../up', 'ok/../docs', '.claude', 'scripts/', 'a//b', './c'):
+            self.assertIn('refused .claude/worktree-disposable line %s (empty, "//"' % entry, out)
+
+    def test_a_root_anchored_entry_matches_the_roots_folder_alone(self):
+        # #288: `build` matched every build folder, a scratch one below the root too, and no
+        # entry could name the root's alone. /build does.
+        self.disposable('/build\n')
+        path = self.worktree('done')
+        (path / 'build').mkdir()
+        (path / 'build/out.o').write_text('o\n')
+        (path / 'src/build').mkdir(parents=True)
+        (path / 'src/build/scratch.py').write_text('only here\n')
+        self.assertKept(path, self.run_script('--apply'),
+                        'files with no identical copy in main, outside a disposable folder: src/build/scratch.py')
+        (path / 'src/build/scratch.py').unlink()
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_removal_uses_the_committed_disposable_list(self):
+        # #288: an uncommitted edit of the list took effect at the next merge, before review.
+        self.disposable('cache\n')
+        self.git('add', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        self.disposable('build\n')
+        path = self.worktree('done')
+        (path / 'build').mkdir()
+        (path / 'build/scratch.py').write_text('only here\n')
+        out = self.run_script('--apply')
+        self.assertIn('clean_worktrees: .claude/worktree-disposable differs from its committed version; this '
+                      'removal uses the committed list', out)
+        self.assertKept(path, out, 'outside a disposable folder: build/scratch.py')
+        # The dry run shows what the edited list would remove; once committed, it applies.
+        out = self.run_script()
+        self.assertIn('remove .claude/worktrees/done', out)
+        self.git('commit', '-q', '-am', 'build is disposable')
+        self.assertRemoved(path, self.run_script('--apply'))
 
     def test_a_tracked_file_under_another_name_is_kept_and_never_deleted(self):
         # Reproduced by a reviewer on a case-insensitive file system (macOS): tracked `a` renamed
