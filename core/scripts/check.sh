@@ -970,7 +970,10 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     # staged submodule revision, and the document beside it skipped the build. Any doubt runs
     # the build: no HEAD yet, a merge in progress, a git error, an entry that does not parse.
     # The diff is against HEAD, which for an amend is the tree being amended: the build last
-    # vouched for HEAD, and the commit differs from it only by these documents. A clean
+    # vouched for HEAD, and the commit differs from it only by these documents. Vouched means
+    # recorded: .githooks/pre-commit writes the tree of each commit it gated into the worktree's
+    # check-gated-tree, and a HEAD whose tree is not there builds. A rebase, cherry-pick or
+    # revert runs no hook (#115), and a pull or a branch switch brings in another tree. A clean
     # `git merge` never comes here: pre-merge-commit asks for the full gate.
     docs_only=""
     if [ -n "$for_commit" ] && [ "$docs_only_skip_build" = 1 ]; then
@@ -981,6 +984,13 @@ def git(*args):
 if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
     sys.exit(1)
 if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
+    sys.exit(1)
+head = git("rev-parse", "-q", "--verify", "HEAD^{tree}").stdout.strip()
+try:
+    with open(os.fsdecode(git("rev-parse", "--git-path", "check-gated-tree").stdout.strip()), "rb") as gated:
+        if not head or gated.read().strip() != head:
+            sys.exit(1)
+except OSError:
     sys.exit(1)
 diff = git("diff", "--cached", "--raw", "--no-renames", "--ignore-submodules=none", "-z", "HEAD", "--")
 fields = diff.stdout.split(b"\0")

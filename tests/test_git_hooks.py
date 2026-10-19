@@ -162,30 +162,42 @@ class GitHookTests(unittest.TestCase):
             git('merge', '-q', '--no-edit', 'side')
             self.assertEqual((root / '.git/project-runs').read_text(encoding='utf-8').split(), ['pre-merge-commit'])
 
-    def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
-        # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit)
-        # never takes it, whatever the merge brings in.
+    def docs_project(self, tmp):
+        """A gated project whose base commit went through the hooks, so the gate recorded its tree.
+        The build passes and, from here on, leaves a mark."""
         spec = importlib.util.spec_from_file_location('check_gate', ROOT / 'tests/test_check_gate.py')
         check_gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(check_gate)
+        root = Path(tmp) / 'project'
+        check_gate.make_project(root)
+        shutil.copytree(ROOT / 'core/.githooks', root / '.githooks')
+        (root / 'scripts/check.sh').chmod(0o755)
+        mark, build = Path(tmp) / 'built', Path(tmp) / 'build.sh'
+        build.write_text('true\n', encoding='utf-8')
+        env = dict({k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_'))},
+                   GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                   # The build command expands it unquoted: a Windows path keeps its `\` only as `/`.
+                   GATE_TEST_BUILD=build.as_posix())
+        git = lambda *args, check=True: subprocess.run(
+            ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+             '-c', 'core.hooksPath=.githooks', *args],
+            cwd=root, env=env, capture_output=True, text=True, check=check, encoding='utf-8')
+        git('checkout', '-q', '-b', 'main')
+        # A document the build reads is listed in docs_always_build (#97).
+        gate = root / 'scripts/check.sh'
+        self.assertIn('docs_always_build=""', gate.read_text(encoding='utf-8').splitlines())
+        gate.write_bytes(gate.read_bytes().replace(b'docs_always_build=""',
+                                                   b'docs_always_build="docs/*.md README.md"', 1))
+        git('add', '-A')
+        git('commit', '-q', '-m', 'base')
+        build.write_text('echo ran > "%s"\n' % mark, encoding='utf-8')
+        return root, git, build, mark
+
+    def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
+        # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit)
+        # never takes it, whatever the merge brings in.
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / 'project'
-            check_gate.make_project(root)
-            shutil.copytree(ROOT / 'core/.githooks', root / '.githooks')
-            (root / 'scripts/check.sh').chmod(0o755)
-            mark, build = Path(tmp) / 'built', Path(tmp) / 'build.sh'
-            build.write_text('true\n', encoding='utf-8')
-            env = dict({k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_'))},
-                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
-                       # The build command expands it unquoted: a Windows path keeps its `\` only as `/`.
-                       GATE_TEST_BUILD=build.as_posix())
-            git = lambda *args, check=True: subprocess.run(
-                ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
-                 '-c', 'core.hooksPath=.githooks', *args],
-                cwd=root, env=env, capture_output=True, text=True, check=check, encoding='utf-8')
-            git('checkout', '-q', '-b', 'main')
-            git('add', '-A')
-            git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'base')
+            root, git, build, mark = self.docs_project(tmp)
             # From here on the build leaves a mark and fails.
             build.write_text('echo ran > "%s"; exit 1\n' % mark, encoding='utf-8')
             (root / 'notes.md').write_text('notes\n', encoding='utf-8')
@@ -194,14 +206,7 @@ class GitHookTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(mark.exists(), result.stdout + result.stderr)
             self.assertIn('build not run: documentation-only commit, 1 file)', result.stdout + result.stderr)
-            # A document the build reads is listed in docs_always_build: it builds, an unlisted
-            # one still skips (#97).
-            gate = root / 'scripts/check.sh'
-            self.assertIn('docs_always_build=""', gate.read_text(encoding='utf-8').splitlines())
-            gate.write_bytes(gate.read_bytes().replace(b'docs_always_build=""',
-                                                       b'docs_always_build="docs/*.md README.md"', 1))
-            git('add', 'scripts/check.sh')
-            git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'list')
+            # A listed document builds, an unlisted one still skips (#97).
             (root / 'docs/api.md').write_text('api\n', encoding='utf-8')
             git('add', 'docs/api.md')
             result = git('commit', '-q', '-m', 'api', check=False)
@@ -230,6 +235,30 @@ class GitHookTests(unittest.TestCase):
             result = git('merge', '-q', '--no-edit', 'side', check=False)
             self.assertTrue(mark.exists(), 'a clean merge skipped the build: ' + result.stdout + result.stderr)
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_documentation_only_commit_after_a_rebase_builds_once(self):
+        # A rebase runs no hook, so the gate never saw the tree it leaves; the documentation-only
+        # path trusted that HEAD and skipped the build (#115).
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git, build, mark = self.docs_project(tmp)
+            git('checkout', '-q', '-b', 'feat')
+            (root / 'feat.c').write_text('int f;\n', encoding='utf-8')
+            git('add', 'feat.c')
+            git('commit', '-q', '-m', 'feat')
+            git('checkout', '-q', 'main')
+            (root / 'main.c').write_text('int m;\n', encoding='utf-8')
+            git('add', 'main.c')
+            git('commit', '-q', '-m', 'main')
+            git('checkout', '-q', 'feat')
+            git('rebase', '-q', 'main')
+            for n, builds in ((1, True), (2, False)):
+                if mark.exists():
+                    mark.unlink()
+                (root / 'notes.md').write_text('notes %d\n' % n, encoding='utf-8')
+                git('add', 'notes.md')
+                result = git('commit', '-q', '-m', 'notes %d' % n, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(mark.exists(), builds, result.stdout + result.stderr)
 
     def commit(self, root, git, message, *opts, **extra):
         (root / 'c').write_text(message, encoding='utf-8')

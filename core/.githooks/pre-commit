@@ -70,7 +70,13 @@ else
   ./scripts/check.sh
 fi
 status=$?
-[ "$status" -ne 0 ] || exit 0
+# The tree this commit records, as gated: check.sh's documentation-only path trusts only a HEAD
+# whose tree it finds here. A rebase, cherry-pick or revert runs no hook (#115), and the first
+# documentation-only commit after one builds. One file per worktree, overwritten.
+if [ "$status" -eq 0 ]; then
+  gated_tree=$(git write-tree) && printf '%s\n' "$gated_tree" > "$(git rev-parse --git-path check-gated-tree)"
+  exit 0
+fi
 # 75: another gate run held the lock past GATE_LOCK_WAIT. Nothing was checked, so the commit
 # stays blocked, but calling that a failure sends someone hunting for a defect that is not there.
 if [ "$status" -eq 75 ]; then

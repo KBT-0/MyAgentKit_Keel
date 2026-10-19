@@ -347,9 +347,17 @@ class CheckGateTests(unittest.TestCase):
         (self.project / 'code.c').write_text('int main(void) { return 0; }\n')
         git('add', '-A')
         git('commit', '-q', '-m', 'base')
+        self.record_gated()
         self.mark = self.tmp / 'built'
         self.build.write_text('echo ran > "%s"; exit 1\n' % self.mark)
         return git
+
+    def record_gated(self):
+        """Record HEAD's tree as gated, as .githooks/pre-commit does after a pass (#115)."""
+        out = lambda *args: subprocess.run(GIT + list(args), cwd=self.project, check=True,
+                                           capture_output=True, text=True).stdout.strip()
+        (self.project / out('rev-parse', '--git-path', 'check-gated-tree')).write_text(
+            out('rev-parse', 'HEAD^{tree}') + '\n')
 
     def gate_built(self, args=('--for-commit',)):
         """Run the gate; report whether the build ran."""
@@ -435,6 +443,8 @@ class CheckGateTests(unittest.TestCase):
                     (self.project / '.gitmodules').write_text(
                         '[submodule "lib"]\n\tpath = vendor/lib\n\turl = ./lib\n' + gitmodules)
                     git('commit', '-q', '-am', 'ignore it')
+                # The base is gated: only the hidden submodule revision may run the build.
+                self.record_gated()
                 (self.project / 'notes.md').write_text('notes\n')
                 # -f: `git add` itself skips a submodule whose ignore is all.
                 git('add', '-f', 'notes.md', 'vendor/lib')
