@@ -196,9 +196,19 @@ class BootstrapTests(unittest.TestCase):
                             'commit', '-qm', 'adopted project'], cwd=project, check=True)
             before = {name: subprocess.check_output(['git', 'show', ':' + name], cwd=project)
                       for name in names}
+            # A rerun for a new overlay file on an installed project (UPDATING) kept neither:
+            # its set-up gate stopped it as a first install, and where the gate matched it
+            # stamped the latest version over ACTION items nobody applied (#100).
+            (project / 'docs/kit/.kit-version').write_bytes(b'0.8\n')
+            added = kit / 'overlays/claude-code/files/scripts/new_tool.sh'
+            added.parent.mkdir(parents=True, exist_ok=True)
+            added.write_text('#!/bin/sh\nexit 0\n')
             result = subprocess.run(command, capture_output=True, text=True, timeout=bootstrap_timeout(60))
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('STOPPING', result.stdout)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('STOPPING', result.stdout)
+            self.assertIn('its version stays v0.8', result.stdout)
+            self.assertEqual((project / 'docs/kit/.kit-version').read_bytes(), b'0.8\n')
+            self.assertTrue((project / 'scripts/new_tool.sh').is_file())
             for name in names:
                 with self.subTest(path=name):
                     self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s', name],
@@ -499,7 +509,8 @@ class BootstrapTests(unittest.TestCase):
                 if case == 'note':
                     self.assertIn('new agenda', dest.read_text())
                 else:
-                    self.assertEqual(dest.read_bytes(), (current + '\n').encode() if case == 'stamp'
+                    # A rerun keeps the stamp it found (#100).
+                    self.assertEqual(dest.read_bytes(), b'0.1\n' if case == 'stamp'
                                      else (root / 'core' / rel).read_bytes())
                 if case == 'stamp':
                     self.assertEqual((dest.parent / '.kit-version.kit-tmp').read_text(), '0.1\n')
@@ -563,12 +574,10 @@ class BootstrapTests(unittest.TestCase):
                         self.assertEqual(state, (True, prior), 'the project\'s hooks path was touched')
                         self.assertIn("core.hooksPath is '%s'" % prior, result.stderr)
                         continue
-                    if fault == 'signal after the mv' and start == current:
-                        self.assertEqual(state, (True, '.githooks'), 'recorded with the gates disconnected')
-                        continue
+                    # A stamp found is kept (#100), so after the mv it holds `start` again,
+                    # this run's commit, and the gates stay wired.
                     if fault == 'signal after the mv':
-                        self.assertIn(state, [(True, prior or ''), (False, '.githooks')],
-                                      'stamped and hooks path not wired, or the reverse')
+                        self.assertEqual(state, (True, '.githooks'), 'recorded with the gates disconnected')
                         continue
                     self.assertEqual(state, (True, prior or ''), 'hooks path left replaced')
                     self.assertIn('core.hooksPath', result.stderr)
