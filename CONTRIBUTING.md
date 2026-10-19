@@ -90,8 +90,8 @@ code.claude.com/docs/en/plugins/loading, "Versions and updates").
 tiers (`docs/research/kit-self-checks.md`, findings 6 to 8). The default run is the fast tier:
 the structural checks and the unit and fixture suites, within ten minutes on the maintainer's
 20-CPU Windows host; run it on every change and before a push. `./scripts/check.sh --slow` runs
-the slow tier alone: bootstrap and acceptance, the review bridge, doctor and worker-spawn suites;
-`--all` runs both. CI runs the two tiers as parallel jobs. Each tier has a time budget and each
+the slow tier alone: bootstrap and acceptance, the review bridge, doctor, worker-spawn and
+close_worker suites and the locale run of test_git_hooks; `--all` runs both. CI runs the two tiers as parallel jobs. Each tier has a time budget and each
 unit a cap (`CAPS` in `scripts/check_kit.py`): a run over either is red with the unit's name and
 seconds, so a slow test moves to the slow tier or gets faster, and never grows the commit stage
 unseen. A slow host raises both with `MYAGENTKIT_TEST_TIMEOUT_SCALE` (CI sets 3). A change

@@ -242,6 +242,19 @@ executable() {
 " ;; esac
 }
 
+# hook_name NAME — true for a name git runs as a hook (githooks(5)). A function, not inline:
+# bash 3.2, macOS's sh, reads a pattern's `)` inside $( ) as the end of the $( ).
+hook_name() {
+  case "$1" in
+    applypatch-msg|pre-applypatch|post-applypatch|pre-commit|pre-merge-commit|prepare-commit-msg|\
+    commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|pre-receive|update|\
+    proc-receive|post-receive|post-update|reference-transaction|push-to-checkout|pre-auto-gc|\
+    post-rewrite|sendemail-validate|fsmonitor-watchman|p4-changelist|p4-prepare-changelist|\
+    p4-post-changelist|p4-pre-submit|post-index-change) return 0 ;;
+  esac
+  return 1
+}
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -547,12 +560,8 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # executable bit is none. Git Bash's -x is true for a #! file, the one Git for Windows runs.
   if [ -z "$effective" ] && hooks_dir=$(git -C "$target" rev-parse --git-path hooks 2>/dev/null) &&
      ( cd "$target" && cd "$hooks_dir" 2>/dev/null ) && left=$(cd "$target" && cd "$hooks_dir" &&
-       for h in *; do [ -f "$h" ] && [ -x "$h" ] || continue; case "$h" in
-         applypatch-msg|pre-applypatch|post-applypatch|pre-commit|pre-merge-commit|prepare-commit-msg|\
-         commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|pre-receive|update|\
-         proc-receive|post-receive|post-update|reference-transaction|push-to-checkout|pre-auto-gc|\
-         post-rewrite|sendemail-validate|fsmonitor-watchman|p4-changelist|p4-prepare-changelist|\
-         p4-post-changelist|p4-pre-submit|post-index-change) printf ' %s' "$h" ;; esac; done) && [ -n "$left" ]; then
+       for h in *; do if [ -f "$h" ] && [ -x "$h" ] && hook_name "$h"; then printf ' %s' "$h"; fi; done) &&
+     [ -n "$left" ]; then
     rm -f "$part"; part=""
     printf '%s\n' "bootstrap: STOP: $hooks_dir holds hooks git runs today:$left; the kit's hooks path (.githooks) would silence them (Git LFS keeps its pre-push there)." >&2
     printf '%s\n' "  Move each one into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2

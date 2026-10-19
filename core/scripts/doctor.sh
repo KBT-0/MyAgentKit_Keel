@@ -152,7 +152,7 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
     miss "$f is not in the git index (the next clone will not have it)" "chmod +x $f && git add --chmod=+x $f"
   elif [ ! -x "$f" ] && case $f in .githooks/*.project) true ;; *) false ;; esac; then
     # chmod -x is the off switch of a project hook with a #! line: the kit's hook skips it.
-    echo "NOTE: $f is switched off (no execute bit); the kit's hook skips it. To switch it on: chmod +x $f && git update-index --chmod=+x $f"
+    printf '%s\n' "NOTE: $f is switched off (no execute bit); the kit's hook skips it. To switch it on: chmod +x $f && git update-index --chmod=+x $f"
   elif [ ! -x "$f" ] || [ "$mode" != 100755 ]; then
     miss "$f is not executable (disk or git index)" "chmod +x $f && git update-index --chmod=+x $f"
   fi
