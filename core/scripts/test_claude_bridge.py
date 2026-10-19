@@ -736,10 +736,10 @@ class BridgeTests(unittest.TestCase):
                 envelope = dict(type='result', subtype='success', is_error=False,
                                 modelUsage={'claude-opus-5': {}}, structured_output=value)
                 with self.subTest(field=field, item=item):
-                    # #120: a High among the findings reads as Reject; anything else as a check.
+                    # #120: a High reads as Reject, among the findings or the checks, as the
+                    # Codex text does (test above); anything else as a check (rsel).
                     self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'],
-                                     'Reject' if field == 'findings' and re.search('High|Critical', item)
-                                     else 'Accept with Manual Checks')
+                                     'Reject' if re.search('High|Critical', item) else 'Accept with Manual Checks')
 
     def test_fallback_uses_the_resolved_backend_model_family_and_refuses_unknowns(self):
         from contextlib import redirect_stdout
@@ -3557,45 +3557,48 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, completed, result.stdout + result.stderr)
                 self.assertEqual(chain['failure_kind'], None if completed else 'invalid_evidence')
 
-    def test_codex_accept_with_a_manual_check_is_refused_as_on_the_claude_side(self):
+    def test_codex_accept_with_a_manual_check_is_read_as_on_the_claude_side(self):
         # Round 3: the manual checks were read only for the other verdict, so an Accept that
-        # kept a check completed. claude_bridge.validate() already refuses it.
+        # kept a check passed as a plain Accept. Since #120 (owner decision 59 A) both adapters
+        # read it as Accept with Manual Checks, the first check naming the correction, and a
+        # High among the checks as Reject (rsel); claude_bridge.validate() reads it the same.
         fake = python_cli(self.root / 'codex-accept-manual', PYTHON_SHEBANG +
                           'import json, os, pathlib, sys\n'
                           'sys.stdin.read()\n'
                           'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FINAL_RESPONSE"])\n'
                           'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
-        for final, completed in (
+        for final, verdict in (
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n- Verify deployment before release.\n\n'
-                 'VERDICT: Accept\n', False),
+                 'VERDICT: Accept\n', 'Accept with Manual Checks'),
                 ('## Findings\n\n- None.\n\n**Manual checks:**\n\nVerify deployment before release.\n\n'
-                 'VERDICT: Accept\n', False),
+                 'VERDICT: Accept\n', 'Accept with Manual Checks'),
                 # fix4 review: a check written as a heading is still a check.
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n### Verify deployment before release.\n\n'
-                 'VERDICT: Accept\n', False),
+                 'VERDICT: Accept\n', 'Accept with Manual Checks'),
                 # rvfix: the paid review put a NOT RUN paragraph after a clean placeholder.
                 ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n\n'
                  '`tests/test_python_fallback.py`: both tests passed. The blocking assertion proves '
                  'the Python fallback reaches `plain_report`; the copied grammar matches the installed project layout.\n\n'
                  'NOT RUN: Git comparison; this archive has no Git metadata. '
-                 'Reviewed the supplied diff against checkout files.\n', False),
+                 'Reviewed the supplied diff against checkout files.\n', 'Accept with Manual Checks'),
                 ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n\n'
-                 'I could not verify the Git comparison because this archive has no Git metadata.\n', False),
+                 'I could not verify the Git comparison because this archive has no Git metadata.\n', 'Accept with Manual Checks'),
                 ('VERDICT: Accept with Manual Checks\n\n## Findings\n\n- None.\n\n## Manual checks\n\n'
-                 'NOT RUN: Git comparison; this archive has no Git metadata.\n', True),
+                 'NOT RUN: Git comparison; this archive has no Git metadata.\n', 'Accept with Manual Checks'),
                 ('VERDICT: Accept with Manual Checks\n\n## Findings\n\n- None.\n\n## Manual checks\n\n'
-                 'I could not verify the Git comparison because this archive has no Git metadata.\n', True),
-                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n', True),
-                ('## Findings\n\n- None.\n\n## Manual checks\n\n- None.\n\nVERDICT: Accept\n', True)):
+                 'I could not verify the Git comparison because this archive has no Git metadata.\n', 'Accept with Manual Checks'),
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n', 'Accept'),
+                ('## Findings\n\n- None.\n\n## Manual checks\n\n- None.\n\nVERDICT: Accept\n', 'Accept'),
+                ('## Findings\n\n- None.\n\n## Manual checks\n\n- High: x.py:1 drops records.\n\nVERDICT: Accept\n',
+                 'Reject')):
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
                                           REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
                 chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
                                         result.stdout.splitlines() if s.startswith('review dispatch: ')))
-                self.assertEqual(result.returncode == 0, completed, result.stdout + result.stderr)
-                self.assertEqual(chain['failure_kind'], None if completed else 'invalid_evidence')
-                if not completed:
-                    self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(chain['failure_kind'], None)
+                self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), ['VERDICT: ' + verdict])
 
     def test_default_effort_follows_the_tier_and_xhigh_is_no_review_choice(self):
         # review.sh computed the tier default alone: the plugin's direct dispatcher command and
@@ -3811,7 +3814,15 @@ class BridgeTests(unittest.TestCase):
                 (['Medium: x.py:1 a defect.'], [], 'Accept with Manual Checks', ['Medium: x.py:1 a defect.']),
                 ([], ['NOT RUN: the Windows suite.'], 'Accept with Manual Checks', ['NOT RUN: the Windows suite.']),
                 (['Low: a note', 'NOT RUN: the deployment.'], [], 'Accept with Manual Checks',
-                 ['NOT RUN: the deployment.'])):
+                 ['NOT RUN: the deployment.']),
+                # rsel: the leading severity decides, never the word high or critical in the text.
+                (['Medium: x.py:1 the high-effort timeout is not applied.'], [], 'Accept with Manual Checks',
+                 ['Medium: x.py:1 the high-effort timeout is not applied.']),
+                (['NOT RUN: the high-tier focus run.'], [], 'Accept with Manual Checks',
+                 ['NOT RUN: the high-tier focus run.']),
+                (['Pre-existing (Critical): x.py:1 an old bypass.'], [], 'Accept with Manual Checks',
+                 ['Pre-existing (Critical): x.py:1 an old bypass.']),
+                (['High-level: x.py:1 a note.'], [], 'Accept with Manual Checks', ['High-level: x.py:1 a note.'])):
             value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': checks}
             envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
                         'modelUsage': {'claude-opus-5': {}}, 'structured_output': value}

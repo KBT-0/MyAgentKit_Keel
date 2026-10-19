@@ -1368,7 +1368,10 @@ def stricter_verdict(blocking: list) -> tuple[str, str]:
     Reject, anything else Accept with Manual Checks. Refused, the whole paid review was lost to
     an inconsistency the stricter verdict settles without dropping an item. Returns the verdict
     and the check line that says so."""
-    verdict = ("Reject" if any(re.search(r"\b(?:critical|high)\b", item, re.I) for item in blocking)
+    # The item's leading severity, as finding_start() reads it: a word match anywhere read
+    # `Medium: the high-effort run` and `NOT RUN: the high-tier focus` as High (rsel).
+    leading = [review_item(re.sub(r"\s", " ", re.sub(r"[*_]", "", item))) for item in blocking]
+    verdict = ("Reject" if any(re.match(r"(?i)(?:critical|high)(?![-\w])", item) for item in leading)
                else "Accept with Manual Checks")
     return verdict, ("The reviewer wrote Accept; the bridge read it as %s, because its own findings "
                      "or manual checks hold an item a plain Accept cannot carry." % verdict)
@@ -1412,10 +1415,14 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError("invalid verdict")
         if verdict == "Accept" and (value["manual_checks"] or checks or not accept_allows(findings)
                                     or not accept_allows(value["findings"])):
-            blocking = [item for item in dict.fromkeys(findings + value["findings"]) if not accept_allows([item])]
+            # A severity-first check is a finding, as review_parts() reads Codex's Manual checks
+            # section: the two adapters read one Accept with a High check alike (rsel).
+            marked = review_parts("## Manual checks\n" + "\n".join(value["manual_checks"]))[0]
+            blocking = [item for item in dict.fromkeys(findings + value["findings"] + marked) if not accept_allows([item])]
             verdict, note = stricter_verdict(blocking)
             moved = checks + (blocking if verdict != "Reject" else [])
             value = dict(value, verdict=verdict,
+                         findings=list(dict.fromkeys(value["findings"] + (marked if verdict == "Reject" else []))),
                          manual_checks=[note] + list(dict.fromkeys(value["manual_checks"] + moved)))
         if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
