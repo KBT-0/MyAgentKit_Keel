@@ -194,6 +194,8 @@ usage are ignored by Git; publish only deliberately scrubbed review summaries.
 Offline tests construct missing, contradictory, stale, timed-out, and wrong-model evidence
 and assert the specific failure. They do not prove authentication or real CLI compatibility.
 A live run is required before claiming the integration works on a particular machine;
-see the dated result in ACCEPTANCE.md. Any future cache update requires packaging again,
-a plugin cachebuster/reinstall, and a new Codex thread. Publishing to a remote marketplace
-or pushing the kit is a separate owner-authorized action.
+see the dated result in ACCEPTANCE.md. Packaging stamps the manifest's version from the kit
+version and a hash of the packaged files, and `--check` refuses a stale one, so each change
+gets a version of its own in Codex's version-keyed plugin cache (#156); a change reaches a
+machine after packaging, `codex plugin add myagentkit@personal` and a new Codex thread.
+Publishing to a remote marketplace or pushing the kit is a separate owner-authorized action.
