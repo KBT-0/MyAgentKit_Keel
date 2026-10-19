@@ -18,7 +18,7 @@ import codex_quota
 from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
                            prior_rounds,
-                           review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
+                           review_context, review_parts, recheck, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
 
@@ -100,7 +100,7 @@ def main(argv=None, result_sink=None, claims=None):
     # read: the first one raises, every later one is noted.
     guard = agent_process.OneShot()
     guard.previous = agent_process.hold(guard)
-    result = None
+    result = unverified = None
     deadline = time.monotonic() + timeout
     try:
         # The reviewer's workspace is a throwaway copy inside this directory, removed with it
@@ -200,7 +200,14 @@ def main(argv=None, result_sink=None, claims=None):
                     if len(raw) > 8_000_000:
                         reason = reason or "output_limit"
                     final = raw[:8_000_000].decode(errors="replace")
-                if snapshot(repo, scope, ref)[1] != fingerprint:
+                try:
+                    now = recheck(repo, scope, ref)
+                    changed = now is None or now[1] != fingerprint
+                except (OSError, ValueError, BridgeError) as error:
+                    # Unreadable proves no change: the review stays completed in its record, so
+                    # its round counts (fail closed), and the result fails as checkout_unverified.
+                    changed, unverified = False, "the checkout could not be read after the review: %s" % error
+                if changed:
                     reason = reason or "stale_checkout"
             except (OSError, ValueError, BridgeError):
                 reason = reason or "stale_checkout"
@@ -291,8 +298,12 @@ def main(argv=None, result_sink=None, claims=None):
         was_cancelled = cancel_noted()
         reconcile()
         status, reason = usage["status"], usage["failure_kind"]
+        if unverified and status == "completed":
+            status, reason = "failed", "checkout_unverified"
         result = {"status": status, "failure_kind": reason, "evidence": archived,
                   "usage_record": str(path), "recovery": usage["recovery"], "cancelled": was_cancelled}
+        if reason == "checkout_unverified":
+            result["error"] = unverified
         if reason == "rate_limited":
             # The wait the CLI named, for the dispatcher's capacity retry (KARARLAR B01 (6)).
             result["retry_after"] = agent_usage.retry_after(values)
@@ -333,7 +344,7 @@ def main(argv=None, result_sink=None, claims=None):
             if result["cancelled"]:
                 return
             result["cancelled"] = True
-            if result["failure_kind"]:
+            if usage["failure_kind"]:  # a checkout_unverified result has a completed record
                 result.update(status=usage["status"], failure_kind="cancelled")
             print("review invocation: " + json.dumps(dict(result, correction=True)))
 

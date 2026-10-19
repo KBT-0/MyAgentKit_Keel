@@ -28,6 +28,10 @@ DEFAULT_REVIEW_TIMEOUT = 2700
 MAX_REVIEW_TIMEOUT = 3600
 DEFAULT_REVIEW_TURNS = 200
 MAX_REVIEW_TURNS = 500
+# Seconds the pipes still drain once the reviewer itself has exited. A descendant that inherited
+# its stdout held the pipe open, and a finished review waited out the wall-clock limit as a
+# timeout (#197). Five is the kit's choice: the leader's own output is in the pipe at its exit.
+DRAIN_GRACE_SECONDS = 5
 # Ctrl-C, kill and a closed terminal or restarted host session. The reviewer runs in its own
 # session so none of these reach it; left at their defaults, SIGTERM and SIGHUP end this
 # process without its cleanup and the paid reviewer keeps running, unaccounted. Native Windows
@@ -201,7 +205,10 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
         # started with a cleared environment (env -i); on Linux one that is not dumpable
         # (prctl PR_SET_DUMPABLE 0, as ssh-agent does, or a setuid, setgid or file-capability
         # binary), whose /proc environ is closed to us; on macOS one whose environment ps -E
-        # does not show.
+        # does not show; and one that rewrites its process title (setproctitle: nginx, Redis,
+        # Perl `$0`), which overwrites its environment memory, the marker included (#198). A
+        # daemon that also calls setsid escapes the group kill too. A cgroup per run would hold
+        # all of these, but it is Linux only and needs delegation; that change is the owner's.
         marker = "MYAGENTKIT_PROCESS_" + os.urandom(8).hex()
         environment = os.environ if popen_kw.get("env") is None else popen_kw["env"]
         popen_kw["env"] = dict(environment, **{marker: "1"})
@@ -618,12 +625,26 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                         selector.register(stream, selectors.EVENT_READ, name)
                 else:
                     chunks, open_streams = drain({"stdout": child.stdout, "stderr": child.stderr}), 2
+                gone = None
+
+                def drained():
+                    # The leader exited (seen without reaping) DRAIN_GRACE_SECONDS ago: what still
+                    # holds a pipe is a descendant, which stop_group ends below (#197).
+                    nonlocal gone
+                    try:
+                        if gone is None and _exited_unreaped(child, 0):
+                            gone = time.monotonic()
+                    except OSError:
+                        pass  # only the grace's look: the wait once the pipes close reports the fault
+                    return gone is not None and time.monotonic() - gone >= DRAIN_GRACE_SECONDS
                 # 8,000,000 bytes per stream is the owner's choice of safety cap,
                 # not a provider limit (B03 inv2#65).
                 while not POSIX and open_streams:
                     remaining = timeout - (time.monotonic() - started)
                     if remaining <= 0:
                         termination = "timeout"
+                        break
+                    if drained():
                         break
                     for name, data in take(chunks, min(0.2, remaining)):
                         if not data:
@@ -641,6 +662,8 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     remaining = timeout - (time.monotonic() - started)
                     if remaining <= 0:
                         termination = "timeout"
+                        break
+                    if drained():
                         break
                     for key, _ in selector.select(min(0.2, remaining)):
                         data = os.read(key.fd, 65536)

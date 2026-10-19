@@ -112,6 +112,10 @@ BACKEND_CLEAR_KEYS = frozenset({
 # 64 KiB: a backend file is a few KEY=VALUE lines; the bound only stops a wrong file from being
 # read whole (OWASP ASVS V12, CWE-1284 principle; the number itself is a project choice).
 BACKEND_MAX_BYTES = 64 * 1024
+# The Claude tiers by name: a value naming one anywhere is that tier, so an alias (`opus`,
+# `Opus 5.5`), a Bedrock-style id (us.anthropic.claude-opus-5-v1:0) and the older
+# claude-3-5-sonnet-20241022 form compare as the tier they run (#181).
+CLAUDE_TIERS = ("opus", "sonnet", "haiku", "fable")
 
 
 def pin_valid(provider, model, backend=None):
@@ -121,12 +125,29 @@ def pin_valid(provider, model, backend=None):
 
 
 def tier(model):
-    """The tier a model id belongs to: `claude-opus` for every Opus id (claude-opus-5,
-    claude-opus-5-5, a dated one), else the id without a -YYYYMMDD date. A `vendor/` prefix,
-    as MYAGENTKIT_REQUESTER writes it, is dropped."""
-    model = model.strip().lower().rpartition("/")[2]
+    """The tier a model id belongs to: `claude-opus` for every value naming Opus (claude-opus-5,
+    claude-opus-5-5, a dated one, `opus`, a vendor-prefixed id), else the id without a
+    -YYYYMMDD date. A `vendor/` prefix, as MYAGENTKIT_REQUESTER writes it, is dropped, and a
+    Codex id inside a longer value (`codex gpt-5.5`, `gpt-5.5 xhigh`) is that id's tier."""
+    model = model.strip().lower()
+    named = re.search(r"(?<![a-z])(%s)(?![a-z])" % "|".join(CLAUDE_TIERS), model)
+    if named:
+        return "claude-" + named[1]
+    codex = [token for token in re.split(r"[\s/]+", model) if token != "codex" and author_family(token) == "codex"]
+    model = codex[0] if codex else model.rpartition("/")[2]
     family = re.match(r"claude-([a-z]+)", model)
     return "claude-" + family[1] if family else re.sub(r"-\d{8}$", "", model)
+
+
+def author_tier(author):
+    """The tier `author` names, or None when it names no model: a family, vendor or CLI alone
+    (claude, anthropic, claude-code, claude-cli, codex, openai, gpt) or an id of no known
+    family. Such a value compared equal to no pin, so the check it was meant to arm passed (#181)."""
+    named = tier(author)
+    if named in ["claude-" + name for name in CLAUDE_TIERS] or (
+            author_family(named) == "codex" and named != "codex"):
+        return named
+    return None
 
 
 def author_family(model):
@@ -168,10 +189,16 @@ def load_backend(repo, name):
                 os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
                 for entry in tracked.stdout.split(b"\0") if entry):
             raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
-        if os.path.lexists(path):
-            print("NOTE [review]: backend %s is read from %s, the old place; move it to %s (the "
-                  "old place is read only while projects move)" % (name, path, folder),
-                  file=sys.stderr, flush=True)
+        # After the tracked check: on a case-sensitive filesystem a case variant of a tracked
+        # file does not exist, and it must still be refused as tracked.
+        if not os.path.lexists(path):
+            # Named in full: the old place alone sent the owner to put a credential file
+            # inside the repository, the place the kit is moving away from (#277).
+            raise ValueError("backend %s: %s.env is not in the backend folder %s (MYAGENTKIT_BACKENDS_DIR) "
+                             "nor in the old place %s" % (name, name, folder, path.parent))
+        print("NOTE [review]: backend %s is read from %s, the old place; move it to %s (the "
+              "old place is read only while projects move)" % (name, path, folder),
+              file=sys.stderr, flush=True)
     try:
         if path.is_symlink() or not os.path.isfile(path):
             raise ValueError("backend %s: %s cannot be read: expected a regular file" % (name, path))
@@ -198,6 +225,10 @@ def load_backend(repo, name):
                              % (name, number, path, ", ".join(sorted(BACKEND_KEYS))))
         if "\x00" in value:
             raise ValueError("backend %s: line %d of %s contains an invalid environment value" % (name, number, path))
+        # One pair of matching quotes is the dotenv form, not part of the value: kept, a quoted
+        # token reached the endpoint with its quotes, and a quoted model read as "no model".
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
         env[key] = value
     if not env.get("ANTHROPIC_BASE_URL"):
         raise ValueError("backend %s: %s sets no ANTHROPIC_BASE_URL" % (name, path))
@@ -295,11 +326,25 @@ def main(argv=None):
     # KARARLAR B01 (1): the author never reviews its own patch, and the default excludes the
     # author's tier. Only the lead knows the author; when it says so, the pin is checked here.
     author = os.environ.get("MYAGENTKIT_AUTHOR", "").strip() or None
-    if author and tier(author) == tier(pins[args.reviewer]):
-        raise ValueError("MYAGENTKIT_AUTHOR %s is the author's tier (%s), which reviewer %s model %s "
-                         "would run: the author never reviews its own patch (docs/REVIEW_GATE.md, "
-                         "\"Invariant\"). Pin another tier (REVIEW_CLAUDE_MODEL) or the other family "
-                         "(--reviewer)" % (author, tier(author), names[args.reviewer], pins[args.reviewer]))
+    if author and author_tier(author) is None:
+        raise ValueError("MYAGENTKIT_AUTHOR %r names no model tier, so the author's tier cannot be checked: "
+                         "name the author's model id (claude-opus-5-5, claude/claude-sonnet-5, gpt-5.5)" % author)
+    authors = [author] if author else []
+    # The owner's exception (docs/WORKFLOW.md, solo; 2026-10-16): on a plan with no tier above the
+    # author's, a high-tier change is reviewed by the author's tier in a fresh session at high
+    # effort, and the owner's diff read is the second check. Named, never inferred (#179).
+    exception = os.environ.get("REVIEW_SAME_TIER_EXCEPTION", "").strip() or None
+    if exception and (os.environ.get("REVIEW_RISK") != "high" or args.effort != "high"):
+        raise ValueError("REVIEW_SAME_TIER_EXCEPTION is for a high-tier change only: it needs "
+                         "REVIEW_RISK=high and effort high (docs/WORKFLOW.md, \"Working modes, by name\", solo)")
+    same = [value for value in authors if tier(value) == tier(pins[args.reviewer])]
+    if same and not exception:
+        raise ValueError("author %s is the tier (%s) reviewer %s model %s would run: the author never "
+                         "reviews its own patch (docs/REVIEW_GATE.md, \"Invariant\"). Pin another tier "
+                         "(REVIEW_CLAUDE_MODEL), never a weaker one for a high-tier change, or the other "
+                         "family (--reviewer). A high-tier change on a plan with no tier above the "
+                         "author's sets REVIEW_SAME_TIER_EXCEPTION=<reason>"
+                         % (", ".join(same), tier(same[0]), names[args.reviewer], pins[args.reviewer]))
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     original = claude_bridge.snapshot(repo, scope, ref)
     if not original[2].strip():
@@ -338,6 +383,16 @@ def main(argv=None):
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
     if author:
         chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
+    def same_tier(provider, same):
+        # For whichever reviewer runs: a substitute of the author's tier (the quota switch,
+        # --fallback) runs under the exception as the primary does, recorded and printed.
+        chain["same_tier_exception"] = exception
+        print("REVIEW [same tier]: author %s and reviewer %s model %s are one tier, under "
+              "REVIEW_SAME_TIER_EXCEPTION (%s); the owner reads the diff before the merge."
+              % (", ".join(same), names[provider], pins[provider], exception), flush=True)
+
+    if same:
+        same_tier(args.reviewer, same)
     if os.environ.get("REVIEW_SHADOW") == "1":
         # Marked where a later reader looks: the chain record and the console. A variable left
         # exported after a shadow run turns every later review into one, so the line says so.
@@ -418,13 +473,25 @@ def main(argv=None):
             attempt["error_after_result"] = str(error)
         chain["attempts"].append(attempt)
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
+        if result.get("failure_kind") == "checkout_unverified":
+            chain["checkout_unverified"] = result.get("error")  # the adapter's own look
         try:
-            if claude_bridge.snapshot(repo, scope, ref) != original:
-                raise ValueError("checkout changed between review attempts")
-        except (OSError, ValueError, claude_bridge.BridgeError):
+            # A refusal now (a dirty tree for a reference review, a moved HEAD) is a change.
+            changed, unread = claude_bridge.recheck(repo, scope, ref) != original, None
+        except (OSError, ValueError, claude_bridge.BridgeError) as caught:
+            changed, unread = False, caught
+        if changed or unread:
+            # Both fail the chain. Only a checkout seen changed marks it checkout_changed, which
+            # takes a completed review out of the round count (claude_bridge.chain_failure): an
+            # unreadable one proves no change, and its round still counts (fail closed).
             reason = chain["failure_kind"]
-            chain.update(status="failed", checkout_changed=True,
-                         failure_kind="stale_checkout" if reason is None or reason in UNAVAILABLE else reason)
+            kept = reason is not None and reason not in UNAVAILABLE
+            if changed:
+                chain.update(status="failed", checkout_changed=True,
+                             failure_kind=reason if kept else "stale_checkout")
+            else:
+                chain.update(status="failed", checkout_unverified=str(unread),
+                             failure_kind=reason if kept else "checkout_unverified")
             exit_code = 5
         if chain["status"] == "completed" and exit_code == 0:
             chain["selected_reviewer"] = names[provider]
@@ -461,17 +528,23 @@ def main(argv=None):
         if eligible and not pin_valid(other, pins[other], args.backend):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
             eligible = False
-        if eligible and author_family(author) is None:
-            chain["fallback_blocked"] = "author family is unknown; set MYAGENTKIT_AUTHOR before requesting fallback"
+        if eligible and not authors:
+            chain["fallback_blocked"] = ("the author is unknown, so the substitute's tier cannot be checked; "
+                                         "set MYAGENTKIT_AUTHOR to the author's model id and run the review again")
             eligible = False
         if eligible and author_family(pins[other]) is None:
             chain["fallback_blocked"] = ("other reviewer %s model %s has an unknown family; "
                                          "cannot verify independence" % (names[other], pins[other]))
             eligible = False
-        if eligible and author_family(author) == author_family(pins[other]):
-            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's family (MYAGENTKIT_AUTHOR %s)"
+        # The tier, not the family: in solo another tier of the author's family reviews, so a
+        # Claude author's Codex review that ran out of quota goes to another Claude tier (#225).
+        if eligible and not exception and any(tier(value) == tier(pins[other]) for value in authors):
+            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (%s)"
                                          % (names[other], pins[other], author))
             eligible = False
+        substitute_same = [value for value in authors if eligible and tier(value) == tier(pins[other])]
+        if substitute_same:
+            chain["same_tier_exception"] = exception  # in the checkpoint before the substitute runs
         checkpoint(retry)  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
             # The result stands only when the chain completed; after a stale_checkout it did not.
@@ -480,7 +553,8 @@ def main(argv=None):
                      "the result stands as recorded in" if chain["status"] == "completed"
                      else "the adapter recorded the result in", result.get("evidence"),
                      ", but the checkout changed, so the chain failed"
-                     if chain.get("checkout_changed") else ""), flush=True)
+                     if chain.get("checkout_changed") else ", but the checkout could not be read "
+                     "afterwards, so the chain failed" if chain.get("checkout_unverified") else ""), flush=True)
         if retry:
             retries += 1
             print("RETRY [review]: %s is at capacity (rate_limited); retry %d of %d in %s seconds."
@@ -500,6 +574,8 @@ def main(argv=None):
             print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
                   "passed, so configured %s model %s runs once instead."
                   % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
+        if substitute_same:
+            same_tier(other, substitute_same)
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
         queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)
@@ -515,15 +591,21 @@ def main(argv=None):
             print("FAIL [review]: Claude Code's Bash sandbox cannot start on this host, and the "
                   "review never runs Bash outside it. On Linux and WSL2 install bubblewrap and "
                   "socat (see scripts/doctor.sh); WSL1 cannot sandbox.")
+        # --fallback mends only a substitute that was not requested; one the author check or a
+        # pin blocked is blocked again, so the hint names that cause instead (#225).
+        blocked = chain.get("fallback_blocked")
+        substitute = ("with --fallback on the other configured reviewer" if not blocked
+                      or blocked.startswith("not requested") else
+                      "after fixing what blocked the substitute (above)")
         if chain["failure_kind"] == "quota_exhausted":
             print("FAIL [review]: the reviewer's quota is exhausted (a plan, session or spend limit); "
-                  "it is not retried. Tell the owner: wait for the reset, or run the review with "
-                  "--fallback on the other configured reviewer.")
+                  "it is not retried. Tell the owner: wait for the reset, or run the review again "
+                  + substitute + ".")
         if chain["failure_kind"] == "rate_limited":
             if chain.get("retry_blocked"):
                 print("FAIL [review]: " + chain["retry_blocked"])
             print("FAIL [review]: the reviewer was rate limited or at capacity; run the review "
-                  "again later, or with --fallback on the other configured reviewer.")
+                  "again later, or " + substitute + ".")
         if chain["failure_kind"] == "content_flagged":
             print("FAIL [review]: the provider's content classifier stopped the review; run it "
                   "again, or send a smaller scope (--commit, or a shorter --base range).")
@@ -535,6 +617,10 @@ def main(argv=None):
                   "the result cannot be tied to the "
                   "diff it names. Leave this checkout untouched until review.sh exits: keep "
                   "working in another worktree, or wait for it, then run the review again.")
+        if chain["failure_kind"] == "checkout_unverified":
+            print("FAIL [review]: the checkout could not be read after the review (%s), so the "
+                  "result cannot be tied to the diff it names; the completed review still counts "
+                  "as a round. Mend the cause, then run the review again." % chain["checkout_unverified"])
     elif chain.get("selected_reviewer") != names[args.reviewer]:
         print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
               "author the patch." % (chain["selected_reviewer"], names[args.reviewer]))
