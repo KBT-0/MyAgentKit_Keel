@@ -297,8 +297,9 @@ fi
 # --- guard hooks the committed settings do not register (Claude Code overlay) ---------
 # A worktree worker runs HEAD's .claude/settings.json (spawn_worker.sh; the working file only
 # when HEAD has none): a sync copied five guards, the merged settings stayed uncommitted, and
-# every worker ran without them while doctor said ready (#101). Every file under .claude/hooks
-# is named in the overlay's settings (py.sh as the wrapper, after_compact.txt through cat).
+# every worker ran without them while doctor said ready (#101). Only a file with a #! line is
+# a hook that needs an entry: every kit hook has one (py.sh is named as the wrapper), while a
+# helper module a project's hook imports, or a text file, has none and no entry of its own.
 if [ -d .claude/hooks ]; then
   if registered=$(git show HEAD:.claude/settings.json 2>/dev/null); then
     git diff --quiet HEAD -- .claude/settings.json 2>/dev/null ||
@@ -308,9 +309,11 @@ if [ -d .claude/hooks ]; then
   fi
   for f in .claude/hooks/*; do
     [ -f "$f" ] || continue
+    first=""; IFS= read -r first < "$f" || true
+    case $first in '#!'*) ;; *) continue ;; esac
     case $registered in
       *"/$f"*) ;;
-      *) miss "$f is not registered in the committed .claude/settings.json (worktree workers run without it)" "add its entry from the kit's overlay settings.json and commit it (the owner's edit, docs/UPDATING.md), or move the file out of .claude/hooks" ;;
+      *) miss "$f is not registered in the committed .claude/settings.json (worktree workers run without it)" "add its entry from the kit's overlay settings.json and commit it (the owner's edit, docs/UPDATING.md)" ;;
     esac
   done
   # Only $CLAUDE_PROJECT_DIR paths: a user-level hook under ~/.claude/hooks is not this checkout's.

@@ -1138,14 +1138,17 @@ class DoctorTests(unittest.TestCase):
             settings = project / '.claude/settings.json'
             entry = '"command": "sh \\"$CLAUDE_PROJECT_DIR/.claude/hooks/%s\\""'
             write = lambda *names: settings.write_text('{%s}\n' % ', '.join(entry % n for n in names))
-            (project / '.claude/hooks/guard_a.py').write_text('')
+            (project / '.claude/hooks/guard_a.py').write_text('#!/usr/bin/env python3\n')
+            # A helper a project's hook imports, and a text file: no #! line, no entry needed.
+            (project / '.claude/hooks/_common.py').write_text('X = 1\n')
+            (project / '.claude/hooks/notes.txt').write_text('text\n')
             write('guard_a.py')
             git('add', '-A')
             git('commit', '-qm', 'base')
             run = lambda: self.doctor_section('# --- guard hooks the committed settings', '# On native Windows',
                                               project, os.environ)
             self.assertEqual(run(), '')
-            (project / '.claude/hooks/guard_b.py').write_text('')
+            (project / '.claude/hooks/guard_b.py').write_text('#!/usr/bin/env python3\n')
             out = run()
             self.assertIn('MISSING: .claude/hooks/guard_b.py is not registered in the committed '
                           '.claude/settings.json', out)
