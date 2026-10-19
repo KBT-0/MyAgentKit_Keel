@@ -5126,7 +5126,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         record = Path(first['usage_record'])
         original = json.loads(record.read_text())
         for field, value, named in (('scope', 'base', 'scope'), ('resolved', '1' * 40, 'reference'),
-                                    ('head', '0' * 40, 'not HEAD')):
+                                    ('head', '0' * 40, 'not an ancestor of HEAD')):
             with self.subTest(field=field):
                 changed = json.loads(json.dumps(original))
                 changed['task'][field] = value
@@ -5247,26 +5247,37 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('cannot be listed', refused['error'])
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
 
-    def test_earlier_rounds_bind_the_change_not_the_reference_text(self):
-        # "--commit HEAD" names a different commit once HEAD moves, and an --uncommitted diff
-        # that was committed since is replaced by the next one: neither is the reviewed change.
-        commit = lambda message: self.git(
+    def test_a_label_continues_over_a_fix_commit_in_every_scope(self):
+        # #119: a --commit or --uncommitted round 2 over the fix commit was refused as "another
+        # change", so the lead took a new label and the count restarted. Like --base, a round on
+        # top of the earlier round's head continues the label, and the third is refused; an
+        # amend leaves the earlier head off HEAD's line and still needs a new label.
+        commit = lambda *args: self.git(
             '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
-            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qam', message)
-        task = {'MYAGENTKIT_TASK_ID': 'replaced-task'}
-        code, first = self.run_bridge('reject', env_extra=task)
-        self.assertEqual(code, 0, first)
-        commit('the reviewed diff')
-        (self.repo / 'file.py').write_text('another change\n')
-        code, refused = self.run_bridge(env_extra=task)
-        self.assertEqual(code, 2, refused)
-        self.assertIn('new task label', refused['error'])
-        commit('A')
-        task = {'MYAGENTKIT_TASK_ID': 'moving-task'}
+            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qa', *args)
+        for scope in (('--uncommitted',), ('--commit', 'HEAD')):
+            with self.subTest(scope=scope):
+                task = {'MYAGENTKIT_TASK_ID': 'fix-%s-task' % scope[0].strip('-')}
+                if scope[0] == '--commit':
+                    commit('-m', 'A')
+                code, first = self.run_bridge('reject', extra=scope, env_extra=task)
+                self.assertEqual(code, 0, first)
+                for text in ('fixed', 'fixed again'):
+                    if scope[0] == '--uncommitted':
+                        commit('-m', 'reviewed')
+                    (self.repo / 'file.py').write_text(text)
+                    if scope[0] == '--commit':
+                        commit('-m', 'fix')
+                    code, result = self.run_bridge(extra=scope, env_extra=task)
+                    if text == 'fixed':
+                        self.assertEqual(code, 0, result)
+                self.assertEqual(code, 2, result)
+                self.assertIn('already has 2 completed rounds', result['error'])
+        task = {'MYAGENTKIT_TASK_ID': 'amended-task'}
         code, first = self.run_bridge('reject', extra=('--commit', 'HEAD'), env_extra=task)
         self.assertEqual(code, 0, first)
-        (self.repo / 'file.py').write_text('B\n')
-        commit('B')
+        (self.repo / 'file.py').write_text('amended')
+        commit('--amend', '-m', 'amended')
         code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
         self.assertEqual(code, 2, refused)
         self.assertIn('new task label', refused['error'])

@@ -1096,27 +1096,24 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         if not isinstance(value.get("evidence"), str) or not value["evidence"]:
             raise damaged(path, "is a completed review that names no evidence")
         # A reused label from another change must not carry that change's rounds. Compared
-        # as resolved commits, never as the reference text: "--commit HEAD" one commit later
-        # is another change. --commit and --uncommitted rounds share one HEAD: an
-        # uncommitted diff that was committed since is replaced by the next one.
+        # as resolved commits, never as the reference text.
         earlier, mismatch = str(task.get("head")), None
         if task.get("scope") != scope:
             mismatch = "scope %s, not %s" % (task.get("scope"), scope)
         elif task.get("resolved") != resolved and not (
-                # Round 2 over the fix commits: its --base is the earlier round's head or above
-                # it, on HEAD's line. The rounds stay one count, so a third is still refused; a
-                # new label restarted the count (the owner's rule: never by label). A rebase or an
-                # amend leaves the earlier head off that line, and needs a new label.
-                scope == "base" and descends(earlier, resolved) and descends(resolved, head)):
+                # Round 2 over the fix commits, in every scope (#119): a --base at the earlier
+                # round's head or above it, or the --commit of a fix on top of it, on HEAD's line.
+                # The rounds stay one count, so a third is still refused; a new label restarted
+                # the count (the owner's rule: never by label). A rebase or an amend leaves the
+                # earlier head off that line, and needs a new label.
+                descends(earlier, resolved) and descends(resolved, head)):
             mismatch = "reference %s resolved to %s, not %s" % (
                 task.get("reference"), task.get("resolved"), resolved)
-        elif scope != "base" and earlier != head:
-            mismatch = "head %s, not HEAD %s" % (earlier, head)
         elif not descends(earlier, head):
             mismatch = "head %s, not an ancestor of HEAD %s" % (earlier, head)
         if mismatch:
             raise BridgeError("an earlier review with task label %s has %s; that is another "
-                              "change, a rebase, an amend or a --commit round, so use a new "
+                              "change, a rebase or an amend, so use a new "
                               "task label" % (task_id, mismatch))
         evidence = Path(value["evidence"]).resolve()
         if not evidence.is_relative_to((repo / "docs/reviews").resolve()) or not evidence.is_file():

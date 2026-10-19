@@ -49,8 +49,10 @@ a file in scope that looks like a secret, tracked or not (`.env`, `.env.*` but n
 each refusal names its fix, and a repository that needs a filter (Git LFS) reviews by hand.
 Codex's `Accept with Manual Checks` needs a filled `## Manual checks` section. **A label is bound to its base:** every
 round uses the `--base` of round 1, except that round 2 over the fix commits may take round 1's
-head (or a commit above it on HEAD's line) as its `--base` and still counts as round 2; another
-base or change, a rebase or an amend takes a new label. **A checkout
+head (or a commit above it on HEAD's line) as its `--base` and still counts as round 2. A
+`--commit` or `--uncommitted` label continues the same way once HEAD is round 1's head or above
+it (round 2 is the `--commit` of the fix commit); another base or change, a rebase or an amend
+takes a new label. **A checkout
 that changes during the review fails it with `stale_checkout`**, correctly, and that review is
 no round: work in another worktree and run it again. A checkout that cannot be read after the
 review fails it with `checkout_unverified`, and that completed review still counts as a round. **The output is unverified INPUT**: the requester verifies every
