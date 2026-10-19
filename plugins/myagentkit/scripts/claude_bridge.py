@@ -866,8 +866,9 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                           'an end of the reviewed range, and %s. Review a scope without it, or remove the '
                           'attribute (or the filter config) where the checkout still has it'
                           % (os.fsdecode(name), why))
-    # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy.
-    raw_diff = ('--no-ext-diff', '--no-textconv', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
+    # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy;
+    # color.ui=always put ANSI escapes into the patch.
+    raw_diff = ('--no-ext-diff', '--no-textconv', '--no-color', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
     # The filtered paths let through are proven unchanged, so the payload never asks their filter
     # again: a clean driver that answered differently on a later call put its output in the diff.
     # ponytail: one pathspec per LFS file on the command line; tens of thousands reach ARG_MAX.
@@ -1244,6 +1245,11 @@ SECTIONS = ("findings", "manual checks", "notes", "summary", "verdict")
 MARKUP = re.compile(r"^[ \t]*(?:(?:[-+*]|\d+[.)]|#{1,6})[ \t]+)?[*_ \t]*")
 SEVERITY_FIRST = re.compile(r"(?i)(?:critical|high|medium|low|pre-existing)\b")
 SEVERITY_HEADING = re.compile(r"\b(?:critical|high|medium|low|pre-existing)\b", re.I)
+# A Critical or High an item leads with, its markup removed: after an issue number (`Issue 3:
+# High — ...`), a `Severity:` label or in brackets (`[High] ...`), and followed by a separator,
+# so `High availability: confirm failover` is a check, not a High (decision 59, rsel3).
+BLOCKING_SEVERITY = re.compile(r"(?i)(?:(?:issue|finding)[ \t]*#?\d+[ \t]*[:.)—–-]?[ \t]*"
+                               r"|severity[ \t]*[:—–-]?[ \t]*)?\[?(?:critical|high)[ \t]*(?:[:\]—–]|-(?![-\w])|$)")
 UNVERIFIED = re.compile(r"\b(?:not run|could not (?:verify|be verified))\b", re.I)
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
@@ -1374,8 +1380,10 @@ def stricter_verdict(blocking: list) -> tuple[str, str]:
     and the check line that says so."""
     # The item's leading severity, as finding_start() reads it: a word match anywhere read
     # `Medium: the high-effort run` and `NOT RUN: the high-tier focus` as High (rsel).
-    leading = [review_item(re.sub(r"\s", " ", re.sub(r"[*_]", "", item))) for item in blocking]
-    verdict = ("Reject" if any(re.match(r"(?i)(?:critical|high)(?![-\w])", item) for item in leading)
+    # Closing emphasis separates too: `**Critical** x.py:1 ...` is a Critical.
+    leading = [review_item(re.sub(r"\s", " ", re.sub(r"[*_]", "", re.sub(
+        r"(?i)\b(critical|high)(?:\*+|_+(?!\w))", r"\1:", item)))) for item in blocking]
+    verdict = ("Reject" if any(BLOCKING_SEVERITY.match(item) for item in leading)
                else "Accept with Manual Checks")
     return verdict, ("The reviewer wrote Accept; the bridge read it as %s, because its own findings "
                      "or manual checks hold an item a plain Accept cannot carry." % verdict)
