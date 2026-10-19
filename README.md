@@ -125,9 +125,9 @@ decision, and a relayed verdict in either direction is a failed review.
 
 A file is kit-owned (it carries a `KIT-OWNED` header; `sync-kit.sh` overwrites it) or
 project-owned (customised at setup; never overwritten). `sync-kit.sh` refreshes the
-kit-owned files, prints the `CHANGELOG.md` entries since the project's recorded version
-with their **ACTION** items as one ordered checklist, and records the new version only after
-`--actions-applied`. A project file at a path the kit has since made kit-owned stops the
+kit-owned files, writes the **ACTION** items of the `CHANGELOG.md` entries since the
+project's recorded version to `docs/kit/UPGRADE.md`, oldest first with a box each, and
+records the new version only after `--actions-applied` with every box ticked. A project file at a path the kit has since made kit-owned stops the
 sync as a `conflict:` before anything is copied.
 
 ## Requirements

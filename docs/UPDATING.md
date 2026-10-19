@@ -31,7 +31,11 @@ exactly the habit the review gate exists to prevent.
 /path/to/kit/sync-kit.sh .            # or --dry-run first
 ```
 
-1. Reads `docs/kit/.kit-version`. Missing or empty is a hard stop — it will not guess.
+1. Reads `docs/kit/.kit-version`. Missing or empty is a hard stop — it will not guess. So is
+   a version newer than the kit's (a second kit clone, not pulled: its older hooks would roll
+   the project back) and a version the kit's changelog does not hold; the versions are
+   compared by number, before anything is copied. The same version is synced all the same: a
+   release gains kit-owned fixes and ACTION items while its number stays.
 2. Overwrites the kit-owned files, reporting each as new, updated or unchanged. Each hook
    and script it writes also gets mode 100755 in the git index, since `core.fileMode=false`
    (native Windows) never carries the disk's bit there: a tracked one keeps its staged bytes,
@@ -39,23 +43,41 @@ exactly the habit the review gate exists to prevent.
    kit-owned path WITHOUT the KIT-OWNED header is the project's own (a hook the project
    wrote before the kit owned that path): it is listed as `conflict:`, and the sync stops
    before it copies anything or records a version. Move yours aside, sync again, then carry
-   what yours did into the project by hand (`docs/RETROFIT.md`). Template and package tools
+   what yours did into the project by hand (`docs/RETROFIT.md`). A hook of yours under
+   `.githooks` (a Git LFS `post-merge`) only needs a new name: as `.githooks/<same name>.project`
+   (executable, with a `#!` line) it keeps running, since the kit's hook runs it first with
+   git's arguments. A kit-owned file with an edit git does not hold (unstaged, or an untracked
+   file) is a `conflict:` too, since the copy keeps no backup: commit the edit or restore the
+   file, then sync again. Template and package tools
    leave that call to a person too (Copier marks conflicts for review before the commit;
    dpkg asks about a changed configuration file); the sync is stricter and writes nothing,
    because a half-merged hook can be a gate that silently does not run.
-3. **Prints every `CHANGELOG.md` entry added since your version.** This is the real product.
-   Entries mark manual migration steps with **ACTION**: files to copy, project-owned rules
-   to merge, lines to check and commands to run. `sync-kit.sh . --dry-run` lists those items
-   without copying files; a normal sync lists them again at the end, each printed whole.
-   Work through each version's items top to bottom; when you skip versions, do the oldest
-   version's items first. An ACTION line saying only "none" requires no confirmation.
-4. Records the new version — but only when there are no ACTION items, or you confirmed
-   them. With ACTION items pending, the version stays where it was and the script exits 2,
-   so the next sync prints the same entries and checklist again. Apply the items, then:
+3. **Lists every ACTION item added since your version.** This is the real product. The
+   changelog marks manual migration steps with **ACTION**: files to copy, project-owned rules
+   to merge, lines to check and commands to run. Each marker is one item, the oldest version's
+   first. `sync-kit.sh . --dry-run` prints them without writing anything; a normal sync writes
+   them to `docs/kit/UPGRADE.md`, one box each, and prints only where they are and how many
+   are open. Each item's whole entry is in the kit's `CHANGELOG.md`. The sync no longer prints
+   the entries themselves: from v0.8 they came to 209 KB, seven times what an agent's shell
+   tool shows, so the checklist at the end was cut off. With the kit commit of the last stamp
+   (`docs/kit/.kit-commit`), an item added under a version after the project took it is listed
+   too. An ACTION line saying only "none" is no item.
+4. Records the new version — but only when there are no ACTION items, or every box in
+   `docs/kit/UPGRADE.md` is ticked. Tick a box (`- [x]`) as you apply its item: a session
+   that stops half way, compacts or hands off leaves the next one the boxes still open. A
+   rerun keeps the ticks (an item the kit added or reworded comes back open). Then:
 
    ```sh
    /path/to/kit/sync-kit.sh . --actions-applied
    ```
+
+   It records the version and deletes the checklist; while a box is open it exits 2. The
+   report is printed when the run ends, so a run piped to `head` still records the version.
+   **Edits to `.claude/settings.json` are the owner's.** Claude Code's auto mode refuses an
+   agent's write to its own settings as self-modification, so an item that registers a hook
+   or changes a permission is prepared by the agent (the merged file beside it, or the entry
+   to add) and applied and committed by the owner. Commit it: a worktree worker runs the
+   committed `settings.json`, not the lead's working copy.
 
    The recorded version therefore means "everything up to here was applied", not "the
    files were copied". Stamping first once let a project skip two versions of hand edits
@@ -103,7 +125,9 @@ overlay's worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`
 you want a new file from one: it adds what is missing, passes over files identical to the
 kit's and lists the ones that differ without touching them; only `--force` overwrites (as
 Copier's `skip_if_exists` and dpkg's kept configuration file: a tool never overwrites the
-user's change by default). The presence of an overlay file is the record that the project
+user's change by default). On an installed project the rerun keeps `docs/kit/.kit-version`
+and `docs/kit/.kit-commit` as they are, since the version is the sync's to record, and a gate
+file the setup changed is left alone, not a stop. The presence of an overlay file is the record that the project
 took that overlay; Copier and cruft keep that record in a file of answers instead
 (`.copier-answers.yml`, `.cruft.json`), which the kit would only need if a deleted overlay
 file ever had to be told apart from a declined one.
