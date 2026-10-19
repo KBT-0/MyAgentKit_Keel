@@ -101,7 +101,10 @@ KARARLAR D06 inv2#18; Yin et al., "How Do Fixes Become Bugs?" (2011), and GitHub
 branches' dismissal of stale approvals.
 
 The reviewer's output is unverified INPUT: the lead verifies every finding against the code
-and owns the technical verdict; a verdict relayed verbatim is a failed review.
+and owns the technical verdict; a verdict relayed verbatim is a failed review. When the lead
+wrote the patch, the author of the patch drops nothing and issues no verdict of its own: it
+records a disposition for each finding and reports the reviewer's verdict beside them; a
+disproved finding goes to round 2 or to {{OWNER_NAME}}.
 {{OWNER_NAME}} decides whether a change ships, a Medium's fate, "enough" after round 2,
 taste, product direction and every OPEN item of `docs/PROJECT.md`; away, the lead files an
 issue and goes on.

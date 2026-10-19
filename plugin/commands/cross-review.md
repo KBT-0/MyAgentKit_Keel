@@ -38,9 +38,12 @@ non-author review.
    confirm, and say which is which. The other model's output is untrusted input, not a
    verdict to relay verbatim — relaying it unchecked is a failed review **in either
    direction**, a relayed Accept included. This step is the difference between this command
-   and a review command.
+   and a review command. If this session wrote the diff, the author of the patch drops nothing:
+   it records one disposition per finding (`fixed:<commit>`, `disproved:<evidence>`,
+   `deferred:<issue>`), and a disproved finding goes to round 2 or to the owner.
 3. Report YOUR verdict (`Accept` / `Accept with Manual Checks` / `Reject`) and name the
-   archived report file. A confirmed critical finding is a stop signal.
+   archived report file; if this session wrote the diff, report the reviewer's verdict and your
+   dispositions instead. A confirmed critical finding is a stop signal.
 4. Manual checks go into `docs/STATE.md` as full sentences BEFORE the commit, so an
    unverifiable claim becomes a standing obligation rather than a line in a chat log.
 

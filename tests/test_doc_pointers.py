@@ -180,6 +180,16 @@ class SectionPointerTests(unittest.TestCase):
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
+    def test_the_patchs_author_records_dispositions_and_drops_no_finding(self):
+        # #104: cross-review told the requesting session, possibly the author, to drop what it
+        # disproved and to report its own verdict, so the author approved its own patch.
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        for name in ('plugin/commands/cross-review.md', 'core/docs/REVIEW_GATE.md', 'core/docs/WORKFLOW.md'):
+            with self.subTest(name=name):
+                self.assertIn('the author of the patch drops nothing', read(name).lower())
+        command = read('plugin/commands/cross-review.md')
+        self.assertIn("report the reviewer's verdict and your dispositions", command)
+
     def test_review_rounds_are_capped_once_and_the_lead_reads_a_short_block(self):
         # #106: inner rounds ran "until no Medium remains", which never ends. #123: the final
         # review was due per branch in WORKFLOW and per release in the gate. #85: the lead's
