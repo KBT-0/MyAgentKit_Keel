@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python -m unittest tests.NAME` too (#236)
 import test_spawn_worker
 from test_spawn_worker import MARKERS, WT_TAB, shq
 
@@ -133,7 +134,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def win(self, path, flag='-w'):
         if WINDOWS:
-            return subprocess.run(['cygpath', flag, str(path)], capture_output=True, text=True,
+            return subprocess.run(['cygpath', flag, str(path)], capture_output=True, text=True, encoding='utf-8',
                                   check=True).stdout.rstrip('\n')
         return 'C:' + str(path).replace('/', '\\') if flag == '-w' else str(path)
 
@@ -144,7 +145,7 @@ class SpawnCodexTests(unittest.TestCase):
             (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
             (self.bin / 'uname').chmod(0o755)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
-                              capture_output=True, text=True, timeout=60 * SCALE)
+                              capture_output=True, text=True, encoding='utf-8', timeout=60 * SCALE)
 
     def publisher(self, stdout):
         """The interpreter and codex_worker.py as spawn names them, read from its printed wait command."""
@@ -153,7 +154,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def runs(self):
         path = self.state / 'codex.log'
-        return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
+        return [json.loads(l) for l in path.read_text(encoding='utf-8').splitlines()] if path.exists() else []
 
     def test_a_worker_starts_sandboxed_without_git_roots_and_its_session_recorded(self):
         result = self.spawn('w1', str(self.brief), '--model', 'gpt-x', '--effort', 'high', '--worktree')
@@ -258,8 +259,7 @@ class SpawnCodexTests(unittest.TestCase):
     def test_elsewhere_the_worker_is_a_tmux_session(self):
         if WINDOWS:
             # Native Windows never takes the tmux path, and its paths do not reach it.
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-            return
+            self.skipTest('the tmux path, POSIX only')
         result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', tmux=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("'new-session', '-d', '-s', 'w6'", (self.state / 'tmux.log').read_text())
@@ -278,11 +278,11 @@ class SpawnCodexTests(unittest.TestCase):
         result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', '--resume', tmux=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("tmux session 'w6' still runs", result.stderr)
+    test_elsewhere_the_worker_is_a_tmux_session._kit_platform_skip = WINDOWS
 
     def test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it(self):
         if WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-            return
+            self.skipTest('the tmux path, POSIX only')
         for folder in ('temp$(touch INJECTED)', 'temp`touch INJECTED`', 'temp$REVIEW_SEGMENT'):
             with self.subTest(folder=folder):
                 tmpdir = self.tmp / folder
@@ -295,11 +295,11 @@ class SpawnCodexTests(unittest.TestCase):
                 self.assertNotIn("'new-session'", (self.state / 'tmux.log').read_text())
                 self.assertEqual(self.runs(), [])
                 self.assertEqual(list(tmpdir.iterdir()), [], 'the refused script was left behind')
+    test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it._kit_platform_skip = WINDOWS
 
     def test_tmpdir_with_a_space_is_refused_by_name(self):
         if WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-            return
+            self.skipTest('the tmux path, POSIX only')
         tmpdir = self.tmp / 'temp space'
         tmpdir.mkdir()
         result = self.spawn('spaced-temp', str(self.brief), '--model', 'm', '--effort', 'high',
@@ -309,11 +309,11 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertNotIn("'new-session'", (self.state / 'tmux.log').read_text())
         self.assertEqual(self.runs(), [])
         self.assertEqual(list(tmpdir.iterdir()), [])
+    test_tmpdir_with_a_space_is_refused_by_name._kit_platform_skip = WINDOWS
 
     def test_refused_tmpdir_with_worktree_leaves_no_worktree_or_branch(self):
         if WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-            return
+            self.skipTest('the tmux path, POSIX only')
         tmpdir = self.tmp / 'refused temp'
         tmpdir.mkdir()
         result = self.spawn('refused-temp', str(self.brief), '--model', 'm', '--effort', 'high',
@@ -328,6 +328,7 @@ class SpawnCodexTests(unittest.TestCase):
                                   capture_output=True, text=True, check=True).stdout
         self.assertEqual(branches, '')
         self.assertEqual(list(tmpdir.iterdir()), [])
+    test_refused_tmpdir_with_worktree_leaves_no_worktree_or_branch._kit_platform_skip = WINDOWS
 
     def test_term_after_tmux_accepts_preserves_the_panes_script(self):
         (self.bin / 'tmux').write_text(test_spawn_worker.ACCEPT_THEN_TERM, newline='\n')
@@ -362,8 +363,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def test_dash_term_before_launch_removes_script_and_reservation(self):
         if WINDOWS or not shutil.which('dash'):  # Fedora, Arch and FreeBSD ship no dash
-            sys.stderr.write('\nNOT RUN: %s (dash signal handling, POSIX with dash only)\n' % self.id())
-            return
+            self.skipTest('dash signal handling, POSIX with dash only')
         (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
         (self.bin / 'python3').write_text(test_spawn_worker.PRELAUNCH_TERM, newline='\n')
         (self.bin / 'python3').chmod(0o755)
@@ -378,6 +378,7 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
         self.assertEqual(self.runs(), [])
+    test_dash_term_before_launch_removes_script_and_reservation._kit_platform_skip = WINDOWS or not shutil.which('dash')
 
     def test_int_before_tmux_creates_session_removes_script_and_reservation(self):
         (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
@@ -445,8 +446,7 @@ exit 1
 
     def test_later_validation_failure_removes_the_reserved_session_script(self):
         if WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-            return
+            self.skipTest('the tmux path, POSIX only')
         tmpdir = self.tmp / 'session-temp'
         tmpdir.mkdir()
         result = self.spawn('late-failure', str(self.brief), '--model', 'm', '--effort', 'high',
@@ -454,11 +454,11 @@ exit 1
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('invalid result path', result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [], 'the reserved script was left behind')
+    test_later_validation_failure_removes_the_reserved_session_script._kit_platform_skip = WINDOWS
 
     def test_relative_tmpdir_launches_in_a_worktree_with_an_absolute_script_path(self):
         if WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-            return
+            self.skipTest('the tmux path, POSIX only')
         tmpdir = self.tmp / 'session-temp'
         tmpdir.mkdir()
         result = self.spawn('relative-temp', str(self.brief), '--model', 'm', '--effort', 'high',
@@ -468,6 +468,7 @@ exit 1
                          (self.repo / '.claude/worktrees/relative-temp').resolve())
         self.assertIn('sh ' + str(tmpdir) + '/', (self.state / 'tmux.log').read_text())
         self.assertEqual(list(tmpdir.iterdir()), [], 'the launched script did not remove itself')
+    test_relative_tmpdir_launches_in_a_worktree_with_an_absolute_script_path._kit_platform_skip = WINDOWS
 
     def test_an_unsafe_name_or_control_byte_in_model_is_refused_before_launch(self):
         for name, model, effort in (('../escape', 'm', 'high'), ('a/b', 'm', 'high'),

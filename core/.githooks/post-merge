@@ -81,14 +81,21 @@ if [ -f scripts/close_worker.sh ] && orig=$(git rev-parse -q --verify ORIG_HEAD 
   set -- $(git rev-list --parents -n 1 HEAD)
   head=$1; shift
   merged=""; [ "${1-}" != "$orig" ] || { shift; merged=" $* "; }
-  for branch in $(git for-each-ref --format='%(refname:lstrip=2)' --merged HEAD --no-merged ORIG_HEAD 'refs/heads/worktree-*'); do
+  # Also a worker an earlier merge brought in while it still worked: close_worker.sh left it
+  # NAME.merged-running, and its branch, merged before, is no candidate of this merge (#195).
+  # Branches are never deleted: only one with a worktree folder costs a git call.
+  for branch in $(git for-each-ref --format='%(refname:lstrip=2)' --merged HEAD 'refs/heads/worktree-*'); do
     name=${branch#worktree-}
+    [ -d ".claude/worktrees/$name" ] || continue
     gd=$(git -C ".claude/worktrees/$name" rev-parse --absolute-git-dir 2>/dev/null) || continue
     [ "$(cat -- "$gd/locked" 2>/dev/null)" = "kit worker $name" ] || continue
     tip=$(git rev-parse -q --verify "refs/heads/$branch") || continue
-    # A fast-forward to a worker's own merge commit is that worker's tip, not its parents'.
-    [ "$tip" = "$head" ] || { [ -z "$(git for-each-ref --points-at HEAD 'refs/heads/worktree-*')" ] &&
-      case $merged in *" $tip "*) true ;; *) false ;; esac; } || continue
+    if [ ! -e ".myagentkit/workers/$name.merged-running" ]; then
+      ! git merge-base --is-ancestor "$tip" "$orig" 2>/dev/null || continue
+      # A fast-forward to a worker's own merge commit is that worker's tip, not its parents'.
+      [ "$tip" = "$head" ] || { [ -z "$(git for-each-ref --points-at HEAD 'refs/heads/worktree-*')" ] &&
+        case $merged in *" $tip "*) true ;; *) false ;; esac; } || continue
+    fi
     sh scripts/close_worker.sh --finished "$name" </dev/null ||
       printf '%s\n' "post-merge: close_worker.sh did not close $name; the merge is complete, the lines above say why" >&2
   done

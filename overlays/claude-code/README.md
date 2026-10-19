@@ -333,7 +333,9 @@ step and per name:
    period. That period is a margin for "no worker is still in it", which no listing proves;
    here the lead has just ended the session and decided the work is finished, so a worktree
    committed a minute ago is closed at once. The post-merge hook never lifts it, and
-   `--no-quiet` is refused without `--only`. A worktree the audit keeps (a process still
+   `--no-quiet` is refused without `--only`. Under `--finished` (the hook's close) it is lifted
+   only on a positive end, a session this close ended or a `Kind: completed` result: a close
+   that ended nothing keeps the quiet period, for a worker neither scan can see. A worktree the audit keeps (a process still
    inside, an uncommitted file) is reported with its first reason.
 4. The branch `worktree-NAME` is never deleted; the line says how to delete merged branches.
 

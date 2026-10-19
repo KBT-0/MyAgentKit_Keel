@@ -12,7 +12,8 @@
 # "Worker cost"). Left to the owner, finished sessions sat idle for hours and 39 worktrees
 # piled up; left to the lead, worker tabs stayed open for hours after their merge, so the
 # post-merge hook (core/.githooks/post-merge) now runs it, with --finished, for every kit worker
-# whose branch tip a merge merged. For each NAME, in order, each step on its own line:
+# whose branch tip a merge merged, and for one an earlier merge left running (its
+# .myagentkit/workers/NAME.merged-running, written here, #195). For each NAME, in order, each step on its own line:
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs. So is a worker whose worktree
 #      a gate (check.sh, by its lock) or a git operation (index.lock) is running in: the session
@@ -34,7 +35,9 @@
 #      `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
 #      proof, for .claude/worktrees/NAME alone, without the quiet period: that margin stands in
 #      for "no worker is still in it", and here the lead has just ended the session and decided
-#      the work is finished (the hook never lifts it). No --assume-idle: a process still inside
+#      the work is finished (the hook never lifts it). Under --finished it is lifted only on a
+#      positive end, a session this close ended or a Kind: completed result; a close that ended
+#      nothing keeps it, for a worker neither scan can see (#194). No --assume-idle: a process still inside
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
 #      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
@@ -74,8 +77,9 @@
 # The helper prints the .report-move-* folder of a report it could not restore. Where neither
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
-# NAME.live and NAME.question go too, and spawn_worker.sh's NAME.result-path and NAME.pid; a kept worktree
-# keeps them.
+# NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid and
+# NAME.hooks-ignore-spawned, and NAME.merged-running (also gone once the worktree is unlocked);
+# a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
@@ -426,11 +430,13 @@ live() {
 # codex_worker.py's rules (beside this script): the path spawn_worker.sh recorded in
 # NAME.result-path, else RESULT-NAME.md at DIR, the default of both spawns. ponytail: a Codex
 # worker given another --result is told finished only by its ended session (its supervisor
-# ends it on that result anyway). Each spawn, a resume too, rewrites NAME.result-path: only a
-# result published since that write is this run's (a resumed worker keeps its last one).
+# ends it on that result anyway). Each spawn, a resume too, rewrites NAME.result-path
+# (spawn_worker.sh) or NAME.session (spawn_codex.sh): only a result published since that write
+# is this run's (a resumed worker keeps its last one; #170: a Codex worker's counted).
 completed() {
   rec=$top/.myagentkit/workers/$2.result-path
-  r=$(cat -- "$rec" 2>/dev/null) && [ -n "$r" ] || { r=$1/RESULT-$2.md; rec=$r; }
+  r=$(cat -- "$rec" 2>/dev/null) && [ -n "$r" ] ||
+    { r=$1/RESULT-$2.md; rec=$top/.myagentkit/workers/$2.session; [ -f "$rec" ] || rec=$r; }
   k=$kit
   [ -f "$r" ] && [ -f "$k/codex_worker.py" ] || return 1
   [ -z "$windows" ] || { r=$(cygpath -m "$r") && rec=$(cygpath -m "$rec") && k=$(cygpath -m "$k"); } || return 1
@@ -460,9 +466,16 @@ for name; do
   if why=$(busy "$wt_dir"); then refuse; continue; fi
   # --finished (the post-merge hook): a merge proves its branch merged, not its session done.
   if [ -n "$finished" ] && why=$(live "$name" "$wt_dir") && ! completed "$wt_dir" "$name"; then
-    say "$name: left as it is: $why, and its result is no Kind: completed result; a merge ends only a finished worker, so nothing is done for $name"
+    # A later merge closes it once it has finished: its branch is no candidate again (#195).
+    [ -n "$dry" ] || { mkdir -p -- "$top/.myagentkit/workers" && : > "$top/.myagentkit/workers/$name.merged-running"; } 2>/dev/null
+    say "$name: left as it is: $why, and its result is no Kind: completed result; a merge ends only a finished worker, so nothing is done for $name; a later merge closes it once it has finished"
     continue
   fi
+  # The quiet period stands in for "no worker is still in it". It is lifted only on a positive
+  # end: a session this close ended, the lead's own close, or a Kind: completed result. Under
+  # --finished a worker neither scan can see (another user's, an elevated one) was found by
+  # nothing and ended by nothing (#194).
+  noquiet=--no-quiet; [ -z "$finished" ] || completed "$wt_dir" "$name" || noquiet=""
   record=$top/.myagentkit/workers/$name
   if [ -e "$record.report-move" ] || [ -L "$record.report-move" ]; then
     fail "$name: unfinished report move recorded in $record.report-move; the session is not ended, the audit will not run and the worktree and session records are kept"
@@ -494,23 +507,24 @@ for name; do
       sid=$(cat "$record.session" 2>/dev/null) || sid=""
       resume=""; [ -z "$sid" ] || resume="; its conversation stays resumable: codex resume $sid"
       if [ -n "$dry" ]; then
-        say "$name: dry run: would end the Codex session in $wt_dir (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+        say "$name: dry run: would end the Codex session in $wt_dir (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"; noquiet=--no-quiet
       elif why=$(busy "$wt_dir"); then
         refuse; continue
       else
         # Its wrapper (codex_worker.py) sees the session end, records why and returns; the tab's
         # script then ends with `exit 0`, on which Windows Terminal closes the tab.
         for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
-        i=0
-        while left=$(codex "$wt_dir") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
-        if ! left=$(codex "$wt_dir"); then
+        # 15 s by the clock: each lister call takes about 0.8 s, and 15 rounds took 28-29 s (#242).
+        end=$(( $(date +%s) + 15 ))
+        while left=$(codex "$wt_dir"); st=$?; [ "$st" -eq 0 ] && [ -n "$left" ] && [ "$(date +%s)" -lt "$end" ]; do sleep 1; done
+        if [ "$st" -ne 0 ]; then
           fail "$name: could not establish that the Codex session ended: $left; its worktree is not touched"
           continue
         elif [ -n "$left" ]; then
           fail "$name: the Codex session still runs after taskkill (process $left); its session record and worktree are kept"
           continue
         fi
-        say "$name: Codex session ended (process $pids$resume); its Windows Terminal tab closes by itself"
+        say "$name: Codex session ended (process $pids$resume); its Windows Terminal tab closes by itself"; noquiet=--no-quiet
       fi
     fi
   fi
@@ -526,14 +540,14 @@ for name; do
     elif [ -z "$pids" ]; then
       say "$name: no Claude Code session this checkout started as $name runs; nothing to end"
     elif [ -n "$dry" ]; then
-      say "$name: dry run: would end the Claude Code session $name (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+      say "$name: dry run: would end the Claude Code session $name (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"; noquiet=--no-quiet
     elif why=$(busy "$wt_dir"); then
       refuse; continue
     else
       for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
-      i=0
-      while left=$(mine "$name") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
-      if ! left=$(mine "$name"); then
+      end=$(( $(date +%s) + 15 ))
+      while left=$(mine "$name"); st=$?; [ "$st" -eq 0 ] && [ -n "$left" ] && [ "$(date +%s)" -lt "$end" ]; do sleep 1; done
+      if [ "$st" -ne 0 ]; then
         fail "$name: could not establish that the session ended: $left; its worktree is not touched"
         continue
       elif [ -n "$left" ]; then
@@ -541,7 +555,7 @@ for name; do
         fail "$name: the Claude Code session still runs after taskkill (process $left); its worktree is not touched"
         continue
       else
-        say "$name: Claude Code session ended (process $pids); its Windows Terminal tab closes by itself"
+        say "$name: Claude Code session ended (process $pids); its Windows Terminal tab closes by itself"; noquiet=--no-quiet
       fi
     fi
   elif ! command -v tmux >/dev/null 2>&1; then
@@ -551,11 +565,11 @@ for name; do
   elif [ "$st" -eq 2 ]; then
     fail "$name: tmux could not say whether session $name exists, so it may still run: $err"
   elif [ -n "$dry" ]; then
-    say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+    say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"; noquiet=--no-quiet
   elif why=$(busy "$wt_dir"); then
     refuse; continue
   elif tmux kill-session -t "=$name" 2>/dev/null; then
-    say "$name: tmux session ended; the terminal tab attached to it closes by itself"
+    say "$name: tmux session ended; the terminal tab attached to it closes by itself"; noquiet=--no-quiet
     wt=""; [ -z "$top" ] || wt=$(CDPATH= cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
     i=0; on=""
     while :; do
@@ -585,7 +599,7 @@ for name; do
      [ "$(cat -- "$gd/locked" 2>/dev/null)" = "kit worker $name" ]; then
     if [ -n "$failed" ]; then say "$name: its worktree stays locked (kit worker $name): the close failed above"
     elif [ -n "$dry" ]; then say "$name: dry run: would unlock its worktree (kit worker $name)"
-    elif git worktree unlock "$wt_dir" 2>/dev/null; then say "$name: worktree unlocked (kit worker $name)"
+    elif git worktree unlock "$wt_dir" 2>/dev/null; then say "$name: worktree unlocked (kit worker $name)"; rm -f -- "$record.merged-running"
     else fail "$name: could not unlock its worktree; the audit below keeps it"; fi
   fi
   # The default result reports on the work and is not project content: once the lead committed
@@ -631,7 +645,12 @@ for name; do
     say "$name: the audit did not run, so a worktree stays: publication of RESULT-$name.md failed; recover the report from its source, archive or the path printed above, else from a .report-move-* folder in ${record%/*}; after recovery remove $record.report-move if present and close again"
     kept=1
   else
-    apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
+    apply=--apply; [ -z "$dry" ] || apply=""
+    if [ -z "$noquiet" ]; then
+      say "$name: no session of it was ended here and its result is no Kind: completed result, so the quiet period stays for its worktree: it covers a worker the process scan cannot see"
+    elif [ -n "$dry" ]; then
+      say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"
+    fi
     # spawn_worker.sh's ignore file for the hook files it copied has no copy in main, so the
     # audit kept the worktree for it alone: it is set aside for the audit and put back if the
     # worktree is kept, but only while it is byte for byte what the spawn wrote (its record
@@ -644,10 +663,14 @@ for name; do
        mkdir -p -- "${record%/*}" && mv -- "$ignore" "$record.hooks-ignore"; then
       aside=$record.hooks-ignore
     fi
-    out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
+    out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" $noquiet 2>&1); rc=$?
+    # Deleted only with the worktree: a folder Windows moved aside and not back (MOVED) has no
+    # .claude/hooks either, and the file goes back with it.
+    removed=""; case $nl$out in *"${nl}clean_worktrees: removed 1,"*) removed=1 ;; esac
     if [ -z "$aside" ]; then :
-    elif [ ! -d "${ignore%/*}" ]; then rm -f -- "$aside"
-    elif ! mv -- "$aside" "$ignore"; then fail "$name: could not put its .claude/hooks/.gitignore back; it is at $aside"; kept=1
+    elif [ -n "$removed" ]; then rm -f -- "$aside"
+    elif [ ! -d "${ignore%/*}" ] || ! mv -- "$aside" "$ignore"; then
+      fail "$name: could not put its .claude/hooks/.gitignore back; it is at $aside: move it back once its worktree is back"; kept=1
     fi
     printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
     case $nl$out in
@@ -691,7 +714,7 @@ for name; do
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
-      "$record.hooks-ignore-spawned" "$record.pid" || fail "$name: could not remove its Codex session records"
+      "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

@@ -1032,6 +1032,34 @@ def main():
             check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 2})
         self.assertIn('PASS: the locale suites ran under', out.getvalue())
 
+    def test_a_minimum_follows_the_condition_its_suites_skip_declares(self):
+        # A minimum keyed on the platform failed a host without dash (Fedora, Arch, FreeBSD) or
+        # /proc and /dev/full (FreeBSD): 57 tests could run, 58 were required. Here no host has them.
+        names = ('test_spawn_codex', 'test_codex_worker', 'test_worker_visibility')
+        which, exists, is_dir = shutil.which, os.path.exists, Path.is_dir
+        node = next(node.value for node in ast.parse((ROOT / 'scripts/check_kit.py').read_text(encoding='utf-8')).body
+                    if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'REQUIRED_SUITES')
+        tests = node.values[[key.value for key in node.keys].index('tests')]
+        saved = {name: sys.modules.pop(name, None) for name in names}
+        try:
+            with unittest.mock.patch('shutil.which', lambda cmd, *a, **k: None if cmd == 'dash' else which(cmd, *a, **k)), \
+                    unittest.mock.patch('os.path.exists', lambda path: path != '/dev/full' and exists(path)), \
+                    unittest.mock.patch.object(Path, 'is_dir', lambda path, *a, **k:
+                                               path.as_posix() != '/proc/self/fd' and is_dir(path, *a, **k)):
+                minimums = eval(compile(ast.Expression(tests), 'check_kit.py', 'eval'), vars(check_kit))
+                folder = ROOT / 'tests'
+                suite, found = check_kit.discover(folder, {path.stem for path in folder.glob('test_*.py')} - set(names))
+                skipped = [test.id().split('.')[0] for test in check_kit._cases(suite)
+                           if getattr(getattr(test, test._testMethodName), '_kit_platform_skip', False)]
+        finally:
+            for name in names:
+                sys.modules.pop(name, None)
+                if saved[name]:
+                    sys.modules[name] = saved[name]
+        for name in names:
+            with self.subTest(name):
+                self.assertGreaterEqual(found[name] - skipped.count(name), minimums[name])
+
 
 if __name__ == '__main__':
     unittest.main()

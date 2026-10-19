@@ -2403,8 +2403,8 @@ class CleanWorktreesTests(unittest.TestCase):
     def test_a_symlink_is_kept(self):
         path = self.worktree('done')
         (path / 'link').symlink_to('a')
-        self.assertKept(path, self.run_script('--apply'), 'not a regular file (a symlink, FIFO, socket, device or '
-                        'nested repository), outside a disposable folder: link')
+        self.assertKept(path, self.run_script('--apply'), 'not a regular file (a symlink, FIFO, socket or device), '
+                        'outside a disposable folder: link')
 
     def test_a_fifo_git_does_not_list_is_kept(self):
         path = self.worktree('done')
@@ -2414,7 +2414,10 @@ class CleanWorktreesTests(unittest.TestCase):
     def test_a_nested_repository_is_kept(self):
         path = self.worktree('done')
         self.git('init', '-q', str(path / 'nested'))
-        self.assertKept(path, self.run_script('--apply'), 'nested/.git/')
+        out = self.run_script('--apply')
+        self.assertKept(path, out, 'holds a nested repository (a .git of its own), outside a disposable folder, '
+                        'whose history this script does not judge: nested\n')
+        self.assertNotIn('nested/.git/', out)
 
     def test_file_names_with_a_space_a_newline_and_a_non_utf8_byte(self):
         names = [b'with space', b'new\nline', b'bad\xffbyte']

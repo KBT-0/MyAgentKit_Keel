@@ -1123,7 +1123,8 @@ another result than `RESULT-NAME.md`; a progress result or a free-form file ends
 the lead merges a kit worker's branch (`worktree-NAME`, whose worktree its spawn locked `kit
 worker NAME`) and that branch's tip is what the merge merged, not a base another worker built
 on, the post-merge hook runs `scripts/close_worker.sh --finished NAME`: it leaves a worker
-whose session still runs without a `Kind: completed` result. A refused close is printed, never a veto of the merge. The
+whose session still runs without a `Kind: completed` result, marked
+`.myagentkit/workers/NAME.merged-running`, and a later merge closes it once it has finished. A refused close is printed, never a veto of the merge. The
 explicit `scripts/close_worker.sh NAME` stays for a session closed without a merge (work not
 merged, a worker without a worktree, a reused session the lead now finishes). It ends the tmux
 session (its terminal tab closes by itself), on native Windows the worker's Claude Code session

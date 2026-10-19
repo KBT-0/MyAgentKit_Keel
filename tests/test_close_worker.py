@@ -10,8 +10,8 @@ logic of the same script, so a `uname` stub that says Linux (and a tmux stub) ta
 as the round-2 stubs did; `windows()` says MINGW again for the Claude Code path. What that
 needs from the host is shaped in the helpers below: a Python stub is started through `sh`
 (no `python3` on PATH is assumed), arguments reach the script through the environment (the
-MSYS runtime re-parses a command line), and the audit prints a Windows path with its
-backslashes doubled (clean_worktrees.py show()).
+MSYS runtime re-parses a command line), and the audit prints a Windows path with / for its
+backslashes (clean_worktrees.py show(), #243).
 """
 import os
 from pathlib import Path
@@ -27,9 +27,8 @@ SCRIPT = ROOT / 'overlays/claude-code/files/scripts/close_worker.sh'
 HOOK = ROOT / 'core/.githooks/post-merge'
 PROC = os.path.exists('/proc/self/cwd')
 NT = os.name == 'nt'
-# A worktree as the audit prints it: `.claude/worktrees/w1`, on Windows with the escaped
-# backslashes of its show().
-WT_DIR = '.claude\\\\worktrees\\\\' if NT else '.claude/worktrees/'
+# A worktree as the audit prints it: `.claude/worktrees/w1`, on Windows too (show(), #243).
+WT_DIR = '.claude/worktrees/'
 # The first line of the ignore file spawn_worker.sh writes for the hook files it copied.
 SPAWN_IGNORE = "# spawn_worker.sh: hook files copied from the lead's checkout; close_worker.sh sets this file aside\n"
 
@@ -90,8 +89,11 @@ if args[0] == 'kill-session':
 # tree), and logs the call. CLOSE_PS_ERROR: a lister that cannot answer, for the queries that
 # name CLOSE_PS_ERROR_ON (the Codex lister and the session lister are asked separately).
 PS = r"""#!/usr/bin/env python3
-import os, sys
+import os, sys, time
+time.sleep(float(os.environ.get('CLOSE_PS_DELAY', '0')))  # a real lister takes about 0.8 s
 query = ' '.join(sys.argv[1:])
+with open(os.path.join(os.environ['CLOSE_STATE'], 'ps.log'), 'a') as log:
+    log.write(query + '\n')
 if os.environ.get('CLOSE_PS_ERROR') and os.environ.get('CLOSE_PS_ERROR_ON', '') in query:
     sys.exit(os.environ['CLOSE_PS_ERROR'])
 path = os.path.join(os.environ['CLOSE_STATE'], 'claude-procs')
@@ -230,7 +232,7 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertFalse(path.exists(), out)
         self.assertIn('remove ' + WT_DIR + 'w1', out)
         log = (self.main / '.git/kit-worktree-removals.log').read_text().splitlines()
-        self.assertEqual(log[-1].split('\t')[2:], ['outcome', os.path.realpath(path).replace('\\', '\\\\'), 'removed'])  # the log escapes a backslash
+        self.assertEqual(log[-1].split('\t')[2:], ['outcome', os.path.realpath(path).replace('\\', '/'), 'removed'])  # Windows: / for a backslash (#243)
         self.assertIn('close_worker: w1: worktree removed through the audit', out)
         self.assertEqual(self.git('rev-parse', 'worktree-w1'), tip)
         self.assertIn('close_worker: w1: branch worktree-w1 is kept, never deleted here; ', out)
@@ -501,6 +503,34 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), extended, out)
         self.assertFalse((records / 'w1.hooks-ignore').exists())
 
+    @unittest.skipUnless(NT, 'the move-aside probe runs on native Windows only')
+    def test_a_worktree_windows_cannot_move_back_is_reported_moved_and_keeps_its_ignore_file(self):
+        # #193 review: the folder moved aside and not back took .claude/hooks with it, so the
+        # set-aside ignore file was deleted as if the worktree were gone, and the summary said
+        # PARTLY MODIFIED although nothing was deleted. A stand-in fails every move back.
+        (self.tmp / 'site').mkdir()
+        (self.tmp / 'site/sitecustomize.py').write_text(
+            'import os\nrename = os.rename\n'
+            'def refuse(src, dst, *args, **kwargs):\n'
+            '    if os.fsencode(src).endswith(b".kit-remove-probe"):\n'
+            '        raise PermissionError(13, "held (a stand-in)")\n'
+            '    return rename(src, dst, *args, **kwargs)\n'
+            'os.rename = refuse\n')
+        path = self.worker('w1')
+        (path / '.claude/hooks').mkdir(parents=True)
+        (path / '.claude/hooks/.gitignore').write_text(SPAWN_IGNORE + '/.gitignore\n')
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        shutil.copy(path / '.claude/hooks/.gitignore', records / 'w1.hooks-ignore-spawned')
+        out = self.close('w1', code=1, PYTHONPATH=str(self.tmp / 'site'))
+        self.assertIn('MOVED: the worktree is at ', out)
+        self.assertIn('clean_worktrees: removed 0, kept 0, MOVED 1 (above: where it is, and how it moves back)', out)
+        self.assertNotIn('PARTLY MODIFIED', out)
+        self.assertTrue((Path(str(path) + '.kit-remove-probe') / 'w1.txt').is_file(), out)
+        self.assertEqual((records / 'w1.hooks-ignore').read_text(), SPAWN_IGNORE + '/.gitignore\n', out)
+        self.assertIn('could not put its .claude/hooks/.gitignore back; it is at ', out)
+    test_a_worktree_windows_cannot_move_back_is_reported_moved_and_keeps_its_ignore_file._kit_platform_skip = not NT
+
     def hooked(self):
         """main with the kit's post-merge hook and the overlay's scripts, as bootstrap installs them."""
         (self.main / '.githooks').mkdir()
@@ -575,7 +605,7 @@ class CloseWorkerTests(unittest.TestCase):
         # Finished, w1 is closed by the next merge; w2 still is not. Its result is where the brief
         # named it, outside the worktree, as spawn_worker.sh --result records it.
         reports = self.main / '.myagentkit/workers'
-        reports.mkdir(parents=True)
+        reports.mkdir(parents=True, exist_ok=True)  # w1's merged-running marker made it (#195)
         (reports / 'w1.result-path').write_text((self.tmp / 'RESULT-w1.md').as_posix() + '\n')
         # Spawn records the run before its worker can publish a result. Reversing these
         # writes makes a finished result stale on filesystems with subsecond timestamps.
@@ -605,6 +635,91 @@ class CloseWorkerTests(unittest.TestCase):
         out = self.merge('worktree-w1')
         self.assertFalse([c for c in self.calls() if 'kill-session' in c], out)
         self.assertEqual(self.sessions(), ['w1'])
+
+    def side_merge(self, name):
+        """A merge of a branch no worker made: the next merge after the worker's own."""
+        self.git('checkout', '-q', '-b', name)
+        self.git('commit', '-q', '--allow-empty', '-m', name)
+        self.git('checkout', '-q', 'main')
+        return self.merge('--no-ff', name)
+
+    def test_a_merge_never_ends_a_resumed_codex_worker_on_its_previous_runs_result(self):
+        # #170: spawn_codex.sh writes no NAME.result-path; attempt 1's Kind: completed result counted
+        # for attempt 2, and the merge killed the running Codex session. Its NAME.session, rewritten
+        # by every spawn and resume, dates the run.
+        self.hooked()
+        w1 = self.kit_worker('w1')
+        self.env.update(self.windows('5151 "C:\\codex\\codex.exe" -C "%s" exec' % os.path.realpath(w1)))
+        self.result(w1, 'w1', 'Kind: completed')
+        reports = self.main / '.myagentkit/workers'
+        reports.mkdir(parents=True)
+        (reports / 'w1.session').write_text('sid\n')
+        old = (reports / 'w1.session').stat().st_mtime - 60
+        os.utime(w1 / 'RESULT-w1.md', (old, old))
+        (w1 / 'more.txt').write_text('more\n')
+        self.git('add', 'more.txt', cwd=w1)
+        self.git('commit', '-q', '-m', 'more', cwd=w1)
+        out = self.merge('worktree-w1')
+        self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
+        self.assertIn('close_worker: w1: left as it is: its Codex session still runs (process 5151)', out)
+        self.assertTrue(w1.is_dir(), out)
+        # Attempt 2 publishes its own result: the next merge, of another branch, closes it (#195).
+        self.result(w1, 'w1', 'Kind: completed')
+        out = self.side_merge('side')
+        self.assertEqual((self.tmp / 'taskkill.log').read_text().splitlines(), ["['/PID', '5151', '/T', '/F']"], out)
+        self.assertFalse(w1.exists(), out)
+
+    def test_a_worker_merged_while_working_is_closed_by_a_later_merge_once_finished(self):
+        # #195: its branch was in ORIG_HEAD from then on, no merge's candidate again, and its
+        # worktree stayed locked `kit worker w1` until a close by hand.
+        self.hooked()
+        w1 = self.kit_worker('w1')
+        out = self.merge('worktree-w1')
+        self.assertIn('close_worker: w1: left as it is: its session still runs', out)
+        out = self.side_merge('side1')
+        self.assertTrue(w1.is_dir(), out)  # still working: left again
+        (self.tmp / 'sessions').write_text('')  # it ended, with no new commit
+        out = self.side_merge('side2')
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        self.assertFalse(w1.exists(), out)
+        self.assertFalse((self.main / '.myagentkit/workers/w1.merged-running').exists())
+
+    def test_a_merged_branch_without_a_worktree_folder_costs_the_hook_no_git_call(self):
+        # #195 review: the loop visits every merged worker branch ever made (none is deleted),
+        # and each cost a git spawn on every merge, seconds per merge on Windows.
+        self.hooked()
+        self.git('branch', 'worktree-gone')
+        self.side_merge('side')
+        result = subprocess.run(['sh', '-x', '.githooks/post-merge', '0'], cwd=self.main, env=self.env,
+                                capture_output=True)
+        trace = (result.stdout + result.stderr).decode('utf-8', 'replace')
+        self.assertIn('name=gone', trace)
+        self.assertNotIn('.claude/worktrees/gone rev-parse', trace)
+
+    def test_a_finished_close_that_ended_nothing_keeps_the_quiet_period(self):
+        # #194: a worker neither scan sees (another user's, an elevated one) was unlocked and its
+        # quiet period lifted at once. Only a positive end lifts it: here a Kind: completed result.
+        path = self.worker('w1', session=False)
+        now = {'CLEAN_WORKTREES_NOW': str(time.time())}
+        out = self.close('--finished', 'w1', code=1, **now)
+        self.assertIn('close_worker: w1: no session of it was ended here and its result is no Kind: completed '
+                      'result, so the quiet period stays', out)
+        self.assertIn('quiet period: ', out)
+        self.assertTrue(path.is_dir(), out)
+        self.result(path, 'w1', 'Kind: completed')
+        out = self.close('--finished', 'w1', **now)
+        self.assertFalse(path.exists(), out)
+
+    def test_on_native_windows_the_session_wait_is_15_s_by_the_clock(self):
+        # #242: 15 rounds of a 0.8 s lister and a 1 s sleep took 28-29 s: 18 lister calls in all.
+        # By the clock, a 1 s lister and a 1 s sleep make at most 9 in 15 s, more load fewer.
+        path = self.worker('w1', session=False)
+        env = self.windows('100 claude.exe -n w1', mine={'w1': '100'})
+        out = self.close('w1', code=1, CLOSE_TASKKILL_IGNORED='1', CLOSE_PS_DELAY='1', **env)
+        self.assertIn('the Claude Code session still runs after taskkill (process 100)', out)
+        calls = [q for q in (self.tmp / 'ps.log').read_text().splitlines() if 'claude.exe' in q]
+        self.assertLessEqual(len(calls), 10, out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_a_close_the_merge_cannot_make_is_printed_and_the_merge_stands(self):
         self.hooked()
