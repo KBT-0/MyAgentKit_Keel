@@ -190,6 +190,19 @@ class SectionPointerTests(unittest.TestCase):
         command = read('plugin/commands/cross-review.md')
         self.assertIn("report the reviewer's verdict and your dispositions", command)
 
+    def test_the_diff_reviewer_names_its_reading_and_makes_its_own_copy(self):
+        # #105: "run your reproductions in a throwaway copy" named no way to make one (a review
+        # mutated tracked files and reverted them), and "its reading list" pointed at nothing.
+        # #103: it is the author's side's early check, not the gate's review.
+        reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
+                            .read_text(encoding='utf-8').split())
+        self.assertIn('Read `AGENTS.md`, `docs/ARCHITECTURE.md` and `docs/REVIEW_GATE.md`', reviewer)
+        self.assertIn("the author's side's early check, not the gate's review", reviewer)
+        self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
+        self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
+        self.assertNotIn('its reading list', reviewer)
+        self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
+
     def test_review_rounds_are_capped_once_and_the_lead_reads_a_short_block(self):
         # #106: inner rounds ran "until no Medium remains", which never ends. #123: the final
         # review was due per branch in WORKFLOW and per release in the gate. #85: the lead's
