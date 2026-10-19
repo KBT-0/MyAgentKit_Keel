@@ -368,6 +368,24 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('cheaper model (Sonnet)', docs['WORKFLOW.md'])
         self.assertEqual(sum(text.count('omitted sub-agent model') for text in docs.values()), 1)
 
+    def test_the_kits_agents_chains_leave_room_under_codexs_limit(self):
+        # #143: Codex silently drops what passes project_doc_max_bytes (32 KiB) of the AGENTS.md
+        # chain from the root to the working folder, and the tail holds the STOP list. The kit's
+        # own text keeps a quarter of the limit for the project's rules and placeholders.
+        root = (ROOT / 'core/AGENTS.md').stat().st_size
+        for nested in (ROOT / 'core/docs/AGENTS.md', ROOT / 'overlays/unity/files/unity/AGENTS.md'):
+            with self.subTest(chain=str(nested.relative_to(ROOT))):
+                self.assertLess(root + nested.stat().st_size, 24 * 1024)
+
+    def test_a_style_plugin_never_replaces_the_test_and_report_rules(self):
+        # #140: ponytail injects a "one self-check" test rule and a three-line report cap.
+        interview = ' '.join((ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8').split())
+        self.assertNotIn('was not measured here', interview)
+        self.assertIn("the kit's rules win", interview)
+        for path in (ROOT / 'core/AGENTS.md', ROOT / 'overlays/claude-code/files/.claude/agents/worker.md'):
+            with self.subTest(doc=path.name):
+                self.assertIn('never replaces these', ' '.join(path.read_text(encoding='utf-8').split()))
+
     def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
         # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,
         # and a worker then reports clean against a list the reviewer no longer uses.

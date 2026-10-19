@@ -291,8 +291,10 @@ One topic per turn. Suggested order, because each answer informs the next:
     keeps input validation, error handling and security in. Cost and gain, honestly: its own
     benchmark (run by its author, one model, 39 tasks, 5 runs each, Opus 5.5) reports about
     half the code and 26 percent lower cost than the same agent without it; nobody has checked
-    it independently (its README, github.com/DietrichGebert/ponytail). Its session-start cost
-    was not measured here. It comes from its author's own marketplace at the latest version
+    it independently (its README, github.com/DietrichGebert/ponytail). Its cost, measured in
+    kit issue #140: its SessionStart hook adds about 5,250 characters and its SubagentStart hook about
+    5,450 (about 1.3k tokens each) to every session and every sub-agent; where its test or
+    report advice differs from the kit's, the kit's rules win (`AGENTS.md`). It comes from its author's own marketplace at the latest version
     (the owner's choice: not pinned to a ref or sha). Yes: keep
     `extraKnownMarketplaces` (`ponytail`) and `enabledPlugins` (`ponytail@ponytail`) in
     `.claude/settings.json` (the Claude Code overlay ships them; where bootstrap kept the

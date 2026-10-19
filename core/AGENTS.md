@@ -111,9 +111,10 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
   writing the test first is advice, not a rule. An ordinary test needs no mandatory red proof;
   a gate check does (below). A generated-content pipeline validates its output (data
   validation, captures); unit tests of the generator are not mandatory. `./scripts/check.sh`
-  must PASS before you finish. A test runs in its own command and its result is read before a
-  commit: never `test; git commit`, never a test piped through a filter (`| grep`, `| tail`)
-  ahead of the commit, since both hide a red result.
+  must PASS before you finish. A plugin's test or output advice (a self-check in place of the
+  test tree, a capped report) never replaces these rules. A test runs in its own command and
+  its result is read before a commit: never `test; git commit`, never a test piped through a
+  filter (`| grep`, `| tail`) ahead of the commit, since both hide a red result.
 - The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
   abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). **Agents
   never use `git commit --no-verify`** — that hatch is {{OWNER_NAME}}'s. In the Claude Code
