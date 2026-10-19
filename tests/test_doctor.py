@@ -1162,6 +1162,27 @@ class DoctorTests(unittest.TestCase):
                           out)
             self.assertEqual(out.count('MISSING:'), 1, out)
 
+    def test_an_empty_disposable_list_with_build_output_in_worktrees_is_told(self):
+        # #145: the list shipped empty, so every merged worktree that ran the gate kept its build/.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / '.claude/worktrees/w1').mkdir(parents=True)
+            listed = project / '.claude/worktree-disposable'
+            listed.write_text('# comments only\n\nquiet-minutes=30\n')
+            run = lambda: self.doctor_section('# --- build output a merged worktree keeps', '# On native Windows',
+                                              project, os.environ)
+            self.assertEqual(run(), '')  # no build output in a worktree
+            (project / '.claude/worktrees/w1/build').mkdir()
+            (project / '.claude/worktrees/w1/node_modules').mkdir()
+            out = run()
+            self.assertIn('NOTE: .claude/worktree-disposable lists no folder, and worktrees hold build, node_modules',
+                          out)
+            self.assertEqual(out.count('\n'), 1, out)
+            listed.write_text('# a list\nbuild\n')
+            self.assertEqual(run(), '')
+            listed.unlink()  # no list: the clean-up is off, nothing to tell here
+            self.assertEqual(run(), '')
+
     def test_missing_mode_helper_names_the_command_not_the_gate(self):
         # Execute the installed required-file checks without bootstrapping an unrelated project.
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text()

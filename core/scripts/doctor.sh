@@ -319,6 +319,23 @@ if [ -d .claude/hooks ]; then
   done
 fi
 
+# --- build output a merged worktree keeps (Claude Code overlay) -----------------------
+# The list ships empty, the safe default: a worktree holding build output is then kept. A
+# project that never filled it kept all eight merged worktrees of a CMake build, 373 MB each
+# (#145). Told, not MISSING: a list left empty on purpose is the owner's choice. The names are
+# the interview's usual ones (setup/INTERVIEW.md, question 10).
+if [ -f .claude/worktree-disposable ] &&
+   ! grep -Ev '^[[:space:]]*(#|quiet-minutes|$)' .claude/worktree-disposable >/dev/null 2>&1; then
+  held=""
+  for d in build node_modules dist target .venv; do
+    for w in .claude/worktrees/*/"$d"; do
+      [ -d "$w" ] && { held="$held${held:+, }$d"; break; }
+    done
+  done
+  [ -z "$held" ] ||
+    printf '%s\n' "NOTE: .claude/worktree-disposable lists no folder, and worktrees hold $held: every merged worktree that holds them is kept. List the build-output folders there, one per line, and ignore them in .gitignore; scripts/clean_worktrees.sh shows what each removal would take"
+fi
+
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.
 # Sources (D02 inv2#145): code.claude.com/docs/en/agent-teams;
