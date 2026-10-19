@@ -82,12 +82,14 @@ status` does not list a FIFO, a socket or a device, and `git worktree remove` de
 every ignored file without asking.
 
 Removal order: the log's intent line (on disk; it names every ref to save and every file to
-delete), the saved refs, f and e again, the identical copies git does not track, e again, `git
+delete), the saved refs, f and e again, on native Windows the move-aside probe (its folder
+renamed aside and back: Windows refuses that while a process holds a file in it, one the scan
+cannot see too), the identical copies git does not track, e again, the probe again, `git
 worktree remove` without --force (git's own check, independent of this one), the log's outcome
 line (removed when git removed it, whatever was deleted before; else possibly-modified when
 `git worktree remove` failed, even after a copy was deleted, as git may have deleted more;
-partly-modified when a step stopped it after a copy was deleted; or kept; why; each file
-deleted). Both lines carry the run's id, which pairs
+partly-modified when a step stopped it after a copy was deleted; moved when the probe could not
+move it back, MOVED with the command that does, exit 1; or kept; why; each file deleted). Both lines carry the run's id, which pairs
 them; an intent with no outcome is a run that did not finish. An outcome that cannot be
 written leaves the removal as it is, stops the run and exits 1. Each line about the removal is
 printed after the log line it reports; a print never raises (what stdout cannot encode is
@@ -159,7 +161,7 @@ ESCAPING = ('a backslash is \\\\ (on native Windows, where no name holds one, it
 LOG_HEADER = ('# two lines per removal, tab-separated, after the time and run=<the run\'s id>, which pairs them: '
               '"intent", logged before anything is saved or deleted (its commits to save as saved=<ref>=<id>, its '
               'files to delete as delete=<path>), and "outcome", logged when it ends (removed, partly-modified, '
-              'possibly-modified or kept, why, and deleted=<path> for each file deleted); an intent with no outcome '
+              'possibly-modified, moved or kept, why, and deleted=<path> for each file deleted); an intent with no outcome '
               'is a run that did not finish; in every name %s\n' % ESCAPING)
 
 
@@ -1161,8 +1163,9 @@ def log_line(ctx, fields):
 
 
 def remove(record, facts, ctx, shown, announce):
-    """'removed', 'kept' (nothing changed but saved refs), or 'partly' (identical copies deleted,
-    or `git worktree remove` failed, which may have deleted files first). The intent line is
+    """'removed', 'kept' (nothing changed but saved refs), 'partly' (identical copies deleted,
+    or `git worktree remove` failed, which may have deleted files first), or 'moved' (nothing
+    deleted, its folder moved aside and not back: held()). The intent line is
     logged first, then ANNOUNCE (the lines about this removal) is printed; the outcome line is
     logged before anything about the outcome is printed, and the outcome is what happened, never
     whether a line could be printed. SIGNALS are caught meanwhile: one that comes stops it at the
@@ -1189,7 +1192,7 @@ def remove(record, facts, ctx, shown, announce):
         except Exception as error:  # a keep, like an error in the audit
             why = 'not proven: %s' % (error or type(error).__name__)
         aside = facts.get('aside')
-        outcome = 'removed' if why is None else 'partly' if deleted or failed or aside else 'kept'
+        outcome = 'removed' if why is None else 'partly' if deleted or failed else 'moved' if aside else 'kept'
         try:
             log_line(ctx, ['outcome', show(facts['real']), 'removed' if why is None else 'possibly-modified' if failed
                            else 'partly-modified' if deleted else 'moved' if aside else 'kept']
@@ -1418,7 +1421,7 @@ def main():
             say('clean_worktrees: no worktree at %s' % shown)
         elif args.no_quiet:
             say('clean_worktrees: --no-quiet: the quiet period is not applied to %s' % shown)
-    removed = kept = partly = freed = 0
+    removed = kept = partly = moved = freed = 0
     gone = []
     for record in records:
         shown = os.path.realpath(record['worktree'])
@@ -1450,6 +1453,8 @@ def main():
             gone.append(short(facts['branch']))
         elif outcome == 'partly':
             partly += 1
+        elif outcome == 'moved':
+            moved += 1
         else:
             kept += 1
         if STOP:
@@ -1467,9 +1472,10 @@ def main():
         say('clean_worktrees: %d processes could not be inspected; the quiet period covers a worker this '
             'scan cannot see' % ctx['unseen'])
     if args.apply:
-        say('clean_worktrees: removed %d, kept %d, %sfreed %d bytes; log: %s%s'
+        say('clean_worktrees: removed %d, kept %d, %s%sfreed %d bytes; log: %s%s'
             % (removed, kept, 'PARTLY MODIFIED %d (above: what may be gone, and how it comes back), '
-               % partly if partly else '', freed, show(ctx['log']),
+               % partly if partly else '', 'MOVED %d (above: where it is, and how it moves back), '
+               % moved if moved else '', freed, show(ctx['log']),
                '; the reasons: scripts/clean_worktrees.sh' if args.quiet and kept else ''))
         if gone:
             say('clean_worktrees: branches kept, their worktrees removed: %s' % names(gone))
@@ -1482,7 +1488,7 @@ def main():
             % (removed, kept, freed, ' --assume-idle' if args.assume_idle else '',
                ' --only=' + sh_word(os.fsencode(args.only)) if args.only is not None else '',
                ' --no-quiet' if args.no_quiet else ''))
-    return 1 if partly or STOP or ctx['unlogged'] else 0
+    return 1 if partly or moved or STOP or ctx['unlogged'] else 0
 
 
 if __name__ == '__main__':

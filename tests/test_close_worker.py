@@ -503,6 +503,34 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), extended, out)
         self.assertFalse((records / 'w1.hooks-ignore').exists())
 
+    @unittest.skipUnless(NT, 'the move-aside probe runs on native Windows only')
+    def test_a_worktree_windows_cannot_move_back_is_reported_moved_and_keeps_its_ignore_file(self):
+        # #193 review: the folder moved aside and not back took .claude/hooks with it, so the
+        # set-aside ignore file was deleted as if the worktree were gone, and the summary said
+        # PARTLY MODIFIED although nothing was deleted. A stand-in fails every move back.
+        (self.tmp / 'site').mkdir()
+        (self.tmp / 'site/sitecustomize.py').write_text(
+            'import os\nrename = os.rename\n'
+            'def refuse(src, dst, *args, **kwargs):\n'
+            '    if os.fsencode(src).endswith(b".kit-remove-probe"):\n'
+            '        raise PermissionError(13, "held (a stand-in)")\n'
+            '    return rename(src, dst, *args, **kwargs)\n'
+            'os.rename = refuse\n')
+        path = self.worker('w1')
+        (path / '.claude/hooks').mkdir(parents=True)
+        (path / '.claude/hooks/.gitignore').write_text(SPAWN_IGNORE + '/.gitignore\n')
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        shutil.copy(path / '.claude/hooks/.gitignore', records / 'w1.hooks-ignore-spawned')
+        out = self.close('w1', code=1, PYTHONPATH=str(self.tmp / 'site'))
+        self.assertIn('MOVED: the worktree is at ', out)
+        self.assertIn('clean_worktrees: removed 0, kept 0, MOVED 1 (above: where it is, and how it moves back)', out)
+        self.assertNotIn('PARTLY MODIFIED', out)
+        self.assertTrue((Path(str(path) + '.kit-remove-probe') / 'w1.txt').is_file(), out)
+        self.assertEqual((records / 'w1.hooks-ignore').read_text(), SPAWN_IGNORE + '/.gitignore\n', out)
+        self.assertIn('could not put its .claude/hooks/.gitignore back; it is at ', out)
+    test_a_worktree_windows_cannot_move_back_is_reported_moved_and_keeps_its_ignore_file._kit_platform_skip = not NT
+
     def hooked(self):
         """main with the kit's post-merge hook and the overlay's scripts, as bootstrap installs them."""
         (self.main / '.githooks').mkdir()
@@ -655,6 +683,18 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: worktree removed through the audit', out)
         self.assertFalse(w1.exists(), out)
         self.assertFalse((self.main / '.myagentkit/workers/w1.merged-running').exists())
+
+    def test_a_merged_branch_without_a_worktree_folder_costs_the_hook_no_git_call(self):
+        # #195 review: the loop visits every merged worker branch ever made (none is deleted),
+        # and each cost a git spawn on every merge, seconds per merge on Windows.
+        self.hooked()
+        self.git('branch', 'worktree-gone')
+        self.side_merge('side')
+        result = subprocess.run(['sh', '-x', '.githooks/post-merge', '0'], cwd=self.main, env=self.env,
+                                capture_output=True)
+        trace = (result.stdout + result.stderr).decode('utf-8', 'replace')
+        self.assertIn('name=gone', trace)
+        self.assertNotIn('.claude/worktrees/gone rev-parse', trace)
 
     def test_a_finished_close_that_ended_nothing_keeps_the_quiet_period(self):
         # #194: a worker neither scan sees (another user's, an elevated one) was unlocked and its

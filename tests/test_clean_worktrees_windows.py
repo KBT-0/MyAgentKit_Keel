@@ -324,7 +324,6 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertTrue((path / 'src/build/scratch.py').is_file())
 
     @windows_only
-    @windows_only
     def test_paths_print_and_log_with_single_separators(self):
         # #243: show() escaped every Windows separator as \\, in the output and the log.
         path = self.worktree('sep')
@@ -390,6 +389,7 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertTrue((stray / 'x.txt').is_file())
 
+    @windows_only
     def test_a_path_with_a_newline_is_kept_as_not_printable(self):
         # NTFS refuses a newline in a name, so git and the folder are stood in for, git answering
         # rev-parse as it does, one line per flag. Split on newlines, the answer once judged such a

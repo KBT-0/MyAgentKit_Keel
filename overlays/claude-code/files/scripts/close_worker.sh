@@ -12,7 +12,8 @@
 # "Worker cost"). Left to the owner, finished sessions sat idle for hours and 39 worktrees
 # piled up; left to the lead, worker tabs stayed open for hours after their merge, so the
 # post-merge hook (core/.githooks/post-merge) now runs it, with --finished, for every kit worker
-# whose branch tip a merge merged. For each NAME, in order, each step on its own line:
+# whose branch tip a merge merged, and for one an earlier merge left running (its
+# .myagentkit/workers/NAME.merged-running, written here, #195). For each NAME, in order, each step on its own line:
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs. So is a worker whose worktree
 #      a gate (check.sh, by its lock) or a git operation (index.lock) is running in: the session
@@ -34,7 +35,9 @@
 #      `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
 #      proof, for .claude/worktrees/NAME alone, without the quiet period: that margin stands in
 #      for "no worker is still in it", and here the lead has just ended the session and decided
-#      the work is finished (the hook never lifts it). No --assume-idle: a process still inside
+#      the work is finished (the hook never lifts it). Under --finished it is lifted only on a
+#      positive end, a session this close ended or a Kind: completed result; a close that ended
+#      nothing keeps it, for a worker neither scan can see (#194). No --assume-idle: a process still inside
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
 #      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
@@ -74,8 +77,9 @@
 # The helper prints the .report-move-* folder of a report it could not restore. Where neither
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
-# NAME.live and NAME.question go too, and spawn_worker.sh's NAME.result-path and NAME.pid; a kept worktree
-# keeps them.
+# NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid and
+# NAME.hooks-ignore-spawned, and NAME.merged-running (also gone once the worktree is unlocked);
+# a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
@@ -660,9 +664,13 @@ for name; do
       aside=$record.hooks-ignore
     fi
     out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" $noquiet 2>&1); rc=$?
+    # Deleted only with the worktree: a folder Windows moved aside and not back (MOVED) has no
+    # .claude/hooks either, and the file goes back with it.
+    removed=""; case $nl$out in *"${nl}clean_worktrees: removed 1,"*) removed=1 ;; esac
     if [ -z "$aside" ]; then :
-    elif [ ! -d "${ignore%/*}" ]; then rm -f -- "$aside"
-    elif ! mv -- "$aside" "$ignore"; then fail "$name: could not put its .claude/hooks/.gitignore back; it is at $aside"; kept=1
+    elif [ -n "$removed" ]; then rm -f -- "$aside"
+    elif [ ! -d "${ignore%/*}" ] || ! mv -- "$aside" "$ignore"; then
+      fail "$name: could not put its .claude/hooks/.gitignore back; it is at $aside: move it back once its worktree is back"; kept=1
     fi
     printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
     case $nl$out in
