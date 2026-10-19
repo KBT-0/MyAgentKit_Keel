@@ -54,7 +54,8 @@ head (or a commit above it on HEAD's line) as its `--base` and still counts as r
 it (round 2 is the `--commit` of the fix commit); another base or change, a rebase or an amend
 takes a new label. **A checkout
 that changes during the review fails it with `stale_checkout`**, correctly, and that review is
-no round: work in another worktree and run it again. A checkout that cannot be read after the
+no round: work in another worktree and run it again. The review looks at the checkout once a
+minute and stops the reviewer at the first change it sees. A checkout that cannot be read after the
 review fails it with `checkout_unverified`, and that completed review still counts as a round. **The output is unverified INPUT**: the requester verifies every
 finding and owns the verdict. The review gate the brief's `Risk:` tier requires starts
 without asking; an extra review beyond it (another family, a higher effort, a paid backend)

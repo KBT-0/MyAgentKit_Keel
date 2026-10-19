@@ -170,8 +170,18 @@ def main(argv=None, result_sink=None, claims=None):
                     prepared = {"exit_code": None, "stdout": "", "stderr": "the review wall-clock limit passed during preparation", "termination": "timeout",
                              "cancelled": False, "duration_ms": 0}
                 started = time.monotonic()
+
+                def changed():
+                    # A look during the review (#118). One that cannot read the checkout proves
+                    # no change: the check after the review decides.
+                    try:
+                        now = recheck(repo, scope, ref)
+                        return now is None or now[1] != fingerprint
+                    except (OSError, ValueError, BridgeError):
+                        return False
                 try:
-                    execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
+                    execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed,
+                                                              watch=changed)
                 except OSError as error:
                     execution = dict(handed) if handed else {
                         "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,

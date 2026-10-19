@@ -631,7 +631,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import codex_bridge
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             # LF bytes matter: a CRLF verdict could fail for an unrelated reason.
             Path(command[command.index('-o') + 1]).write_bytes(final.encode('utf-8'))
             return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
@@ -668,7 +668,7 @@ class BridgeTests(unittest.TestCase):
         import codex_bridge
         commands = []
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             commands.append(command)
             Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
             return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
@@ -696,7 +696,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import codex_bridge
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             Path(command[command.index('-o') + 1]).write_bytes(final.encode('utf-8'))
             return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
                         stderr='', termination=None, duration_ms=1)
@@ -1330,7 +1330,7 @@ class BridgeTests(unittest.TestCase):
 
         observed = []
 
-        def capture(command, prompt, repo, timeout, into=None, noted=None):
+        def capture(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             observed.append(timeout)
             raise CapturedLaunch()  # No CLI or wall-clock wait is needed.
 
@@ -1382,7 +1382,7 @@ class BridgeTests(unittest.TestCase):
 
         observed = []
 
-        def capture(command, prompt, repo, timeout, into=None, noted=None):
+        def capture(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             observed.append(command[command.index('--max-turns') + 1])
             raise CapturedLaunch()
 
@@ -1895,7 +1895,7 @@ class BridgeTests(unittest.TestCase):
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
             self.git('update-ref', 'refs/heads/review-base', original)
 
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 self.git('update-ref', 'refs/heads/review-base', intermediate)
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
@@ -1929,7 +1929,7 @@ class BridgeTests(unittest.TestCase):
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
             self.git('update-ref', 'refs/heads/review-base', original)
 
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 self.git('update-ref', '-d', 'refs/heads/review-base')
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
@@ -1983,7 +1983,7 @@ class BridgeTests(unittest.TestCase):
             label = 'moving-base-' + ('claude' if main is bridge.main else 'codex')
             prompts = []
 
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 prompts.append(prompt)
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
@@ -2031,7 +2031,7 @@ class BridgeTests(unittest.TestCase):
 
         for main, args in ((bridge.main, ['review']),
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                     value = {'type': 'turn.completed', 'usage': {}}
@@ -2071,7 +2071,7 @@ class BridgeTests(unittest.TestCase):
         import review_dispatch
         publish, account = agent_usage.write_evidence, agent_usage.record
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
@@ -2135,7 +2135,7 @@ class BridgeTests(unittest.TestCase):
         import review_dispatch
         real_run, real_killpg = agent_process.run, os.killpg
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
@@ -2181,7 +2181,7 @@ class BridgeTests(unittest.TestCase):
         import review_dispatch
         real_run = agent_process.run
 
-        def absent(command, prompt, repo, timeout, into=None, noted=None):
+        def absent(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             return real_run([str(self.root / 'absent-cli')], prompt, repo, timeout, into)
 
@@ -2314,7 +2314,7 @@ class BridgeTests(unittest.TestCase):
         real_signal, fired = signal.signal, []
         caller_int = signal.getsignal(signal.SIGINT)
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                     'error': {'message': 'usage limit reached'}}), 'stderr': '',
                     'termination': None, 'duration_ms': 1}
@@ -2365,7 +2365,7 @@ class BridgeTests(unittest.TestCase):
         import codex_bridge
         real_pending = signal.sigpending
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2422,7 +2422,7 @@ class BridgeTests(unittest.TestCase):
             reads.append(cli)
             return {'status': 'unavailable', 'buckets': {}}
 
-        def cancelled(command, prompt, repo, timeout, into=None, noted=None):
+        def cancelled(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             return {'exit_code': None, 'stdout': '', 'stderr': '', 'termination': 'cancelled',
                     'cancelled': True, 'duration_ms': 1}
 
@@ -2488,7 +2488,7 @@ class BridgeTests(unittest.TestCase):
                     send_cancel(signal.SIGTERM)
                 return dict.__getitem__(self, key)
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             return Execution({'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                               'error': {'message': 'usage limit reached'}}), 'stderr': '',
                               'termination': None, 'duration_ms': 1})
@@ -2573,7 +2573,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             value = {'type': 'result', 'subtype': 'success', 'is_error': True,
                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}}
@@ -2632,7 +2632,7 @@ class BridgeTests(unittest.TestCase):
         def caller(signum, frame):
             raise CallerCancel
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2704,7 +2704,7 @@ class BridgeTests(unittest.TestCase):
         def caller(signum, frame):
             raise CallerCancel
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2764,7 +2764,7 @@ class BridgeTests(unittest.TestCase):
         def caller(signum, frame):
             raise CallerCancel
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                     'error': {'message': 'usage limit reached'}}), 'stderr': '',
@@ -2848,6 +2848,52 @@ class BridgeTests(unittest.TestCase):
                 usage = json.loads(Path(received[0]['usage_record']).read_text())
                 self.assertEqual((usage['status'], usage['failure_kind']), ('completed', None))
 
+    def test_a_review_stops_at_the_next_look_once_the_checkout_changed(self):
+        # #118: the checkout was read only after the reviewer exited, so a stale review ran to
+        # its end and was paid for. run() looks every WATCH_SECONDS and stops it on a change.
+        from unittest.mock import patch
+        import agent_process
+        looks = []
+
+        def watch():
+            looks.append(True)
+            return len(looks) == 2
+
+        with patch.object(agent_process, 'WATCH_SECONDS', 0):
+            result = agent_process.run([sys.executable, '-c', 'import time; time.sleep(60)'], '',
+                                       self.root, 30, watch=watch)
+        self.assertEqual((result['termination'], len(looks)), ('stale_checkout', 2))
+        self.assertLess(result['duration_ms'], 20000)
+
+    def test_both_adapters_stop_a_review_whose_checkout_changed_during_it(self):
+        # #118: each adapter hands run() a look at the checkout; a change seen there stops the
+        # reviewer, and the review fails as stale_checkout without waiting for its end.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        for name, main, args in (('claude', bridge.main, ['review']),
+                                 ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            with self.subTest(adapter=name):
+                (self.repo / 'file.py').write_text('changed\n')
+                looks, received = [], []
+
+                def stopped(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+                    looks.append(watch())
+                    (self.repo / 'file.py').write_text('edited during the review\n')
+                    looks.append(watch())
+                    return {'launched': True, 'exit_code': None, 'stdout': '', 'stderr': '',
+                            'termination': 'stale_checkout', 'cancelled': False, 'duration_ms': 1}
+
+                env = self.review_env(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLI_BIN=str(self.build_fake_codex()))
+                with patch.dict(os.environ, env), patch.object(agent_process, 'run', stopped), \
+                        redirect_stdout(StringIO()):
+                    main([*args, '--repo', str(self.repo), '--uncommitted'], received.append)
+                self.assertEqual(looks, [False, True])
+                self.assertEqual((received[0]['status'], received[0]['failure_kind']),
+                                 ('failed', 'stale_checkout'), received[0])
+
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the
         # two left the archive saying cancelled and the record quota, and the Codex adapter
@@ -2863,7 +2909,7 @@ class BridgeTests(unittest.TestCase):
         import codex_bridge
         publish, account, sync = agent_usage.write_evidence, agent_usage.record, os.fsync
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -3005,7 +3051,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'Low: A \xe2\x86\x92 B.\n\nVERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
@@ -3066,7 +3112,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
@@ -3163,7 +3209,7 @@ class BridgeTests(unittest.TestCase):
                 raise OSError('archive unavailable')
             return write_evidence(repo, path, *args, **kwargs)
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 return {'exit_code': 1 if case == 'failed' else 0,
@@ -3218,7 +3264,7 @@ class BridgeTests(unittest.TestCase):
         import claude_bridge
         import review_dispatch
         self.commit_fixture('Reference review fixture')
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
@@ -7142,7 +7188,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         from unittest.mock import patch
         import review_dispatch
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             calls.append(1)
             if len(calls) <= failures:
                 message = 'Selected model is at capacity.' + hint

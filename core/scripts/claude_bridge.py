@@ -1825,9 +1825,19 @@ def main(argv=None, result_sink=None, claims=None) -> int:
             if execution is None:
                 handed = {}
                 started = time.monotonic()
+
+                def changed():
+                    # A look during the review (#118). One that cannot read the checkout proves
+                    # no change: the check after the review decides.
+                    try:
+                        now = recheck(repo, scope, ref)
+                        return (now is None or now[1] != checkout_fingerprint
+                                or behaviour_appendix(repo) != (source_name, source_bytes))
+                    except (BridgeError, OSError, ValueError):
+                        return False
                 try:
                     execution = agent_process.run(command, prompt, workdir, remaining,
-                                                  into=handed, noted=cancelled)
+                                                  into=handed, noted=cancelled, watch=changed)
                 except OSError as error:
                     execution = dict(handed) if handed else {
                         "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,
@@ -1842,6 +1852,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
         try:
             if execution["termination"] == "timeout":
                 raise BridgeError("Claude exceeded the wall-clock limit; process group stopped")
+            if execution["termination"] == "stale_checkout" and execution.get("launched"):
+                raise BridgeError("checkout changed during review; the reviewer was stopped early")
             if execution["termination"] in ("copy_failed", "unsafe_behaviour_appendix", "stale_checkout"):
                 reason = execution["termination"]
                 raise BridgeError("Claude never ran: " + execution["stderr"])
