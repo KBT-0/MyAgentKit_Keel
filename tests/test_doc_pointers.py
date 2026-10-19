@@ -231,6 +231,18 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn("Then search the kit's issues, open and closed, before drafting anything", command)
         self.assertIn('propose a comment on it', command)
         self.assertIn('It is not pre-approved on purpose', command)
+        # #154 (owner decision 57): a project switch, asked at setup and read by the command;
+        # a standing approval prints the body and sends, and the permission prompt still asks.
+        self.assertIn('read the `kit_feedback:` line of `AGENTS.md`', command)
+        self.assertIn('no line means `ask-each-time`', command)
+        self.assertIn('- `standing-approval`: ', command)
+        self.assertIn("The send command's permission prompt still asks", command)
+        interview = (ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8')
+        phase = interview.split('## Phase 0.5', 1)[1].split('\n## ', 1)[0]
+        self.assertIn('`kit_feedback: ask-each-time`', phase)
+        self.assertIn('`kit_feedback: standing-approval`', phase)
+        yes = phase.split('**If yes:**', 1)[1].split('**If no:**', 1)[0]
+        self.assertIn('>   `kit_feedback: ask-each-time`\n', yes)
         # #278: /usage, the canonical name, and a NOT RUN line instead of an unread figure.
         handoff = ' '.join((ROOT / 'plugin/commands/handoff.md').read_text(encoding='utf-8').split())
         self.assertNotIn('/cost', handoff)
@@ -300,6 +312,21 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('Ubuntu, macOS and native Windows are in CI', readme)
         self.assertIn('developed on native Windows', readme)
         self.assertNotIn('Linux, WSL and macOS are in CI', readme)
+
+    def test_the_ci_template_clones_the_whole_history(self):
+        # A depth-1 clone of a pull request holds only GitHub's merge commit, so the gate's
+        # Done: history check examined no commit of it (#135).
+        workflow = (ROOT / 'core/.github/workflows/ci.yml').read_text(encoding='utf-8')
+        self.assertRegex(workflow, r'uses: actions/checkout@v\d+\n(?:\s*#.*\n)*\s*with:\n\s*fetch-depth: 0\n')
+
+    def test_a_missing_shellcheck_is_reported_with_its_install_command(self):
+        # The gate's NOT RUN came on every run with no fix, and doctor called the host ready (#155).
+        install = 'apt install shellcheck, brew install shellcheck or winget install koalaman.shellcheck'
+        gate = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        self.assertRegex(gate, r'NOT RUN \[shellcheck\][^\n]*\n\s*echo " *Install it: ' + re.escape(install))
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+        self.assertIn('command -v shellcheck >/dev/null 2>&1 ||\n  echo "NOTE: shellcheck is not installed', doctor)
+        self.assertIn(install, doctor)
 
     def test_every_named_section_exists_in_the_file_named(self):
         # A pointer such as (`docs/WORKFLOW.md`, "Writing a gate") sends an agent to one section

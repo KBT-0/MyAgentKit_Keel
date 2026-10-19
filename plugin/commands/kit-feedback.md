@@ -11,7 +11,9 @@ learned something the hard way pays it back.
 
 **Publishing is the point and the risk.** A GitHub issue or PR is PUBLIC and may be cached
 or indexed even if deleted later. Nothing leaves this machine without the owner reading the
-exact text first and saying yes. There is no "obviously fine" case.
+exact text first and saying yes: in the chat each time, or, where the project recorded a
+standing approval (§4), at the send command's permission prompt after the full text is
+printed. There is no "obviously fine" case.
 
 ## 1. Work out what the finding actually is
 
@@ -83,9 +85,14 @@ about the owner's work. If the answer is anything at all, scrub again.
 
 ## 4. Show it, then ask
 
-Print the FULL body you intend to send — title and text, exactly as it will appear — and
-ask for explicit approval. Not "shall I proceed": show the artifact. The owner may edit it,
-narrow it, or drop it.
+Print the FULL body you intend to send — title and text, exactly as it will appear. Then
+read the `kit_feedback:` line of `AGENTS.md` (the owner's answer at setup, INTERVIEW Phase 0.5;
+no line means `ask-each-time`):
+
+- `ask-each-time`: ask for explicit approval. Not "shall I proceed": show the artifact. The
+  owner may edit it, narrow it, or drop it.
+- `standing-approval`: the owner approved sending in advance; go on to §5 with the printed
+  body. The send command's permission prompt still asks, and the owner may stop it there.
 
 If `gh` is not installed or not authenticated (`gh auth status`), say so and offer the body
 as text for them to paste by hand. Do not attempt another route.

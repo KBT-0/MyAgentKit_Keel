@@ -97,17 +97,25 @@ whether the agent OFFERS. Do not present it as a data or privacy setting — des
 scarier than it is would be its own kind of dishonesty. (Ask first, send nothing unasked: the
 opt-in that clig.dev, "Analytics", asks of any command-line tool.)
 
+On a yes, ask one more: "When I send, shall I show you the text and wait for your yes each
+time, or do you give a standing approval: I print the text and send it, and Claude Code still
+asks permission for the send command?" Each time is `kit_feedback: ask-each-time`, the default
+and the answer when unsure; a standing approval is `kit_feedback: standing-approval`.
+`/myagentkit:kit-feedback` reads that line.
+
 Then fill `{{KIT_FEEDBACK_RULE}}` in `AGENTS.md` with exactly ONE of the two bullets below,
-whole and unedited.
+whole and unedited but for the `kit_feedback:` value.
 
 **If yes:**
 
 > - **Something about the FOUNDATION itself was wrong, unclear or missing** — a gate that
 >   failed open, a rule that did not survive contact with real work, an ambiguous setup
 >   instruction, a document contradicting itself → offer to send it upstream with
->   `/myagentkit:kit-feedback`. It scrubs this project out, shows the exact text, and sends
->   nothing without a yes. Offer ONCE per finding, take no for an answer, never send on your
->   own initiative. Keep it light: a footnote in a closing summary, not a campaign.
+>   `/myagentkit:kit-feedback`. It scrubs this project out and shows the exact text; the line
+>   below says whether it then waits for a yes. Offer ONCE per finding, take no for an answer,
+>   never send on your own initiative. Keep it light: a footnote in a closing summary, not a
+>   campaign.
+>   `kit_feedback: ask-each-time`
 
 **If no:**
 
@@ -414,8 +422,8 @@ when they become current, never now.
 
 One value sits beside them, not a placeholder: ask "Which top-level folders hold modules?"
 and write the answer into `module_roots` in `scripts/check.sh` (space-separated). The gate
-then fails when a subfolder of one is not named in the `## Module map` of
-`docs/ARCHITECTURE.md`; empty, it prints a NOTE and checks nothing (a single-module project).
+then fails when a subfolder of one is not named in a table row or list entry of the
+`## Module map` of `docs/ARCHITECTURE.md`, by its bare name (`app`) or its path (`src/app/`); empty, it prints a NOTE and checks nothing (a single-module project).
 
 ### Gates
 
@@ -435,6 +443,12 @@ instruction together. Substituting only the token leaves the replacement inside 
 which is how a check ends up enforcing nothing while everything still reports green. That
 mistake has already been made twice in this kit's history, which is why every other
 placeholder is either a quoted value or a whole file.
+
+Two values sit beside `{{BUILD_TEST_COMMAND}}` in `scripts/check.sh`, not placeholders: a commit
+that changes only `.md` files skips the build. Ask "Does the build or a test read a markdown
+file? Which?" A build that reads them all (a documentation site) sets `docs_only_skip_build=0`;
+a few named ones (a doc test, a generated page) go into `docs_always_build`, space-separated
+paths or globs (`docs/api/*.md README.md`), and a commit that changes one builds.
 
 ### Process
 

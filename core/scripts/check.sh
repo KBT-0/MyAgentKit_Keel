@@ -626,6 +626,16 @@ if [ -n "$for_commit" ]; then
     echo "             file. A [LESSON] or [GOTCHA] line keeps until it has a permanent home (docs/AGENTS.md):"
     printf '%s\n' "$dropped" | sed 's/^-/               /' | head -10
   fi
+  # The gate reads the working tree, not the index (#109): an unstaged edit or an untracked
+  # file is checked and built, and the commit lacks it (a forgotten `git add`). Told, not
+  # failed: other agents' files in a shared tree are the normal case.
+  unrecorded=$({ hgit diff --name-only; hgit ls-files --others --exclude-standard; } 2>/dev/null | sort -u)
+  if [ -n "$unrecorded" ]; then
+    echo "NOTE [scan]: the gate checked the working tree; these paths are not what this commit records:"
+    printf '%s\n' "$unrecorded" | head -10 | sed 's/^/             /'
+    unrecorded_count=$(printf '%s\n' "$unrecorded" | wc -l)
+    [ "$unrecorded_count" -le 10 ] || echo "             and $((unrecorded_count - 10)) more"
+  fi
 fi
 
 # The strong review cycle runs at least every STRONG_REVIEW_DAYS days or after
@@ -722,7 +732,8 @@ fi
 # is one an agent may rebuild beside it ("NEVER rewrite a system you could not find"). Prefer
 # a check to a promise (KARARLAR B10 inv1#239): every direct subfolder of a module root that
 # holds a file in the scan list must be named, as a whole entry, in the "## Module map" section
-# of docs/ARCHITECTURE.md. module_roots is a VALUE: the folders whose subfolders are modules,
+# of docs/ARCHITECTURE.md: its bare name (app) or its path from the top (src/app, src/app/), so a
+# multi-root map that names game/sim and engine/sim checks each (#88, #141). module_roots is a VALUE: the folders whose subfolders are modules,
 # space-separated, e.g. "src packages". Empty, nothing is checked and a NOTE says so: a
 # single-module project has no module folders. A root with no file at all FAILS: a check over a
 # missing folder finds nothing, which looks like a clean result.
@@ -759,7 +770,7 @@ else
       printf '%s\n' "FAIL [architecture]: the module root $root in scripts/check.sh holds no file the gate sees."
       fail=1; continue; }
     sort -u "$work/modules" | while IFS= read -r module; do
-      grep -qxF -- "$module" "$work/module-map" || {
+      grep -qxF -e "$module" -e "$prefix$module" -e "$prefix$module/" -- "$work/module-map" || {
         printf '%s\n' "FAIL [architecture]: $prefix$module is a module folder that the '## Module map' of $architecture_file does not name."
         echo "                     Add its line in the same task (one line: module, responsibility)."
         : > "$work/module-unnamed"; }
@@ -788,7 +799,9 @@ select_shellcheck_files() {
   done
 }
 if ! command -v shellcheck >/dev/null 2>&1; then
+  # The install line rides along: a NOT RUN printed on every run, with no fix, was read as noise (#155).
   echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
+  echo "                      Install it: apt install shellcheck, brew install shellcheck or winget install koalaman.shellcheck."
 else
   shell_files=$(tr '\0' '\n' < "$filelist" | select_shellcheck_files)
   sc_status=0
@@ -843,8 +856,12 @@ fi
 build_test_cmd="{{BUILD_TEST_COMMAND}}"
 # A commit that changes only documentation skips the build/test command, and nothing else:
 # every scan and check above has run. A project's gate built for minutes on every such commit.
-# 1: on. 0: off, for a project whose build reads markdown (a documentation site, doc tests).
+# 1: on. 0: off, for a project whose build reads markdown everywhere (a documentation site).
 docs_only_skip_build=1
+# The documents a build or a test does read (a doc test, a generated page): a commit that
+# changes one builds (#97). Space-separated paths or globs from the top of the repository,
+# matched as Python's fnmatch.fnmatchcase does (a * also crosses a /): "docs/api/*.md README.md".
+docs_always_build=""
 # BUILD CACHE. One change ran the same build three or four times on the same files: the
 # worker, the Stop hook, the commit hook, the merge hook (#82). A build that passed is recorded
 # under a key, and a later run whose key matches skips the build and says so in its PASS line;
@@ -953,17 +970,27 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     # staged submodule revision, and the document beside it skipped the build. Any doubt runs
     # the build: no HEAD yet, a merge in progress, a git error, an entry that does not parse.
     # The diff is against HEAD, which for an amend is the tree being amended: the build last
-    # vouched for HEAD, and the commit differs from it only by these documents. A clean
+    # vouched for HEAD, and the commit differs from it only by these documents. Vouched means
+    # recorded: .githooks/pre-commit writes the tree of each commit it gated into the worktree's
+    # check-gated-tree, and a HEAD whose tree is not there builds. A rebase, cherry-pick or
+    # revert runs no hook (#115), and a pull or a branch switch brings in another tree. A clean
     # `git merge` never comes here: pre-merge-commit asks for the full gate.
     docs_only=""
     if [ -n "$for_commit" ] && [ "$docs_only_skip_build" = 1 ]; then
       docs_only=$(python3 -c '
-import subprocess, sys
+import fnmatch, os, subprocess, sys
 def git(*args):
     return subprocess.run(("git",) + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
     sys.exit(1)
 if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
+    sys.exit(1)
+head = git("rev-parse", "-q", "--verify", "HEAD^{tree}").stdout.strip()
+try:
+    with open(os.fsdecode(git("rev-parse", "--git-path", "check-gated-tree").stdout.strip()), "rb") as gated:
+        if not head or gated.read().strip() != head:
+            sys.exit(1)
+except OSError:
     sys.exit(1)
 diff = git("diff", "--cached", "--raw", "--no-renames", "--ignore-submodules=none", "-z", "HEAD", "--")
 fields = diff.stdout.split(b"\0")
@@ -978,8 +1005,10 @@ for meta, path in zip(fields[0::2], fields[1::2]):
     if not ((status == b"A" and new in regular) or (status == b"D" and old in regular) or
             (status == b"M" and old in regular and new in regular)):
         sys.exit(1)
+    if any(fnmatch.fnmatchcase(os.fsdecode(path), glob) for glob in sys.argv[1].split()):
+        sys.exit(1)
 print(len(fields) // 2)
-' 2>/dev/null) || docs_only=""
+' "$docs_always_build" 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
     if [ -n "$docs_only" ]; then

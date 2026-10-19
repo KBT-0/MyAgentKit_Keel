@@ -17,6 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        # The whole history: check.sh's Done: trailer check and the strong review reminder read
+        # it, and the default depth of 1 holds only GitHub's own merge commit on a pull request,
+        # which carries no trailer, so no commit of the pull request was checked (#135).
+        with:
+          fetch-depth: 0
 
       # {{TOOLCHAIN_SETUP_STEP}} — replace this ENTIRE line, leading "#" included, with the
       # real setup step(s); delete it if the runner needs nothing. A half-edit that keeps

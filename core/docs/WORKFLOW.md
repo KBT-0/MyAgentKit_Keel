@@ -95,7 +95,9 @@ deletion checkable.
   `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to. Ids are
   case-insensitive: `k4` and `K4` are the same task. The format is the owner's choice: the
   digit keeps a plain word from being read as an id, and one inner `-` keeps ids short and
-  greppable.
+  greppable. Pick a shape no other label in these files uses: a task `M7` and a milestone
+  `M7` are one token, so closing the task fails every later line naming the milestone (#136);
+  a prefix of the project's own (`T-12`) keeps them apart.
 - The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
   of the message: `Done: K4`. The value is exactly one id: the hook rejects `Done: K4 K5`,
   `Done: K4, K5` and an empty `Done:`, and such a value already in the history closes
@@ -479,7 +481,8 @@ changed a shared contract under the other.
 
 - While parallel work is in flight, public interfaces are **FROZEN**.
 - Contract changes are serialized: one task, alone, on the main branch; then the branches
-  rebase onto it.
+  rebase onto it. A rebase, cherry-pick or revert runs no git hook, so the gate never saw the
+  rebased tree: run `./scripts/check.sh` on it before it fast-forwards the main branch.
 - A contract-first task therefore comes BEFORE any parallel fan-out. If the interfaces are
   not settled, do not fan out yet.
 - A shared contract that two branches both use has a test that states what its consumer

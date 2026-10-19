@@ -18,11 +18,14 @@
 # one as pre-commit.project, project-owned, and runs FIRST with git's arguments: its failure
 # is the commit's failure, and this hook still runs after it. No other hooks path.
 project_hook="$(dirname -- "$0")/pre-commit.project"
-# git passes pre-commit no arguments; --merge is this kit's own (from pre-merge-commit).
+# git passes pre-commit no arguments; --merge is this kit's own (from pre-merge-commit). Git
+# runs no pre-commit hook for a clean merge, so pre-commit.project is skipped there: the
+# project's pre-merge-commit.project has already run (#153).
 # A hook without a #! line is refused: Git for Windows never runs one, chmod +x or not, and
 # the documented one-line form was skipped in silence, so the project's own check never ran
 # (#165). One with a #! line and no execute bit is still skipped: chmod -x switches it off.
-if [ -x "$project_hook" ]; then "$project_hook" || exit $?
+if [ "${1:-}" = --merge ]; then :
+elif [ -x "$project_hook" ]; then "$project_hook" || exit $?
 elif [ -f "$project_hook" ] && case $(head -n 1 -- "$project_hook") in '#!'*) false ;; esac; then
   printf '%s\n' "pre-commit: $project_hook has no #! line, and Git for Windows never runs such a file. Commit refused. Start it with #!/bin/sh and chmod +x it, or delete it." >&2; exit 1
 fi
@@ -67,7 +70,13 @@ else
   ./scripts/check.sh
 fi
 status=$?
-[ "$status" -ne 0 ] || exit 0
+# The tree this commit records, as gated: check.sh's documentation-only path trusts only a HEAD
+# whose tree it finds here. A rebase, cherry-pick or revert runs no hook (#115), and the first
+# documentation-only commit after one builds. One file per worktree, overwritten.
+if [ "$status" -eq 0 ]; then
+  gated_tree=$(git write-tree) && printf '%s\n' "$gated_tree" > "$(git rev-parse --git-path check-gated-tree)"
+  exit 0
+fi
 # 75: another gate run held the lock past GATE_LOCK_WAIT. Nothing was checked, so the commit
 # stays blocked, but calling that a failure sends someone hunting for a defect that is not there.
 if [ "$status" -eq 75 ]; then
