@@ -625,45 +625,6 @@ class SyncKitTests(unittest.TestCase):
     test_a_kit_path_spelled_in_another_case_still_records_the_kit_commit._kit_platform_skip = \
         not CASE_FOLDS
 
-    def bootstrap_kit(self, own):
-        """Install from a fixture kit, its own clone run by its path in another letter case or
-        one inside another repository; return the recorded kit commit (None for none) and HEAD."""
-        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as project:
-            kit = Path(tmp) / 'kit'
-            # Not the root's .claude and .myagentkit: they hold the worktrees and a live worker's
-            # locked files, which bootstrap never reads.
-            shutil.copytree(ROOT, kit, ignore=lambda folder, names: {
-                name for name in names if name in ('.git', '__pycache__', 'tests')
-                or Path(folder) == ROOT and name in ('.claude', '.myagentkit')})
-            for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
-                                         'commit', '-q', '--allow-empty', '-m', 'k']):
-                subprocess.run(['git', '-C', str(kit if own else tmp), *args], check=True, env=env,
-                               capture_output=True)
-            script = str(kit / 'bootstrap.sh')
-            result = subprocess.run(['sh', script.swapcase() if own else script, project],
-                                    capture_output=True, text=True, env=env, timeout=600)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            recorded = Path(project) / 'docs/kit/.kit-commit'
-            head = subprocess.run(['git', '-C', str(kit), 'rev-parse', 'HEAD'], check=True, env=env,
-                                  capture_output=True, text=True).stdout.strip()
-            return (recorded.read_text().strip() if recorded.exists() else None), head
-
-    def test_bootstrap_records_no_commit_of_a_repository_around_the_kit(self):
-        # bootstrap.sh holds the same test as own_repo: a vendored kit recorded the outer
-        # repository's HEAD as its base (round 1 of #184).
-        self.assertIsNone(self.bootstrap_kit(own=False)[0])
-
-    def test_bootstrap_records_the_commit_of_a_kit_clone_run_by_a_path_in_another_case(self):
-        # A kit path in another letter case recorded no base (#184). A skip inside a subTest
-        # cannot carry the platform declaration, so this is a test of its own.
-        if not CASE_FOLDS:
-            self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
-        recorded, head = self.bootstrap_kit(own=True)
-        self.assertEqual(recorded, head)
-    test_bootstrap_records_the_commit_of_a_kit_clone_run_by_a_path_in_another_case._kit_platform_skip = \
-        not CASE_FOLDS
-
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
         # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync

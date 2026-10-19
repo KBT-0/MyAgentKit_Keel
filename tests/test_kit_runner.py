@@ -447,15 +447,19 @@ runpy.run_path(%r, run_name='__main__')
                         | set(check_kit.REQUIRED_SUITES['core/scripts']))
         module = lambda name: name.rpartition('/')[2].partition('@')[0]
         slow, out = units('--slow')
-        self.assertEqual(slow, [name for name in names if module(name) in check_kit.SLOW])
+        is_slow = lambda name: module(name) in check_kit.SLOW or name in check_kit.SLOW
+        self.assertEqual(slow, [name for name in names if is_slow(name)])
         self.assertIn('slow tier', out)
         fast, out = units()
-        self.assertEqual(fast, [name for name in names if module(name) not in check_kit.SLOW])
+        self.assertEqual(fast, [name for name in names if not is_slow(name)])
         self.assertIn('fast tier', out)
         self.assertTrue(slow and fast)
+        # A unit named whole is slow alone: its module's other units stay fast.
+        self.assertIn('locale/test_git_hooks', slow)
+        self.assertIn('tests/test_git_hooks@0', fast)
         # A long unit starts right after the shards, never last.
         self.assertTrue(set(check_kit.LONG) <= set(check_kit.REQUIRED_SUITES['tests']))
-        self.assertLess(fast.index('tests/test_close_worker'), fast.index('tests/test_packaging'))
+        self.assertLess(fast.index('tests/test_sync_kit'), fast.index('tests/test_packaging'))
         with self.assertRaisesRegex(RuntimeError, 'SLOW names no unit of the kit check: test_gone'):
             units(slow=check_kit.SLOW | {'test_gone'})
         (self.tmp / 'suite').mkdir()

@@ -112,28 +112,29 @@ def symlinks_work():
 
 def case_folds():
     """A folder spelled in another letter case is the same folder (Windows, macOS by default).
-    The same probe as tests/test_sync_kit.py, whose two case tests are declared skips where not."""
+    The same probe as tests/test_sync_kit.py and tests/test_bootstrap.py, whose case tests are
+    declared skips where not."""
     return Path(tempfile.gettempdir().swapcase()).is_dir()
 
 
 REQUIRED_SUITES = {
-    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=6, test_context_buckets=6, test_owns_check=6),
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=8, test_context_buckets=8, test_owns_check=9),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 37, 'test_acceptance': 20,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 39 if case_folds() else 38, 'test_acceptance': 20,
               'test_review_upgrade': 5 if os.name == 'nt' else 6,
               'test_scan_gate': 1, 'test_gate_checks': 12 if symlinks_work() else 11, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 20, 'test_check_gate_windows': 35 if os.name == 'nt' else 11,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
-              'test_sync_kit': 49 if case_folds() else 47, 'test_doctor': 9, 'test_git_hooks': 35, 'test_stop_hook': 11, 'test_context_hook': 12, 'test_communication_hooks': 36, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 66 if os.name == 'nt' else 65, 'test_guard_boundaries': 3, 'test_guard_private_email': 11,
+              'test_sync_kit': 47 if case_folds() else 46, 'test_doctor': 9, 'test_git_hooks': 35, 'test_stop_hook': 11, 'test_context_hook': 14, 'test_communication_hooks': 36, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 66 if os.name == 'nt' else 65, 'test_guard_boundaries': 3, 'test_guard_private_email': 11,
               'test_spawn_worker': 59 if os.name == 'nt' else 79, 'test_spawn_codex': 52 if os.name == 'nt' else 59 if shutil.which('dash') else 58,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 62 if os.name == 'nt' else 64 if Path('/proc/self/fd').is_dir() else 63, 'test_working_mode': 52,
-              'test_worker_visibility': 75 if os.name == 'nt' or os.path.exists('/dev/full') else 74, 'test_doc_pointers': 16,
-              'test_usage_summary': 25, 'test_done_audits': 2,
+              'test_worker_visibility': 77 if os.name == 'nt' or os.path.exists('/dev/full') else 76, 'test_doc_pointers': 16,
+              'test_usage_summary': 29, 'test_done_audits': 2,
               'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 18 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
-              'test_close_worker': 40 if os.name == 'nt' else 39, 'test_python_fallback': 2},
+              'test_close_worker': 40 if os.name == 'nt' else 39, 'test_python_fallback': 3},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
@@ -152,14 +153,15 @@ SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4, 'test_gate_checks': 3, '
 # minutes, the long suites in a second stage). The fast tier is the default run, for every
 # change and before a push; `--slow` runs the slow tier alone, `--all` both (CI runs the two as
 # parallel jobs; a release runs both). Each unit is in exactly one tier: these slow units
-# (a module name, every shard of it, or "acceptance"), every other unit fast. Measured in
-# .myagentkit/v012/reports/tiers.md.
+# (a module name, every shard of it, "acceptance", or one unit by its full name), every other
+# unit fast. Measured in .myagentkit/v012/reports/tiers.md and reports/ckfix.md: close_worker
+# (40 tests, about 12 s each) and the unsharded locale/test_git_hooks passed the 480 s cap.
 # Unsharded modules that start right after the shards (their locale suites too): queued last, a
 # 240-280 s unit alone set the fast tier's tail (measured in the tiers report).
-LONG = ('test_close_worker', 'test_sync_kit', 'test_guard_destructive_git', 'test_claude_sandbox',
+LONG = ('test_sync_kit', 'test_guard_destructive_git', 'test_claude_sandbox',
         'test_close_worker_windows', 'test_worker_paths_windows', 'test_review_upgrade')
 SLOW = {'acceptance', 'test_bootstrap', 'test_claude_bridge', 'test_spawn_worker', 'test_spawn_codex',
-        'test_worker_visibility', 'test_doctor'}
+        'test_worker_visibility', 'test_doctor', 'test_close_worker', 'locale/test_git_hooks'}
 # Each tier's time budget (finding 8, Bazel's test-size timeouts): (per-unit cap, whole-tier
 # cap) in seconds, times SCALE on a slow host. A unit over its cap is stopped and fails; a tier
 # over its cap fails; each is named with its seconds. The measured times and headroom are in
@@ -1404,7 +1406,7 @@ def main():
                         help="print each unit's, phase's and slowest test's seconds at the end")
     tier = parser.add_mutually_exclusive_group()
     tier.add_argument("--slow", action="store_true",
-                      help="run the slow tier alone (bootstrap, acceptance, the review bridge, doctor and worker-spawn suites)")
+                      help="run the slow tier alone (bootstrap, acceptance, the review bridge, doctor, worker-spawn and close_worker suites, the locale run of test_git_hooks)")
     tier.add_argument("--all", action="store_true", help="run the fast and the slow tier (a release)")
     parser.add_argument("--unit", help=argparse.SUPPRESS)
     parser.add_argument("--timing-file", help=argparse.SUPPRESS)
@@ -1435,13 +1437,13 @@ def main():
     units += rest
     units += ["locale/" + name for name in LOCALE_SUITES]
     module = lambda name: name.rpartition("/")[2].partition("@")[0]
-    stale = SLOW - {module(name) for name in units} - {name for required in NOT_ON_WINDOWS.values() for name in required}
+    stale = SLOW - {module(name) for name in units} - set(units) - {name for required in NOT_ON_WINDOWS.values() for name in required}
     if stale:
         raise RuntimeError("SLOW names no unit of the kit check: " + ", ".join(sorted(stale)))
     units.sort(key=lambda name: (name not in ("structure", "acceptance"), module(name) not in SHARDS,
                                  module(name) not in LONG))
     tiers = ["fast", "slow"] if args.all else ["slow"] if args.slow else ["fast"]
-    tier_of = lambda name: "slow" if module(name) in SLOW else "fast"
+    tier_of = lambda name: "slow" if module(name) in SLOW or name in SLOW else "fast"
     units = [name for name in units if tier_of(name) in tiers]
     host = float(os.environ.get(SCALE, "1"))
     budget = sum(CAPS[name][1] for name in tiers) * host

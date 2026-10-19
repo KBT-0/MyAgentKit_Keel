@@ -21,7 +21,7 @@ spec.loader.exec_module(gate)
 class AcceptanceTests(unittest.TestCase):
     def test_gate_launchers_refuse_python_3_10_and_accept_3_11(self):
         for path, marker in (('scripts/check.sh', '# Help ends'),
-                             ('core/scripts/check.sh', '\nlock_path=')):
+                             ('core/scripts/check.sh', '\n# A run that claims the lock')):
             source = (ROOT / path).read_text(encoding='utf-8').split(marker, 1)[0]
             # Keep the isolated POSIX probe in this shell so the Python stubs survive.
             source = source.replace('if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi\n', '')
@@ -29,10 +29,12 @@ class AcceptanceTests(unittest.TestCase):
                 with self.subTest(path=path, version=version):
                     prefix = 'import sys; sys.version_info = %r; ' % (version,)
                     functions = ('python3() { [ "$1" != -I ] || shift; %s -c %s"$2"; }; '
-                                 'python() { python3 "$@"; };\n'
+                                 'python() { python3 "$@"; }; py() { shift; python3 "$@"; };\n'
                                  % (shlex.quote(Path(sys.executable).as_posix()), shlex.quote(prefix)))
+                    # A gate run around this test hands its own Python down (#249); not here.
+                    env = {k: v for k, v in os.environ.items() if k not in ('GATE_LOCK_HELD', 'GATE_PYTHON')}
                     result = subprocess.run(['sh', '-c', functions + source,
-                                             str(ROOT / path)], capture_output=True, text=True)
+                                             str(ROOT / path)], capture_output=True, text=True, env=env)
                     self.assertEqual(result.returncode, status, result.stdout + result.stderr)
                     if status:
                         self.assertIn('Python 3.11 or newer', result.stdout + result.stderr)
