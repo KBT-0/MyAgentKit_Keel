@@ -22,7 +22,7 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `MYAGENTKIT_TASK_ID` | the change's label; rounds under it carry the earlier ones, two at most (a review its dispatcher failed afterwards is carried but not counted: `docs/REVIEW_GATE.md`, "Rounds") |
 | `REVIEW_DISPOSITIONS` | answers to every earlier round (round 1 by default), one line per finding: `fixed:` / `disproved:` / `deferred:` |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
-| `REVIEW_SAME_TIER_EXCEPTION` | reason the author's tier reviews a high-tier change on a plan with no tier above it (`REVIEW_RISK=high`, effort high), kept in the record; one round per label and focus, so a second round under it is refused, a substitute's included and `REVIEW_ROUND_EXCEPTION` notwithstanding (`docs/WORKFLOW.md`, "Model routing", rule 7) |
+| `REVIEW_SAME_TIER_EXCEPTION` | reason the author's tier reviews a high-tier change on a plan with no tier above it (`REVIEW_RISK=high`, effort high), kept in the record; one round per label and focus (a round without a focus uses it for every focus), so a second round under it is refused, a substitute's included and `REVIEW_ROUND_EXCEPTION` notwithstanding (`docs/WORKFLOW.md`, "Model routing", rule 7) |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
 | `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; each focus gets the label's two rounds; a review without a focus counts toward every focus |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |

@@ -45,6 +45,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
                       # The lead's author claim: an exported one refused the fixtures' reviewer pin.
                       'MYAGENTKIT_AUTHOR', 'REVIEW_SAME_TIER_EXCEPTION', 'MYAGENTKIT_ALLOW_SECRET_FILES',
+                      # Set by the dispatcher for a reviewer under the exception: its own test run
+                      # marked the fixture rounds and refused their second one.
+                      'MYAGENTKIT_REVIEW_SAME_TIER',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
                       'REVIEW_TASK_FILE',
                       # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
@@ -6739,6 +6742,69 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
         self.assertNotIn('same_tier_exception', usage['task'])
 
+    def test_the_same_tier_exception_is_one_round_per_label_and_focus(self):
+        # Owner decision 56 (2026-10-19), rtier review r1 High: a round under the exception counts
+        # for its own focus, one without a focus for every focus. The two focus reviewers run under
+        # it one after the other or in parallel; a second round of either, or a run without a
+        # focus, is refused. A round the 98591eb dispatcher marked only in its chain checkpoint
+        # counts too.
+        from unittest.mock import patch
+        refused = 'already had its round under REVIEW_SAME_TIER_EXCEPTION'
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+
+        def preflight(label, focus):  # the dispatcher's check before an attempt under the exception
+            with patch.dict(os.environ, {bridge.SAME_TIER_ENV: 'plan without Fable'}):
+                os.environ.pop('REVIEW_FOCUS', None)
+                if focus:
+                    os.environ['REVIEW_FOCUS'] = focus
+                bridge.prior_rounds(self.repo, label, 'uncommitted', None, head, '')
+        marked = {bridge.SAME_TIER_ENV: 'plan without Fable', 'MYAGENTKIT_TASK_ID': 'same-focus'}
+        preflight('same-focus', 'logic')  # in parallel, both pass before either round is recorded
+        preflight('same-focus', 'portability')
+        for focus in ('logic', 'portability'):
+            code, result = self.run_bridge('reject', env_extra=dict(marked, REVIEW_FOCUS=focus))
+            self.assertEqual(code, 0, result)
+        for focus in ('logic', 'portability', None):
+            with self.subTest(focus=focus), self.assertRaisesRegex(bridge.BridgeError, refused):
+                preflight('same-focus', focus)
+        code, result = self.run_bridge('reject', env_extra=dict(marked, MYAGENTKIT_TASK_ID='same-plain'))
+        self.assertEqual(code, 0, result)
+        with self.assertRaisesRegex(bridge.BridgeError, refused):
+            preflight('same-plain', 'logic')
+        legacy = dict(MYAGENTKIT_TASK_ID='same-legacy', MYAGENTKIT_REVIEW_CHAIN_ID='legacy',
+                      MYAGENTKIT_REVIEW_ATTEMPT='1')
+        code, result = self.run_bridge('reject', env_extra=legacy)
+        self.assertEqual(code, 0, result)
+        preflight('same-legacy', None)
+        (self.repo / '.myagentkit/usage/chains').mkdir(exist_ok=True)
+        (self.repo / '.myagentkit/usage/chains/legacy-1.json').write_text(json.dumps(
+            {'status': 'completed', 'attempts': [{'status': 'completed'}],
+             'same_tier_exception': 'plan without Fable'}), encoding='utf-8')
+        with self.assertRaisesRegex(bridge.BridgeError, refused):
+            preflight('same-legacy', None)
+
+    def test_a_focus_without_its_exception_round_takes_a_substitute_of_the_author_tier(self):
+        # rtier review r1 Medium: logic used its round under the exception and portability did
+        # not, so portability's quota switch to the author's tier runs; its next substitute
+        # (--fallback this time) is refused.
+        refused = 'already had its round under REVIEW_SAME_TIER_EXCEPTION'
+        exception = dict(MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
+                         REVIEW_SAME_TIER_EXCEPTION='plan without Fable', MYAGENTKIT_TASK_ID='same-medium')
+        result, chain = self.dispatch_result('claude', fallback=False, REVIEW_FOCUS='logic', **exception)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result, chain = self.dispatch_result('codex', fallback=False, REVIEW_FOCUS='portability', **exception)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
+                                             REVIEW_FOCUS='portability', **exception)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
+        self.assertEqual(chain['same_tier_exception'], 'plan without Fable')
+        result, chain = self.dispatch_result('codex', fallback=True, CODEX_FIXTURE_CASE='mcp_exit',
+                                             REVIEW_FOCUS='portability', **exception)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+        self.assertIn(refused, chain['fallback_blocked'])
+
     def test_a_used_up_codex_quota_switches_to_another_tier_of_a_claude_author(self):
         # #225: the switch checks the tier, so a Claude author's review goes to another Claude
         # tier; an unknown author blocks it, and the hint names MYAGENTKIT_AUTHOR, not --fallback.
@@ -6764,12 +6830,17 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         from unittest.mock import patch
         bridge = dispatch.claude_bridge
         snapshot, run = bridge.snapshot, dispatch.agent_process.run
-        cases = [(provider, error, kind) for provider in ('claude', 'codex') for error, kind in (
+        cases = [(provider, error, kind, {}) for provider in ('claude', 'codex') for error, kind in (
             (bridge.GitFailed('git diff failed: index cannot be read'), 'checkout_unverified'),
             (bridge.BridgeError('reference reviews require a clean checkout; use --uncommitted'),
              'stale_checkout'))]
-        for provider, error, kind in cases:
-            with self.subTest(provider=provider, kind=kind):
+        # rtier review r1: under the same-tier exception that round was the label's one, so the
+        # FAIL line names the next reviewer, not a rerun the tooling refuses.
+        cases.append(('claude', bridge.GitFailed('git diff failed: index cannot be read'), 'checkout_unverified',
+                      dict(MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
+                           REVIEW_SAME_TIER_EXCEPTION='plan without Fable')))
+        for provider, error, kind, exception in cases:
+            with self.subTest(provider=provider, kind=kind, exception=bool(exception)):
                 ran = []
 
                 def look(*args):
@@ -6782,7 +6853,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     return run(*args, **kwargs)
                 env = self.review_env(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
                                       REVIEW_CLI_BIN=str(self.build_fake_codex()), REVIEW_CODEX_MODEL='gpt-5.5',
-                                      MYAGENTKIT_TASK_ID='unread-%s-%s' % (provider, kind))
+                                      MYAGENTKIT_TASK_ID='unread-%s-%s-%s' % (provider, kind, bool(exception)),
+                                      **exception)
                 out = io.StringIO()
                 with patch.dict(os.environ, env, clear=True), patch.object(bridge, 'snapshot', look), \
                         patch.object(dispatch.agent_process, 'run', review), contextlib.redirect_stdout(out):
@@ -6799,6 +6871,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.assertTrue(counted)
                     self.assertIn('still counts as a round', out.getvalue())
                     self.assertIn('index cannot be read', out.getvalue())
+                    self.assertEqual('then run the review again' in out.getvalue(), not exception)
+                    self.assertEqual("the other family or the owner's diff read" in out.getvalue(),
+                                     bool(exception))
                 else:
                     self.assertIs(chain.get('checkout_changed'), True)
                     self.assertNotIn('checkout_unverified', chain)

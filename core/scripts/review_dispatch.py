@@ -642,9 +642,14 @@ def main(argv=None):
                   "diff it names. Leave this checkout untouched until review.sh exits: keep "
                   "working in another worktree, or wait for it, then run the review again.")
         if chain["failure_kind"] == "checkout_unverified":
+            # A rerun under the exception is refused (prior_rounds): that round was its one.
+            again = ("It was this label's one round under REVIEW_SAME_TIER_EXCEPTION: mend the cause, "
+                     "then the next round of this focus goes to the other family or the owner's diff "
+                     "read (docs/WORKFLOW.md, \"Model routing\", rule 7)." if under.get(provider)
+                     else "Mend the cause, then run the review again.")
             print("FAIL [review]: the checkout could not be read after the review (%s), so the "
                   "result cannot be tied to the diff it names; the completed review still counts "
-                  "as a round. Mend the cause, then run the review again." % chain["checkout_unverified"])
+                  "as a round. %s" % (chain["checkout_unverified"], again))
     elif chain.get("selected_reviewer") != names[args.reviewer]:
         print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
               "author the patch." % (chain["selected_reviewer"], names[args.reviewer]))
