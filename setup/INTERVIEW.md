@@ -97,17 +97,25 @@ whether the agent OFFERS. Do not present it as a data or privacy setting — des
 scarier than it is would be its own kind of dishonesty. (Ask first, send nothing unasked: the
 opt-in that clig.dev, "Analytics", asks of any command-line tool.)
 
+On a yes, ask one more: "When I send, shall I show you the text and wait for your yes each
+time, or do you give a standing approval: I print the text and send it, and Claude Code still
+asks permission for the send command?" Each time is `kit_feedback: ask-each-time`, the default
+and the answer when unsure; a standing approval is `kit_feedback: standing-approval`.
+`/myagentkit:kit-feedback` reads that line.
+
 Then fill `{{KIT_FEEDBACK_RULE}}` in `AGENTS.md` with exactly ONE of the two bullets below,
-whole and unedited.
+whole and unedited but for the `kit_feedback:` value.
 
 **If yes:**
 
 > - **Something about the FOUNDATION itself was wrong, unclear or missing** — a gate that
 >   failed open, a rule that did not survive contact with real work, an ambiguous setup
 >   instruction, a document contradicting itself → offer to send it upstream with
->   `/myagentkit:kit-feedback`. It scrubs this project out, shows the exact text, and sends
->   nothing without a yes. Offer ONCE per finding, take no for an answer, never send on your
->   own initiative. Keep it light: a footnote in a closing summary, not a campaign.
+>   `/myagentkit:kit-feedback`. It scrubs this project out and shows the exact text; the line
+>   below says whether it then waits for a yes. Offer ONCE per finding, take no for an answer,
+>   never send on your own initiative. Keep it light: a footnote in a closing summary, not a
+>   campaign.
+>   `kit_feedback: ask-each-time`
 
 **If no:**
 
