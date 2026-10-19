@@ -75,7 +75,7 @@ staged=""
 # `mv`: a stamp that held the version before the run (a rerun of it) is no commit.
 committed() {
   [ -n "$staged" ] && [ ! -e "$staged" ] && [ -z "$(blocked docs/kit/.kit-version)" ] &&
-    [ "$(cat "$target/docs/kit/.kit-version" 2>/dev/null)" = "$version" ]
+    [ "$(cat "$target/docs/kit/.kit-version" 2>/dev/null)" = "$record" ]
 }
 # finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
 # path, this says what it means. A stop after core.hooksPath was changed and before the version
@@ -328,6 +328,15 @@ left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -p
 [ -z "$left" ] || printf '%s\n' "bootstrap: NOTE: temporaries a stopped run left behind; remove them:" "$left"
 
 printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
+# A stamp already there is an installed project's, and after the install the version is the
+# sync's to record (#100). A rerun for a new overlay file stamped the latest version over the
+# ACTION items nobody had applied, and the next sync said "already current"; the project's
+# set-up gate, which no longer matches the kit's, stopped the rerun as if it were a first
+# install. A rerun keeps the stamp and its kit commit, and leaves a differing gate alone.
+prior=""
+[ -n "$(blocked docs/kit/.kit-version)" ] || [ ! -f "$target/docs/kit/.kit-version" ] ||
+  prior=$(tr -d '[:space:]' < "$target/docs/kit/.kit-version")
+record=${prior:-$version}
 
 check_attributes
 copy_tree "$kit/core"
@@ -448,6 +457,7 @@ gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|com
   while IFS= read -r g; do
     why=$(blocked "$g")
     printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
+[ -z "$prior" ] || gates=""
 # Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
 # itself (docs/reviews, the stamp) is a plain destination that could not be written.
 if [ -n "$gates" ]; then
@@ -519,14 +529,14 @@ fi
 # Written before the stamp, which stays the last write. sync-kit.sh's own_repo is the same test.
 # Git answers whether the kit folder is its repository's top: two path strings differed for a
 # kit path in another letter case or through a subst drive, and no commit was recorded.
-if kit_prefix=$(git -C "$kit" rev-parse --show-prefix 2>/dev/null) && [ -z "$kit_prefix" ] &&
+if [ -z "$prior" ] && kit_prefix=$(git -C "$kit" rev-parse --show-prefix 2>/dev/null) && [ -z "$kit_prefix" ] &&
    commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
   put "$target/docs/kit/.kit-commit" <<EOF
 $commit
 EOF
 fi
 stage "$target/docs/kit/.kit-version" <<EOF
-$version
+$record
 EOF
 staged=$part
 repo=""
@@ -599,6 +609,12 @@ else
   echo "bootstrap: NOT a git repository yet. After 'git init', run:"
   echo "             git config core.hooksPath .githooks"
   echo "           Without it there is no commit gate (docs/DEV_SETUP.md)."
+fi
+
+if [ -n "$prior" ]; then
+  printf '%s\n' "" "bootstrap: the project was installed before: its version stays v$prior. A newer kit's" \
+    "           files and ACTION items come with sync-kit.sh, which records the version."
+  exit 0
 fi
 
 cat <<'EOF'

@@ -17,15 +17,16 @@
 #                are all customised during setup, and overwriting them would throw that away
 #                (and re-introduce the placeholders).
 #
-# So a sync is: refresh the few generic files, then PRINT the changelog entries added since
-# your version so you can apply the rest deliberately. That second half is the real product.
-# A tool that silently merged process rules into a working project would be worse than no
-# tool at all.
+# So a sync is: refresh the few generic files, then list the changelog's ACTION items added
+# since your version so you can apply the rest deliberately. That second half is the real
+# product. A tool that silently merged process rules into a working project would be worse
+# than no tool at all.
 #
 # The recorded version (docs/kit/.kit-version) means "the owner has applied everything up to
-# here", not "the files were copied". While the printed entries hold an **ACTION** item, the
-# version stays put, the items are printed again on every run, and the exit status is 2.
-# Rerun with --actions-applied once you have applied them; only then is the version recorded.
+# here", not "the files were copied". While an **ACTION** item is pending, the version stays
+# put, the items are written oldest first to docs/kit/UPGRADE.md with a box each, and the exit
+# status is 2. Tick each box as you apply its item, then rerun with --actions-applied: only
+# when every box is ticked is the version recorded, and the checklist deleted.
 #
 # A failed write stops the run before the stamp (`set -e`, and the copy step names its file):
 # a failed chmod was ignored and the version recorded over a hook that could not run.
@@ -55,7 +56,7 @@ while [ $# -gt 0 ]; do
     --actions-applied) applied=1; shift ;;
     --merge) merge=1; shift ;;
     --base) [ $# -ge 2 ] || die "--base needs a kit commit"; base_ref=$2; shift 2 ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     -*)        die "unknown option: $1" ;;
     *)         target="$1"; shift ;;
   esac
@@ -146,6 +147,20 @@ have=$(tr -d '[:space:]' < "$stamp")
 
 latest=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" | head -1)
 [ -n "$latest" ] || die "cannot read a version from $kit/CHANGELOG.md"
+# The versions are compared by number, before a file is copied (#113). A project stamped newer
+# than this kit (a second kit clone, not pulled) had its kit-owned hooks rolled back and the
+# older version recorded as an upgrade; a version the changelog does not hold printed the
+# whole changelog, every item since v0.1.
+case "$have" in
+  *[!0-9.]*|.*|*.|*..*) die "$stamp holds '$have', which is no version; write the version the project came from" ;;
+esac
+newer=$(awk -v a="$have" -v b="$latest" 'BEGIN { n = split(a, x, "."); m = split(b, y, ".")
+  for (i = 1; i <= (n > m ? n : m); i++) if (x[i] + 0 != y[i] + 0) { print (x[i] + 0 > y[i] + 0); exit }
+  print 0 }')
+[ "$newer" = 0 ] ||
+  die "this project has v$have, newer than this kit's v$latest; pull the kit, or run the clone the project came from. Nothing was changed."
+awk -v want="v$have" '$1 == "##" && $2 == want { found = 1 } END { exit !found }' "$kit/CHANGELOG.md" ||
+  die "v$have is no version in $kit/CHANGELOG.md; write the version the project came from into $stamp. Nothing was changed."
 
 work_list=$(mktemp) || { echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
@@ -153,7 +168,13 @@ copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot crea
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
 mdir=""
-trap 'rm -f "$work_list" "$pending" "$copies" "$copies.k" "$copies.k2" "$copies.stage" ${part:+"$part"}; [ -z "$mdir" ] || rm -rf "$mdir"' EXIT
+out=$(mktemp) || { rm -f "$work_list" "$pending" "$copies"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
+# The report is held in a file and printed when the run ends: printed as it went, a run piped
+# to `head` died of SIGPIPE before the stamp, and looked like a success (#78). The exit trap
+# prints it, past the stamp, and a reader that is gone by then costs nothing.
+exec 3>&1 >"$out"
+trap 'rm -f "$work_list" "$pending" "$copies" "$copies".* ${part:+"$part"}; [ -z "$mdir" ] || rm -rf "$mdir"
+  trap "" PIPE; cat "$out" >&3 2>/dev/null || :; rm -f "$out"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -164,10 +185,10 @@ left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -p
 [ -z "$left" ] || printf '%s\n' "sync-kit: NOTE: temporaries a stopped run left behind; remove them:" "$left"
 
 printf '%s\n' "sync-kit: project has v$have, kit is v$latest"
-if [ "$have" = "$latest" ]; then
-  echo "sync-kit: already current. Nothing to do."
-  exit 0
-fi
+# The same version is synced all the same (#98): a release gains kit-owned fixes and ACTION
+# items under its heading, and "already current" kept a project synced partway through it on
+# the old hooks and without the new items.
+repo_prefix=$(git -C "$target" rev-parse --show-prefix 2>/dev/null) && repo=1 || repo=""
 
 # The base of --merge is checked before anything is written: a run that stops on it changes
 # nothing.
@@ -218,6 +239,7 @@ echo "KIT-OWNED files (overwritten):"
 found=0
 conflict=0
 kit_conflict=0
+dirty=0
 overlay_fix=''
 # Read the list line by line rather than through word splitting: a path containing a space
 # would otherwise be torn into two nonexistent paths and silently skipped.
@@ -261,6 +283,17 @@ while IFS= read -r src; do
     # executable bit is missing (a chmod that failed on an earlier run), and that step sets it.
     printf '%s\n' "  same:    $rel"
   elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
+    # An edit git does not hold (unstaged, or an untracked file) would be lost: the copy keeps
+    # no backup (#128). A staged one stays in the index. Content the kit's own history holds is
+    # no edit: an earlier run that stopped at its ACTION items wrote it, and the kit moved since.
+    if [ -n "$repo" ] && git -C "$target" --literal-pathspecs status --porcelain -- "$rel" 2>/dev/null | grep -q '^.[^ ]' &&
+      ! { own_repo && blob=$(git -C "$kit" hash-object --path="${src#"$kit/"}" -- "$target/$rel" 2>/dev/null) &&
+          git -C "$kit" cat-file -e "$blob" 2>/dev/null; }; then
+      printf '%s\n' "  conflict: $rel (uncommitted edits, which the copy would overwrite)"
+      conflict=1
+      dirty=1
+      continue
+    fi
     printf '%s\n' "  update:  $rel"
   elif [ "$overlay" -eq 1 ]; then
     # An overlay file without the header is the kit's own copy from before the header (a
@@ -294,7 +327,15 @@ EOF
   A core or setup file listed is project-owned (no KIT-OWNED header, not a regular file, or
   a symlink or a file in its path). For each one: move yours aside, rerun the sync to install
   the kit's file, then carry what yours did into the project's own files by hand (the kit's
-  docs/RETROFIT.md).
+  docs/RETROFIT.md). A hook of yours under .githooks only needs a new name: as
+  .githooks/<same name>.project (executable, with a #! line) it keeps running, since the
+  kit's hook runs it first with git's arguments.
+EOF
+  [ "$dirty" -eq 0 ] || cat <<EOF
+
+  A kit-owned file listed holds uncommitted edits. Commit them (git keeps them, and the next
+  sync replaces the file) or put the file back (git restore -- <file>; delete one git does not
+  track), then sync again.
 EOF
   [ -z "$overlay_fix" ] || cat <<EOF
 
@@ -340,7 +381,6 @@ index_exe() {
   fi
 }
 if [ "$dry" -eq 0 ]; then
-  repo_prefix=$(git -C "$target" rev-parse --show-prefix 2>/dev/null) && repo=1 || repo=""
   while IFS= read -r src; do
     relpath "$src"
     { cmp -s "$src" "$target/$rel" || { mkdir -p "$target/$(dirname "$rel")" && put "$target/$rel" "$src"; }; } &&
@@ -349,57 +389,93 @@ if [ "$dry" -eq 0 ]; then
   done < "$copies"
 fi
 
-# --- tier 2: print what has to be applied by hand -----------------------------------
-# Everything from the top of the changelog down to (but not including) the recorded
-# version. If the recorded version is not in the changelog, print the lot and say so
-# rather than printing nothing — an empty report would read as "no changes".
-echo
-echo "=============================================================================="
-printf '%s\n' " Changelog since v$have — apply these to your PROJECT-OWNED files by hand"
-echo "=============================================================================="
-# The recorded version is matched as an exact FIELD, never as a prefix: `index()` against
-# "## v0.1" also matched "## v0.10", so the slice stopped at the wrong heading and printed
-# an empty report — which reads as "no changes". (`\b` was no fix either; it is a GNU grep
-# extension, not POSIX.)
-if awk -v want="v$have" '$1 == "##" && $2 == want { found = 1 } END { exit !found }' \
-    "$kit/CHANGELOG.md"; then
-  awk -v want="v$have" '
-    $1 == "##" && $2 == want { exit }
-    /^## v/ { p = 1 }
-    p
-  ' "$kit/CHANGELOG.md"
-else
-  printf '%s\n' "(v$have is not in this changelog — printing all of it. Check that the recorded"
-  echo " version is right.)"
-  echo
-  cat "$kit/CHANGELOG.md"
+# --- tier 2: the checklist of what has to be applied by hand -------------------------
+# items FILE INCL — FILE's ACTION items above the "## v$have" heading (with INCL=1, those of
+# its own section too), one per line, "VERSION<tab>TEXT", the oldest version first, as
+# UPDATING says to apply them: printed newest first, an item marked "first" came 79 items late
+# (#99). The version is matched as an exact field, never a prefix ("## v0.1" is no "## v0.10").
+# An item runs from its marker to the end of its list item or paragraph (a blank line, a
+# heading or the next list item), joined into one line: printing only the marker's line cut
+# items mid-sentence. A second marker inside that text starts an item of its own: it was
+# printed as continuation text, and a gate merge read as part of a maintainer's push step.
+# A "none" marker (**ACTION** — none, **ACTION:** none.) is no item. A "## Unreleased — vX"
+# section is read as vX's: a sync from the kit's master copies its kit-owned files, and listed
+# "already current" without the items they need. Named vX, a ticked item stays ticked past the
+# release, when the heading becomes "## vX".
+items() {
+  awk -v want="v$have" -v incl="$2" '
+    function add(s, g) { if (g != "") sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); if (s != "") cur = cur g s }
+    function flush() { if (cur != "") { n++; txt[n] = cur; ver[n] = nv }; cur = ""; on = 0 }
+    function take(s,    i, r, g) {
+      g = " "
+      while ((i = index(s, "**ACTION")) > 0) {
+        if (on) add(substr(s, 1, i - 1), g)
+        flush()
+        r = substr(s, i)
+        if (r ~ /^\*\*ACTION\*\* — none\.?[ \t]*$/ || r ~ /^\*\*ACTION:\*\*[ \t]+none\.[ \t]*$/) return
+        on = 1; cur = "**ACTION"; s = substr(r, 9); g = ""
+      }
+      if (on) add(s, g)
+    }
+    { sub(/\r$/, "") }
+    /^## (v|Unreleased)/ { flush(); if (last) exit; v = $2
+      if (v == "Unreleased") v = match($0, /v[0-9][0-9.]*/) ? substr($0, RSTART, RLENGTH) : v
+      if (v == want) { if (!incl) exit; last = 1 }; nv++; name[nv] = v; next }
+    on && /[^ \t]/ && !/^#/ && !/^[ \t]*([-*]|[0-9]+\.)[ \t]/ { take($0); next }
+    { flush() }
+    nv { take($0) }
+    END { flush(); for (k = nv; k >= 1; k--) for (i = 1; i <= n; i++) if (ver[i] == k) print name[k] "\t" txt[i] }
+  ' "$1"
+}
+# The pending items. With the kit commit of the last stamp (docs/kit/.kit-commit) in the kit's
+# history: every item of the changelog now, from v$have's own section up, that the changelog of
+# that commit did not hold, so an item added under a version after the project took it is
+# pending too (#98). Without it, the items of the versions above v$have. A scan that failed
+# leaves the list empty, which reads as "no ACTION items": it stops the sync instead.
+scanned=0
+if own_repo && [ -z "$(blocked docs/kit/.kit-commit)" ] && [ -f "$target/docs/kit/.kit-commit" ]; then
+  was=$(tr -d '[:space:]' < "$target/docs/kit/.kit-commit")
+  if [ -n "$was" ] && git -C "$kit" show "$was:CHANGELOG.md" > "$copies.was" 2>/dev/null; then
+    items "$copies.was" 1 > "$copies.old" && items "$kit/CHANGELOG.md" 1 > "$copies.now" &&
+      { grep -vxF -f "$copies.old" "$copies.now" || [ $? -eq 1 ]; } > "$pending" && scanned=1 ||
+      die "cannot scan the changelog for ACTION items; version left at v$have. Rerun once awk can read $kit/CHANGELOG.md."
+  fi
 fi
-
-# The ACTION items between the recorded version and the top (all of them if the recorded
-# version is unknown), repeated as a checklist. Stamping past them unconfirmed once made the
-# next run say "already current" while the hand edits had never been made. A scan that
-# failed leaves the list empty, which reads as "no ACTION items": it stops the sync instead.
-#
-# Each item is printed from its marker to the end of its list item or paragraph (up to a
-# blank line, a heading or the next list item): printing only the marker's own line cut
-# items mid-sentence.
-awk -v want="v$have" '
-  $1 == "##" && $2 == want { exit }
-  /^## v/ { v = $2; item = 0; next }
-  item && /[^ \t]/ && !/^#/ && !/^[ \t]*([-*]|[0-9]+\.)[ \t]/ {
-    sub(/^[ \t]+/, ""); print "      " $0; next
-  }
-  { item = 0 }
-  v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none\.?[ \t]*$/ && !/\*\*ACTION:\*\*[ \t]+none\.[ \t]*$/ {
-    print "  " v ": " substr($0, index($0, "**ACTION")); item = 1
-  }
-' "$kit/CHANGELOG.md" > "$pending" ||
+[ "$scanned" -eq 1 ] || items "$kit/CHANGELOG.md" 0 > "$pending" ||
   die "cannot scan the changelog for ACTION items; version left at v$have. Rerun once awk can read $kit/CHANGELOG.md."
 
-if [ -s "$pending" ]; then
-  echo
-  printf '%s\n' "ACTION items since v$have (the full entries are above):"
-  cat "$pending"
+# The checklist, one box per item: a session that applied half the list and then compacted or
+# handed off left the next one the same full list, and one flag confirmed it all (#129). Ticks
+# are kept by an item's text across runs, so an item the kit added or reworded since comes back
+# open. The full entries stay in the kit's changelog: printed whole on every run, they made a
+# v0.8 upgrade print 209 KB, seven times what an agent's shell tool shows (#99).
+list=docs/kit/UPGRADE.md
+render() {
+  awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" '
+    FILENAME == ck { sub(/\r$/, ""); if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }
+    !head { head = 1
+      print "# Upgrade checklist, v" from " to v" to; print ""
+      print "Written by sync-kit.sh, one box per ACTION item, the oldest version first. Apply each item"
+      print "and tick its box (- [x]) when it is done; each one'\''s whole entry is in " src "."
+      print "Then rerun sync-kit.sh with --actions-applied: it records v" to " only when every box is"
+      print "ticked, and deletes this file."; print "" }
+    { i = index($0, "\t"); t = substr($0, 1, i - 1) ": " substr($0, i + 1); print "- [" (t in done ? "x" : " ") "] " t }
+  ' "$1" "$pending"
+}
+echo
+if [ ! -s "$pending" ]; then
+  [ "$have" != "$latest" ] || echo "sync-kit: already current: nothing new to apply by hand since the last sync."
+elif [ "$dry" -eq 1 ]; then
+  printf '%s\n' "ACTION items since v$have, oldest first (a real run writes them to $list):"
+  render /dev/null | sed -n 's/^- \[ \] /  /p'
+else
+  why=$(blocked "$list")
+  [ -z "$why" ] || die "conflict: $list ($why); the checklist is not written there. Version left at v$have."
+  if [ -f "$target/$list" ]; then render "$target/$list"; else render /dev/null; fi > "$copies.list" &&
+    put "$target/$list" "$copies.list" || die "could not write $list; version left at v$have"
+  total=$(grep -c '^- \[[ x]\] ' "$copies.list") || :
+  unticked=$(grep -c '^- \[ \] ' "$copies.list") || :
+  printf '%s\n' "sync-kit: $total ACTION items since v$have, oldest first, are in $list; $unticked of them not ticked."
 fi
 
 # --- tier 3, with --merge: the kit's changes merged into the project-owned files ---------
@@ -478,11 +554,15 @@ if [ "$dry" -eq 1 ]; then
   exit 0
 fi
 
-if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
+if [ -s "$pending" ] && { [ "$applied" -eq 0 ] || [ "$unticked" -ne 0 ]; }; then
   echo
-  printf '%s\n' "sync-kit: version left at v$have: the ACTION items above are not confirmed."
-  printf '%s\n' "          Apply them, then rerun with --actions-applied to record v$latest."
-  echo "          Until then every sync prints them again."
+  if [ "$applied" -eq 1 ]; then
+    printf '%s\n' "sync-kit: version left at v$have: $unticked items in $list are not ticked."
+  else
+    printf '%s\n' "sync-kit: version left at v$have: the ACTION items are not confirmed."
+  fi
+  printf '%s\n' "          Apply each item in $list and tick its box, then rerun with" \
+    "          --actions-applied to record v$latest. Until then every sync lists them again."
   exit 2
 fi
 
@@ -514,6 +594,8 @@ $latest
 EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
+[ -n "$(blocked "$list")" ] || [ ! -f "$target/$list" ] || rm -f "$target/$list" ||
+  printf '%s\n' "sync-kit: NOTE: $list is done; remove it"
 if [ -s "$copies.stage" ]; then
   while IFS= read -r rel; do
     if git -C "$target" add --chmod=+x -- "$rel"; then

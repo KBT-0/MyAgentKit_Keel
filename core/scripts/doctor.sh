@@ -299,6 +299,55 @@ if [ -f .claude/settings.json ] && grep -q '"onFailure"' .claude/settings.json 2
   fi
 fi
 
+# --- guard hooks the committed settings do not register (Claude Code overlay) ---------
+# A worktree worker runs HEAD's .claude/settings.json (spawn_worker.sh; the working file only
+# when HEAD has none): a sync copied five guards, the merged settings stayed uncommitted, and
+# every worker ran without them while doctor said ready (#101). Only a file with a #! line is
+# a hook that needs an entry: every kit hook has one (py.sh is named as the wrapper), while a
+# helper module a project's hook imports, or a text file, has none and no entry of its own.
+if [ -d .claude/hooks ]; then
+  if registered=$(git show HEAD:.claude/settings.json 2>/dev/null); then
+    git diff --quiet HEAD -- .claude/settings.json 2>/dev/null ||
+      echo "NOTE: .claude/settings.json differs from the committed one; worktree workers run the committed one, so the owner commits it"
+  else
+    registered=$(cat .claude/settings.json 2>/dev/null)
+  fi
+  # A Windows path (%CLAUDE_PROJECT_DIR%\\.claude\\hooks\\x.py in JSON) is read with slashes,
+  # and a relative one (python3 .claude/hooks/x.py) counts too: only "/" before it did.
+  registered=$(printf '%s\n' "$registered" | sed 's|\\\\*|/|g')
+  for f in .claude/hooks/*; do
+    [ -f "$f" ] || continue
+    first=""; IFS= read -r first < "$f" || true
+    case $first in '#!'*) ;; *) continue ;; esac
+    case $registered in
+      *"/$f"*|*" $f"*|*"\"$f"*|*"'$f"*) ;;
+      *) miss "$f is not registered in the committed .claude/settings.json (worktree workers run without it)" "add its entry from the kit's overlay settings.json and commit it (the owner's edit, docs/UPDATING.md)" ;;
+    esac
+  done
+  # Only $CLAUDE_PROJECT_DIR paths: a user-level hook under ~/.claude/hooks is not this checkout's.
+  # A hook in a subfolder is read whole: cut at its folder, it named one that is no file.
+  for f in $(printf '%s\n' "$registered" | grep -o 'PROJECT_DIR[}%]\{0,1\}/\.claude/hooks/[A-Za-z0-9_./-]*' | sed 's|.*/\.claude/|.claude/|; s|/*$||' | sort -u); do
+    [ -f "$f" ] || miss ".claude/settings.json registers $f, which does not exist" "sync the kit again, or remove the entry and commit settings.json"
+  done
+fi
+
+# --- build output a merged worktree keeps (Claude Code overlay) -----------------------
+# The list ships empty, the safe default: a worktree holding build output is then kept. A
+# project that never filled it kept all eight merged worktrees of a CMake build, 373 MB each
+# (#145). Told, not MISSING: a list left empty on purpose is the owner's choice. The names are
+# the interview's usual ones (setup/INTERVIEW.md, question 10).
+if [ -f .claude/worktree-disposable ] &&
+   ! grep -Ev '^[[:space:]]*(#|quiet-minutes|$)' .claude/worktree-disposable >/dev/null 2>&1; then
+  held=""
+  for d in build node_modules dist target .venv; do
+    for w in .claude/worktrees/*/"$d"; do
+      [ -d "$w" ] && { held="$held${held:+, }$d"; break; }
+    done
+  done
+  [ -z "$held" ] ||
+    printf '%s\n' "NOTE: .claude/worktree-disposable lists no folder, and worktrees hold $held: every merged worktree that holds them is kept. List the build-output folders there, one per line, and ignore them in .gitignore; scripts/clean_worktrees.sh shows what each removal would take"
+fi
+
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.
 # Sources (D02 inv2#145): code.claude.com/docs/en/agent-teams;

@@ -1063,8 +1063,12 @@ class DoctorTests(unittest.TestCase):
         """Run the part of doctor.sh from the line starting with `start` up to `end`, with miss() printing."""
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
         section = start + doctor.split('\n' + start, 1)[1].split('\n' + end, 1)[0]
-        result = subprocess.run([shutil.which('sh'), '-c', 'miss() { echo "MISSING: $1"; }; %s\n%s\n%s' % (prelude, section, suffix)],
-                                cwd=cwd, env=env, capture_output=True, text=True)
+        # From a file: a `sh -c` argument loses backslashes on the Windows command line.
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / 'section.sh'
+            script.write_bytes(('miss() { echo "MISSING: $1"; }; %s\n%s\n%s\n' % (prelude, section, suffix)).encode())
+            result = subprocess.run([shutil.which('sh'), str(script)],
+                                    cwd=cwd, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -1143,6 +1147,77 @@ class DoctorTests(unittest.TestCase):
             (project / '.githooks/pre-push').write_text('#!/bin/sh\nexit 0\n')
             self.assertIn('MISSING: .githooks/pre-push does not run Git LFS', run())
             (project / '.githooks/pre-push').write_text('#!/bin/sh\ngit lfs pre-push "$@"\n')
+            self.assertEqual(run(), '')
+
+    def test_a_hook_file_the_committed_settings_do_not_register_is_not_ready(self):
+        # #101: a sync copied five guards, settings.json was merged but not committed, and
+        # every worktree worker (which runs the committed settings) ran without them.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            git = lambda *args: subprocess.run(['git', '-C', tmp, '-c', 'user.name=t', '-c', 'user.email=t@t',
+                                                *args], capture_output=True, check=True)
+            git('init', '-q')
+            (project / '.claude/hooks').mkdir(parents=True)
+            settings = project / '.claude/settings.json'
+            entry = '"command": "sh \\"$CLAUDE_PROJECT_DIR/.claude/hooks/%s\\""'
+            write = lambda *names: settings.write_text('{%s}\n' % ', '.join(entry % n for n in names))
+            (project / '.claude/hooks/guard_a.py').write_text('#!/usr/bin/env python3\n')
+            # A helper a project's hook imports, and a text file: no #! line, no entry needed.
+            (project / '.claude/hooks/_common.py').write_text('X = 1\n')
+            (project / '.claude/hooks/notes.txt').write_text('text\n')
+            write('guard_a.py')
+            git('add', '-A')
+            git('commit', '-qm', 'base')
+            run = lambda: self.doctor_section('# --- guard hooks the committed settings', '# On native Windows',
+                                              project, os.environ)
+            self.assertEqual(run(), '')
+            (project / '.claude/hooks/guard_b.py').write_text('#!/usr/bin/env python3\n')
+            out = run()
+            self.assertIn('MISSING: .claude/hooks/guard_b.py is not registered in the committed '
+                          '.claude/settings.json', out)
+            self.assertEqual(out.count('MISSING:'), 1, out)
+            write('guard_a.py', 'guard_b.py')  # merged, not committed: the workers still miss it
+            out = run()
+            self.assertIn('MISSING: .claude/hooks/guard_b.py is not registered', out)
+            self.assertIn('NOTE: .claude/settings.json differs from the committed one', out)
+            git('commit', '-qam', 'register')
+            self.assertEqual(run(), '')
+            (project / '.claude/hooks/guard_a.py').unlink()
+            out = run()
+            self.assertIn('MISSING: .claude/settings.json registers .claude/hooks/guard_a.py, which does not exist',
+                          out)
+            self.assertEqual(out.count('MISSING:'), 1, out)
+            # A project's own hooks, registered by a relative or a Windows path, or in a subfolder.
+            for name in ('lint.py', 'win.py', 'lib/run.py'):
+                (project / '.claude/hooks' / name).parent.mkdir(exist_ok=True)
+                (project / '.claude/hooks' / name).write_text('#!/usr/bin/env python3\n')
+            settings.write_text('{"a": "python3 .claude/hooks/lint.py", '
+                                '"b": "%CLAUDE_PROJECT_DIR%\\\\.claude\\\\hooks\\\\win.py", '
+                                '"c": "sh \\"$CLAUDE_PROJECT_DIR/.claude/hooks/lib/run.py\\"", '
+                                + entry % 'guard_b.py' + '}\n')
+            git('add', '-A')
+            git('commit', '-qm', 'project hooks')
+            self.assertEqual(run(), '')
+
+    def test_an_empty_disposable_list_with_build_output_in_worktrees_is_told(self):
+        # #145: the list shipped empty, so every merged worktree that ran the gate kept its build/.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / '.claude/worktrees/w1').mkdir(parents=True)
+            listed = project / '.claude/worktree-disposable'
+            listed.write_text('# comments only\n\nquiet-minutes=30\n')
+            run = lambda: self.doctor_section('# --- build output a merged worktree keeps', '# On native Windows',
+                                              project, os.environ)
+            self.assertEqual(run(), '')  # no build output in a worktree
+            (project / '.claude/worktrees/w1/build').mkdir()
+            (project / '.claude/worktrees/w1/node_modules').mkdir()
+            out = run()
+            self.assertIn('NOTE: .claude/worktree-disposable lists no folder, and worktrees hold build, node_modules',
+                          out)
+            self.assertEqual(out.count('\n'), 1, out)
+            listed.write_text('# a list\nbuild\n')
+            self.assertEqual(run(), '')
+            listed.unlink()  # no list: the clean-up is off, nothing to tell here
             self.assertEqual(run(), '')
 
     def test_missing_mode_helper_names_the_command_not_the_gate(self):
