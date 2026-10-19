@@ -517,13 +517,24 @@ class CodexWorkerTests(unittest.TestCase):
     def test_wait_reports_a_supervisor_that_never_started(self):
         # #191: a tab whose `cd` or python failed runs no supervisor, which writes neither the .live
         # nor the exit record; the wait polled forever. Once .live is there it stays open-ended.
+        # r1: 120 s fired on a loaded host while the supervisor was still starting; the bound is 300 s.
         with tempfile.TemporaryDirectory() as tmp:
             result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
-            args = [sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(time.time() - 200),
+            loaded = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since',
+                                       str(time.time() - 200), '--exit', str(record)],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                time.sleep(1.5)
+                self.assertIsNone(loaded.poll(), 'a launch 200 s ago was reported as never started')
+            finally:
+                loaded.kill()
+                loaded.communicate()
+            args = [sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(time.time() - 400),
                     '--exit', str(record)]
             waiter = subprocess.run(args, capture_output=True, text=True, timeout=10)
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
-            self.assertIn('NOT STARTED: no supervisor record within 120 s', waiter.stdout)
+            self.assertIn('NOT STARTED: no supervisor record within 300 s', waiter.stdout)
+            self.assertIn('running the same wait again is safe', waiter.stdout)
             record.with_suffix('.live').write_bytes(b'')  # started; an empty record is no ended supervisor
             waiter = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:

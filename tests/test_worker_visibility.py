@@ -830,6 +830,36 @@ class ResultTests(Base):
                 if not platform:
                     self.assertEqual(watch().stdout, '', 'the same result was reported twice')
 
+    def published(self, data):
+        # An uncommitted docs/w1.md this run published: newer than NAME.result-path.
+        start = self.cwd / '.myagentkit/workers/w1.result-path'
+        start.parent.mkdir(parents=True, exist_ok=True)
+        start.write_text('docs/w1.md\n')
+        then = time.time() - 60
+        os.utime(start, (then, then))
+        self.file.write_bytes(data)
+
+    def test_a_bom_result_is_done_as_codex_worker_reads_it(self):
+        # A UTF-8 BOM (PowerShell 5.1 Set-Content -Encoding UTF8) was MALFORMED here but DONE
+        # for codex_worker.py; both the working file and the committed blob are read the same way.
+        done = 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none (result file docs/w1.md)\n'
+        data = b'\xef\xbb\xbf' + (HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n').encode()
+        self.published(data)
+        self.assertEqual(self.watch().stdout, done, 'the uncommitted BOM result')
+        self.commit(data + b'more\n')
+        self.assertEqual(self.watch().stdout, done, 'the committed BOM result')
+
+    def test_a_crlf_result_committed_later_is_not_reported_again(self):
+        # Under core.autocrlf=true the committed blob is LF: the once-marker of the uncommitted
+        # CRLF file must be the blob git stores, or the commit reports the same result twice.
+        self.git('config', 'core.autocrlf', 'true')
+        data = (HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n').replace('\n', '\r\n').encode()
+        self.published(data)
+        self.assertIn('DONE: w1', self.watch().stdout)
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'r')
+        self.assertEqual(self.watch().stdout, '', 'the same result was reported again after its commit')
+
     def test_a_malformed_head_is_never_done(self):
         for head, why in (('', 'line 1'), ('Kind: finished\nTask: T\nAttempt: 1\nRemaining: none\n', 'line 1'),
                           ('# Result\n' + HEAD % ('completed', 'none'), 'line 1'),

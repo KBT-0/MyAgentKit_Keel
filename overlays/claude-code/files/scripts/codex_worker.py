@@ -20,7 +20,8 @@ REFUSED = {}  # path: its consecutive refusals
 SETTLED = 60  # seconds a changed file sits unchanged before --wait calls it NOT A RESULT
 # A bound, not a measurement: the supervisor writes its .live record before it launches the worker,
 # so a run with neither that record nor an exit record this long after its launch never started.
-START = 120
+# Wide enough for a loaded Windows host, where the tab's shell and python can take minutes to start.
+START = 300
 STALE_LOCK = 600  # seconds an index.lock sits unchanged, with no gate running, before it counts as left behind
 CHECKED = {}  # path: (id, size, mtime_ns) last read by not_a_result, and its verdict
 
@@ -415,8 +416,8 @@ def main():
                     started = True  # a record that cannot be read is no proof it is missing
                 if not started:
                     print('codex_worker: NOT STARTED: no supervisor record within %d s of the launch (its tab '
-                          'or session failed before the supervisor ran: look at it) and no new result: %s'
-                          % (START, result), flush=True)
+                          'or session failed before the supervisor ran: look at it; running the same wait '
+                          'again is safe) and no new result: %s' % (START, result), flush=True)
                     return 0
             time.sleep(0.1)
     if sys.argv[1:2] == ['--publish']:

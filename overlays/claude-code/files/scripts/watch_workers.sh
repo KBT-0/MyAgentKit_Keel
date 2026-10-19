@@ -277,8 +277,10 @@ report() {
   say "  look at it: scripts/show_workers.sh $name   (or: tmux attach -t $name)" || return 2
 }
 
-# Line $1 of file $2, control bytes and trailing blanks removed.
-hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
+# Line $1 of file $2, a leading UTF-8 BOM (codex_worker.py reads past it too, #169), control
+# bytes and trailing blanks removed.
+bom=$(printf '\357\273\277')
+hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C sed "s/^$bom//" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
 
 # Report NAME's result file and return 0 when it is committed and its tree is clean, or it is
 # not in HEAD and this run published it (the header says how), and this version was not
@@ -319,7 +321,9 @@ EOF
     cat -- "$f" >"$body" 2>/dev/null || return 1
     ready=$(LC_ALL=C tr -d '\r' <"$body" | LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)
     [ "$ready" = '<!-- codex-worker: ready -->' ] || return 1
-    blob=$(git hash-object --stdin <"$body" 2>/dev/null) || return 1
+    # Hashed as git would store it (eol and attribute filters of its path): a later commit of
+    # the same content under core.autocrlf=true has this id and is not reported again.
+    blob=$(git -C "$d" hash-object --path="${f##*/}" --stdin <"$body" 2>/dev/null) || return 1
     [ "$(mark "$1" result)" != "$blob" ] || return 1
   else
     mode=${entry%% *}; blob=${entry#* }; blob=${blob#* }; blob=${blob%%"	"*}
