@@ -161,12 +161,12 @@ class Base(unittest.TestCase):
         argv = sh_argv(script, args, env, redirect)
         if stdout is not None:
             return subprocess.run(argv, cwd=self.cwd, env=env, stdout=stdout,
-                                  stderr=subprocess.PIPE, text=True, timeout=60)
-        return subprocess.run(argv, cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60)
+                                  stderr=subprocess.PIPE, text=True, encoding='utf-8', timeout=60)
+        return subprocess.run(argv, cwd=self.cwd, env=env, capture_output=True, text=True, encoding='utf-8', timeout=60)
 
     def log(self, name):
         path = self.state / (name + '.log')
-        return path.read_text() if path.exists() else ''
+        return path.read_text(encoding='utf-8') if path.exists() else ''
 
     def full_buffer(self):
         # A `tr` first on PATH whose write into a regular file fails: the watcher's report
@@ -237,7 +237,7 @@ class ShowTests(Base):
                 env = dict(os.environ, PATH=os.pathsep.join([str(self.bin), os.environ['PATH']]),
                            VIS_STATE=str(self.state), KIT_WT=posix(self.bin / 'wt-stub'), **self.WSL)
                 result = subprocess.run(['sh', str(SHOW), '--print', 'a'], cwd=self.cwd / where, env=env,
-                                        capture_output=True, text=True, timeout=60)
+                                        capture_output=True, text=True, encoding='utf-8', timeout=60)
                 self.assertIn("'-w' '0' 'new-tab'", result.stdout, result.stderr)
 
     def test_macos_print_uses_iterm_tabs_or_terminal_windows(self):
@@ -437,7 +437,7 @@ class WatchTests(Base):
     def test_the_absence_wordings_are_those_of_close_worker(self):
         lists = []
         for script in (WATCH, SCRIPTS / 'close_worker.sh'):
-            lines = [line.strip() for line in script.read_text().splitlines() if line.strip().endswith(') return 1 ;;')]
+            lines = [line.strip() for line in script.read_text(encoding='utf-8').splitlines() if line.strip().endswith(') return 1 ;;')]
             lists.append(lines)
         self.assertEqual(len(lists[0]), 2, lists)
         self.assertEqual(lists[0], lists[1])
@@ -488,7 +488,7 @@ class WatchTests(Base):
     def test_the_pattern_table_lists_every_rule_with_its_flag(self):
         result = self.run_script(WATCH, '--list-patterns')
         self.assertEqual(result.returncode, 0, result.stderr)
-        rules = [line for line in (SCRIPTS / 'waiting_patterns.txt').read_text().splitlines()
+        rules = [line for line in (SCRIPTS / 'waiting_patterns.txt').read_text(encoding='utf-8').splitlines()
                  if line.strip() and not line.startswith('#')]
         self.assertEqual(len(result.stdout.splitlines()), len(rules) + 1)
         for rule in rules:
@@ -740,7 +740,7 @@ class ResultTests(Base):
         spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
-        self.assertEqual(gate.case_in_substitution(WATCH.read_text()), [])
+        self.assertEqual(gate.case_in_substitution(WATCH.read_text(encoding='utf-8')), [])
         before = ('result() {\n  f=$(printf \'%s\\n\' "$results" | while IFS= read -r r; do\n'
                   '    case $r in "$1="*) printf \'%s\\n\' "${r#"$1="}" ;; esac\n  done | tail -n 1)\n}\n')
         self.assertEqual(gate.case_in_substitution(before), [3])
@@ -965,7 +965,7 @@ class ContextTests(Base):
         lines = [line for line in text.replace(STATUS, status).splitlines() if not (drop and '│' in line)]
         lines = ([quote] if quote else []) + lines + list(after)
         pane = self.tmp / 'pane.txt'
-        pane.write_text('\n'.join(lines) + '\n')
+        pane.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         return self.run_script(WATCH, *args, 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane), LC_ALL='C',
                                path_first=path_first)
 

@@ -281,8 +281,8 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 result = self.run_script(path, '--dry-run', 'fixture')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('fixture: no worktree at .claude/worktrees/fixture; nothing to remove', result.stdout)
-
-
     test_close_finds_its_auditor_without_ending_any_process._kit_platform_skip = os.name != 'nt'
+
+
 if __name__ == '__main__':
     unittest.main()

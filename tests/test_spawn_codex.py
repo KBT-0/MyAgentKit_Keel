@@ -134,7 +134,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def win(self, path, flag='-w'):
         if WINDOWS:
-            return subprocess.run(['cygpath', flag, str(path)], capture_output=True, text=True,
+            return subprocess.run(['cygpath', flag, str(path)], capture_output=True, text=True, encoding='utf-8',
                                   check=True).stdout.rstrip('\n')
         return 'C:' + str(path).replace('/', '\\') if flag == '-w' else str(path)
 
@@ -145,7 +145,7 @@ class SpawnCodexTests(unittest.TestCase):
             (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
             (self.bin / 'uname').chmod(0o755)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
-                              capture_output=True, text=True, timeout=60 * SCALE)
+                              capture_output=True, text=True, encoding='utf-8', timeout=60 * SCALE)
 
     def publisher(self, stdout):
         """The interpreter and codex_worker.py as spawn names them, read from its printed wait command."""
@@ -154,7 +154,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def runs(self):
         path = self.state / 'codex.log'
-        return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
+        return [json.loads(l) for l in path.read_text(encoding='utf-8').splitlines()] if path.exists() else []
 
     def test_a_worker_starts_sandboxed_without_git_roots_and_its_session_recorded(self):
         result = self.spawn('w1', str(self.brief), '--model', 'gpt-x', '--effort', 'high', '--worktree')

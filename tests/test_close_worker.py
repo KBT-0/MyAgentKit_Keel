@@ -577,7 +577,7 @@ class CloseWorkerTests(unittest.TestCase):
         # Finished, w1 is closed by the next merge; w2 still is not. Its result is where the brief
         # named it, outside the worktree, as spawn_worker.sh --result records it.
         reports = self.main / '.myagentkit/workers'
-        reports.mkdir(parents=True)
+        reports.mkdir(parents=True, exist_ok=True)  # w1's merged-running marker made it (#195)
         (reports / 'w1.result-path').write_text((self.tmp / 'RESULT-w1.md').as_posix() + '\n')
         # Spawn records the run before its worker can publish a result. Reversing these
         # writes makes a finished result stale on filesystems with subsecond timestamps.
