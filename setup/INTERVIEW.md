@@ -436,6 +436,12 @@ which is how a check ends up enforcing nothing while everything still reports gr
 mistake has already been made twice in this kit's history, which is why every other
 placeholder is either a quoted value or a whole file.
 
+Two values sit beside `{{BUILD_TEST_COMMAND}}` in `scripts/check.sh`, not placeholders: a commit
+that changes only `.md` files skips the build. Ask "Does the build or a test read a markdown
+file? Which?" A build that reads them all (a documentation site) sets `docs_only_skip_build=0`;
+a few named ones (a doc test, a generated page) go into `docs_always_build`, space-separated
+paths or globs (`docs/api/*.md README.md`), and a commit that changes one builds.
+
 ### Process
 
 | Placeholder | What goes in |

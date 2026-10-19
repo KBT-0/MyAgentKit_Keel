@@ -194,6 +194,26 @@ class GitHookTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(mark.exists(), result.stdout + result.stderr)
             self.assertIn('build not run: documentation-only commit, 1 file)', result.stdout + result.stderr)
+            # A document the build reads is listed in docs_always_build: it builds, an unlisted
+            # one still skips (#97).
+            gate = root / 'scripts/check.sh'
+            self.assertIn('docs_always_build=""', gate.read_text(encoding='utf-8').splitlines())
+            gate.write_bytes(gate.read_bytes().replace(b'docs_always_build=""',
+                                                       b'docs_always_build="docs/*.md README.md"', 1))
+            git('add', 'scripts/check.sh')
+            git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'list')
+            (root / 'docs/api.md').write_text('api\n', encoding='utf-8')
+            git('add', 'docs/api.md')
+            result = git('commit', '-q', '-m', 'api', check=False)
+            self.assertNotEqual(result.returncode, 0, 'a listed document skipped the failing build')
+            self.assertTrue(mark.exists(), result.stdout + result.stderr)
+            git('reset', '-q', '--hard', 'HEAD')
+            mark.unlink()
+            (root / 'notes.md').write_text('more notes\n', encoding='utf-8')
+            git('add', 'notes.md')
+            result = git('commit', '-q', '-m', 'notes', check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(mark.exists(), result.stdout + result.stderr)
             (root / 'code.c').write_text('int x;\n', encoding='utf-8')
             git('add', 'code.c')
             result = git('commit', '-q', '-m', 'code', check=False)

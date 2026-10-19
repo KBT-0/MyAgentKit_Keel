@@ -846,8 +846,12 @@ fi
 build_test_cmd="{{BUILD_TEST_COMMAND}}"
 # A commit that changes only documentation skips the build/test command, and nothing else:
 # every scan and check above has run. A project's gate built for minutes on every such commit.
-# 1: on. 0: off, for a project whose build reads markdown (a documentation site, doc tests).
+# 1: on. 0: off, for a project whose build reads markdown everywhere (a documentation site).
 docs_only_skip_build=1
+# The documents a build or a test does read (a doc test, a generated page): a commit that
+# changes one builds (#97). Space-separated paths or globs from the top of the repository,
+# matched as Python's fnmatch.fnmatchcase does (a * also crosses a /): "docs/api/*.md README.md".
+docs_always_build=""
 # BUILD CACHE. One change ran the same build three or four times on the same files: the
 # worker, the Stop hook, the commit hook, the merge hook (#82). A build that passed is recorded
 # under a key, and a later run whose key matches skips the build and says so in its PASS line;
@@ -961,7 +965,7 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     docs_only=""
     if [ -n "$for_commit" ] && [ "$docs_only_skip_build" = 1 ]; then
       docs_only=$(python3 -c '
-import subprocess, sys
+import fnmatch, os, subprocess, sys
 def git(*args):
     return subprocess.run(("git",) + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
@@ -981,8 +985,10 @@ for meta, path in zip(fields[0::2], fields[1::2]):
     if not ((status == b"A" and new in regular) or (status == b"D" and old in regular) or
             (status == b"M" and old in regular and new in regular)):
         sys.exit(1)
+    if any(fnmatch.fnmatchcase(os.fsdecode(path), glob) for glob in sys.argv[1].split()):
+        sys.exit(1)
 print(len(fields) // 2)
-' 2>/dev/null) || docs_only=""
+' "$docs_always_build" 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
     if [ -n "$docs_only" ]; then
