@@ -626,6 +626,16 @@ if [ -n "$for_commit" ]; then
     echo "             file. A [LESSON] or [GOTCHA] line keeps until it has a permanent home (docs/AGENTS.md):"
     printf '%s\n' "$dropped" | sed 's/^-/               /' | head -10
   fi
+  # The gate reads the working tree, not the index (#109): an unstaged edit or an untracked
+  # file is checked and built, and the commit lacks it (a forgotten `git add`). Told, not
+  # failed: other agents' files in a shared tree are the normal case.
+  unrecorded=$({ hgit diff --name-only; hgit ls-files --others --exclude-standard; } 2>/dev/null | sort -u)
+  if [ -n "$unrecorded" ]; then
+    echo "NOTE [scan]: the gate checked the working tree; these paths are not what this commit records:"
+    printf '%s\n' "$unrecorded" | head -10 | sed 's/^/             /'
+    unrecorded_count=$(printf '%s\n' "$unrecorded" | wc -l)
+    [ "$unrecorded_count" -le 10 ] || echo "             and $((unrecorded_count - 10)) more"
+  fi
 fi
 
 # The strong review cycle runs at least every STRONG_REVIEW_DAYS days or after

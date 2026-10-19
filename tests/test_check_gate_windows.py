@@ -912,6 +912,22 @@ class GateRuleTests(unittest.TestCase):
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
 
+    def test_the_commit_gate_names_the_paths_the_commit_does_not_record(self):
+        # The gate reads the working tree: an unstaged edit or an untracked file was checked
+        # and built, and the commit lacked it (#109).
+        self.write('notes.md', 'staged\n')
+        self.git('add', 'notes.md')
+        self.write('notes.md', 'staged, then edited\n')
+        self.write('new_test.c', 'int t;\n')
+        code, out = self.run_gate('--for-commit')
+        self.assertEqual(code, 0, out)
+        self.assertIn('NOTE [scan]: the gate checked the working tree; these paths are not what this commit records:', out)
+        self.assertIn('             notes.md\n', out)
+        self.assertIn('             new_test.c\n', out)
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('not what this commit records', out)
+
     def test_a_module_may_be_named_by_its_path_from_the_top(self):
         # A map naming `src/app/` or game/sim, as the template's table invites, failed every
         # module (#88, #141). A path under another root names nothing there.
