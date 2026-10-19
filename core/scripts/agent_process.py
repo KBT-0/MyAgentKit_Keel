@@ -644,15 +644,20 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     except OSError:
                         pass  # only the grace's look: the wait once the pipes close reports the fault
                     return gone is not None and time.monotonic() - gone >= DRAIN_GRACE_SECONDS
-                looked = started
+                looked, took = started, 0.0
 
                 def changed():
                     # The checkout changed: the review is stale, stopped now, not at its end (#118).
-                    nonlocal looked
-                    if watch is None or time.monotonic() - looked < WATCH_SECONDS:
+                    # The minute counts from a look's end, so a slow look is not repeated back to
+                    # back, and a look the last one's length would carry past the deadline is skipped.
+                    nonlocal looked, took
+                    now = time.monotonic()
+                    if watch is None or now - looked < WATCH_SECONDS or took >= timeout - (now - started):
                         return False
+                    stale = bool(watch())
                     looked = time.monotonic()
-                    return bool(watch())
+                    took = looked - now
+                    return stale
                 # 8,000,000 bytes per stream is the owner's choice of safety cap,
                 # not a provider limit (B03 inv2#65).
                 while not POSIX and open_streams:

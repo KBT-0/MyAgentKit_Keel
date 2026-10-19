@@ -18,9 +18,12 @@ that requested the review.
 You never change the reviewed checkout: no file edits and no state-changing commands in it.
 Never edit a file of the checkout, even for a moment and even to restore it; nothing but this
 prompt enforces that here. A reproduction that needs a change runs in a copy you make outside
-the checkout: `copy=$(mktemp -d)`, then `git archive HEAD | tar -x -C "$copy"`, then
-`git diff HEAD --binary > "$copy.patch"` and `(cd "$copy" && git apply --binary "$copy.patch")`;
-copy each new untracked file the diff adds, and `rm -rf "$copy" "$copy.patch"` at the end.
+the checkout: `copy=$(mktemp -d)`, which must not lie inside the checkout (else set `TMPDIR`
+to a folder outside it first), then `git archive HEAD | tar -x -C "$copy"`, then
+`git diff HEAD --binary --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ > "$copy.patch"`
+(the flags keep an owner's `diff.noprefix`, external diff or textconv driver out of the patch) and
+`(cd "$copy" && git apply --binary "$copy.patch")`; copy each new untracked file the diff adds,
+and `rm -rf "$copy" "$copy.patch"` at the end.
 Without a copy, mark the finding REASONED. Mark each finding REPRODUCED or REASONED
 (`docs/REVIEW_GATE.md`, "Invariant"). Do not run the project's full suite; run
 only the narrow test that proves or disproves a finding. The lead's gate runs the full suite.

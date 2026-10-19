@@ -2865,6 +2865,25 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((result['termination'], len(looks)), ('stale_checkout', 2))
         self.assertLess(result['duration_ms'], 20000)
 
+    def test_a_slow_look_waits_its_interval_and_never_runs_past_the_deadline(self):
+        # rpipe review Low: the interval ran from a look's start, so a look as slow as it ran back
+        # to back, and a look begun near the deadline ran the reviewer past it. Looks of 3 s every
+        # 2 s with an 8 s limit: one at 2 s (ends 5 s), the next due at 7 s would end past 8 s.
+        from unittest.mock import patch
+        import agent_process
+        looks = []
+
+        def watch():
+            looks.append(True)
+            time.sleep(3)
+            return False
+
+        with patch.object(agent_process, 'WATCH_SECONDS', 2):
+            result = agent_process.run([sys.executable, '-c', 'import time; time.sleep(60)'], '',
+                                       self.root, 8, watch=watch)
+        self.assertEqual((result['termination'], len(looks)), ('timeout', 1))
+        self.assertLess(result['duration_ms'], 9500)
+
     def test_both_adapters_stop_a_review_whose_checkout_changed_during_it(self):
         # #118: each adapter hands run() a look at the checkout; a change seen there stops the
         # reviewer, and the review fails as stale_checkout without waiting for its end.
@@ -2893,6 +2912,9 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(looks, [False, True])
                 self.assertEqual((received[0]['status'], received[0]['failure_kind']),
                                  ('failed', 'stale_checkout'), received[0])
+                if name == 'claude':
+                    # A launched run's stop is named as such, never "Claude never ran".
+                    self.assertIn('the reviewer was stopped early', received[0]['error'])
 
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the

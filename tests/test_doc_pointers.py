@@ -114,7 +114,7 @@ class SectionPointerTests(unittest.TestCase):
                      'A review is finished only when that latest record has status `completed`, or status `failed` and no `next_attempt`.',
                      'The number of possible attempts is one, plus up to two capacity retries of Codex (a wait of up to 20 minutes before each), plus one quota switch or fallback.',
                      'Use the mtime of `<chain>-0.json` as the review start time.',
-                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`), unless the latest record shows it is finished as above.',
+                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times the number of possible attempts plus the capacity waits and overhead (about 4 h 40 min with 3600 s: four attempts and two 20-minute waits), unless the latest record shows it is finished as above.',
                      'This window is a lower bound, not proof that an orphaned reviewer stopped.',
                      'After the window, the lead still confirms completion in the process listing.',
                      'On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.',
@@ -128,6 +128,8 @@ class SectionPointerTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 self.assertIn(rule, gotchas)
         self.assertNotIn("grep -v -F 'grep -F'", gotchas)
+        # rpipe review Low: "about two hours" was the window before the capacity retries counted.
+        self.assertNotIn('about two hours', gotchas)
         self.assertNotIn('every other row is a survivor', gotchas)
         self.assertNotIn('It ignores its own rows', gotchas)
         self.assertNotIn("Only a review's own reviewer process holds no checkout lock.", gotchas)
@@ -200,6 +202,10 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn("the author's side's early check, not the gate's review", reviewer)
         self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
         self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
+        # rpipe review Low: without the bridge's flags an owner's diff.noprefix broke `git apply`
+        # in the copy, and a TMPDIR inside the checkout put the copy in the reviewed repository.
+        self.assertIn('git diff HEAD --binary --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/', reviewer)
+        self.assertIn('must not lie inside the checkout', reviewer)
         self.assertNotIn('its reading list', reviewer)
         self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
 
