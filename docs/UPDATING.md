@@ -128,7 +128,7 @@ The gate (`scripts/check.sh` and its lock), `scripts/review.sh` and the
 checklists in `CHANGELOG.md` share one threat model. A project has one owner, who works with
 agents. The threat model was written in v0.10 after six review rounds in which each fix
 exposed an "adjacent path"; a finding outside it is answered with this section, not a fix
-(`docs/REVIEW_GATE.md`, "A review loop").
+(`docs/REVIEW_GATE.md`, "Rounds").
 
 - **In scope: mistakes and accidents of the owner and the agents.** A killed process or a
   Ctrl-C at any point. A file left behind by a killed run. A CRLF checkout. A symlink the

@@ -568,7 +568,7 @@ the review tier (`docs/REVIEW_GATE.md`, "Risk tiers"). `Checks:` lists what the 
 on top of the gate, never instead of it (rule 9 of "Worker cost": the gate always runs): for
 low, the tests of the touched files; for medium, the focused suites, plus the project's
 packaging consistency check when it has one, a check of seconds such as the kit's
-`python scripts/package_codex_plugin.py --check` (the package build itself runs once after
+`python3 scripts/package_codex_plugin.py --check` (`python` on native Windows) (the package build itself runs once after
 the merge, rule 9); for high, the full gate run by hand and a careful diff read. The lead session changes
 its model only at a task boundary, never mid-task, because a model switch rebuilds the prompt
 cache at full price; an effort switch keeps the cache on Claude, and still waits for the
@@ -621,7 +621,7 @@ Rules for whoever routes work, binding with any table:
    ChatGPT sign-in too (learn.chatgpt.com/docs/models).
 5. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
    lead counts review rejects and rework per tier and moves the boundaries where they show.
-   `python3 scripts/usage_summary.py` gives the review side: rounds, verdicts, rejects and
+   `python3 scripts/usage_summary.py` (`python` on native Windows) gives the review side: rounds, verdicts, rejects and
    the author-claimed acceptance rate (`accepted=`) per task and per model, effort and
    backend. The rate informs; nothing switches a reviewer off by itself. For reviewer
    acceptance, use the decided-finding sample and distinct-rated-round floors in
@@ -781,7 +781,7 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   ("Worker cost", rule 2), and each focus gets the label's two rounds
   (`docs/REVIEW_GATE.md`, "Rounds").
 - **Quota:** before the switch to cross and before a large Codex errand, the lead reads
-  Codex's allowance (`python3 scripts/codex_quota.py`). A Codex worker stopped by its quota
+  Codex's allowance (`python3 scripts/codex_quota.py`, `python` on native Windows). A Codex worker stopped by its quota
   leaves its session id in the task's STATE line, and `spawn_codex.sh ... --resume`
   continues it once the allowance resets.
 - **Measured before it is fixed:** the split above is provisional. For the first ten Codex

@@ -2,7 +2,7 @@
 
 The kit collects what people, AI vendors and our own projects have learned about building
 software with AI agents, and keeps itself current with it. Every rule, workflow and
-decision in the kit stands on a source (`CONTRIBUTING.md`, "Every change cites its source"),
+decision in the kit stands on a source (`CONTRIBUTING.md`, "Before you open a pull request"),
 and the reports below are where most of those sources live. Read them to see why the kit
 works the way it does; cite them, by file and finding number, when you change it.
 

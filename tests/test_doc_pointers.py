@@ -305,19 +305,45 @@ class SectionPointerTests(unittest.TestCase):
         # A pointer such as (`docs/WORKFLOW.md`, "Writing a gate") sends an agent to one section
         # instead of the whole file; a renamed heading would send it nowhere.
         pattern = re.compile(r'`((?:docs/)?[A-Z_]+\.md)`,\s+(?:the four\s+)?"([^"]+)"')
-        sources = [ROOT / 'core/AGENTS.md'] + sorted((ROOT / 'core/docs').glob('*.md'))
+        # #159: the kit's own docs cite sections too; a kit doc names a project path (core/) or its own.
+        sources = ([ROOT / 'core/AGENTS.md'] + sorted((ROOT / 'core/docs').glob('*.md'))
+                   + sorted((ROOT / 'docs').glob('*.md')) + [ROOT / 'docs/research/README.md', ROOT / 'README.md'])
         checked = 0
         for path in sources:
             text = re.sub(r'\s+', ' ', path.read_text(encoding='utf-8'))
             for target, section in pattern.findall(text):
                 with self.subTest(source=path.name, target=target, section=section):
+                    cited = source(target) if source(target).is_file() else ROOT / target
                     # A heading, or a bold label inside a list (HANDOFF's "**Proof:**").
-                    names = headings(source(target))
+                    names = headings(cited)
                     self.assertTrue(any(h == section or h.startswith(section + ' ') for h in names)
-                                    or '**' + section + ':**' in source(target).read_text(encoding='utf-8'),
+                                    or '**' + section + ':**' in cited.read_text(encoding='utf-8'),
                                     '%s names "%s" in %s, which has no such heading' % (path.name, section, target))
                     checked += 1
         self.assertGreater(checked, 10)
+
+    def test_documented_plugin_counts_match_the_shipped_directories(self):
+        # #159: README named three commands after mode.md shipped, CODEX.md two skills of three.
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+        for command in (ROOT / 'plugin/commands').glob('*.md'):
+            self.assertIn('`/myagentkit:%s`' % command.stem, readme)
+        skills = [d for d in (ROOT / 'plugins/myagentkit/skills').iterdir() if d.is_dir()]
+        words = {2: 'two', 3: 'three', 4: 'four', 5: 'five'}
+        self.assertIn('The Codex plugin packages %s skills' % words[len(skills)],
+                      ' '.join((ROOT / 'docs/CODEX.md').read_text(encoding='utf-8').split()))
+
+    def test_documented_python_commands_name_the_windows_form(self):
+        # #160: a bare `python3 scripts/...` opens the Store alias or fails on a python.org
+        # Windows install, and a bare `python` is absent on macOS; each doc names both forms.
+        docs = ([ROOT / 'README.md', ROOT / 'CONTRIBUTING.md'] + sorted((ROOT / 'docs').glob('*.md'))
+                + sorted((ROOT / 'core').rglob('*.md')) + sorted((ROOT / 'setup').glob('*.md')))
+        for path in docs:
+            text = path.read_text(encoding='utf-8')
+            with self.subTest(doc=str(path.relative_to(ROOT))):
+                self.assertIsNone(re.search(r'(?<![\w-])python (core/)?scripts/', text))
+                if re.search(r'python3 (core/)?scripts/', text):
+                    self.assertTrue('`python` on native Windows' in ' '.join(text.split())
+                                    or 'native Windows: python instead of python3' in text)
 
     def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
         # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,

@@ -12,8 +12,8 @@ Claude and Codex reviews every change Claude wrote, a low-tier one included
 reverse, and for what in-session delegation does and does not exist on each side, see
 [delegation-is-not-symmetric.md](delegation-is-not-symmetric.md).
 
-The Codex plugin packages two skills, both standard-library-only review adapters, and
-their shared failover dispatcher.
+The Codex plugin packages three skills (review, delegate and mode), the standard-library-only
+review adapters behind them and their shared failover dispatcher.
 Existing repositories must merge the kit's `core/.gitignore` private-record exclusions
 before launching the plugin adapters. Ignored, untracked storage is now checked before
 model work and during publication; tracked diagnostics and symlinked storage are refused.
@@ -27,6 +27,7 @@ and makes no change to the existing Claude Code plugin.
 Run from the kit checkout after validating and reviewing the change:
 
 ```sh
+# native Windows: python instead of python3
 python3 scripts/package_codex_plugin.py
 codex plugin marketplace add /absolute/path/to/MyAgentKit_Keel
 codex plugin add myagentkit@personal

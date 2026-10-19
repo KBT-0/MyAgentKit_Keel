@@ -13,7 +13,8 @@
 #
 # --resume answers a worker that stopped for a decision IN ITS OWN SESSION: the BRIEF_FILE then
 # holds the answer, and `codex resume` keeps everything the session read, where a fresh session
-# reads it all again (docs/WORKFLOW.md, "A stopped worker is answered in its own session").
+# reads it all again (docs/WORKFLOW.md, "The measurements and the full rules", the paragraph
+# "A stopped worker is answered in its own session").
 # Without SESSION_ID it takes the id this script recorded when it started the worker. With
 # --worktree it resumes in the existing .claude/worktrees/NAME.
 #

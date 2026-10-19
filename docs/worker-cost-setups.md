@@ -86,7 +86,7 @@ three times, from 36k to 711k over 377 requests (RESEARCH_LOG, 2026-10-03).
 
 ## Read the measurements
 
-Run `python3 scripts/agent_cost.py --latest` alongside `/usage` at handoff, with completed
+Run `python3 scripts/agent_cost.py --latest` (`python` on native Windows) alongside `/usage` at handoff, with completed
 task counts. `/usage`'s Session block totals the session and includes a separate subagent
 breakdown. Only its `Prompt cache (main)` line covers the main conversation alone;
 the analyzer also reads worker transcripts (KARARLAR D06 inv1#172/#287;
