@@ -114,14 +114,15 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=6, test_context_buckets=6, test_owns_check=6),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 20,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 37, 'test_acceptance': 20,
               'test_review_upgrade': 5 if os.name == 'nt' else 6,
-              'test_scan_gate': 1, 'test_gate_checks': 12 if symlinks_work() else 11, 'test_unity_gate': 10, 'test_kit_wrapper': 6,
-              'test_check_gate': 20, 'test_check_gate_windows': 36 if os.name == 'nt' else 10,
-              'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 3, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 11, 'test_guard_destructive_git': 65, 'test_guard_boundaries': 1, 'test_guard_private_email': 10,
-              'test_spawn_worker': 55 if os.name == 'nt' else 75, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
+              'test_scan_gate': 1, 'test_gate_checks': 12 if symlinks_work() else 11, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
+              'test_check_gate': 20, 'test_check_gate_windows': 35 if os.name == 'nt' else 11,
+              'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
+              'test_sync_kit': 40 if sys.platform.startswith('linux') else 42, 'test_doctor': 9, 'test_git_hooks': 31, 'test_stop_hook': 3, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 11, 'test_guard_destructive_git': 65, 'test_guard_boundaries': 1, 'test_guard_private_email': 10,
+              'test_spawn_worker': 55 if os.name == 'nt' else 75, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 12,
               'test_usage_summary': 25, 'test_done_audits': 2,
-              'test_kit_output': 1, 'test_kit_runner': 46, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 14 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 46, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 14 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
               'test_close_worker': 34, 'test_python_fallback': 2},
 }
@@ -298,7 +299,10 @@ def degree(cpus, units):
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
+# Output is read as UTF-8 unless a caller says otherwise: a test file run without UTF-8 mode
+# (not under the kit check) read "—" in the ANSI code page and failed a passing check (#275).
 def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300, **popen):
+    popen = dict({'encoding': 'utf-8', 'errors': 'replace'}, **popen)
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
                             timeout=limit(timeout), **popen)
     output = result.stdout + result.stderr
@@ -713,6 +717,7 @@ def bash_5_2():
     for path in tried:
         try:
             version = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10,
+                                     encoding="utf-8", errors="replace",
                                      env=dict(os.environ, LC_ALL="C", LANG="C")).stdout
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -1056,7 +1061,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
     build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n', encoding='utf-8')
     pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True) for _ in range(2)]
+                             text=True, encoding="utf-8", errors="replace") for _ in range(2)]
     outputs = [p.communicate(timeout=limit(60))[0] for p in pair]
     if (any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs))
             or not any("NOTE [lock]" in o for o in outputs)):
@@ -1079,7 +1084,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
     killed.wait()
     waiters = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True) for _ in range(3)]
+                                text=True, encoding="utf-8", errors="replace") for _ in range(3)]
     outputs = [p.communicate(timeout=limit(120))[0] for p in waiters]
     if any(p.returncode or "CHECK: PASS" not in o for p, o in zip(waiters, outputs)):
         raise RuntimeError("a waiter built beside the build of a killed gate, or beside"
@@ -1262,7 +1267,7 @@ def stop_tree(child):
         child.kill()
 
 
-def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=None):
+def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=None, left_out=0):
     """Run the (name, command) units, `parallel` at once (default all); print each unit's whole
     output in the given order. Each unit's timeouts scale by `parallel` (see limit()). `said`:
     the NOT RUN lines the checks before the units printed, repeated under the summary first.
@@ -1271,6 +1276,8 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
     `deadline`: the tier budget's end (time.monotonic()); a unit still running then is stopped
     and named, and a unit queued after it does not start, so a CI job's timeout never cancels
     the run before it says what ran over.
+    `left_out`: the tests of the suites that do not run on this host, counted by their
+    REQUIRED_SUITES number, for the NOT RUN total under the summary (#231).
 
     The units share no state: every suite and the acceptance phases work in temporary
     directories of their own, and each synthetic project has its own .git and so its own
@@ -1312,7 +1319,7 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
                 return 1, "KIT CHECK: FAIL — unit %s did not start: the tier's budget ran out\n" % name, 0.0
             # Its own session: a cap or a cancel stops the unit's test processes with it.
             child = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, env=env, start_new_session=True,
-                                     stderr=subprocess.STDOUT, text=True, errors="replace")
+                                     stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
             children.append(child)
         left = None if deadline is None else max(deadline - started, 0)
         budget_first = left is not None and (cap is None or left < cap)
@@ -1340,7 +1347,7 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
         futures = [pool.submit(one, name, command, timing_file, cap)
                    for (name, command), timing_file, cap in zip(units, files, caps or [None] * len(units))]
-        summary, failed, not_run = [], [], list(said)
+        summary, failed, not_run, ran, skipped = [], [], list(said), 0, 0
         for (name, _), future, timing_file in zip(units, futures, files):
             code, output, seconds = future.result()
             if not code and "UNIT DONE: " + name not in output.splitlines():
@@ -1351,6 +1358,10 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
             # A test that cannot run on this host says so in one "NOT RUN:" line and passes;
             # repeated under the summary, the end of the output names what this host did not run.
             not_run += [line for line in output.splitlines() if line.startswith("NOT RUN:")]
+            # run_tests' PASS line counts the tests that ran, and it names each declared
+            # platform skip in a "NOT RUN: <test id> (<reason>)" line.
+            ran += sum(int(count) for count in re.findall(r"^PASS: \S+ ran (\d+) tests", output, re.M))
+            skipped += len(re.findall(r"^NOT RUN: [\w.]+ \(", output, re.M))
             if code:
                 failed.append(name)
             summary.append("%7.1f s  %s%s" % (seconds, name, " (FAILED)" if code else ""))
@@ -1363,6 +1374,12 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
         print("\n".join("TIME: " + row.strip() for row in summary))
     if not_run:
         print("\n".join(not_run))
+    # The share of the suites a local pass covers, in one line: the per-test lines above are
+    # easy to scroll past. Only after a full pass: a failed unit printed no count.
+    if ran and not failed:
+        print("NOT RUN: %d of %d tests of this run's suites on this platform (%d declared platform skips, "
+              "%d in suites that do not run here, counted by their REQUIRED_SUITES number)"
+              % (skipped + left_out, ran + skipped + left_out, skipped, left_out))
     if failed:
         print("KIT CHECK: FAIL — %d of %d units failed: %s" % (len(failed), len(units), ", ".join(failed)),
               file=sys.stderr)
@@ -1424,8 +1441,11 @@ def main():
         print(line)
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())]
+    left_out = sum(REQUIRED_SUITES[directory][name] for directory, reasons in NOT_ON_WINDOWS.items()
+                   for name in reasons if tier_of(name) in tiers)
     passed = run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
-                       caps=[CAPS[tier_of(name)][0] * host for name in units], deadline=started + budget)
+                       caps=[CAPS[tier_of(name)][0] * host for name in units], deadline=started + budget,
+                       left_out=left_out)
     seconds = time.monotonic() - started
     if passed:
         print("TIME: %.1f s in all" % seconds)
