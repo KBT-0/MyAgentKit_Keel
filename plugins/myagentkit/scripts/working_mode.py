@@ -108,10 +108,11 @@ def switch_lock(project):
             release()
 
 
-# A line shaped like the key, bold or not, after a bullet or a quote mark, so one written without
-# the bold or quoted is still refused as unrecognized; a sentence that mentions "the working
-# mode: saver" is prose (#257).
-MODE_KEY = re.compile(r'[^\S\r\n]*(?:[-*+>][^\S\r\n]*)?(?:\*\*)?working mode:', re.I)
+# A line shaped like the key: after any Markdown line markers (bullet, number, quote, heading,
+# table cell), bold, italic or plain, so one in another shape is still refused as unrecognized
+# (v0.11); a sentence that mentions "the working mode: saver" is prose (#257).
+MODE_KEY = re.compile(r'[^\S\r\n]*(?:(?:[-*+>|]|\d+[.)]|#+)[^\S\r\n]*)*(?:\*\*|__|[*_])?working mode'
+                      r'(?:\*\*|__|[*_])?[^\S\r\n]*:', re.I)
 
 
 def mode_lines(text):

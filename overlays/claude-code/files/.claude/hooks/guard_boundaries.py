@@ -5,7 +5,8 @@ It sees Edit, Write and NotebookEdit only: a write through the shell (sed, a her
 Bash or PowerShell) names no file to the hook, so it gets no early warning here (#151); the gate
 below still catches it. A notebook cell (NotebookEdit) is checked against the ".py" entries: a
 Jupyter cell is Python code, and an ".ipynb" path never ended in ".py", so it went unchecked
-(#264). On Windows the path and the suffix match in any case, as the filesystem does.
+(#264). On Windows and macOS the path and the suffix match in any case, as their default
+filesystems (NTFS, APFS) do.
 
 It warns after the write; scripts/check.sh is the gate (a PostToolUse hook cannot block, the
 tool already ran: https://code.claude.com/docs/en/hooks).
@@ -42,7 +43,7 @@ path = (tool_input.get("file_path") or tool_input.get("notebook_path") or "").re
 # looked installed. If these names drift, this hook is inert again: verify them against the
 # tool's actual schema, not from memory. NotebookEdit sends `notebook_path` and `new_source`.
 content = "".join(tool_input.get(k) or "" for k in ("content", "new_string", "new_source"))
-fold = str.casefold if os.name == "nt" else str
+fold = str.casefold if os.name == "nt" or sys.platform == "darwin" else str
 
 unconfigured = [b for b in BOUNDARIES if isinstance(b, str)]
 if unconfigured:

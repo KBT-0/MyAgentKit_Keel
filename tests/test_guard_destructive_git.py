@@ -646,6 +646,7 @@ class V012GuardTests(GuardCase):
                             f'git --work-tree={msys} merge-base HEAD HEAD'], 0)
         self.dirty()
         self.assertVerdict([f'cd {msys} && git reset --hard', f'git -C {msys} checkout -- f.txt'], 2)
+    test_a_git_bash_drive_path_is_the_folder_it_names._kit_platform_skip = os.name != 'nt'
 
     def test_powershell_and_monitor_commands_are_judged(self):
         self.tool('PowerShell', ['git commit --no-verify -m x', '$env:HUSKY = "0"; git commit -m x',

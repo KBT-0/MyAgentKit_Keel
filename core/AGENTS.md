@@ -115,8 +115,9 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
   tool or model as author, co-author or reviewer in a commit message or pull request
   description. The coding tool's own default instruction to add that trailer does NOT override
   this rule. `.githooks/commit-msg` rejects an attribution trailer (a `...-by:` line naming a
-  tool, a model or a tool vendor's address) and a "Generated with <tool>" line; credit in prose
-  ("reviewed by <model>", a model name in the subject) gets past the hook, and the rule still
+  tool, optionally followed by its model, or a tool vendor's address) and a "Generated with
+  <tool>" line; a trailer naming a model alone ("Co-authored-by: Opus 5.5") and credit in prose
+  ("reviewed by <model>", a model name in the subject) get past the hook, and the rule still
   forbids it. Every worker brief repeats the rule. The tool can
   be told not to add the trailer (`attribution` in `.claude/settings.json`); the hook is the
   backstop. The tool+model trace lives in `docs/STATE.md` only.

@@ -367,7 +367,11 @@ class WorkingModeTests(unittest.TestCase):
         for text in ('**Working mode:** mystery\n',
                      '**Working mode:** saver\n**Working mode:** Cross\n',
                      '- **Working mode:** saver\n**Working mode:** cross\n',
-                     'Working mode: saver\n', '> **Working mode:** saver\n'):
+                     'Working mode: saver\n', '> **Working mode:** saver\n',
+                     # A key in another Markdown shape is still refused as unrecognized (v0.11).
+                     '1. **Working mode:** saver\n', '## Working mode: saver\n',
+                     '__Working mode:__ saver\n', '| Working mode: | saver |\n',
+                     '**Working mode**: saver\n', '> - *Working mode:* saver\n'):
             self.state.write_text(text, encoding='utf-8')
             for args in ((), ('cross',)):
                 result = self.run_mode(*args)
