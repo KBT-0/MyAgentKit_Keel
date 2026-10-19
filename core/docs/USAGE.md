@@ -26,6 +26,7 @@ calls, pass `--requester codex/ACTUAL_MODEL --task-id STABLE_TASK_LABEL` to the 
 the earlier completed reviews with that label (`docs/REVIEW_RUNNING.md`).
 
 ```sh
+# native Windows: python instead of python3
 python3 scripts/agent_usage.py --repo .
 python3 scripts/agent_usage.py --repo . --task-id STABLE_TASK_LABEL --json
 ```

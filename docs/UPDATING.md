@@ -17,6 +17,17 @@ short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 A project's own machine checks, once in its own `scripts/doctor.sh`, move to
 `scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
 
+The review adapters (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
+`scripts/review_dispatch.py` and the scripts they import) carry no marker yet, but each
+upgrade's checklist replaces them whole too. A line a project adds to them, such as its own
+check of a reviewer's final report, is lost at the next upgrade. The adapters have no
+project hook for such a check today: send it upstream (`/myagentkit:kit-feedback`) so it
+lands in the kit, and keep it as a marked patch with a `docs/STATE.md` line until then.
+
+An upgrade that adds a Claude Code agent definition (`.claude/agents/*.md`) next to one the
+project already has for the same job, such as its own reviewer beside `diff-reviewer.md`,
+keeps one of the two (the overlay's README says how).
+
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and
 their negative tests. All of them were customised during setup. Overwriting them would
@@ -130,7 +141,7 @@ The gate (`scripts/check.sh` and its lock), `scripts/review.sh` and the
 checklists in `CHANGELOG.md` share one threat model. A project has one owner, who works with
 agents. The threat model was written in v0.10 after six review rounds in which each fix
 exposed an "adjacent path"; a finding outside it is answered with this section, not a fix
-(`docs/REVIEW_GATE.md`, "A review loop").
+(`docs/REVIEW_GATE.md`, "Rounds").
 
 - **In scope: mistakes and accidents of the owner and the agents.** A killed process or a
   Ctrl-C at any point. A file left behind by a killed run. A CRLF checkout. A symlink the

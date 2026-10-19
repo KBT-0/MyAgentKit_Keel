@@ -4,7 +4,8 @@ Install with `bootstrap.sh . --overlay claude-code`. This README is NOT copied â
 `files/` is.
 
 **The commands live in the plugin, not here.** `/myagentkit:handoff`,
-`/myagentkit:cross-review` and `/myagentkit:kit-feedback` are installed once per machine:
+`/myagentkit:cross-review`, `/myagentkit:kit-feedback` and `/myagentkit:mode` are installed once
+per machine:
 
 ```
 /plugin marketplace add KBT-0/MyAgentKit_Keel
@@ -37,8 +38,8 @@ repository.
 | `.claude/hooks/guard_destructive_git.py` | Always refuses `stash drop/clear`, force pushes (unless `--force-with-lease=ref:expected` or `--force-if-includes`), `remote set-url/add`, amending a pushed commit and a skipped gate (`--no-verify`, `commit -n`, `-c core.hooksPath=`, `--no-gpg-sign`, or moving/unsetting `core.hooksPath`); allows the project's gate wiring with `git config core.hooksPath .githooks`; refuses a ref delete or forced move that loses commits no other ref reaches (`branch -D/-f/-M`, `tag -d`, `update-ref`, `remote remove`), `reflog expire/delete`, `gc --prune=<time>`, `prune`, and `worktree remove --force` of a worktree that holds work; refuses `reset --hard`, `checkout --`/`-f`, `restore`, `clean -f`, `rm -f`, `mv -f`, `checkout-index -f` and `read-tree -u --reset` while the tree is dirty, and prints what would be lost |
 | `.claude/hooks/guard_private_email.py` | Refuses a WebFetch, WebSearch or web-client shell call (Bash, PowerShell, Monitor: curl, wget, gh, a URL, Monitor's `ws.url`) that carries git's `user.email` (read in the project too) or an address in `MYAGENTKIT_PRIVATE_EMAILS` (separated by commas, semicolons or spaces), or that runs what prints one (`git log/show`, `git var`, `git config -l`, `env`, `printenv`); the API gets the project's Web contact from `docs/PROJECT.md` |
 | `.claude/hooks/guard_worker_route.py` | Refuses an Agent call that names no model or no effort, which would inherit the lead's; a fork is exempt, as it cannot change either. The lead tells the owner the model, the effort and why before the start (`docs/WORKFLOW.md`, "Worker cost", rule 5) |
-| `.claude/hooks/plain_report.py` | Bounces a final message to the owner that names a session label (`D-1`, `r2`, `Accept-MC`) outside code, once per turn; the agent rewrites it in plain words (`docs/COMMUNICATION.md`, "Language and terms"). A project adds its own shapes in `.claude/plain_report_labels.json`, a JSON list of regular expressions |
-| `.claude/hooks/progress_reminder.py` | After five tool calls with no visible line, adds one line of context asking the agent to say what it is doing; it reads only the transcript's tail (`docs/COMMUNICATION.md`, "Progress") |
+| `.claude/hooks/plain_report.py` | Bounces a final message to the owner that names a session label (`D-1`, `r2`, `Accept-MC`) outside code, once per turn; the agent rewrites it in plain words (`docs/COMMUNICATION.md`, "Language and terms"). Compact ids such as `K4`, `L1b` and `r2` count when they lead entries in `docs/STATE.md` or `docs/BACKLOG.md`; product names such as `S3` and `H100` otherwise pass; the kit's dashed shapes (`D-5`, `v011-d5`) and `Accept-MC` always count. A project adds its own shapes in `.claude/plain_report_labels.json`, a project-owned JSON list of regular expressions such as `["\\bPR-\\d+\\b", "\\bREADY\\b"]` that sync never overwrites; its matches count as labels without the built-in task filter, so keep token boundaries in each pattern. Legacy additions to the hook's `LABELS` list still work; keep new ones in the JSON file |
+| `.claude/hooks/progress_reminder.py` | After five tool calls with no visible line, adds one line of context asking the agent to say what it is doing, and passes on `context_size.py`'s band line; a worker session (`MYAGENTKIT_ROLE=worker`) gets the band but no reminder; it reads only the transcript's tail (`docs/COMMUNICATION.md`, "Progress") |
 | `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off; when none runs, a guard blocks (exit 2) and every hook prints `no Python found; install it or run doctor` |
 | `.claude/agents/diff-reviewer.md` | Review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md`. Its tool list has no Edit or Write; that it leaves the checkout unchanged is asked by its prompt and enforced only by the throwaway copy and the sandbox. Like the bridges' reviewer it runs only the narrow test that proves a finding, and reports only gaps that affect correctness or the stated requirements (code.claude.com/docs/en/best-practices). Its first question for a gate, "was it seen red?", is TDD's red step; it skips `docs/REVIEW_RUNNING.md`, which is for the caller, to keep its context small (code.claude.com/docs/en/sub-agents) |
 | `.claude/agents/worker.md` | Implementation worker that pins model, effort and a 150-turn cap; as a sub-agent it runs on the five-minute prompt cache, so a job whose waits pass five minutes goes to a `scripts/spawn_worker.sh` session (`docs/WORKFLOW.md`, "Worker cost") |
@@ -219,7 +220,10 @@ in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 
 The overlay's files also carry the core's `{{PROJECT_NAME}}`, `{{OWNER_NAME}}` and
 `{{RISKY_AREAS}}`, filled with the same values as the core files. `diff-reviewer.md` ships
-with `effort: high`: reviews run at high effort.
+with `effort: high`: reviews run at high effort. A project that already has its own reviewer
+agent under `.claude/agents` keeps one definition, not two: merge what its own carries into
+`diff-reviewer.md` and delete it, or keep its own and delete `diff-reviewer.md`. Two
+definitions for one job is the decay signal `AGENTS.md` names, and a lead then picks either.
 
 If the project has no such jobs, keep `.claude/agents/worker.md` (it pins model, effort and
 the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn_worker.sh`

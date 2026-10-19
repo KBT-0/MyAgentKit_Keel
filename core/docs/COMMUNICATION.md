@@ -29,16 +29,9 @@ bill is one to three percent.
 - A session label (a task id, a round number, a verdict code such as `D-1`, `r2`,
   `Accept-MC`) never stands alone toward the owner. Say what it is in plain words ("the
   second review round"); add the label in parentheses at most once per message, and only
-  when the owner will meet it in a file. The `plain_report.py` hook bounces a final message
-  that breaks this.
-  Compact ids such as `K4`, `L1b` and `r2` are recognised when they lead entries in
-  `docs/STATE.md` or `docs/BACKLOG.md`; product names such as `S3` and `H100` otherwise pass.
-  The hook also recognises the kit's dashed shapes (`D-5`, `v011-d5`) and `Accept-MC`.
-  Add project shapes to `.claude/plain_report_labels.json`, a project-owned JSON list of
-  regex strings, for example `["\\bPR-\\d+\\b", "\\bsprint\\d+\\b", "\\bREADY\\b"]`.
-  Sync never overwrites that file. Its matches count as labels without the built-in task
-  filter; keep token boundaries in each pattern. Legacy additions to the hook's `LABELS`
-  list still work, but keep new configuration in the JSON file rather than `commit-msg`.
+  when the owner will meet it in a file. In the Claude Code overlay the `plain_report.py` hook
+  bounces a final message that breaks this (what it recognises and how a project adds its
+  own label shapes: the overlay's README).
 - Sentences of about twenty words, one idea each; the number is a starting value for
   English, tuned per language.
 
@@ -59,11 +52,12 @@ doubt; on verified work the sentence is plain.
 ## Progress
 
 One sentence before the first tool call. While working, one sentence only at a finding, a
-change of direction or a block. The `progress_reminder.py` hook adds a reminder when five
-tool calls passed without a visible line, and stops after the third reminder in the same
-silent stretch (a visible line or a compaction starts a new one); five and three are starting
-values (Anthropic's Sonnet 5.5 prompting guide; a hook's added context is paid on the next
-request, code.claude.com/docs/en/hooks).
+change of direction, a block, or after five tool calls with no visible line; no other prose
+between tool calls. The `progress_reminder.py` hook reminds the lead of the last case, and
+stops after the third reminder in the same silent stretch (a visible line or a compaction
+starts a new one); five and three are starting values (Anthropic's Sonnet 5.5 prompting
+guide; a hook's added context is paid on the next request, code.claude.com/docs/en/hooks).
+A worker session is not reminded: the lead reads its result, not its chat.
 
 ## Questions and approvals
 
@@ -83,7 +77,7 @@ request, code.claude.com/docs/en/hooks).
   bounces a final message that ends with a question or names one as open.
 - While the owner is away, nothing waits on a question. Away means {{OWNER_NAME}} said so
   (overnight, "I'm out"), or 45 minutes passed with no reply to an asked question; 45 is the
-  owner's choice (KARARLAR B03 inv1#169), not a measured value, and it is separate from a
+  kit owner's choice, not a measured value, and it is separate from a
   review's timeout (`REVIEW_TIMEOUT_SECONDS`). The agent
   decides what the rules already settle or what is reversible and reports it later; else it
   does the work so that the owner's answer in the morning changes one named spot; else it
@@ -111,13 +105,5 @@ not reach sub-agents.
 ## Per-model notes
 
 A fixed "keep it short" line is too much for one model and too little for another. When a
-model pin changes (`docs/WORKFLOW.md`, "Model routing"), re-read this file: Opus 5 writes
-long by default and needs an explicit brevity line; Fable 5.1 under-reports in agent work
-and an anti-format rule can suppress structure it needs.
-
-## Measuring the rules
-
-The release's dogfood period (`docs/ACCEPTANCE.md`) is the measurement: the owner marks each
-report *understood*, *one part unclear* or *had to ask again*; the lead counts how often
-each hook fired and how many "what does this mean" questions came. The numbers go to
-`RESEARCH_LOG.md`. A rule that moves no number is deleted.
+model pin changes (`docs/WORKFLOW.md`, "Model routing"), re-read this file against the
+model's own prompting guide (the kit's `docs/research/communication-style.md`, finding 14).

@@ -13,16 +13,18 @@ other's CLI from inside a session, use it. It handles transport, sessions, resum
 authentication, and when the CLI changes underneath, fixing it is their problem.
 
 **Policy — write your own, thin.** What gets reviewed, by whom, when, with what instructions,
-and what happens to the output: that is yours. It is fifty lines of shell plus a document.
+and what happens to the output: that is yours. Keep it thin: a policy document and a wrapper
+that calls the plumbing.
 Do not reimplement the plumbing's review command; CALL it and layer your protocol over it.
 
 Concretely, that is `scripts/review.sh` (collect the diff, pin the sandbox, archive the report
 with its configuration) plus `docs/REVIEW_GATE.md` (the priority order and the verdicts).
-Neither knows anything about transport.
+The transport is the kit's own adapters (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
+about 2,300 lines), kept apart from the policy: review.sh and REVIEW_GATE.md never carry it.
 
 **Reject third-party orchestration frameworks that sit in the middle.** They own your policy
-and depend on the plumbing, so you inherit two maintenance surfaces to avoid writing fifty
-lines you understand.
+and depend on the plumbing, so you inherit two maintenance surfaces to avoid writing a thin
+layer you understand.
 
 ## The rules that make it safe
 

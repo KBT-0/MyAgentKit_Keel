@@ -325,6 +325,16 @@ class ProgressReminderTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('5 tool calls', self.nudge(calls)['additionalContext'])
 
+    def test_a_worker_session_is_never_nudged(self):
+        # #132: a spawned worker's chat has no reader, and the nudge asked it for the narration
+        # AGENTS.md forbids.
+        # Its own band still reaches it: a 250k request makes the band line, so an empty output fails.
+        calls = [assistant(tool()) for _ in range(5)]
+        calls[-1]['message']['usage'] = {'input_tokens': 250000}
+        said = self.nudge(calls, MYAGENTKIT_ROLE='worker')['additionalContext']
+        self.assertIn('Context is 250k tokens', said)
+        self.assertNotIn('tool calls since', said)
+
     def test_three_nudges_per_silence_then_text_and_compaction_rearm(self):
         calls = []
         for count in range(1, 26):

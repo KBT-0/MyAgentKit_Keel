@@ -19,7 +19,9 @@ so a large tool result cannot hide a visible line between calls. Silent on any e
 It also adds context_size.py's band line, so a long autonomous turn meets the band when it
 crosses it, not at the owner's next prompt (#138). A sub-agent's call (`agent_id` in the
 input, code.claude.com/docs/en/hooks) is skipped whole: the owner never reads a sub-agent's
-text, the band is the lead's to act on, and a nudge it took was the lead's (#214).
+text, the band is the lead's to act on, and a nudge it took was the lead's (#214). A worker
+session (MYAGENTKIT_ROLE=worker, set by spawn_worker.sh) gets the band but no nudge: it writes
+for the lead, whose chat the owner reads (#132).
 """
 import json
 import os
@@ -111,7 +113,9 @@ def main() -> None:
         if saved:
             if saved['mark'] != mark or said > total or saved['offset'] > offset:
                 said, nudges = None, 0  # visible text, compaction or truncation starts a new count
-        nudge = nudges < MAX_NUDGES and total // STEP > (said or 0) // STEP
+        # Nobody reads a worker's chat; its own band still matters (#132).
+        nudge = (nudges < MAX_NUDGES and total // STEP > (said or 0) // STEP
+                 and os.environ.get('MYAGENTKIT_ROLE') != 'worker')
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({'said': total if nudge else (said or 0), 'mark': mark,

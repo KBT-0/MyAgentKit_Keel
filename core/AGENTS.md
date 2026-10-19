@@ -6,6 +6,12 @@ binding. It is a map: rules that apply only when one tree is edited live in that
 loads it whole on its own: in Claude Code, `.claude/rules/state.md` points to it when a file
 under `docs/` is read.
 
+**Started by another agent?** A sub-agent, a reviewer or a session started with a brief is
+bound by the HARD RULES and by the STOP and MENTION ONCE lists in "Duties toward
+{{OWNER_NAME}}", which it raises to the agent that started it. It skips the reading order and
+the rest of that section: its brief or definition names what to read. It leaves
+`docs/STATE.md` to the lead and reports to the agent that started it.
+
 ## What this project is
 
 {{PROJECT_DESCRIPTION}}
@@ -37,6 +43,7 @@ it, each marked DECIDED or OPEN. It is read by section only (reading order, item
    and cite it by number (`PROJECT §4.2`). Never load the whole file, and never copy its text
    elsewhere: a quotation is a duplicate, a citation is not.
 
+The lead also reads `docs/COMMUNICATION.md` (how to talk to {{OWNER_NAME}}) once per session.
 Read only when needed: `docs/GOTCHAS.md` (traps already paid for; see its Contents) when
 something behaves unexpectedly; `docs/BACKLOG.md` when the next task is chosen; as the lead,
 `docs/WORKFLOW.md`, "Worker cost", its first block "The rules in brief", before you brief,
@@ -105,9 +112,10 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
   writing the test first is advice, not a rule. An ordinary test needs no mandatory red proof;
   a gate check does (below). A generated-content pipeline validates its output (data
   validation, captures); unit tests of the generator are not mandatory. `./scripts/check.sh`
-  must PASS before you finish. A test runs in its own command and its result is read before a
-  commit: never `test; git commit`, never a test piped through a filter (`| grep`, `| tail`)
-  ahead of the commit, since both hide a red result.
+  must PASS before you finish. A plugin's test or output advice (a self-check in place of the
+  test tree, a capped report) never replaces these rules. A test runs in its own command and
+  its result is read before a commit: never `test; git commit`, never a test piped through a
+  filter (`| grep`, `| tail`) ahead of the commit, since both hide a red result.
 - The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
   abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). **Agents
   never use `git commit --no-verify`** — that hatch is {{OWNER_NAME}}'s. In the Claude Code
@@ -217,11 +225,6 @@ an explicit "start it here".
   300k recommend `/compact` or a hand-off, whichever is cheaper now, with the number, at the
   next clean stop; at 400k stop now (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is
   the default; a session compacted once hands off.
-- v0.11 dogfood only (deleted once `scripts/context_buckets.py` gives its first report):
-  {{OWNER_NAME}} corrected you and
-  the prompt has no `#fix` → once per session, say that `#fix` in a correcting prompt lets
-  `scripts/context_buckets.py` count it by context size, the data that keeps or moves the
-  context band.
 - A time or token cost you saw repeat, with a cheaper way around it → propose it with a number
   from `scripts/agent_cost.py` or `/usage`. Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}

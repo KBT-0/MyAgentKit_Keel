@@ -97,7 +97,7 @@ seconds, so a slow test moves to the slow tier or gets faster, and never grows t
 unseen. A slow host raises both with `MYAGENTKIT_TEST_TIMEOUT_SCALE` (CI sets 3). A change
 that touches the area of a slow-tier unit (the `SLOW` set in `scripts/check_kit.py`:
 `acceptance`, `test_bootstrap`, `test_claude_bridge`, `test_spawn_worker`, `test_spawn_codex`,
-`test_worker_visibility`, `test_doctor`) also runs `./scripts/check.sh --slow` before its push
+`test_worker_visibility`, `test_doctor`, `test_close_worker`, `locale/test_git_hooks`) also runs `./scripts/check.sh --slow` before its push
 (finding 7, path-filtered runs).
 
 A release runs `./scripts/check.sh --all` on the maintainer's host first. It is not announced,

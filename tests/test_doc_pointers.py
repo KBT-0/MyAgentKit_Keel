@@ -332,19 +332,93 @@ class SectionPointerTests(unittest.TestCase):
         # A pointer such as (`docs/WORKFLOW.md`, "Writing a gate") sends an agent to one section
         # instead of the whole file; a renamed heading would send it nowhere.
         pattern = re.compile(r'`((?:docs/)?[A-Z_]+\.md)`,\s+(?:the four\s+)?"([^"]+)"')
-        sources = [ROOT / 'core/AGENTS.md'] + sorted((ROOT / 'core/docs').glob('*.md'))
+        # #159: the kit's own docs cite sections too; a kit doc names a project path (core/) or its own.
+        sources = ([ROOT / 'core/AGENTS.md'] + sorted((ROOT / 'core/docs').glob('*.md'))
+                   + sorted((ROOT / 'docs').glob('*.md')) + [ROOT / 'docs/research/README.md', ROOT / 'README.md'])
         checked = 0
         for path in sources:
             text = re.sub(r'\s+', ' ', path.read_text(encoding='utf-8'))
             for target, section in pattern.findall(text):
                 with self.subTest(source=path.name, target=target, section=section):
+                    cited = source(target) if source(target).is_file() else ROOT / target
                     # A heading, or a bold label inside a list (HANDOFF's "**Proof:**").
-                    names = headings(source(target))
+                    names = headings(cited)
                     self.assertTrue(any(h == section or h.startswith(section + ' ') for h in names)
-                                    or '**' + section + ':**' in source(target).read_text(encoding='utf-8'),
+                                    or '**' + section + ':**' in cited.read_text(encoding='utf-8'),
                                     '%s names "%s" in %s, which has no such heading' % (path.name, section, target))
                     checked += 1
         self.assertGreater(checked, 10)
+
+    def test_documented_plugin_counts_match_the_shipped_directories(self):
+        # #159: README named three commands after mode.md shipped, CODEX.md two skills of three.
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+        for command in (ROOT / 'plugin/commands').glob('*.md'):
+            self.assertIn('`/myagentkit:%s`' % command.stem, readme)
+        skills = [d for d in (ROOT / 'plugins/myagentkit/skills').iterdir() if d.is_dir()]
+        words = {2: 'two', 3: 'three', 4: 'four', 5: 'five'}
+        self.assertIn('The Codex plugin packages %s skills' % words[len(skills)],
+                      ' '.join((ROOT / 'docs/CODEX.md').read_text(encoding='utf-8').split()))
+
+    def test_documented_python_commands_name_the_windows_form(self):
+        # #160: a bare `python3 scripts/...` opens the Store alias or fails on a python.org
+        # Windows install, and a bare `python` is absent on macOS; each doc names both forms.
+        docs = ([ROOT / 'README.md', ROOT / 'CONTRIBUTING.md'] + sorted((ROOT / 'docs').glob('*.md'))
+                + sorted((ROOT / 'core').rglob('*.md')) + sorted((ROOT / 'setup').glob('*.md')))
+        for path in docs:
+            text = path.read_text(encoding='utf-8')
+            with self.subTest(doc=str(path.relative_to(ROOT))):
+                self.assertIsNone(re.search(r'(?<![\w-])python (core/)?scripts/', text))
+                if re.search(r'python3 (core/)?scripts/', text):
+                    self.assertTrue('`python` on native Windows' in ' '.join(text.split())
+                                    or 'native Windows: python instead of python3' in text)
+
+    def test_the_constitution_carries_project_rules_only(self):
+        # #112: sub-agents load AGENTS.md and followed the lead's reading order; #131: a release's
+        # dogfood rule and kit decision ids shipped into project-owned files; #150: the binding
+        # COMMUNICATION.md was in no reading order.
+        agents = ' '.join((ROOT / 'core/AGENTS.md').read_text(encoding='utf-8').split())
+        head = agents[:agents.index('## What this project is')]
+        self.assertIn('skips the reading order', head)
+        self.assertIn('leaves `docs/STATE.md` to the lead', head)
+        reading = agents[agents.index('## Reading order'):agents.index('## HARD RULES')]
+        self.assertIn('`docs/COMMUNICATION.md`', reading)
+        communication = (ROOT / 'core/docs/COMMUNICATION.md').read_text(encoding='utf-8')
+        for path, text in (('AGENTS.md', agents), ('COMMUNICATION.md', communication)):
+            for kit_only in ('dogfood', 'KARARLAR', 'ACCEPTANCE.md', 'Fable 5.1'):
+                self.assertNotIn(kit_only, text, '%s carries kit-internal text' % path)
+
+    def test_model_routing_values_and_the_inheritance_rule_live_once(self):
+        # #142: rule 1 restated the tier table as "the cheaper model (Sonnet)" while the table
+        # said Haiku or Sonnet, and the inheritance rule was copied into four places.
+        docs = {name: ' '.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8').split())
+                for name in ('WORKFLOW.md', 'HANDOFF.md')}
+        self.assertNotIn('cheaper model (Sonnet)', docs['WORKFLOW.md'])
+        self.assertEqual(sum(text.count('omitted sub-agent model') for text in docs.values()), 1)
+
+    def test_the_kits_agents_chains_leave_room_under_codexs_limit(self):
+        # #143: Codex silently drops what passes project_doc_max_bytes (32 KiB) of the AGENTS.md
+        # chain from the root to the working folder, and the tail holds the STOP list. The kit's
+        # own text keeps a quarter of the limit for the project's rules and placeholders.
+        root = (ROOT / 'core/AGENTS.md').stat().st_size
+        for nested in (ROOT / 'core/docs/AGENTS.md', ROOT / 'overlays/unity/files/unity/AGENTS.md'):
+            with self.subTest(chain=str(nested.relative_to(ROOT))):
+                self.assertLess(root + nested.stat().st_size, 24 * 1024)
+
+    def test_a_style_plugin_never_replaces_the_test_and_report_rules(self):
+        # #140: ponytail injects a "one self-check" test rule and a three-line report cap.
+        interview = ' '.join((ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8').split())
+        self.assertNotIn('was not measured here', interview)
+        self.assertIn("the kit's rules win", interview)
+        for path in (ROOT / 'core/AGENTS.md', ROOT / 'overlays/claude-code/files/.claude/agents/worker.md'):
+            with self.subTest(doc=path.name):
+                self.assertIn('never replaces these', ' '.join(path.read_text(encoding='utf-8').split()))
+
+    def test_a_new_projects_research_pass_starts_from_the_kits_reports(self):
+        # #157: with no project log, every bootstrap ran a full ecosystem pass.
+        protocol = ' '.join((ROOT / 'setup/RESEARCH_PROTOCOL.md').read_text(encoding='utf-8').split())
+        self.assertIn("the kit's own reports", protocol)
+        self.assertIn('`docs/research/README.md`', protocol)
+        self.assertTrue((ROOT / 'docs/research/README.md').is_file())
 
     def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
         # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,
