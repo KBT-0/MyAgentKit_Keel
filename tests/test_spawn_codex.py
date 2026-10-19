@@ -186,6 +186,9 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertIn('--worktree', result.stdout)
         self.assertIn('--resume', result.stdout)
         self.assertIn('leave all work uncommitted', result.stdout)
+        # #107: a worker attempt was lost to a download and a user-profile write nobody warned of.
+        self.assertIn('NOTE: the worker has no network and writes only inside its worktree and the '
+                      'temporary directory', result.stdout)
         self.assertNotIn('--add-dir', run['argv'])
         self.assertIn(self.win(tree / 'QUESTION-w1.md', '-m'), run['argv'][0])
 

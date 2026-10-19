@@ -112,7 +112,7 @@ if case == 'reject': value.update(verdict='Reject', findings=['file.py:1: concre
 if case == 'manual': value.update(verdict='Accept with Manual Checks', manual_checks=['Verify deployment.'])
 if case == 'missing': result.pop('structured_output')
 if case == 'transcript': print('VERDICT: Accept'); sys.exit(0)
-if case == 'conflict': value['findings'] = ['Unresolved defect.']
+if case == 'conflict': value['verdict'] = 'Reject'
 if case == 'turns': result['subtype'] = 'error_max_turns'
 if case == 'model': result['modelUsage'] = {'different-model': {}}
 if case == 'error': result['is_error'] = True
@@ -631,7 +631,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import codex_bridge
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             # LF bytes matter: a CRLF verdict could fail for an unrelated reason.
             Path(command[command.index('-o') + 1]).write_bytes(final.encode('utf-8'))
             return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
@@ -654,10 +654,31 @@ class BridgeTests(unittest.TestCase):
                 code = codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model',
                                           '--uncommitted'], received.append)
                 run.assert_called_once()
-                self.assertEqual(code, 0 if clean else 5, out.getvalue())
-                self.assertEqual(received[-1]['status'], 'completed' if clean else 'failed')
-                self.assertEqual(received[-1]['failure_kind'], None if clean else 'invalid_evidence')
-                self.assertEqual(verdicts_of(received[-1]['evidence']), ['VERDICT: Accept'] if clean else [])
+                # #120: a contradicted Accept completes as the stricter verdict, never as Accept.
+                self.assertEqual(code, 0, out.getvalue())
+                self.assertEqual(received[-1]['status'], 'completed')
+                self.assertEqual(received[-1]['failure_kind'], None)
+                self.assertEqual(verdicts_of(received[-1]['evidence']) == ['VERDICT: Accept'], clean)
+
+    def test_codex_does_not_load_the_copys_agents_md_as_instructions(self):
+        # #117: Codex loads the root AGENTS.md as instructions; the prompt already names it as
+        # evidence to read, so the lead's constitution reached the reviewer twice, once as orders.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+        commands = []
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            commands.append(command)
+            Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
+            return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=execution), \
+                redirect_stdout(io.StringIO()):
+            codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model', '--uncommitted'], [].append)
+        command = commands[0]
+        self.assertEqual(command[command.index('project_doc_max_bytes=0') - 1], '-c')
 
     def test_structured_accept_cannot_hide_severity_or_checks_in_low_continuations(self):
         for body, _, clean in self.continuation_review_cases():
@@ -668,15 +689,14 @@ class BridgeTests(unittest.TestCase):
                 if clean:
                     self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
                 else:
-                    with self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
-                        bridge.validate(envelope, 'review', 'claude-opus-5')
+                    self.assertNotEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'], 'Accept')
 
     def test_codex_accept_cannot_drop_a_finding_or_manual_check_in_a_peer_heading(self):
         from contextlib import redirect_stdout
         from unittest.mock import patch
         import codex_bridge
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             Path(command[command.index('-o') + 1]).write_bytes(final.encode('utf-8'))
             return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
                         stderr='', termination=None, duration_ms=1)
@@ -694,10 +714,11 @@ class BridgeTests(unittest.TestCase):
                 code = codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model',
                                           '--uncommitted'], received.append)
                 run.assert_called_once()
-                self.assertEqual(code, 0 if heading == '## Testing' else 5, out.getvalue())
-                if heading != '## Testing':
-                    self.assertEqual(received[-1]['failure_kind'], 'invalid_evidence')
-                    self.assertEqual(verdicts_of(received[-1]['evidence']), [])
+                self.assertEqual(code, 0, out.getvalue())
+                # #120: the hidden High reads as Reject, the hidden check as Accept with Manual Checks.
+                expected = ('Accept' if heading == '## Testing' else
+                            'Reject' if re.search('High|Critical', heading) else 'Accept with Manual Checks')
+                self.assertEqual(verdicts_of(received[-1]['evidence']), ['VERDICT: ' + expected])
 
     def test_structured_accept_cannot_hide_heading_findings_or_unverified_checks(self):
         for heading in ('## 1. High: file.py:1 drops records.',
@@ -714,8 +735,11 @@ class BridgeTests(unittest.TestCase):
                 value[field] = [item]
                 envelope = dict(type='result', subtype='success', is_error=False,
                                 modelUsage={'claude-opus-5': {}}, structured_output=value)
-                with self.subTest(field=field, item=item), self.assertRaises(bridge.BridgeError):
-                    bridge.validate(envelope, 'review', 'claude-opus-5')
+                with self.subTest(field=field, item=item):
+                    # #120: a High among the findings reads as Reject; anything else as a check.
+                    self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'],
+                                     'Reject' if field == 'findings' and re.search('High|Critical', item)
+                                     else 'Accept with Manual Checks')
 
     def test_fallback_uses_the_resolved_backend_model_family_and_refuses_unknowns(self):
         from contextlib import redirect_stdout
@@ -815,8 +839,9 @@ class BridgeTests(unittest.TestCase):
         value['verdict'] = 'Accept'
         for item in ('Not run', '## NOT RUN', 'NOT RUN: verify deployment on Windows.'):
             value['manual_checks'] = [item]
-            with self.subTest(item=item), self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
-                bridge.validate(envelope, 'review', 'claude-opus-5')
+            with self.subTest(item=item):
+                self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'],
+                                 'Accept with Manual Checks')
 
     def test_secret_refusal_only_checks_changed_paths_and_lists_every_hit(self):
         for name in ('.env', 'site.key'):
@@ -1305,7 +1330,7 @@ class BridgeTests(unittest.TestCase):
 
         observed = []
 
-        def capture(command, prompt, repo, timeout, into=None, noted=None):
+        def capture(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             observed.append(timeout)
             raise CapturedLaunch()  # No CLI or wall-clock wait is needed.
 
@@ -1357,7 +1382,7 @@ class BridgeTests(unittest.TestCase):
 
         observed = []
 
-        def capture(command, prompt, repo, timeout, into=None, noted=None):
+        def capture(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             observed.append(command[command.index('--max-turns') + 1])
             raise CapturedLaunch()
 
@@ -1870,7 +1895,7 @@ class BridgeTests(unittest.TestCase):
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
             self.git('update-ref', 'refs/heads/review-base', original)
 
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 self.git('update-ref', 'refs/heads/review-base', intermediate)
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
@@ -1904,7 +1929,7 @@ class BridgeTests(unittest.TestCase):
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
             self.git('update-ref', 'refs/heads/review-base', original)
 
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 self.git('update-ref', '-d', 'refs/heads/review-base')
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
@@ -1958,7 +1983,7 @@ class BridgeTests(unittest.TestCase):
             label = 'moving-base-' + ('claude' if main is bridge.main else 'codex')
             prompts = []
 
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 prompts.append(prompt)
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
@@ -2006,7 +2031,7 @@ class BridgeTests(unittest.TestCase):
 
         for main, args in ((bridge.main, ['review']),
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
-            def execution(command, prompt, repo, timeout, into=None, noted=None):
+            def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
                 if '-o' in command:
                     Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                     value = {'type': 'turn.completed', 'usage': {}}
@@ -2046,7 +2071,7 @@ class BridgeTests(unittest.TestCase):
         import review_dispatch
         publish, account = agent_usage.write_evidence, agent_usage.record
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
@@ -2110,7 +2135,7 @@ class BridgeTests(unittest.TestCase):
         import review_dispatch
         real_run, real_killpg = agent_process.run, os.killpg
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
@@ -2156,7 +2181,7 @@ class BridgeTests(unittest.TestCase):
         import review_dispatch
         real_run = agent_process.run
 
-        def absent(command, prompt, repo, timeout, into=None, noted=None):
+        def absent(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             return real_run([str(self.root / 'absent-cli')], prompt, repo, timeout, into)
 
@@ -2289,7 +2314,7 @@ class BridgeTests(unittest.TestCase):
         real_signal, fired = signal.signal, []
         caller_int = signal.getsignal(signal.SIGINT)
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                     'error': {'message': 'usage limit reached'}}), 'stderr': '',
                     'termination': None, 'duration_ms': 1}
@@ -2340,7 +2365,7 @@ class BridgeTests(unittest.TestCase):
         import codex_bridge
         real_pending = signal.sigpending
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2397,7 +2422,7 @@ class BridgeTests(unittest.TestCase):
             reads.append(cli)
             return {'status': 'unavailable', 'buckets': {}}
 
-        def cancelled(command, prompt, repo, timeout, into=None, noted=None):
+        def cancelled(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             return {'exit_code': None, 'stdout': '', 'stderr': '', 'termination': 'cancelled',
                     'cancelled': True, 'duration_ms': 1}
 
@@ -2463,7 +2488,7 @@ class BridgeTests(unittest.TestCase):
                     send_cancel(signal.SIGTERM)
                 return dict.__getitem__(self, key)
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             return Execution({'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                               'error': {'message': 'usage limit reached'}}), 'stderr': '',
                               'termination': None, 'duration_ms': 1})
@@ -2548,7 +2573,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             value = {'type': 'result', 'subtype': 'success', 'is_error': True,
                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}}
@@ -2607,7 +2632,7 @@ class BridgeTests(unittest.TestCase):
         def caller(signum, frame):
             raise CallerCancel
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2679,7 +2704,7 @@ class BridgeTests(unittest.TestCase):
         def caller(signum, frame):
             raise CallerCancel
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2739,7 +2764,7 @@ class BridgeTests(unittest.TestCase):
         def caller(signum, frame):
             raise CallerCancel
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             launched.append(command[0])
             return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                     'error': {'message': 'usage limit reached'}}), 'stderr': '',
@@ -2823,6 +2848,52 @@ class BridgeTests(unittest.TestCase):
                 usage = json.loads(Path(received[0]['usage_record']).read_text())
                 self.assertEqual((usage['status'], usage['failure_kind']), ('completed', None))
 
+    def test_a_review_stops_at_the_next_look_once_the_checkout_changed(self):
+        # #118: the checkout was read only after the reviewer exited, so a stale review ran to
+        # its end and was paid for. run() looks every WATCH_SECONDS and stops it on a change.
+        from unittest.mock import patch
+        import agent_process
+        looks = []
+
+        def watch():
+            looks.append(True)
+            return len(looks) == 2
+
+        with patch.object(agent_process, 'WATCH_SECONDS', 0):
+            result = agent_process.run([sys.executable, '-c', 'import time; time.sleep(60)'], '',
+                                       self.root, 30, watch=watch)
+        self.assertEqual((result['termination'], len(looks)), ('stale_checkout', 2))
+        self.assertLess(result['duration_ms'], 20000)
+
+    def test_both_adapters_stop_a_review_whose_checkout_changed_during_it(self):
+        # #118: each adapter hands run() a look at the checkout; a change seen there stops the
+        # reviewer, and the review fails as stale_checkout without waiting for its end.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        for name, main, args in (('claude', bridge.main, ['review']),
+                                 ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            with self.subTest(adapter=name):
+                (self.repo / 'file.py').write_text('changed\n')
+                looks, received = [], []
+
+                def stopped(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+                    looks.append(watch())
+                    (self.repo / 'file.py').write_text('edited during the review\n')
+                    looks.append(watch())
+                    return {'launched': True, 'exit_code': None, 'stdout': '', 'stderr': '',
+                            'termination': 'stale_checkout', 'cancelled': False, 'duration_ms': 1}
+
+                env = self.review_env(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLI_BIN=str(self.build_fake_codex()))
+                with patch.dict(os.environ, env), patch.object(agent_process, 'run', stopped), \
+                        redirect_stdout(StringIO()):
+                    main([*args, '--repo', str(self.repo), '--uncommitted'], received.append)
+                self.assertEqual(looks, [False, True])
+                self.assertEqual((received[0]['status'], received[0]['failure_kind']),
+                                 ('failed', 'stale_checkout'), received[0])
+
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the
         # two left the archive saying cancelled and the record quota, and the Codex adapter
@@ -2838,7 +2909,7 @@ class BridgeTests(unittest.TestCase):
         import codex_bridge
         publish, account, sync = agent_usage.write_evidence, agent_usage.record, os.fsync
 
-        def quota(command, prompt, repo, timeout, into=None, noted=None):
+        def quota(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
@@ -2980,7 +3051,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'Low: A \xe2\x86\x92 B.\n\nVERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
@@ -3041,7 +3112,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
@@ -3138,7 +3209,7 @@ class BridgeTests(unittest.TestCase):
                 raise OSError('archive unavailable')
             return write_evidence(repo, path, *args, **kwargs)
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 return {'exit_code': 1 if case == 'failed' else 0,
@@ -3193,7 +3264,7 @@ class BridgeTests(unittest.TestCase):
         import claude_bridge
         import review_dispatch
         self.commit_fixture('Reference review fixture')
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
@@ -3474,8 +3545,10 @@ class BridgeTests(unittest.TestCase):
         for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:
             with self.subTest(final=final):
                 self.assertEqual(codex_bridge.verdict_refused(final), not completed)
-        # The whole wrapper once each way: the rule decides its exit and chain record.
-        for final, completed in ((completes[0], True), (refused[0], False)):
+        # The whole wrapper once each way: the rule decides its exit and chain record. A
+        # contradicted Accept now completes as the stricter verdict (#120), so the refused run
+        # is a Reject that names no finding.
+        for final, completed in ((completes[0], True), (next(f for f in refused if 'VERDICT: Reject' in f), False)):
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
                                           REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
@@ -3579,7 +3652,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_bad_cli_evidence_fails_with_its_reason(self):
         cases = {"missing": "structured final", "transcript": "Expecting value",
-                 "conflict": "contradicts", "turns": "incomplete", "model": "modelUsage",
+                 "conflict": "has no findings", "turns": "incomplete", "model": "modelUsage",
                  "error": "successful result", "exit": "exited 9", "mutation": "changed during"}
         for case, reason in cases.items():
             with self.subTest(case=case):
@@ -3723,8 +3796,42 @@ class BridgeTests(unittest.TestCase):
                 if allowed:
                     self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
                 else:
-                    with self.assertRaisesRegex(bridge.BridgeError, 'Accept contradicts'):
-                        bridge.validate(envelope, 'review', 'claude-opus-5')
+                    # #120: read as the stricter verdict, not refused.
+                    self.assertNotEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'], 'Accept')
+
+    def test_a_contradicted_accept_is_read_as_the_stricter_verdict(self):
+        # #120, owner decision 59 A: refused, a whole paid review was lost to its own lists. A
+        # blocking item naming Critical or High makes it Reject; any other item or check makes it
+        # Accept with Manual Checks, the item kept as a check; the first check names the correction.
+        import codex_bridge
+        note = 'The reviewer wrote Accept; the bridge read it as %s'
+        for findings, checks, verdict, moved in (
+                (['High: x.py:1 drops records.'], [], 'Reject', []),
+                (['**Critical** x.py:1 bypasses the gate.', 'Low: a note'], [], 'Reject', []),
+                (['Medium: x.py:1 a defect.'], [], 'Accept with Manual Checks', ['Medium: x.py:1 a defect.']),
+                ([], ['NOT RUN: the Windows suite.'], 'Accept with Manual Checks', ['NOT RUN: the Windows suite.']),
+                (['Low: a note', 'NOT RUN: the deployment.'], [], 'Accept with Manual Checks',
+                 ['NOT RUN: the deployment.'])):
+            value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': checks}
+            envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                        'modelUsage': {'claude-opus-5': {}}, 'structured_output': value}
+            with self.subTest(findings=findings, checks=checks):
+                result = bridge.validate(envelope, 'review', 'claude-opus-5')
+                self.assertEqual(result['verdict'], verdict)
+                self.assertEqual(result['findings'], findings)
+                self.assertTrue(result['manual_checks'][0].startswith(note % verdict), result)
+                self.assertEqual(result['manual_checks'][1:], moved)
+                final = codex_bridge.corrected('## Findings\n\n' + ''.join('- %s\n' % f for f in findings or ['None.'])
+                                               + '\n## Manual checks\n\n' + ''.join('- %s\n' % c for c in checks or ['None.'])
+                                               + '\nVERDICT: Accept\n')
+                self.assertEqual(re.findall(codex_bridge.VERDICT, final, re.M), [verdict])
+                self.assertIn('- ' + note % verdict, final)
+                self.assertFalse(codex_bridge.verdict_refused(final), final)
+        # A Reject that names no finding stays refused: there is no stricter reading of it.
+        envelope['structured_output'] = {'verdict': 'Reject', 'findings': ['None.'], 'manual_checks': []}
+        with self.assertRaisesRegex(bridge.BridgeError, 'Reject has no findings'):
+            bridge.validate(envelope, 'review', 'claude-opus-5')
+        self.assertTrue(codex_bridge.verdict_refused(codex_bridge.corrected('## Findings\n\nNone.\n\nVERDICT: Reject\n')))
 
     def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
         # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin
@@ -5126,7 +5233,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         record = Path(first['usage_record'])
         original = json.loads(record.read_text())
         for field, value, named in (('scope', 'base', 'scope'), ('resolved', '1' * 40, 'reference'),
-                                    ('head', '0' * 40, 'not HEAD')):
+                                    ('head', '0' * 40, 'not an ancestor of HEAD')):
             with self.subTest(field=field):
                 changed = json.loads(json.dumps(original))
                 changed['task'][field] = value
@@ -5247,26 +5354,37 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('cannot be listed', refused['error'])
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
 
-    def test_earlier_rounds_bind_the_change_not_the_reference_text(self):
-        # "--commit HEAD" names a different commit once HEAD moves, and an --uncommitted diff
-        # that was committed since is replaced by the next one: neither is the reviewed change.
-        commit = lambda message: self.git(
+    def test_a_label_continues_over_a_fix_commit_in_every_scope(self):
+        # #119: a --commit or --uncommitted round 2 over the fix commit was refused as "another
+        # change", so the lead took a new label and the count restarted. Like --base, a round on
+        # top of the earlier round's head continues the label, and the third is refused; an
+        # amend leaves the earlier head off HEAD's line and still needs a new label.
+        commit = lambda *args: self.git(
             '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
-            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qam', message)
-        task = {'MYAGENTKIT_TASK_ID': 'replaced-task'}
-        code, first = self.run_bridge('reject', env_extra=task)
-        self.assertEqual(code, 0, first)
-        commit('the reviewed diff')
-        (self.repo / 'file.py').write_text('another change\n')
-        code, refused = self.run_bridge(env_extra=task)
-        self.assertEqual(code, 2, refused)
-        self.assertIn('new task label', refused['error'])
-        commit('A')
-        task = {'MYAGENTKIT_TASK_ID': 'moving-task'}
+            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qa', *args)
+        for scope in (('--uncommitted',), ('--commit', 'HEAD')):
+            with self.subTest(scope=scope):
+                task = {'MYAGENTKIT_TASK_ID': 'fix-%s-task' % scope[0].strip('-')}
+                if scope[0] == '--commit':
+                    commit('-m', 'A')
+                code, first = self.run_bridge('reject', extra=scope, env_extra=task)
+                self.assertEqual(code, 0, first)
+                for text in ('fixed', 'fixed again'):
+                    if scope[0] == '--uncommitted':
+                        commit('-m', 'reviewed')
+                    (self.repo / 'file.py').write_text(text)
+                    if scope[0] == '--commit':
+                        commit('-m', 'fix')
+                    code, result = self.run_bridge(extra=scope, env_extra=task)
+                    if text == 'fixed':
+                        self.assertEqual(code, 0, result)
+                self.assertEqual(code, 2, result)
+                self.assertIn('already has 2 completed rounds', result['error'])
+        task = {'MYAGENTKIT_TASK_ID': 'amended-task'}
         code, first = self.run_bridge('reject', extra=('--commit', 'HEAD'), env_extra=task)
         self.assertEqual(code, 0, first)
-        (self.repo / 'file.py').write_text('B\n')
-        commit('B')
+        (self.repo / 'file.py').write_text('amended')
+        commit('--amend', '-m', 'amended')
         code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
         self.assertEqual(code, 2, refused)
         self.assertIn('new task label', refused['error'])
@@ -7018,6 +7136,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         for text in (bridge.REVIEW_RUNS, bridge.REVIEW_READS):
             self.assertNotIn('the suite', text)
 
+    def test_a_reviewer_with_a_shell_is_told_what_its_copy_lacks(self):
+        # #122: the copy holds no file Git ignores and the reviewer has no network, so a build
+        # that needs a build tree, a dependency or a venv cannot run; told nothing, reviewers
+        # spent turns on builds that could not succeed.
+        self.assertIn("The copy holds no files Git ignores (build tree, installed dependencies, "
+                      "virtual environment) and has no network: a check that needs them is NOT RUN; "
+                      "do not build or download them.", bridge.REVIEW_RUNS)
+
     def test_a_setup_fault_or_failed_authentication_never_fails_over(self):
         # KARARLAR D04 inv2#44: a setup fault (authentication among them) is fixed, never failed
         # over: the other reviewer would only hide it, and it fails the same way next time.
@@ -7042,6 +7168,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(chain['selected_reviewer'], 'claude')
         self.assertIn('quota_exhausted', chain['switched'])
         self.assertIn('SWITCH [review]: codex quota is exhausted', result.stdout)
+        # #121: the record written before the switch says it follows; the last one names none.
+        first = Path(chain['chain_record']).with_name(Path(chain['chain_record']).name.replace('-2.json', '-1.json'))
+        self.assertEqual(json.loads(first.read_text())['next_attempt'], {'reviewer': 'claude', 'why': 'quota switch'})
+        self.assertNotIn('next_attempt', chain)
         self.assertIn('FALLBACK REVIEWER: the requested reviewer codex (quota_exhausted)',
                       Path(chain['attempts'][1]['evidence']).read_text())
         # Claude's own exhausted quota switches nothing: without --fallback the review fails.
@@ -7058,7 +7188,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         from unittest.mock import patch
         import review_dispatch
 
-        def execution(command, prompt, repo, timeout, into=None, noted=None):
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
             calls.append(1)
             if len(calls) <= failures:
                 message = 'Selected model is at capacity.' + hint
@@ -7073,7 +7203,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                               (3, '', [600, 1200], 'failed'),
                                               # "0 seconds" is a delay, not a missing one (batch 4 r1 High).
                                               (1, ' Please try again in 0 seconds.', [0], 'completed')):
-            calls, slept, flags, out = [], [], [], io.StringIO()
+            calls, slept, flags, pending, out = [], [], [], [], io.StringIO()
 
             def sleep(delay):
                 # #280: the checkpoint written before the wait says a retry follows.
@@ -7081,7 +7211,12 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 chain_id = os.environ['MYAGENTKIT_REVIEW_CHAIN_ID']
                 newest = max((self.repo / '.myagentkit/usage/chains').glob(chain_id + '-*.json'),
                              key=lambda path: int(path.stem.rpartition('-')[2]))
-                flags.append(json.loads(newest.read_text())['recovery']['automatic_retry'])
+                record = json.loads(newest.read_text())
+                flags.append(record['recovery']['automatic_retry'])
+                # #121: the record also names the attempt that follows and when.
+                pending.append(record['next_attempt']['reviewer'] == 'codex'
+                               and 'rate_limited retry' in record['next_attempt']['why']
+                               and bool(record['next_attempt']['not_before']))
 
             with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
                     MYAGENTKIT_TASK_ID='capacity-%d' % failures,
@@ -7093,6 +7228,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
                 self.assertEqual(slept, waits)
                 self.assertEqual(flags, [True] * len(waits))
+                self.assertEqual(pending, [True] * len(waits))
+                self.assertNotIn('next_attempt', chain)
                 self.assertIs(chain['recovery']['automatic_retry'], False)
                 self.assertEqual(len(calls), len(waits) + 1)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'] * len(calls))

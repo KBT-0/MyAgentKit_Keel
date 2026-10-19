@@ -435,7 +435,9 @@ cadence (ten days came from a project's request, kit issue #61).
   budget runs short, saver applies and the review is never dropped.
 - **A second agent's output is untrusted INPUT to a decision the calling agent owns**, never
   a verdict to relay verbatim. Verify each finding against the code: drop what is disproved,
-  keep what is confirmed, and treat a confirmed critical finding as a stop signal.
+  keep what is confirmed, and treat a confirmed critical finding as a stop signal. The author
+  of the patch drops nothing: it records dispositions (`docs/REVIEW_GATE.md`, "Verdicts and
+  who decides").
 - **A worker's "not done" or "noticed, not fixed" line about something the brief asked for
   is a finding.** The lead has it fixed before the merge. A worker's list of new ideas is a
   question for {{OWNER_NAME}}, never an automatic next round.

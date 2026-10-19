@@ -45,6 +45,10 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    personal data").
    A task that writes an incremental-build planner quotes `docs/GOTCHAS.md`, "An incremental
    build misses its always-run inputs".
+   A task whose checks build, download or write outside the worktree quotes its environment:
+   a fresh worktree has no build tree, dependency cache or virtual environment, and a sandboxed
+   worker has no network and writes only in its worktree and the temporary directory. Name the
+   downloads to stage and the user-profile paths to redirect.
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
    area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets its tier's review
    (`docs/REVIEW_GATE.md`, "Risk tiers"); {{OWNER_NAME}}'s check or the manual check named here
@@ -233,7 +237,7 @@ brief instead: its gate review is the lead's (`docs/WORKFLOW.md`, "The lead's st
 branch is ready").
 
 ```
-Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, <target folder>/AGENTS.md
+Read: docs/PHASES.md, docs/STATE.md, <target folder>/AGENTS.md
       (docs/ARCHITECTURE.md only when the task crosses a module boundary)
 
 TASK:   <one sentence — one module>

@@ -17,7 +17,7 @@ import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
-                           prior_rounds,
+                           prior_rounds, stricter_verdict,
                            review_context, review_parts, recheck, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
@@ -37,6 +37,21 @@ def verdict_refused(final):
     return bool(verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
                 or verdicts[0] == 'Accept with Manual Checks' and not checks
                 or verdicts[0] == 'Reject' and all(placeholder(f) for f in findings))
+
+
+def corrected(final):
+    """Codex's final text with a contradicted Accept read as the stricter verdict, as
+    claude_bridge.validate() does (owner decision 59, #120): the VERDICT line names it and a
+    Manual checks section, first line the correction, carries what moved. Any other text is
+    returned as it is, for verdict_refused() to judge."""
+    if re.findall(VERDICT, final, re.M) != ["Accept"] or not verdict_refused(final):
+        return final
+    findings, checks = review_parts(final)
+    blocking = [item for item in findings if not accept_allows([item])]
+    verdict, note = stricter_verdict(blocking)
+    moved = [] if verdict == "Reject" else blocking
+    final = re.sub(VERDICT, "VERDICT: " + verdict, final, flags=re.M)
+    return final.rstrip("\n") + "\n\n## Manual checks\n\n" + "".join("- %s\n" % item for item in [note] + moved)
 
 
 def main(argv=None, result_sink=None, claims=None):
@@ -127,7 +142,10 @@ def main(argv=None, result_sink=None, claims=None):
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,
-                       "-c", "approval_policy=never", "-o", str(last), "-m", args.model, "-"]
+                       "-c", "approval_policy=never", "-o", str(last), "-m", args.model,
+                       # #117: the copy's AGENTS.md is evidence the prompt names (REVIEW_DOCS), not
+                       # instructions; 0 bytes loads no project doc (openai/codex agents_md.rs).
+                       "-c", "project_doc_max_bytes=0", "-"]
             capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
             def quota_read():
                 # Optional telemetry: ANY error of the read is "unavailable". Raised, one after
@@ -152,8 +170,18 @@ def main(argv=None, result_sink=None, claims=None):
                     prepared = {"exit_code": None, "stdout": "", "stderr": "the review wall-clock limit passed during preparation", "termination": "timeout",
                              "cancelled": False, "duration_ms": 0}
                 started = time.monotonic()
+
+                def changed():
+                    # A look during the review (#118). One that cannot read the checkout proves
+                    # no change: the check after the review decides.
+                    try:
+                        now = recheck(repo, scope, ref)
+                        return now is None or now[1] != fingerprint
+                    except (OSError, ValueError, BridgeError):
+                        return False
                 try:
-                    execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
+                    execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed,
+                                                              watch=changed)
                 except OSError as error:
                     execution = dict(handed) if handed else {
                         "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,
@@ -220,6 +248,7 @@ def main(argv=None, result_sink=None, claims=None):
                        # printed copy_failed and no reason.
                        "\n\n## Failure\n\nCodex never ran: " + execution["stderr"][-4000:]
                        if reason == "copy_failed" else "")
+            final = corrected(final)
             verdicts = re.findall(VERDICT, final, re.M)
             if not reason and (verdict_refused(final)
                                or not any(v.get("type") == "turn.completed" for v in values)):

@@ -87,6 +87,10 @@ of the one release review. Time target: about 20 minutes per reviewer, the secto
 ## Verdicts and who decides
 
 `Accept` / `Accept with Manual Checks` / `Reject`. Reject only on an open Critical or High.
+An Accept whose own findings or manual checks a plain Accept cannot carry is read as the
+stricter verdict: Reject when such a finding names Critical or High, else Accept with Manual
+Checks; its first manual check names the correction (`scripts/claude_bridge.py`,
+`stricter_verdict`).
 A Medium is fixed in the round when the lead can verify the fix with a test; otherwise it is
 an issue {{OWNER_NAME}} sees at the merge. A Low a reviewer reports goes to `docs/BACKLOG.md`
 or an issue, never fixed in the round, because a fix adds code no reviewer has seen; a defect
@@ -97,7 +101,10 @@ KARARLAR D06 inv2#18; Yin et al., "How Do Fixes Become Bugs?" (2011), and GitHub
 branches' dismissal of stale approvals.
 
 The reviewer's output is unverified INPUT: the lead verifies every finding against the code
-and owns the technical verdict; a verdict relayed verbatim is a failed review.
+and owns the technical verdict; a verdict relayed verbatim is a failed review. When the lead
+wrote the patch, the author of the patch drops nothing and issues no verdict of its own: it
+records a disposition for each finding and reports the reviewer's verdict beside them; a
+disproved finding goes to round 2 or to {{OWNER_NAME}}.
 {{OWNER_NAME}} decides whether a change ships, a Medium's fate, "enough" after round 2,
 taste, product direction and every OPEN item of `docs/PROJECT.md`; away, the lead files an
 issue and goes on.

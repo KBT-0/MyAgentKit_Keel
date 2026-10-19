@@ -136,7 +136,9 @@ def review_context(task_file=None) -> str:
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise); run anything inside this copy. Run the reproductions "
+    "work, an archive of HEAD otherwise); run anything inside this copy. The copy holds no files "
+    "Git ignores (build tree, installed dependencies, virtual environment) and has no network: a "
+    "check that needs them is NOT RUN; do not build or download them. Run the reproductions "
     "here, and mark findings REPRODUCED with the command that shows each; if a "
     "run is impossible, mark it REASONED and name the command that would reproduce it; list as "
     "NOT RUN what you could not run and why. Never use the network and never call a paid model.")
@@ -1096,27 +1098,24 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         if not isinstance(value.get("evidence"), str) or not value["evidence"]:
             raise damaged(path, "is a completed review that names no evidence")
         # A reused label from another change must not carry that change's rounds. Compared
-        # as resolved commits, never as the reference text: "--commit HEAD" one commit later
-        # is another change. --commit and --uncommitted rounds share one HEAD: an
-        # uncommitted diff that was committed since is replaced by the next one.
+        # as resolved commits, never as the reference text.
         earlier, mismatch = str(task.get("head")), None
         if task.get("scope") != scope:
             mismatch = "scope %s, not %s" % (task.get("scope"), scope)
         elif task.get("resolved") != resolved and not (
-                # Round 2 over the fix commits: its --base is the earlier round's head or above
-                # it, on HEAD's line. The rounds stay one count, so a third is still refused; a
-                # new label restarted the count (the owner's rule: never by label). A rebase or an
-                # amend leaves the earlier head off that line, and needs a new label.
-                scope == "base" and descends(earlier, resolved) and descends(resolved, head)):
+                # Round 2 over the fix commits, in every scope (#119): a --base at the earlier
+                # round's head or above it, or the --commit of a fix on top of it, on HEAD's line.
+                # The rounds stay one count, so a third is still refused; a new label restarted
+                # the count (the owner's rule: never by label). A rebase or an amend leaves the
+                # earlier head off that line, and needs a new label.
+                descends(earlier, resolved) and descends(resolved, head)):
             mismatch = "reference %s resolved to %s, not %s" % (
                 task.get("reference"), task.get("resolved"), resolved)
-        elif scope != "base" and earlier != head:
-            mismatch = "head %s, not HEAD %s" % (earlier, head)
         elif not descends(earlier, head):
             mismatch = "head %s, not an ancestor of HEAD %s" % (earlier, head)
         if mismatch:
             raise BridgeError("an earlier review with task label %s has %s; that is another "
-                              "change, a rebase, an amend or a --commit round, so use a new "
+                              "change, a rebase or an amend, so use a new "
                               "task label" % (task_id, mismatch))
         evidence = Path(value["evidence"]).resolve()
         if not evidence.is_relative_to((repo / "docs/reviews").resolve()) or not evidence.is_file():
@@ -1363,6 +1362,18 @@ def accept_allows(findings: list) -> bool:
                or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\**\s*[^\s*])", item) for item in findings)
 
 
+def stricter_verdict(blocking: list) -> tuple[str, str]:
+    """The verdict an Accept is read as when its own lists hold an item a plain Accept cannot
+    carry (owner decision 59, #120): a blocking finding naming Critical or High makes it
+    Reject, anything else Accept with Manual Checks. Refused, the whole paid review was lost to
+    an inconsistency the stricter verdict settles without dropping an item. Returns the verdict
+    and the check line that says so."""
+    verdict = ("Reject" if any(re.search(r"\b(?:critical|high)\b", item, re.I) for item in blocking)
+               else "Accept with Manual Checks")
+    return verdict, ("The reviewer wrote Accept; the bridge read it as %s, because its own findings "
+                     "or manual checks hold an item a plain Accept cannot carry." % verdict)
+
+
 def validate(envelope: object, mode: str, model: str) -> dict:
     if not isinstance(envelope, dict) or envelope.get("is_error") is not False:
         raise BridgeError("CLI did not return a successful result envelope")
@@ -1401,7 +1412,11 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError("invalid verdict")
         if verdict == "Accept" and (value["manual_checks"] or checks or not accept_allows(findings)
                                     or not accept_allows(value["findings"])):
-            raise BridgeError("Accept contradicts outstanding findings or manual checks")
+            blocking = [item for item in dict.fromkeys(findings + value["findings"]) if not accept_allows([item])]
+            verdict, note = stricter_verdict(blocking)
+            moved = checks + (blocking if verdict != "Reject" else [])
+            value = dict(value, verdict=verdict,
+                         manual_checks=[note] + list(dict.fromkeys(value["manual_checks"] + moved)))
         if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
         if verdict == "Accept with Manual Checks" and not value["manual_checks"]:
@@ -1810,9 +1825,19 @@ def main(argv=None, result_sink=None, claims=None) -> int:
             if execution is None:
                 handed = {}
                 started = time.monotonic()
+
+                def changed():
+                    # A look during the review (#118). One that cannot read the checkout proves
+                    # no change: the check after the review decides.
+                    try:
+                        now = recheck(repo, scope, ref)
+                        return (now is None or now[1] != checkout_fingerprint
+                                or behaviour_appendix(repo) != (source_name, source_bytes))
+                    except (BridgeError, OSError, ValueError):
+                        return False
                 try:
                     execution = agent_process.run(command, prompt, workdir, remaining,
-                                                  into=handed, noted=cancelled)
+                                                  into=handed, noted=cancelled, watch=changed)
                 except OSError as error:
                     execution = dict(handed) if handed else {
                         "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,
@@ -1827,6 +1852,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
         try:
             if execution["termination"] == "timeout":
                 raise BridgeError("Claude exceeded the wall-clock limit; process group stopped")
+            if execution["termination"] == "stale_checkout" and execution.get("launched"):
+                raise BridgeError("checkout changed during review; the reviewer was stopped early")
             if execution["termination"] in ("copy_failed", "unsafe_behaviour_appendix", "stale_checkout"):
                 reason = execution["termination"]
                 raise BridgeError("Claude never ran: " + execution["stderr"])

@@ -32,6 +32,11 @@ MAX_REVIEW_TURNS = 500
 # its stdout held the pipe open, and a finished review waited out the wall-clock limit as a
 # timeout (#197). Five is the kit's choice: the leader's own output is in the pipe at its exit.
 DRAIN_GRACE_SECONDS = 5
+# Seconds between two looks at the checkout during a review (run()'s `watch`). A checkout that
+# changed makes the review stale; stopped at the next look, it no longer runs to its end and is
+# paid for nothing (#118, owner decision 59 A). One look hashes the whole checkout, so once a
+# minute is the kit's choice of cost against the minutes a stale review still runs.
+WATCH_SECONDS = 60
 # Ctrl-C, kill and a closed terminal or restarted host session. The reviewer runs in its own
 # session so none of these reach it; left at their defaults, SIGTERM and SIGHUP end this
 # process without its cleanup and the paid reviewer keeps running, unaccounted. Native Windows
@@ -471,13 +476,15 @@ class OneShot:
 
 
 def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict | None = None,
-        noted: list | None = None) -> dict:
+        noted: list | None = None, watch=None) -> dict:
     """Return launch status, exit status, partial output, and termination reason within a fractional seconds budget.
 
     `into` receives the result before the caller's handlers are restored: a raising one
     restored there raised before the returned result was assigned, and the attempt was lost.
     `noted` is the caller's own list of cancels its noting handler saw before this guard was
     up: one there stops the launch, as a cancel during the run stops the reviewer.
+    `watch`, when given, is called every WATCH_SECONDS while the reviewer runs; True stops it
+    with termination stale_checkout.
     """
     if not 0 < timeout <= MAX_REVIEW_TIMEOUT:
         raise ValueError("timeout must be greater than zero and at most %d seconds" % MAX_REVIEW_TIMEOUT)
@@ -486,7 +493,7 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
     guard = OneShot()
     try:
         with guard:
-            result.update(_supervise(command, prompt, repo, timeout, started, guard, noted, result))
+            result.update(_supervise(command, prompt, repo, timeout, started, guard, noted, result, watch))
             return result
     finally:
         # Noted while the handlers were restored: still a cancel.
@@ -575,7 +582,7 @@ def finish(child, pgid, timeout: float) -> bool:
     return exited
 
 
-def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=None):
+def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=None, watch=None):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
         # communicate(input=None) after a short timeout can strand a partially written pipe.
@@ -637,6 +644,15 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     except OSError:
                         pass  # only the grace's look: the wait once the pipes close reports the fault
                     return gone is not None and time.monotonic() - gone >= DRAIN_GRACE_SECONDS
+                looked = started
+
+                def changed():
+                    # The checkout changed: the review is stale, stopped now, not at its end (#118).
+                    nonlocal looked
+                    if watch is None or time.monotonic() - looked < WATCH_SECONDS:
+                        return False
+                    looked = time.monotonic()
+                    return bool(watch())
                 # 8,000,000 bytes per stream is the owner's choice of safety cap,
                 # not a provider limit (B03 inv2#65).
                 while not POSIX and open_streams:
@@ -645,6 +661,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                         termination = "timeout"
                         break
                     if drained():
+                        break
+                    if changed():
+                        termination = "stale_checkout"
                         break
                     for name, data in take(chunks, min(0.2, remaining)):
                         if not data:
@@ -664,6 +683,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                         termination = "timeout"
                         break
                     if drained():
+                        break
+                    if changed():
+                        termination = "stale_checkout"
                         break
                     for key, _ in selector.select(min(0.2, remaining)):
                         data = os.read(key.fd, 65536)

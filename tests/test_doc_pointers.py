@@ -111,8 +111,8 @@ class SectionPointerTests(unittest.TestCase):
                      'After a cut-off, look for this check before resuming heavy work; wait for any survivor or ask the owner.',
                      'For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in the record names its process.',
                      '`<chain>-0.json` always stays pending and is not evidence of a running review.',
-                     'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (the attempt count equals the number of possible attempts, a `failure_kind` outside the dispatcher\'s unavailable set, `fallback_blocked` set, or `fallback_allowed` false, or the failed attempt has no `evidence` or `usage_record`: the dispatcher never falls over from such an attempt).',
-                     'The number of possible attempts is one without `--fallback`, two with it.',
+                     'A review is finished only when that latest record has status `completed`, or status `failed` and no `next_attempt`.',
+                     'The number of possible attempts is one, plus up to two capacity retries of Codex (a wait of up to 20 minutes before each), plus one quota switch or fallback.',
                      'Use the mtime of `<chain>-0.json` as the review start time.',
                      'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`), unless the latest record shows it is finished as above.',
                      'This window is a lower bound, not proof that an orphaned reviewer stopped.',
@@ -179,6 +179,35 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('model did not write the latest fix; the final Accept', bridge)
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
+
+    def test_the_patchs_author_records_dispositions_and_drops_no_finding(self):
+        # #104: cross-review told the requesting session, possibly the author, to drop what it
+        # disproved and to report its own verdict, so the author approved its own patch.
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        for name in ('plugin/commands/cross-review.md', 'core/docs/REVIEW_GATE.md', 'core/docs/WORKFLOW.md'):
+            with self.subTest(name=name):
+                self.assertIn('the author of the patch drops nothing', read(name).lower())
+        command = read('plugin/commands/cross-review.md')
+        self.assertIn("report the reviewer's verdict and your dispositions", command)
+
+    def test_the_diff_reviewer_names_its_reading_and_makes_its_own_copy(self):
+        # #105: "run your reproductions in a throwaway copy" named no way to make one (a review
+        # mutated tracked files and reverted them), and "its reading list" pointed at nothing.
+        # #103: it is the author's side's early check, not the gate's review.
+        reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
+                            .read_text(encoding='utf-8').split())
+        self.assertIn('Read `AGENTS.md`, `docs/ARCHITECTURE.md` and `docs/REVIEW_GATE.md`', reviewer)
+        self.assertIn("the author's side's early check, not the gate's review", reviewer)
+        self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
+        self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
+        self.assertNotIn('its reading list', reviewer)
+        self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
+
+    def test_a_brief_names_what_the_workers_environment_lacks(self):
+        # #107: six briefs of one project re-taught sandbox workarounds by hand.
+        handoff = ' '.join((ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8').split())
+        self.assertIn('A task whose checks build, download or write outside the worktree quotes its '
+                      'environment', handoff)
 
     def test_review_rounds_are_capped_once_and_the_lead_reads_a_short_block(self):
         # #106: inner rounds ran "until no Medium remains", which never ends. #123: the final
