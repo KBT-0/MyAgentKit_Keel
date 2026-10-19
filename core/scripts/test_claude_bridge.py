@@ -3844,7 +3844,18 @@ class BridgeTests(unittest.TestCase):
                  ['NOT RUN: the high-tier focus run.']),
                 (['Pre-existing (Critical): x.py:1 an old bypass.'], [], 'Accept with Manual Checks',
                  ['Pre-existing (Critical): x.py:1 an old bypass.']),
-                (['High-level: x.py:1 a note.'], [], 'Accept with Manual Checks', ['High-level: x.py:1 a note.'])):
+                (['High-level: x.py:1 a note.'], [], 'Accept with Manual Checks', ['High-level: x.py:1 a note.']),
+                # rsel3: the forms finding_start() reads as findings lead with their severity too; a
+                # check whose first word only looks like one (no separator follows) is no finding.
+                (['Issue 1: High — x.py:1 drops records.'], [], 'Reject', []),
+                (['### Issue 3: High — x.py:1 drops records.'], [], 'Reject', []),
+                (['[High] x.py:1 drops records.'], [], 'Reject', []),
+                (['**[High]** x.py:1 drops records.'], [], 'Reject', []),
+                (['Severity: High — x.py:1 drops records.'], [], 'Reject', []),
+                ([], ['High availability: confirm failover on staging.'], 'Accept with Manual Checks',
+                 ['High availability: confirm failover on staging.']),
+                ([], ['Critical path: time the deploy.'], 'Accept with Manual Checks',
+                 ['Critical path: time the deploy.'])):
             value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': checks}
             envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
                         'modelUsage': {'claude-opus-5': {}}, 'structured_output': value}
