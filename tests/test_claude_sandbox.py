@@ -355,6 +355,27 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertTrue(folder.is_dir(), 'the sweep removed a copy before its lock was acquired')
         self.assertTrue(Path(str(folder) + '.lock').is_file())
 
+    def test_sweep_names_the_stale_copies_it_keeps(self):
+        # #199: a stale locked copy holding another account's folder (here rmtree removes
+        # nothing) and an unmarked one stayed, review after review, without a word.
+        old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
+        locked, unmarked = self.temp / 'myagentkit-codex-locked', self.temp / 'myagentkit-codex-legacy'
+        for folder in (locked, unmarked):
+            folder.mkdir()
+        with claude_bridge.scratch_lock(str(locked), create=True):
+            pass
+        for folder in (locked, unmarked):
+            os.utime(folder, (old, old))
+        err = io.StringIO()
+        with patch.object(claude_bridge.shutil, 'rmtree'), contextlib.redirect_stderr(err):
+            claude_bridge.sweep('myagentkit-codex-')
+        self.assertTrue(locked.is_dir() and unmarked.is_dir())
+        self.assertIn('1 stale review copies could not be removed', err.getvalue())
+        self.assertIn('takeown' if os.name == 'nt' else 'rm -rf', err.getvalue())
+        self.assertIn('1 stale review copies have no lock marker', err.getvalue())
+        for folder in (locked, unmarked):
+            self.assertEqual(err.getvalue().count(str(folder)), 1, err.getvalue())
+
     def test_sweep_removes_only_old_unheld_orphan_lock_files(self):
         old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
         orphan = self.temp / 'myagentkit-review-orphan'

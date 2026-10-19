@@ -53,9 +53,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 242, 'test_agent_usage': 36, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 245, 'test_agent_usage': 37, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 216, 'test_agent_usage': 32, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 219, 'test_agent_usage': 33, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -732,7 +732,6 @@ class BridgeTests(unittest.TestCase):
         for author, model, allowed in (('codex/gpt-6', 'gpt-6', False),
                                        ('codex/gpt-6', 'openai/gpt-6', False),
                                        ('codex/gpt-6', 'unknown-model', False),
-                                       ('unknown-author', 'claude-opus-5', False),
                                        ('codex/gpt-6', 'claude-opus-5', True),
                                        ('claude/claude-sonnet-5', 'gpt-6', True)):
             (folder / 'openai.env').write_text('ANTHROPIC_BASE_URL=https://backend.invalid/api\n'
@@ -750,8 +749,17 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(fallback.call_count, int(allowed))
                 self.assertEqual(len(chain['attempts']), 2 if allowed else 1)
                 if not allowed:
-                    self.assertIn('family', chain['fallback_blocked'])
+                    # #225: the author's tier is refused, a model of no known family stays unknown.
+                    self.assertIn('unknown family' if model == 'unknown-model' else "the author's tier",
+                                  chain['fallback_blocked'])
                     self.assertNotIn('selected_reviewer', chain)
+        # #181: an author that names no model tier is refused before any reviewer runs.
+        with patch.dict(os.environ, self.review_env(MYAGENTKIT_AUTHOR='unknown-author')), \
+                patch.object(review_dispatch.codex_bridge, 'main', side_effect=unavailable) as primary, \
+                self.assertRaisesRegex(ValueError, 'names no model tier'):
+            review_dispatch.main(['--repo', str(self.repo), '--reviewer', 'codex',
+                                  '--codex-model', 'codex-fixture-model', '--backend', 'openai'])
+        self.assertEqual(primary.call_count, 0)
 
     def test_noise_cannot_bypass_the_total_review_payload_cap(self):
         for name in ('package-lock.json', 'vendor/lib.py', 'app.min.js'):
@@ -4798,6 +4806,35 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         execution = agent_process.run(['git', 'rev-parse', '--show-toplevel'], '', copy, 30)
         self.assertNotEqual(execution['exit_code'], 0, execution)
 
+    def committed_probe(self, smudge):
+        # A committed file whose smudge filter runs when git archive writes it, as LFS's does.
+        (self.repo / '.gitattributes').write_text('probe.txt filter=probe\n')
+        (self.repo / 'probe.txt').write_text('stored\n')
+        self.commit_fixture('probe')
+        self.git('config', 'filter.probe.smudge', smudge)
+        self.git('config', 'filter.probe.required', 'true')
+        return Path(tempfile.mkdtemp(dir=self.root))
+
+    def test_a_failed_git_archive_names_git_s_message_first(self):
+        # #246: git archive's stderr went to DEVNULL, so a failed LFS smudge read as a tar error.
+        import claude_bridge
+        copy = self.committed_probe('echo probe smudge failed >&2; exit 1')
+        with self.assertRaises(claude_bridge.BridgeError) as caught:
+            claude_bridge.throwaway_copy(self.repo, 'HEAD', None, copy)
+        message = str(caught.exception)
+        self.assertIn('probe smudge failed', message)
+        self.assertRegex(message, r'^could not copy HEAD for the reviewer: git archive exited \d+: ')
+
+    def test_a_committed_copy_holds_content_whatever_git_lfs_skip_smudge_says(self):
+        # #247: an inherited GIT_LFS_SKIP_SMUDGE=1 reached git archive, and committed scopes got
+        # LFS pointers where an uncommitted copy holds content.
+        import claude_bridge
+        from unittest.mock import patch
+        copy = self.committed_probe('printf "skip=%s" "$GIT_LFS_SKIP_SMUDGE"')
+        with patch.dict(os.environ, GIT_LFS_SKIP_SMUDGE='1'):
+            claude_bridge.throwaway_copy(self.repo, 'HEAD', None, copy)
+        self.assertEqual((copy / 'probe.txt').read_text(), 'skip=')
+
     def test_tar_reads_no_option_from_the_environment_and_a_proposal_ignores_tmpdir(self):
         import claude_bridge
         self.install_wrapper()
@@ -5197,6 +5234,30 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('not an ancestor of HEAD', refused['error'])
 
+    def test_a_round_two_over_the_fix_commits_keeps_the_label_and_the_count(self):
+        # Lead-found: round 2 with --base at round 1's head (the fix commits only) was refused
+        # under the round-1 label, so leads took a new label, and that restarted the count.
+        commit = lambda *args: self.git(
+            '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qa', *args)
+        head = lambda: self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        self.git('branch', 'review-base')
+        commit('-m', 'X')
+        task = {'MYAGENTKIT_TASK_ID': 'fix-task'}
+        code, first = self.run_bridge('reject', extra=('--base', 'review-base'), env_extra=task)
+        self.assertEqual(code, 0, first)
+        round_one = head()
+        (self.repo / 'file.py').write_text('fixed\n')
+        commit('-m', 'fix')
+        code, second = self.run_bridge(extra=('--base', round_one), env_extra=task)
+        self.assertEqual(code, 0, second)
+        round_two = head()
+        (self.repo / 'file.py').write_text('fixed again\n')
+        commit('-m', 'fix again')
+        code, third = self.run_bridge(extra=('--base', round_two), env_extra=task)
+        self.assertEqual(code, 2, third)
+        self.assertIn('fix-task already has 2 completed rounds', third['error'])
+
     def test_an_edited_earlier_round_is_refused(self):
         # The archive is owner-writable; a round edited after the reviewer wrote it is not its evidence.
         log = self.root / 'prompt.txt'
@@ -5280,6 +5341,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('`authentication`) is fixed, never failed over', running)
 
     def test_changing_or_unsetting_focus_cannot_open_a_third_round(self):
+        # The sequential order today: logic r1, logic r2, then a new focus (portability) is
+        # refused, since a new focus takes the highest count. #102 disputes that rule; a fix
+        # changes this test's portability case, the `security` case of
+        # test_focus_reviewers_each_get_two_rounds_but_carry_only_their_own_reports and
+        # re-checks test_legacy_rounds_are_carried_and_counted_when_focus_is_added (#248).
         from unittest.mock import patch
         task = {'MYAGENTKIT_TASK_ID': 'focus-limit', 'REVIEW_FOCUS': 'logic'}
         for _ in range(2):

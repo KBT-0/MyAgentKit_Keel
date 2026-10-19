@@ -745,6 +745,8 @@ class UsageTests(unittest.TestCase):
         calls = []
 
         def exit_seen_then_cancel(child, timeout):
+            if timeout == 0 and not calls:
+                return real(child, timeout)  # the look while the pipes drain (#197)
             calls.append(timeout)
             if len(calls) == 1:
                 self.assertTrue(real(child, timeout))
@@ -791,6 +793,18 @@ class UsageTests(unittest.TestCase):
             self.assertIn("partial", result["stdout"])
             time.sleep(1.2)
             self.assertFalse((repo / "escaped").exists())
+
+    def test_a_descendant_holding_the_pipe_does_not_turn_a_finished_run_into_a_timeout(self):
+        # #197: the reviewer printed its verdict and exited, but a child it started held its
+        # stdout open, and the run waited for EOF until the wall clock and reported a timeout.
+        # close_fds=False passes the pipe on Windows too (plain bInheritHandles).
+        holder = ("import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; "
+                  "time.sleep(60)'], close_fds=False); print('verdict', flush=True)")
+        started = time.monotonic()
+        result = agent_process.run([sys.executable, "-c", holder], "", Path.cwd(), 30)
+        self.assertEqual((result["exit_code"], result["termination"]), (0, None), result)
+        self.assertIn("verdict", result["stdout"])
+        self.assertLess(time.monotonic() - started, 20)
 
 
 if __name__ == "__main__":
