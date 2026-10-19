@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
     --actions-applied) applied=1; shift ;;
     --merge) merge=1; shift ;;
     --base) [ $# -ge 2 ] || die "--base needs a kit commit"; base_ref=$2; shift 2 ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     -*)        die "unknown option: $1" ;;
     *)         target="$1"; shift ;;
   esac
@@ -174,7 +174,7 @@ out=$(mktemp) || { rm -f "$work_list" "$pending" "$copies"; echo "sync-kit: cann
 # prints it, past the stamp, and a reader that is gone by then costs nothing.
 exec 3>&1 >"$out"
 trap 'rm -f "$work_list" "$pending" "$copies" "$copies".* ${part:+"$part"}; [ -z "$mdir" ] || rm -rf "$mdir"
-  trap "" PIPE; cat "$out" >&3 2>/dev/null; rm -f "$out"' EXIT
+  trap "" PIPE; cat "$out" >&3 2>/dev/null || :; rm -f "$out"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -284,8 +284,11 @@ while IFS= read -r src; do
     printf '%s\n' "  same:    $rel"
   elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
     # An edit git does not hold (unstaged, or an untracked file) would be lost: the copy keeps
-    # no backup (#128). A staged one stays in the index.
-    if [ -n "$repo" ] && git -C "$target" --literal-pathspecs status --porcelain -- "$rel" 2>/dev/null | grep -q '^.[^ ]'; then
+    # no backup (#128). A staged one stays in the index. Content the kit's own history holds is
+    # no edit: an earlier run that stopped at its ACTION items wrote it, and the kit moved since.
+    if [ -n "$repo" ] && git -C "$target" --literal-pathspecs status --porcelain -- "$rel" 2>/dev/null | grep -q '^.[^ ]' &&
+      ! { own_repo && blob=$(git -C "$kit" hash-object --path="${src#"$kit/"}" -- "$target/$rel" 2>/dev/null) &&
+          git -C "$kit" cat-file -e "$blob" 2>/dev/null; }; then
       printf '%s\n' "  conflict: $rel (uncommitted edits, which the copy would overwrite)"
       conflict=1
       dirty=1
@@ -331,7 +334,8 @@ EOF
   [ "$dirty" -eq 0 ] || cat <<EOF
 
   A kit-owned file listed holds uncommitted edits. Commit them (git keeps them, and the next
-  sync replaces the file) or put the file back (git restore -- <file>), then sync again.
+  sync replaces the file) or put the file back (git restore -- <file>; delete one git does not
+  track), then sync again.
 EOF
   [ -z "$overlay_fix" ] || cat <<EOF
 
@@ -394,7 +398,10 @@ fi
 # heading or the next list item), joined into one line: printing only the marker's line cut
 # items mid-sentence. A second marker inside that text starts an item of its own: it was
 # printed as continuation text, and a gate merge read as part of a maintainer's push step.
-# A "none" marker (**ACTION** — none, **ACTION:** none.) is no item.
+# A "none" marker (**ACTION** — none, **ACTION:** none.) is no item. A "## Unreleased — vX"
+# section is read as vX's: a sync from the kit's master copies its kit-owned files, and listed
+# "already current" without the items they need. Named vX, a ticked item stays ticked past the
+# release, when the heading becomes "## vX".
 items() {
   awk -v want="v$have" -v incl="$2" '
     function add(s, g) { if (g != "") sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); if (s != "") cur = cur g s }
@@ -411,7 +418,9 @@ items() {
       if (on) add(s, g)
     }
     { sub(/\r$/, "") }
-    /^## v/ { flush(); if (last) exit; if ($2 == want) { if (!incl) exit; last = 1 }; nv++; name[nv] = $2; next }
+    /^## (v|Unreleased)/ { flush(); if (last) exit; v = $2
+      if (v == "Unreleased") v = match($0, /v[0-9][0-9.]*/) ? substr($0, RSTART, RLENGTH) : v
+      if (v == want) { if (!incl) exit; last = 1 }; nv++; name[nv] = v; next }
     on && /[^ \t]/ && !/^#/ && !/^[ \t]*([-*]|[0-9]+\.)[ \t]/ { take($0); next }
     { flush() }
     nv { take($0) }
@@ -443,7 +452,7 @@ fi
 list=docs/kit/UPGRADE.md
 render() {
   awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" '
-    FILENAME == ck { if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }
+    FILENAME == ck { sub(/\r$/, ""); if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }
     !head { head = 1
       print "# Upgrade checklist, v" from " to v" to; print ""
       print "Written by sync-kit.sh, one box per ACTION item, the oldest version first. Apply each item"

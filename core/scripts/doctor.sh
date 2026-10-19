@@ -307,17 +307,21 @@ if [ -d .claude/hooks ]; then
   else
     registered=$(cat .claude/settings.json 2>/dev/null)
   fi
+  # A Windows path (%CLAUDE_PROJECT_DIR%\\.claude\\hooks\\x.py in JSON) is read with slashes,
+  # and a relative one (python3 .claude/hooks/x.py) counts too: only "/" before it did.
+  registered=$(printf '%s\n' "$registered" | sed 's|\\\\*|/|g')
   for f in .claude/hooks/*; do
     [ -f "$f" ] || continue
     first=""; IFS= read -r first < "$f" || true
     case $first in '#!'*) ;; *) continue ;; esac
     case $registered in
-      *"/$f"*) ;;
+      *"/$f"*|*" $f"*|*"\"$f"*|*"'$f"*) ;;
       *) miss "$f is not registered in the committed .claude/settings.json (worktree workers run without it)" "add its entry from the kit's overlay settings.json and commit it (the owner's edit, docs/UPDATING.md)" ;;
     esac
   done
   # Only $CLAUDE_PROJECT_DIR paths: a user-level hook under ~/.claude/hooks is not this checkout's.
-  for f in $(printf '%s\n' "$registered" | grep -o 'PROJECT_DIR}\{0,1\}/\.claude/hooks/[A-Za-z0-9_.-]*' | sed 's|.*/\.claude/|.claude/|' | sort -u); do
+  # A hook in a subfolder is read whole: cut at its folder, it named one that is no file.
+  for f in $(printf '%s\n' "$registered" | grep -o 'PROJECT_DIR[}%]\{0,1\}/\.claude/hooks/[A-Za-z0-9_./-]*' | sed 's|.*/\.claude/|.claude/|; s|/*$||' | sort -u); do
     [ -f "$f" ] || miss ".claude/settings.json registers $f, which does not exist" "sync the kit again, or remove the entry and commit settings.json"
   done
 fi

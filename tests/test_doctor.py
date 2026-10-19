@@ -1044,8 +1044,12 @@ class DoctorTests(unittest.TestCase):
         """Run the part of doctor.sh from the line starting with `start` up to `end`, with miss() printing."""
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
         section = start + doctor.split('\n' + start, 1)[1].split('\n' + end, 1)[0]
-        result = subprocess.run([shutil.which('sh'), '-c', 'miss() { echo "MISSING: $1"; }; %s\n%s\n%s' % (prelude, section, suffix)],
-                                cwd=cwd, env=env, capture_output=True, text=True)
+        # From a file: a `sh -c` argument loses backslashes on the Windows command line.
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / 'section.sh'
+            script.write_bytes(('miss() { echo "MISSING: $1"; }; %s\n%s\n%s\n' % (prelude, section, suffix)).encode())
+            result = subprocess.run([shutil.which('sh'), str(script)],
+                                    cwd=cwd, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -1164,6 +1168,17 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('MISSING: .claude/settings.json registers .claude/hooks/guard_a.py, which does not exist',
                           out)
             self.assertEqual(out.count('MISSING:'), 1, out)
+            # A project's own hooks, registered by a relative or a Windows path, or in a subfolder.
+            for name in ('lint.py', 'win.py', 'lib/run.py'):
+                (project / '.claude/hooks' / name).parent.mkdir(exist_ok=True)
+                (project / '.claude/hooks' / name).write_text('#!/usr/bin/env python3\n')
+            settings.write_text('{"a": "python3 .claude/hooks/lint.py", '
+                                '"b": "%CLAUDE_PROJECT_DIR%\\\\.claude\\\\hooks\\\\win.py", '
+                                '"c": "sh \\"$CLAUDE_PROJECT_DIR/.claude/hooks/lib/run.py\\"", '
+                                + entry % 'guard_b.py' + '}\n')
+            git('add', '-A')
+            git('commit', '-qm', 'project hooks')
+            self.assertEqual(run(), '')
 
     def test_an_empty_disposable_list_with_build_output_in_worktrees_is_told(self):
         # #145: the list shipped empty, so every merged worktree that ran the gate kept its build/.

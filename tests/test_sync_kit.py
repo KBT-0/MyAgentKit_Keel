@@ -87,7 +87,17 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((result.returncode, stamp), (2, '0.1'), result.stdout + result.stderr)
             self.assertIn('1 items in docs/kit/UPGRADE.md are not ticked', result.stdout)
             self.tick(project)
-            result, stamp = self.sync(tmp, ACTION, '--actions-applied')
+            # A checklist checked out or saved with CRLF keeps its ticks. Git for Windows' gawk
+            # drops a CR on read, a POSIX awk does not: BINMODE keeps it for the checklist's read.
+            listing.write_bytes(listing.read_bytes().replace(b'\n', b'\r\n'))
+            shims = Path(tmp) / 'shims'
+            shims.mkdir()
+            (shims / 'awk').write_text('#!/bin/sh\nPATH=${PATH#*:}\n'
+                                       'case "$*" in *ck=*) exec awk -v BINMODE=rw "$@" ;; esac\n'
+                                       'exec awk "$@"\n', newline='\n')
+            (shims / 'awk').chmod(0o755)
+            env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+            result, stamp = self.sync(tmp, ACTION, '--actions-applied', env=env)
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
             self.assertFalse(listing.exists(), 'the checklist is deleted once the version is recorded')
             result, _ = self.sync(tmp, ACTION)
@@ -128,12 +138,21 @@ class SyncKitTests(unittest.TestCase):
             (kit / 'core/scripts').mkdir(parents=True)
             for n in range(20):
                 (kit / ('core/scripts/tool%d.sh' % n)).write_text('#!/bin/sh\n# KIT-OWNED: fixture\n')
+            temp = Path(tmp) / 'temp'
+            temp.mkdir()
             run = subprocess.Popen(['sh', str(kit / 'sync-kit.sh'), str(project), '--actions-applied'],
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   env=dict(os.environ, TMPDIR=str(temp)))
             run.stdout.close()
-            run.wait(timeout=120)
+            self.assertEqual(run.wait(timeout=120), 0)
             self.assertEqual((project / 'docs/kit/.kit-version').read_text().strip(), '0.2')
             self.assertTrue((project / 'scripts/tool19.sh').is_file())
+            # The failed print of the held report ended the exit trap before its cleanup.
+            self.assertEqual(list(temp.iterdir()), [], 'the held report was left behind')
+
+    def test_the_help_ends_on_a_whole_sentence(self):
+        help = subprocess.run(['sh', str(ROOT / 'sync-kit.sh'), '--help'], capture_output=True, text=True).stdout
+        self.assertTrue(help.rstrip().endswith('.'), help.splitlines()[-1])
 
     def test_a_project_newer_than_the_kit_or_on_an_unknown_version_is_refused_unchanged(self):
         # Compared as strings, a project stamped 0.12 against a v0.11 kit clone had its hooks
@@ -199,6 +218,41 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((project / 'docs/kit/.kit-commit').read_text().strip(), git('rev-parse', 'HEAD'))
 
+    def test_an_unreleased_section_is_listed_as_its_version_and_stays_ticked_past_the_release(self):
+        # A sync from the kit's master copied the unreleased kit-owned files and said "already
+        # current", without the items they need: the "## Unreleased" heading was never read.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, '- A change.\n', '--dry-run')
+            git = lambda *a: subprocess.run(['git', '-C', str(kit), '-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                             *a], check=True, env=env, capture_output=True, text=True).stdout.strip()
+            git('init', '-q')
+            git('add', '-A')
+            git('commit', '-qm', 'v0.2')
+            (project / 'docs/kit/.kit-version').write_bytes(b'0.2\n')
+            (project / 'docs/kit/.kit-commit').write_text(git('rev-parse', 'HEAD') + '\n')
+            log = (kit / 'CHANGELOG.md').read_text(encoding='utf-8')
+            (kit / 'CHANGELOG.md').write_text('## Unreleased — v0.3\n\n- A new hook. **ACTION:** register it.\n\n' + log,
+                                              encoding='utf-8')
+            (kit / 'core/scripts').mkdir(parents=True)
+            (kit / 'core/scripts/hook.sh').write_text('#!/bin/sh\n# KIT-OWNED: fixture\n')
+            git('add', '-A')
+            git('commit', '-qm', 'unreleased')
+            result, stamp = self.sync(tmp, '', env=env)
+            self.assertEqual((result.returncode, stamp), (2, '0.2'), result.stdout + result.stderr)
+            self.assertNotIn('already current', result.stdout)
+            self.assertIn('- [ ] v0.3: **ACTION:** register it.', (project / 'docs/kit/UPGRADE.md').read_text(encoding='utf-8'))
+            self.tick(project)
+            result, stamp = self.sync(tmp, '', '--actions-applied', env=env)
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            (kit / 'CHANGELOG.md').write_text((kit / 'CHANGELOG.md').read_text(encoding='utf-8').replace(
+                '## Unreleased — v0.3', '## v0.3 — 2026-10-20'), encoding='utf-8')
+            git('commit', '-qam', 'release')
+            result, stamp = self.sync(tmp, '', env=env)
+            self.assertEqual((result.returncode, stamp), (0, '0.3'), result.stdout + result.stderr)
+            self.assertNotIn('register it', result.stdout)
+
     def test_an_uncommitted_edit_to_a_kit_owned_file_stops_the_sync(self):
         # The copy replaced a kit-owned file the owner had edited and not committed, with no
         # backup (#128). A staged edit stays in the index, and the copy goes ahead.
@@ -225,6 +279,42 @@ class SyncKitTests(unittest.TestCase):
             result, stamp = self.sync(tmp, '- A change.\n', env=env)
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
             self.assertIn('echo kit', doctor.read_text())
+
+    def test_the_syncs_own_uncommitted_copies_are_no_edit_after_the_kit_moved(self):
+        # A run that stopped at its ACTION items left its copies unstaged (a new one untracked);
+        # once the kit moved, the next run read them as the owner's edits and stopped on them.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, ACTION, '--dry-run')
+            (kit / 'core/scripts').mkdir(parents=True)
+            doctor, tool = kit / 'core/scripts/doctor.sh', kit / 'core/scripts/tool.sh'
+            (project / 'scripts').mkdir()
+            (project / 'scripts/doctor.sh').write_text('#!/bin/sh\n# KIT-OWNED: fixture\n')
+            for repo in (kit, project):
+                subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=env)
+            commit = lambda repo, *a: subprocess.run(
+                ['git', '-C', str(repo), '-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                 'commit', '-q', *a], check=True, env=env, capture_output=True)
+            subprocess.run(['git', '-C', str(project), 'add', '-A'], check=True, env=env)
+            commit(project, '-m', 'one')
+            for n in (1, 2):
+                doctor.write_text('#!/bin/sh\n# KIT-OWNED: fixture\necho kit %d\n' % n)
+                tool.write_text('#!/bin/sh\n# KIT-OWNED: fixture\necho tool %d\n' % n)
+                subprocess.run(['git', '-C', str(kit), 'add', '-A'], check=True, env=env)
+                commit(kit, '-m', 'kit %d' % n)
+                result, stamp = self.sync(tmp, ACTION, env=env)
+                self.assertEqual((result.returncode, stamp), (2, '0.1'), result.stdout + result.stderr)
+                self.assertNotIn('conflict', result.stdout)
+                self.assertIn('echo kit %d' % n, (project / 'scripts/doctor.sh').read_text())
+                self.assertIn('echo tool %d' % n, (project / 'scripts/tool.sh').read_text())
+            # An edit of the owner's is still one.
+            (project / 'scripts/doctor.sh').write_text('#!/bin/sh\n# KIT-OWNED: fixture\necho tuned\n')
+            doctor.write_text('#!/bin/sh\n# KIT-OWNED: fixture\necho kit 3\n')
+            commit(kit, '-am', 'kit 3')
+            result, stamp = self.sync(tmp, ACTION, env=env)
+            self.assertEqual((result.returncode, stamp), (1, '0.1'), result.stdout + result.stderr)
+            self.assertIn('conflict: scripts/doctor.sh (uncommitted edits', result.stdout)
 
     def test_version_without_action_is_stamped(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -895,10 +985,11 @@ class SyncKitTests(unittest.TestCase):
                     items.append(line.split(': ', 1)[1].strip())
             self.assertGreater(len(items), 10)
             # One item per marker: a marker inside another item's text is an item of its own (#99).
-            released = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('\n## v0.1 ', 1)[0]
-            released = released[released.index('\n## v'):]
+            # An "## Unreleased" section is listed too, as the version its heading names.
+            listed = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('\n## v0.1 ', 1)[0]
+            listed = listed[re.search(r'\n## (v|Unreleased)', listed).start():]
             markers = len(re.findall(r'\*\*ACTION(?!\*\* \u2014 none\.?[ \t]*$|:\*\*[ \t]+none\.[ \t]*$)',
-                                     released, re.M))
+                                     listed, re.M))
             self.assertEqual(len(items), markers)
             self.assertFalse([item for item in items if item.count('**ACTION') != 1])
             for item in items:

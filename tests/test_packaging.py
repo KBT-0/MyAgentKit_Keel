@@ -1,5 +1,7 @@
 """The generated-plugin check must reject missing and stale runtime evidence."""
+import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,6 +10,13 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+ENV = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+
+
+def track(root):
+    """The packager hashes only what git tracks: make the temp kit a repository holding every file."""
+    subprocess.run(["git", "init", "-q", str(root)], check=True, env=ENV)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, env=ENV)
 
 
 class PackagingTests(unittest.TestCase):
@@ -25,17 +34,18 @@ class PackagingTests(unittest.TestCase):
             for manifest in ("plugin/.claude-plugin", "plugins/myagentkit/.codex-plugin"):
                 (root / manifest).mkdir(parents=True)
                 (root / manifest / "plugin.json").write_text('{"name": "myagentkit", "version": "0.12.0"}\n')
+            track(root)
             command =[sys.executable, str(root / "scripts/package_codex_plugin.py"), "--check"]
             target = root / "plugins/myagentkit/scripts/claude_bridge.py"
             for case in ["missing", "stale"]:
                 if case == "stale":
                     target.parent.mkdir(parents=True)
                     target.write_text("old runtime\n")
-                result = subprocess.run(command, capture_output=True, text=True)
+                result = subprocess.run(command, capture_output=True, text=True, env=ENV)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("missing or stale", result.stderr)
-            subprocess.run(command[:-1], check=True, capture_output=True)
-            result = subprocess.run(command, capture_output=True, text=True)
+            subprocess.run(command[:-1], check=True, capture_output=True, env=ENV)
+            result = subprocess.run(command, capture_output=True, text=True, env=ENV)
             self.assertEqual(result.returncode, 0)
             self.assertIn("matches canonical", result.stdout)
             for name in ["agent_process.py", "agent_usage.py", "codex_bridge.py",
@@ -43,10 +53,10 @@ class PackagingTests(unittest.TestCase):
                 companion = target.parent / name
                 original = companion.read_bytes()
                 companion.unlink()
-                result = subprocess.run(command, capture_output=True, text=True)
+                result = subprocess.run(command, capture_output=True, text=True, env=ENV)
                 self.assertEqual(result.returncode, 1, name)
                 companion.write_text("stale companion\n")
-                result = subprocess.run(command, capture_output=True, text=True)
+                result = subprocess.run(command, capture_output=True, text=True, env=ENV)
                 self.assertEqual(result.returncode, 1, name)
                 companion.write_bytes(original)
 
@@ -70,14 +80,26 @@ class PackagingTests(unittest.TestCase):
             (plugin / "skills/s").mkdir(parents=True)
             skill = plugin / "skills/s/SKILL.md"
             skill.write_bytes(b"one\n")
+            (plugin / "skills/s/agents").mkdir()
+            (plugin / "skills/s/agents/openai.yaml").write_bytes(b"agent\n")
+            track(root)
             script = [sys.executable, str(root / "scripts/package_codex_plugin.py")]
-            check = lambda: subprocess.run(script + ["--check"], capture_output=True, text=True)
+            check = lambda: subprocess.run(script + ["--check"], capture_output=True, text=True, env=ENV)
             version = lambda: json.loads(manifest.read_text())["version"]
             self.assertEqual(check().returncode, 1)  # the frozen version is stale
-            subprocess.run(script, check=True, capture_output=True)
+            subprocess.run(script, check=True, capture_output=True, env=ENV)
             first = version()
             self.assertRegex(first, r"^0\.12\.0\+codex\.[0-9a-f]{12}$")
             self.assertEqual(json.loads(manifest.read_text())["skills"], "./skills/")
+            self.assertEqual(check().returncode, 0, check().stderr)
+            # Every host hashes the same files in the same order: case-sensitive POSIX names
+            # (SKILL.md before agents/, which a Windows Path sorts the other way), git's files only.
+            digest = hashlib.sha256()
+            for name in ["skills/s/SKILL.md", "skills/s/agents/openai.yaml"]:
+                digest.update(name.encode() + b"\0" + (plugin / name).read_bytes() + b"\0")
+            digest.update(b'{"name": "myagentkit", "skills": "./skills/"}')
+            self.assertEqual(first, "0.12.0+codex." + digest.hexdigest()[:12])
+            (plugin / "skills/s/.DS_Store").write_bytes(b"finder\n")  # untracked: not the plugin's
             self.assertEqual(check().returncode, 0, check().stderr)
             skill.write_bytes(b"one\r\n")  # a CRLF checkout of the same skill: the same version
             self.assertEqual(check().returncode, 0, check().stderr)
@@ -85,11 +107,11 @@ class PackagingTests(unittest.TestCase):
             result = check()
             self.assertEqual(result.returncode, 1)
             self.assertIn("version", result.stderr)
-            subprocess.run(script, check=True, capture_output=True)
+            subprocess.run(script, check=True, capture_output=True, env=ENV)
             self.assertNotEqual(version(), first)
             claude.write_text('{"name": "myagentkit", "version": "0.13.0"}\n')
             self.assertEqual(check().returncode, 1)
-            subprocess.run(script, check=True, capture_output=True)
+            subprocess.run(script, check=True, capture_output=True, env=ENV)
             self.assertTrue(version().startswith("0.13.0+codex."))
 
 
