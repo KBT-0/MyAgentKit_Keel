@@ -42,7 +42,9 @@ fi
 # (`git show :path`), which is what this commit records; the working tree may differ. A
 # mention is the id with no letter, digit, "_" or "-" either side, so closing K3 does not
 # match K3b or K3-a. Ids are case-insensitive: "Done: k4" passed while STATE.md named K4.
-trailers=$(git interpret-trailers --parse "$msg") || {
+# --no-divider: without it a body line "---" read as a patch start and hid every trailer after
+# it, while `git log` and check.sh still read them (#173).
+trailers=$(git interpret-trailers --parse --no-divider "$msg") || {
   echo "commit-msg: cannot parse the trailers; refusing to pass the message unchecked." >&2
   exit 1
 }
@@ -135,9 +137,10 @@ fi
 # them for -m). Checking them fails closed; a commented-out credit left by a squash is one
 # line to delete.
 # ponytail: fixed lists of tool, model and vendor names; extend them when a new tool's trailer gets through.
-tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro|opencode|junie|openhands|warp'
+# Kimi is a human given name too, so only its vendor's domains are listed (#204).
+tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro|opencode|junie|openhands|warp|grok|deepseek|glm'
 words="$tools|opus|sonnet|haiku|fable|mythos|context|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
-domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
+domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com|moonshot\.(ai|cn)|z\.ai|deepseek\.com|x\.ai'
 # Behind a comment character a trailer is still checked: git keeps "# Co-Authored-By: ..."
 # under -m or verbatim cleanup. Punctuation is skipped whatever it is; a configured
 # core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:").

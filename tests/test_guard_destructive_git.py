@@ -636,6 +636,18 @@ class V012GuardTests(GuardCase):
                 result = self.run_hook(command, payload=payload)
                 self.assertEqual(result.returncode, code, result.stderr.decode('utf-8', 'replace'))
 
+    @unittest.skipUnless(os.name == 'nt', 'a Git Bash drive path (/c/...) exists only on Windows')
+    def test_a_git_bash_drive_path_is_the_folder_it_names(self):
+        # The lead's case: `cd /d/repo && git merge-base ...` was refused as an unreadable alias
+        # with "could not read git status": the hook asked git in D:\d\repo, which does not exist.
+        drive, rest = os.path.splitdrive(str(self.repo.resolve()))
+        msys = '/' + drive[0].lower() + rest.replace('\\', '/')
+        self.assertVerdict([f'cd {msys} && git merge-base HEAD HEAD', f'git -C {msys} worktree list',
+                            f'git --work-tree={msys} merge-base HEAD HEAD'], 0)
+        self.dirty()
+        self.assertVerdict([f'cd {msys} && git reset --hard', f'git -C {msys} checkout -- f.txt'], 2)
+    test_a_git_bash_drive_path_is_the_folder_it_names._kit_platform_skip = os.name != 'nt'
+
     def test_powershell_and_monitor_commands_are_judged(self):
         self.tool('PowerShell', ['git commit --no-verify -m x', '$env:HUSKY = "0"; git commit -m x',
                                  'git --% commit --no-verify -m x', 'git commit -m x `\n  --no-verify'], 2)

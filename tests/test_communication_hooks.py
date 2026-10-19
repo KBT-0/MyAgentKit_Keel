@@ -215,6 +215,21 @@ class PlainReportTests(unittest.TestCase):
                 result = self.stop(message)
                 self.assertEqual((result.returncode, result.stderr), (0, ''), message)
 
+    def test_slash_pairs_and_backticked_registered_ids_are_labels(self):
+        # "K4/L1b" was dropped as a path and a backticked registered id passed (#210).
+        for message in ('Tasks K4/L1b are merged.', 'The `K4` task is merged.'):
+            with self.subTest(message=message):
+                self.assertEqual(self.stop(message).returncode, 2, message)
+
+    def test_a_bounce_asks_for_one_line_never_a_resend(self):
+        # A Stop hook runs after the owner read the message: a full resend made them read it twice (#209).
+        for message in ('K4 finished.', 'Shall I merge it?'):
+            with self.subTest(message=message):
+                result = self.stop(message)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('do not send it again', result.stderr)
+                self.assertNotIn('send the message again', result.stderr)
+
     def test_a_second_label_in_parentheses_is_bounced(self):
         result = self.stop('The second review round (r2) is clean; the next one follows it (r2).')
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -301,6 +316,14 @@ class ProgressReminderTests(unittest.TestCase):
         calls += [assistant(text(), tool())]  # a visible line: the count restarts
         self.assertIsNone(self.nudge(calls + [assistant(tool()) for _ in range(3)]))
         self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool()) for _ in range(4)])['additionalContext'])
+
+    def test_a_sub_agent_call_leaves_the_leads_nudge_unspent(self):
+        # A sub-agent's first call at a delegation took the lead's nudge, quoting the lead's count (#214).
+        calls = [assistant(text())] + [assistant(tool()) for _ in range(5)]
+        self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in calls), encoding='utf-8')
+        result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript), 'agent_id': 'a1'}))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertIn('5 tool calls', self.nudge(calls)['additionalContext'])
 
     def test_three_nudges_per_silence_then_text_and_compaction_rearm(self):
         calls = []

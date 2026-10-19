@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -137,13 +138,13 @@ class WorkingModeTests(unittest.TestCase):
         for name in MODES:
             self.assertIn(name, result.stdout)
         self.assertEqual(self.state.read_bytes(), before)
-        self.assertFalse((self.project / '.claude/mode').exists())
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
 
     def test_switch_records_both_files_preserves_state_and_prints_saver_rules(self):
         self.state.write_text('# State\n---\n**Working mode:** solo (keep this note).\nActive work.\n', encoding='utf-8')
         result = self.run_mode('Saver')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'saver')
+        self.assertEqual((self.project / '.myagentkit/mode').read_text(encoding='utf-8').strip(), 'saver')
         self.assertEqual(self.state.read_text(encoding='utf-8'), '# State\n---\n**Working mode:** saver (low: claude, after: solo).\nActive work.\n')
         self.assertIn('#### saver', result.stdout)
         self.assertNotIn('#### solo', result.stdout)
@@ -181,7 +182,7 @@ class WorkingModeTests(unittest.TestCase):
             result = self.run_mode(mode)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('**Working mode:** ' + mode, self.state.read_text(encoding='utf-8'))
-            self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), mode)
+            self.assertEqual((self.project / '.myagentkit/mode').read_text(encoding='utf-8').strip(), mode)
             self.assertIn('Active work stays here.', self.state.read_text(encoding='utf-8'))
 
     def test_a_missing_line_is_added_with_the_note_the_switch_names(self):
@@ -222,7 +223,7 @@ class WorkingModeTests(unittest.TestCase):
             self.assertIn('claude-only is solo; cross-performance, claude-first and codex-first are cross', result.stderr)
             self.assertIn('cross-saving, claude-saver and codex-saver are saver with a (low: ...) note', result.stderr)
         self.assertIn('codex-first', self.state.read_text(encoding='utf-8'))
-        self.assertFalse((self.project / '.claude/mode').exists())
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
 
     def test_an_old_state_mode_name_is_repaired_only_through_replace_state(self):
         # The compare-and-swap rule had no sanctioned path for the v0.11 upgrade: the switch
@@ -310,7 +311,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.state.read_bytes(), before)
         self.assertEqual(self.run_mode('cross').returncode, 0)
-        (self.project / '.claude/mode').write_text('saver\n', encoding='utf-8')
+        (self.project / '.myagentkit/mode').write_text('saver\n', encoding='utf-8')
         self.assertNotEqual(self.run_mode().returncode, 0)
         # An explicit owner choice repairs the disagreement.
         self.assertEqual(self.run_mode('solo').returncode, 0)
@@ -318,7 +319,7 @@ class WorkingModeTests(unittest.TestCase):
     def test_old_workflow_and_missing_state_are_refused_without_writes(self):
         (self.project / 'docs/WORKFLOW.md').write_text('# Old workflow\n', encoding='utf-8')
         self.assertNotEqual(self.run_mode('cross').returncode, 0)
-        self.assertFalse((self.project / '.claude/mode').exists())
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
         (self.project / 'docs/WORKFLOW.md').write_bytes((ROOT / 'core/docs/WORKFLOW.md').read_bytes())
         self.state.unlink()
         self.assertNotEqual(self.run_mode('cross').returncode, 0)
@@ -326,7 +327,7 @@ class WorkingModeTests(unittest.TestCase):
     def test_linked_mode_directory_is_refused(self):
         target = self.project / 'elsewhere'
         target.mkdir()
-        link = self.project / '.claude'
+        link = self.project / '.myagentkit'
         if os.name == 'nt':
             subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)], check=True, capture_output=True)
         else:
@@ -350,7 +351,7 @@ class WorkingModeTests(unittest.TestCase):
             text = self.state.read_text(encoding='utf-8')
             self.assertEqual(text.count('**Working mode:**'), 1)
             self.assertIn('cross (manual).', text)
-            (self.project / '.claude/mode').unlink()
+            (self.project / '.myagentkit/mode').unlink()
 
     def test_list_item_and_indented_state_lines_are_read_and_switched_in_place(self):
         for line in ('- **Working mode:** saver (set by hand).', '  **Working mode:** Saver'):
@@ -361,19 +362,78 @@ class WorkingModeTests(unittest.TestCase):
                 text = self.state.read_text(encoding='utf-8')
                 self.assertEqual(text.count('Working mode:'), 1, text)
                 self.assertIn(line.split('**Working mode:**')[0] + '**Working mode:** cross', text)
-                (self.project / '.claude/mode').unlink()
+                (self.project / '.myagentkit/mode').unlink()
 
     def test_unknown_and_duplicate_state_lines_are_refused_before_writes(self):
         for text in ('**Working mode:** mystery\n',
                      '**Working mode:** saver\n**Working mode:** Cross\n',
                      '- **Working mode:** saver\n**Working mode:** cross\n',
-                     'Working mode: saver\n', '> **Working mode:** saver\n'):
+                     'Working mode: saver\n', '> **Working mode:** saver\n',
+                     # A key in another Markdown shape is still refused as unrecognized (v0.11).
+                     '1. **Working mode:** saver\n', '## Working mode: saver\n',
+                     '__Working mode:__ saver\n', '| Working mode: | saver |\n',
+                     '**Working mode**: saver\n', '> - *Working mode:* saver\n'):
             self.state.write_text(text, encoding='utf-8')
             for args in ((), ('cross',)):
                 result = self.run_mode(*args)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(self.state.read_text(encoding='utf-8'), text)
-            self.assertFalse((self.project / '.claude/mode').exists())
+            self.assertFalse((self.project / '.myagentkit/mode').exists())
+
+    def test_the_key_pattern_stays_linear_on_a_long_marker_run(self):
+        # A nested `#+` in the marker loop backtracked exponentially: 26 '#' took seconds.
+        mode_key = self.module().MODE_KEY
+        for line in ('#' * 26 + 'x', '#' * 5000 + 'x', '# ' * 2000 + 'x', '-*>|1. ' * 800 + 'x'):
+            start = time.monotonic()
+            self.assertIsNone(mode_key.match(line))
+            self.assertLess(time.monotonic() - start, 2, line[:40])
+        self.assertTrue(mode_key.match('### Working mode: solo'))
+
+    def test_a_prose_mention_of_the_working_mode_is_not_a_mode_line(self):
+        # #257: only a key-shaped line counts; a sentence that says "working mode:" is prose.
+        self.assertEqual(self.run_mode('solo').returncode, 0)
+        lesson = '- [LESSON] owner, 2026-10-18: the working mode: saver costs a review round\n'
+        with self.state.open('a', encoding='utf-8') as handle:
+            handle.write(lesson)
+        self.assertIn('Current mode: solo', self.run_mode().stdout)
+        self.assertEqual(self.run_mode('cross').returncode, 0)
+        snapshot, sha = self.snapshot()
+        snapshot.write_bytes(snapshot.read_bytes() + b'Note: the working mode: cross stays.\n')
+        result = self.run_mode('--replace-state', str(snapshot), '--expect', sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(lesson, self.state.read_text(encoding='utf-8'))
+        # Both refusals name the Working mode lines with their numbers.
+        snapshot, sha = self.snapshot()
+        snapshot.write_bytes(snapshot.read_bytes() + b'**Working mode:** saver\n')
+        result = self.run_mode('--replace-state', str(snapshot), '--expect', sha)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, r'line \d+: \*\*Working mode:\*\* cross[^;]*; line \d+: \*\*Working mode:\*\* saver')
+        self.state.write_text('x\n**Working mode:** saver\n**Working mode:** Cross\n', encoding='utf-8')
+        self.assertIn('line 2: **Working mode:** saver; line 3: **Working mode:** Cross', self.run_mode().stderr)
+
+    def test_a_killed_switch_or_edit_leaves_nothing_outside_the_ignored_private_folder(self):
+        # #272 and #256: os._exit stands in for a closed terminal, so no finally block runs.
+        killed = ('import os, sys\nsys.path.insert(0, sys.argv[1])\nimport working_mode\n'
+                  'working_mode.os.replace = lambda *a, **k: os._exit(9)\n'
+                  "sys.argv = ['working_mode.py', '--project'] + sys.argv[2:]\nworking_mode.main()\n")
+        snapshot, sha = self.snapshot()
+        for args in (('cross',), ('--replace-state', str(snapshot), '--expect', sha)):
+            with self.subTest(args=args[0]):
+                result = subprocess.run([sys.executable, '-X', 'utf8', '-c', killed, str(SCRIPT.parent),
+                                         str(self.project), *args], capture_output=True, text=True,
+                                        encoding='utf-8', timeout=15, cwd=self.project)
+                self.assertEqual(result.returncode, 9, result.stderr)
+                outside = sorted(p.relative_to(self.project).as_posix() for p in self.project.rglob('*')
+                                 if p.relative_to(self.project).parts[0] != '.myagentkit')
+                self.assertEqual(outside, ['docs', 'docs/STATE.md', 'docs/WORKFLOW.md'])
+        subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
+        (self.project / '.gitignore').write_bytes((ROOT / 'core/.gitignore').read_bytes())
+        ignored = subprocess.run(['git', 'check-ignore', '-q', '.myagentkit/mode'], cwd=self.project)
+        self.assertEqual(ignored.returncode, 0, 'the shipped .gitignore must ignore the mode record')
+        worker = self.module()
+        with mock.patch.object(worker.os, 'fsync', wraps=os.fsync) as fsync, mock.patch('sys.stdout', io.StringIO()):
+            worker.mode(self.project, 'saver', SIDES['saver'])
+        self.assertEqual(fsync.call_count, 3, 'each prepared copy is flushed before its rename')
 
     def test_a_mode_has_its_english_name_only(self):
         # The owner named the modes solo, cross and saver; the Turkish names left every surface
@@ -402,7 +462,7 @@ class WorkingModeTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('işi ağır', result.stdout.decode('utf-8'))
-        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
+        self.assertEqual((self.project / '.myagentkit/mode').read_text(encoding='utf-8').strip(), 'cross')
 
     def test_atomic_replacement_copies_original_permissions(self):
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
@@ -441,8 +501,8 @@ class WorkingModeTests(unittest.TestCase):
         before = self.state.read_bytes()
         concurrent = before + b'An independently added task.\n'
         prepare = module.prepared
-        def interrupted(path, data):
-            pending = prepare(path, data)
+        def interrupted(project, path, data):
+            pending = prepare(project, path, data)
             if path.name == 'mode':
                 self.state.write_bytes(concurrent)
             return pending
@@ -451,7 +511,7 @@ class WorkingModeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'STATE.md changed'):
                 module.mode(self.project, 'cross')
         self.assertEqual(self.state.read_bytes(), concurrent)
-        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'solo')
+        self.assertEqual((self.project / '.myagentkit/mode').read_text(encoding='utf-8').strip(), 'solo')
         self.assertEqual(self.run_mode('saver').returncode, 0)
 
     def test_failed_record_replace_does_not_roll_back_an_independent_state_edit(self):
@@ -525,7 +585,7 @@ class WorkingModeTests(unittest.TestCase):
                                             encoding='utf-8', timeout=15)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('**Working mode:** cross', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
-                    self.assertEqual((real / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
+                    self.assertEqual((real / '.myagentkit/mode').read_text(encoding='utf-8').strip(), 'cross')
         finally:
             if os.name == 'nt':
                 link.rmdir()
@@ -551,7 +611,7 @@ class WorkingModeTests(unittest.TestCase):
                             module.mode(self.project, 'saver', SIDES['saver'])
                     else:
                         module.mode(self.project, 'cross')
-                        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
+                        self.assertEqual((self.project / '.myagentkit/mode').read_text(encoding='utf-8').strip(), 'cross')
         self.assertIn('**Working mode:** cross', self.state.read_text(encoding='utf-8'))
 
     def test_a_project_below_v0_11_is_named_by_its_kit_version_not_by_its_table(self):
@@ -580,7 +640,7 @@ class WorkingModeTests(unittest.TestCase):
                     self.assertIn('ACTION: this project records kit v' + version.strip() + ' (docs/kit/.kit-version)', result.stdout)
                     self.assertIn('sync-kit.sh', result.stdout)
                     self.assertEqual(self.state.read_bytes(), before)
-                    self.assertFalse((self.project / '.claude').exists())
+                    self.assertFalse((self.project / '.myagentkit/mode.lock').exists())
         # At 0.11 or later, or with no recorded version, an old or incomplete table is a defect,
         # refused as one; the table's rows never decide the version.
         misspelled = current.replace(b'| `saver` |', b'| `savr` |')
@@ -596,13 +656,13 @@ class WorkingModeTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stdout)
                     self.assertNotIn('ACTION', result.stdout)
                     self.assertIn('must define the three modes', result.stderr)
-                    self.assertFalse((self.project / '.claude').exists())
+                    self.assertFalse((self.project / '.myagentkit/mode.lock').exists())
         stamp.write_text('v0.11-beta', encoding='utf-8')
         workflow.write_bytes(current)
         result = self.run_mode('cross')
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn('unreadable kit version in docs/kit/.kit-version', result.stderr)
-        self.assertFalse((self.project / '.claude').exists())
+        self.assertFalse((self.project / '.myagentkit/mode.lock').exists())
         stamp.write_text('0.11\n', encoding='utf-8')
         self.assertEqual(self.run_mode('cross').returncode, 0)
 
@@ -621,7 +681,7 @@ class WorkingModeTests(unittest.TestCase):
                 module.mode(self.project, 'cross')
         result = self.run_mode()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('.claude/mode and STATE.md disagree', result.stderr)
+        self.assertIn('.myagentkit/mode and STATE.md disagree', result.stderr)
         self.assertIn('choose a mode explicitly to repair', result.stderr)
         self.assertEqual(self.run_mode('saver').returncode, 0)
         self.assertIn('Current mode: saver', self.run_mode().stdout)
@@ -632,7 +692,7 @@ class WorkingModeTests(unittest.TestCase):
             return
         target = self.project / 'elsewhere'
         target.mkdir()
-        link = self.project / '.claude'
+        link = self.project / '.myagentkit'
         subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)], check=True, capture_output=True)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         module = importlib.util.module_from_spec(spec)
@@ -669,7 +729,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(sha, hashlib.sha256(before).hexdigest())
         self.assertEqual(snapshot.read_bytes(), before)
         self.assertEqual(self.state.read_bytes(), before)
-        self.assertFalse((self.project / '.claude').exists())
+        self.assertFalse((self.project / '.myagentkit/mode.lock').exists())
 
     def test_a_snapshot_read_before_a_concurrent_edit_is_refused_and_a_late_read_keeps_that_edit(self):
         # Writer 1 read STATE at its session start; writer 2 then publishes Task B.
@@ -753,7 +813,7 @@ class WorkingModeTests(unittest.TestCase):
             self.assertEqual((fake / 'mine.txt').read_text(encoding='utf-8'), 'the user\'s file\n')
             self.assertEqual([p.name for p in fake.parent.iterdir() if p.name.startswith('.' + fake.name)], [])
         self.assertEqual((private / 'workers/w.session').read_text(encoding='utf-8'), 'session\n')
-        self.assertLessEqual({p.name for p in self.project.iterdir()}, {'.claude', '.myagentkit', 'docs'})
+        self.assertLessEqual({p.name for p in self.project.iterdir()}, {'.myagentkit', 'docs'})
         self.assertEqual([p.name for p in private.iterdir()], ['workers'])
         self.assertEqual(self.state.read_bytes(), before)
 
@@ -772,7 +832,7 @@ class WorkingModeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'regular file'):
                 worker.replace_state(self.project, snapshot, sha)
         self.assertEqual((snapshot / 'keep.txt').read_text(encoding='utf-8'), 'keep\n')
-        self.assertEqual([p.name for p in snapshot.parent.iterdir()], [snapshot.name])
+        self.assertEqual([p.name for p in snapshot.parent.iterdir() if p.name != 'mode.lock'], [snapshot.name])
         self.assertEqual(self.state.read_bytes(), before)
 
     def test_failed_folder_restoration_cannot_leave_private_contents_visible_to_git(self):
@@ -780,7 +840,7 @@ class WorkingModeTests(unittest.TestCase):
         before = self.state.read_bytes()
         sha = hashlib.sha256(before).hexdigest()
         subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
-        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n', encoding='utf-8')
+        (self.project / '.gitignore').write_text('/.myagentkit/\n', encoding='utf-8')
         source = self.project / '.myagentkit'
         source.write_bytes(before)  # a regular FILE named after the private directory
         source = worker.private(self.project, source)
@@ -826,7 +886,7 @@ class WorkingModeTests(unittest.TestCase):
         before = self.state.read_bytes()
         source, sha = self.snapshot()
         subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
-        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n', encoding='utf-8')
+        (self.project / '.gitignore').write_text('/.myagentkit/\n', encoding='utf-8')
         renaming = os.rename
         def swapped(path, target):
             if Path(path) == source:
@@ -907,7 +967,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(self.state.read_bytes(), before)
         self.assertEqual(proposed.read_bytes(), b'A different task.\n')
         self.assertEqual(list(self.state.parent.glob('.STATE.md-*')), [])
-        self.assertFalse((self.project / '.claude/mode').exists())
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
 
     def test_state_cas_keeps_permissions_and_replaces_complete_bytes(self):
         self.state.chmod(0o666 if os.name == 'nt' else 0o640)
@@ -921,7 +981,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertFalse(proposed.exists())
         self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), permissions)
         self.assertEqual(list(self.state.parent.glob('.STATE.md-*')), [])
-        self.assertFalse((self.project / '.claude/mode').exists())
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
 
     def state_writer_race(self, rollback):
         self.assertEqual(self.run_mode('solo').returncode, 0)
@@ -929,7 +989,7 @@ class WorkingModeTests(unittest.TestCase):
         worker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(worker)
         proposed = self.project / '.myagentkit/replacement.md'
-        proposed.parent.mkdir()
+        proposed.parent.mkdir(exist_ok=True)
         reading, replacing = Path.read_bytes, os.replace
         checks, refusals, snapshots = [], [], []
         def checked(path):

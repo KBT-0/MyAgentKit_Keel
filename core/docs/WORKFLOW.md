@@ -107,7 +107,10 @@ deletion checkable.
 - `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
   it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
   when either file names an id that any commit in the history closed. The strong review
-  cycle's `docs/STRONG_REVIEW.md` and `docs/reviews/strong-*.md` are checked the same way.
+  cycle's `docs/STRONG_REVIEW.md` and `docs/reviews/strong-*.md` are checked the same way, and
+  so is every audit in the index (`docs/audits/*.md`, however old; "Periodic architecture
+  audit"). A mention is the id as a whole token anywhere in the file, prose included: "the E7
+  session" blocks closing E7 as a finding line does, so reword or delete it.
   Whole word: closing `K3` says nothing about `K3b`.
 - A closed id is never reused. A task needed again gets a new id. A closed id is already in
   git history as `Done: K4`; reusing it would make the old commit look like it closed the new
@@ -135,7 +138,7 @@ rollback could otherwise erase another writer's work. A snapshot lives only in `
 and a snapshot elsewhere can land where `git add -A` commits it; OUT is a name prefix and FILE a
 regular file, because OUT naming `.myagentkit` put the snapshot in the project root and FILE
 naming a folder moved it whole. The "Working mode:" line is the mode switch's, which writes it
-together with `.claude/mode`. Sources: HTTP If-Match (the lost update,
+together with `.myagentkit/mode`. Sources: HTTP If-Match (the lost update,
 developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match), anthropics/claude-code#24130
 (an auto-memory file is not safe for concurrent agents), Python `tempfile.mkstemp` (an exclusively
 created snapshot; CWE-377).
@@ -375,7 +378,7 @@ that closes its last id: a living file keeps no closed item ("The state, backlog
 files"), and debt that is not tracked to its close stays open (Martini, Besker and Bosch,
 2018). The gate reads audit files and prints a NOTE for ids closed in reachable history;
 old audit mentions do not fail an upgraded project. The commit-msg hook still refuses a
-closing `Done:` trailer while the staged audit names that id. **The audit is itself a task; skip it and decay advances
+closing `Done:` trailer while any audit in the index names that id, an old one included. **The audit is itself a task; skip it and decay advances
 invisibly.**
 
 ## The strong review cycle — at least every ten days
@@ -662,7 +665,8 @@ A `claude@NAME` review of another model family counts as the second model (`docs
 The owner switches the working mode by its name: `solo`, `cross` or `saver`. The lead never
 switches it on its own initiative; the one standing exception is saver's return, which the
 owner granted when choosing saver ("saver", Ends). The "Working mode:"
-line of `docs/STATE.md` and the small `.claude/mode` file name the mode in force.
+line of `docs/STATE.md` and the small `.myagentkit/mode` file (ignored by Git, never committed)
+name the mode in force.
 `/myagentkit:mode` uses `scripts/working_mode.py` to show or set both records, preserving
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
 them. A project without either record works in **solo**, the main mode.

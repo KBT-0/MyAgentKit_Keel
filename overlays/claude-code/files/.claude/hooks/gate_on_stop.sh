@@ -24,12 +24,13 @@ CDPATH= cd -- "$root" || exit 0
 # Only work in these paths needs the gate; documentation and tooling turns skip it, which is
 # why the hook is cheap in practice. Untracked files count — `git status` reports them where
 # `git diff` would not, each by itself: without --untracked-files=all a new directory is one
-# `?? src/pkg/` line, which the pattern does not match.
+# `?? src/pkg/` line, which the pattern does not match. -z: plain porcelain quotes a name with
+# a space or a non-ASCII letter, and the closing quote broke the pattern's `$` (#174).
 gated_paths="{{GATED_PATHS}}"
 gated_pattern="{{GATED_FILE_PATTERN}}"
 
 # shellcheck disable=SC2086
-if [ -z "$(git status --porcelain --untracked-files=all -- $gated_paths 2>/dev/null | grep -E "$gated_pattern" || true)" ]; then
+if [ -z "$(git status --porcelain -z --untracked-files=all -- $gated_paths 2>/dev/null | tr '\0' '\n' | grep -E "$gated_pattern" || true)" ]; then
   exit 0
 fi
 

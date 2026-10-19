@@ -9,8 +9,9 @@ The modes are defined in the project's `docs/WORKFLOW.md`, "Working modes, by na
 `python scripts/working_mode.py` (or `python3` / `py -3` on the host) from the project root.
 If the project lacks that helper, use this plugin's `scripts/working_mode.py` (two directories
 above this skill) with `--project <absolute project root>`. The helper records the name in
-`.claude/mode` and the "Working mode:" line of `docs/STATE.md`, detects disagreement on
-reads, and prints the canonical rules. Both records are shared across tools. Do not commit.
+`.myagentkit/mode` (ignored by Git) and the "Working mode:" line of `docs/STATE.md`, detects
+disagreement on reads, and prints the canonical rules. Both records are shared across tools. Do not
+commit.
 
 STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline", in its order
 (`--read-state`, edit the returned PATH, `--replace-state "PATH" --expect SHA256`; on refusal,

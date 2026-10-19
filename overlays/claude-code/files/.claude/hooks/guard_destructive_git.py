@@ -218,6 +218,14 @@ def unknowable(word):
     return "$" in word or UNKNOWN in word or "`" in word or splat(word)
 
 
+def native(path):
+    """A folder as Windows reads it. Git Bash spells a drive `/d/x`; Windows Python and git.exe read
+    that as `\\d\\x` on the current drive, so `cd /d/repo && git merge-base ...` asked git in a
+    folder that does not exist and was refused as unreadable. PowerShell (SPLAT) has no such form."""
+    found = re.fullmatch(r"/([A-Za-z])(/.*)?", path) if os.name == "nt" and not SPLAT else None
+    return found.group(1) + ":" + (found.group(2) or "/") if found else path
+
+
 class Unreadable(Exception):
     pass
 
@@ -477,9 +485,10 @@ class Git:
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
             takes = tok in GIT_VALUE
             if tok in ("-C", "--git-dir", "--work-tree"):
-                self.route += [tok, nxt]
+                self.route += [tok, native(nxt)]
             elif tok.startswith(("--git-dir=", "--work-tree=")):
-                self.route.append(tok)
+                key, value = tok.split("=", 1)
+                self.route.append(key + "=" + native(value))
             elif tok == "-c" or tok == "--config-env":
                 self.configs.append(nxt)
             elif tok.startswith("--config-env="):
@@ -646,7 +655,7 @@ def verdict(g, depth=0):
         unknown = len(words) < 2 or any(unknowable(w) for w in [*steps, *words[1:2]])
         for c in g.cwds:
             held = Git([], {}, [None if c is None or unknown else
-                                os.path.join(c, *steps, os.path.expanduser(words[1]))]).dirty()
+                                os.path.join(c, *steps, native(os.path.expanduser(words[1])))]).dirty()
             if held:
                 return True, (f"git worktree remove --force deletes the worktree with the work it holds:\n\n{held}\n\n"
                               "Commit it there first. A kit worker's worktree is closed with "
@@ -743,7 +752,7 @@ def judge(command, cwds, changed=False, env=None):
             env.update(dict(t.split("=", 1) for t in rest[1:] if "=" in t))
         if name in ("cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"):
             args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
-            target = os.path.expanduser(os.path.expandvars(args[0])) if args and "pop" not in name else None
+            target = native(os.path.expanduser(os.path.expandvars(args[0]))) if args and "pop" not in name else None
             moved = [None if target is None or unknowable(target) or target == "-" or c is None else os.path.join(c, target)
                      for c in cwds]
             cwds = list(dict.fromkeys(cwds + moved))
