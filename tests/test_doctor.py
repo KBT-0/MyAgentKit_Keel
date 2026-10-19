@@ -486,6 +486,12 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(green.returncode, 0, green.stdout)
             self.assertIn('project: ready', green.stdout)
             self.assertIn('DOCTOR: ready', green.stdout)
+            # Without a #! line Git for Windows' sh sees no executable and skipped it silently.
+            extra.write_text('echo "project: ready"\n', newline='\n')
+            bare = doctor()
+            self.assertEqual(bare.returncode, 1, bare.stdout)
+            self.assertIn('MISSING: scripts/doctor.project.sh has no #! line', bare.stdout)
+            self.assertNotIn('DOCTOR: ready', bare.stdout)
             git('rm', '-q', '-f', '--cached', 'scripts/doctor.project.sh')
             extra.unlink()
 

@@ -86,7 +86,7 @@ plugin is installed from this repository's marketplace, and an installed plugin 
 until its version string changes (code.claude.com/docs/en/plugins-reference, `version`;
 code.claude.com/docs/en/plugins/loading, "Versions and updates"). The Codex plugin's version
 is built from that version and a hash of its files, so after the bump run
-`python scripts/package_codex_plugin.py` and commit `plugins/myagentkit/.codex-plugin/plugin.json`;
+`python3 scripts/package_codex_plugin.py` (`python` on native Windows) and commit `plugins/myagentkit/.codex-plugin/plugin.json`;
 until then the kit check is red (#156).
 
 **Run the kit check** (`./scripts/check.sh`, the launcher of `scripts/check_kit.py`) in its two

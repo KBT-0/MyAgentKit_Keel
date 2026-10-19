@@ -231,18 +231,28 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn("Then search the kit's issues, open and closed, before drafting anything", command)
         self.assertIn('propose a comment on it', command)
         self.assertIn('It is not pre-approved on purpose', command)
-        # #154 (owner decision 57): a project switch, asked at setup and read by the command;
-        # a standing approval prints the body and sends, and the permission prompt still asks.
+        # #154 (owner decision 57): a project switch, asked at setup and read by the command.
+        flat = ' '.join(command.split())
         self.assertIn('read the `kit_feedback:` line of `AGENTS.md`', command)
-        self.assertIn('no line means `ask-each-time`', command)
+        # An unknown value or two conflicting lines fall back to asking (gateR review).
+        self.assertIn('No line, any other value, or two `kit_feedback:` lines that disagree mean `ask-each-time`', flat)
         self.assertIn('- `standing-approval`: ', command)
-        self.assertIn("The send command's permission prompt still asks", command)
+        # The prompt shows only the file path and is skipped under bypass or a gh allow rule.
+        self.assertNotIn('permission prompt still asks', flat)
+        self.assertIn('does not ask at all under `bypassPermissions` or an allow rule for `gh`', flat)
+        # Issue batching (owner accepted option B): one checklist issue per area per session.
+        self.assertIn('## 1b. Batch, do not trickle', command)
+        self.assertIn('`- [ ]` line: the kit file, the symptom, how to repeat it', flat)
+        self.assertIn('At most about 10 lines and 6000 characters per issue', flat)
+        self.assertIn('A separate issue only for a security problem, a blocker', flat)
+        self.assertIn('once per batch, never per finding', flat)
         interview = (ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8')
         phase = interview.split('## Phase 0.5', 1)[1].split('\n## ', 1)[0]
         self.assertIn('`kit_feedback: ask-each-time`', phase)
         self.assertIn('`kit_feedback: standing-approval`', phase)
         yes = phase.split('**If yes:**', 1)[1].split('**If no:**', 1)[0]
         self.assertIn('>   `kit_feedback: ask-each-time`\n', yes)
+        self.assertIn('offer them ONCE, at its end, as one batch per area', ' '.join(yes.replace('>', ' ').split()))
         # #278: /usage, the canonical name, and a NOT RUN line instead of an unread figure.
         handoff = ' '.join((ROOT / 'plugin/commands/handoff.md').read_text(encoding='utf-8').split())
         self.assertNotIn('/cost', handoff)
