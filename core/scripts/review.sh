@@ -73,7 +73,8 @@
 #   REVIEW_TASK_FILE the brief the prompt quotes; its Owns: line bounds the diff (owns_check.py)
 #   REVIEW_ROUND_EXCEPTION  the recorded reason for a third round under one label
 #   REVIEW_SAME_TIER_EXCEPTION  the recorded reason the author's tier reviews (a plan with no
-#                    tier above it; REVIEW_RISK=high and effort high only; docs/WORKFLOW.md)
+#                    tier above it; REVIEW_RISK=high and effort high only; one round per
+#                    label and focus, a second is refused; docs/WORKFLOW.md)
 #   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 2700, 3600 for high-effort Codex; at most 3600)
 #   REVIEW_MAX_TURNS        Claude turns per attempt (default: 200, at most 500)
 #   REVIEW_CLI_BIN   the Codex binary             (default: codex)
