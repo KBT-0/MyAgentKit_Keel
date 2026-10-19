@@ -181,13 +181,13 @@ def judge(model, author, effort):
     extra opinion only; ("same", why) for the author's tier below the top, the
     REVIEW_SAME_TIER_EXCEPTION case; ("top", why) for the author's top tier, a fresh session's
     review, why None when the effort is the author's or above, capped at high, since a review never
-    runs at xhigh or max (owner decision 64); ("effort", why) for any other review below that effort
-    or with the author's effort unnamed, since the floor holds for every required review (owner
-    decision 65): left unnamed, the check it arms would pass (#181); (None, None) for any other."""
+    runs at xhigh or max (owner decision 64); ("effort", why) for any other review below that effort,
+    since the floor holds for every required review (owner decision 65); (None, None) for any other.
+    An unnamed author effort counts as high, the cap (owner decision 66)."""
     mine, theirs = tier_rank(model), tier_rank(author)
-    named = os.environ.get(AUTHOR_EFFORT_ENV, "").strip().lower()
-    low = (named not in EFFORTS and "the required review runs at author %s's effort or above, high at most: "
-           "set %s to the author's effort (%s)" % (author, AUTHOR_EFFORT_ENV, ", ".join(EFFORTS))
+    named = author_effort()
+    low = (named not in EFFORTS and "%s %r names no effort: set it to the author's effort (%s), or leave "
+           "it unset for high" % (AUTHOR_EFFORT_ENV, named, ", ".join(EFFORTS))
            or EFFORTS.index(effort) < min(EFFORTS.index(named), EFFORTS.index("high"))
            and "review effort %s is below author %s's effort %s: the required review runs at the author's "
            "effort or above, at high for an author above it (a review runs at low, medium or high; "
@@ -213,6 +213,12 @@ def judge(model, author, effort):
                          "an extra opinion runs with REVIEW_SHADOW=1, whose verdict closes nothing"
                          % (model, author, allowed))
     return ("effort", low) if low else (None, None)
+
+
+def author_effort():
+    """The author's effort; unnamed, it counts as high, the cap (owner decision 66), so the
+    required review runs at high."""
+    return os.environ.get(AUTHOR_EFFORT_ENV, "").strip().lower() or "high"
 
 
 def author_family(model):
@@ -355,8 +361,7 @@ def main(argv=None):
     parser.add_argument("--reviewer", choices=("claude", "codex"), default="claude")
     parser.add_argument("--claude-model", default=os.environ.get("REVIEW_CLAUDE_MODEL", ""))
     parser.add_argument("--codex-model", default=os.environ.get("REVIEW_CODEX_MODEL", ""))
-    parser.add_argument("--effort", choices=("low", "medium", "high"),
-                        default=claude_bridge.default_effort())  # no xhigh for a review
+    parser.add_argument("--effort", choices=("low", "medium", "high"))  # no xhigh for a review
     # Off by default: the requested reviewer is usually chosen because the other model
     # authored the patch, so a silent substitute could be the author reviewing itself.
     parser.add_argument("--allow-fallback", action="store_true")
@@ -394,6 +399,12 @@ def main(argv=None):
     if author and author_tier(author) is None:
         raise ValueError("MYAGENTKIT_AUTHOR %r names no model tier, so the author's tier cannot be checked: "
                          "name the author's model id (claude-opus-5-5, claude/claude-sonnet-5, gpt-5.5)" % author)
+    if args.effort is None:
+        # Unnamed, the effort follows the brief's tier, raised to the author's (high at most): the
+        # required review runs there (owner decisions 65, 66); a lower one named is refused below.
+        args.effort = claude_bridge.default_effort()
+        if author and author_effort() in EFFORTS:
+            args.effort = EFFORTS[max(EFFORTS.index(args.effort), min(EFFORTS.index(author_effort()), 2))]
     authors = [author] if author else []
     # The owner's exception (docs/WORKFLOW.md, solo; 2026-10-16): on a plan with no tier above the
     # author's, a high-tier change is reviewed by the author's tier in a fresh session at high
@@ -462,7 +473,7 @@ def main(argv=None):
 
     def top_tier(provider):
         # The top tier's own review (owner decision 63): recorded and printed, for whichever runs.
-        chain["top_tier_review"] = {"author_effort": os.environ[AUTHOR_EFFORT_ENV].strip().lower(),
+        chain["top_tier_review"] = {"author_effort": author_effort(),
                                     "effort": args.effort}
         print("REVIEW [top tier]: author %s is the top tier of its family, so reviewer %s model %s, "
               "its own tier, reviews it in a fresh session at effort %s (the author's: %s)."
