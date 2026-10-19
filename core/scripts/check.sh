@@ -60,18 +60,6 @@ case "$toolchain_path" in
   ""|*"{{"*) ;;
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
 esac
-# Resolved AFTER toolchain_path joined PATH: a python3 only there is the one a hook sees.
-# Windows installs Python as `python` or `py`: when `python3` is absent or does not run (a
-# Store alias exits 9009), the scripts call the first of those that runs under the usual
-# name. A function is enough for a call; an `exec` cannot run a function, so the exec sites
-# use $kit_python, the resolved command.
-if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
-elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
-else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
-[ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
-$kit_python -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' </dev/null >/dev/null 2>&1 ||
-  { echo "FAIL [python]: Python 3.11 or newer is required (python3, python, py -3)." >&2; exit 1; }
-
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 # Git for Windows prints a linked worktree's git path as C:/...; that is absolute too.
 case "$lock_path" in /*|[A-Za-z]:/*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
@@ -83,6 +71,29 @@ case "$lock_path" in /*|[A-Za-z]:/*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; e
 case "$(uname -s 2>/dev/null)" in
   MSYS*|MINGW*|CYGWIN*) lock_path=$(cygpath -m "$lock_path") ;;
 esac
+# Resolved AFTER toolchain_path joined PATH: a python3 only there is the one a hook sees.
+# Windows installs Python as `python` or `py`: when `python3` is absent or does not run (a
+# Store alias exits 9009), the scripts call the first of those that runs under the usual
+# name and is 3.11 or newer; the one start checks both. A function is enough for a call; an
+# `exec` cannot run a function, so the exec sites use $kit_python, the resolved command.
+# A nested run that claims this checkout's lock calls the interpreter its holder runs
+# (GATE_PYTHON, its sys.executable) and checks nothing: through the python3 alias of native
+# Windows each start cost about 0.4 s, seven before the gate body (#249). The proof below runs
+# with that Python, so a claim that is no lock still fails there.
+if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ] && [ -n "${GATE_PYTHON:-}" ]; then
+  kit_python=python3
+  python3() { "$GATE_PYTHON" "$@"; }
+else
+  new_enough='import sys; sys.exit(sys.version_info < (3, 11))'
+  if python3 -I -c "$new_enough" </dev/null >/dev/null 2>&1; then kit_python=python3
+  elif python -I -c "$new_enough" </dev/null >/dev/null 2>&1; then kit_python=python
+  else
+    kit_python="py -3"   # the launcher, told which Python: unquoted at every use
+    $kit_python -I -c "$new_enough" </dev/null >/dev/null 2>&1 ||
+      { echo "FAIL [python]: Python 3.11 or newer is required (python3, python, py -3)." >&2; exit 1; }
+  fi
+  [ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
+fi
 # A run that claims the lock (GATE_LOCK_HELD names this checkout's) proves it: the descriptor
 # GATE_LOCK_FD it inherited is open on this lock file, the lock is held, so a fresh open of
 # the file cannot take it, and that descriptor itself holds it: flock on it succeeds at once
@@ -201,8 +212,6 @@ case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) printf '%s\n' "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
 if [ -z "$inherited" ]; then
-  $kit_python -I -c '' </dev/null >/dev/null 2>&1 ||
-    { echo "FAIL [lock]: no Python runs (python3, python, py -3), and the gate lock is taken through it."; exit 1; }
   # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
@@ -276,10 +285,12 @@ while not take():
     if interrupted:
         sys.exit(130)
     if wait and waited >= int(wait):
-        print("NOT RUN [lock]: another gate run, or a process it started, has held %s for %ds; GATE_LOCK_WAIT=%s ran out." % (path, waited, wait), flush=True)
+        print("NOT RUN [lock]: another gate run, or a process it started, holds %s; this run waited %ds for it and GATE_LOCK_WAIT=%s ran out." % (path, waited, wait), flush=True)
         sys.exit(75)
+    # The count is the wait of this run, never how long the holder has held it (#250): the lock
+    # file names no holder, so the line points to a tool that does.
     if waited % 30 == 0:
-        print("NOTE [lock]: another gate run, or a process it started, has held %s for %ds; waiting for it." % (path, waited), flush=True)
+        print("NOTE [lock]: another gate run, or a process it started, holds %s; this run has waited %ds for it." % (path, waited), flush=True)
         if waited == 0:
             print("             To see the holder: %s. A server the build left running (a compiler\n"
                   "             server, a build daemon) holds it until that server exits: docs/GOTCHAS.md." % find, flush=True)
@@ -289,12 +300,14 @@ if fcntl:
     # A copy that survives exec, above the fds sh scripts redirect; nested runs prove they hold it.
     os.environ["GATE_LOCK_FD"] = str(fcntl.fcntl(fd, fcntl.F_DUPFD, 10))
     os.environ["GATE_LOCK_HELD"] = path
+    os.environ["GATE_PYTHON"] = sys.executable
     os.execvp("sh", ["sh", gate] + sys.argv[3:])
 # Native Windows: no exec (os.execv starts a new process and this one exits, so the caller
 # would read the gate as finished), so this process waits for the gate and passes its status on.
 os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
 os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
+os.environ["GATE_PYTHON"] = sys.executable
 # The gate is created suspended and the Ctrl-C record is read only once it exists: read before
 # the launch, a Ctrl-C between that read and the launch reached no gate, and the gate it then
 # started ran its build to the end. Read after, every earlier Ctrl-C is seen and the suspended
@@ -724,8 +737,19 @@ elif ! grep -q '^## Module map' "$architecture_file" 2>/dev/null; then
 else
   # Split Markdown table cells, code spans and list-entry colons; keep dots and hyphens
   # inside names. grep -w would count api-gateway as naming api, or core.utils as core.
+  # Names come from table rows (a line with a pipe: GitHub-flavored Markdown makes the outer
+  # pipes optional) and list entries only, never from prose or an HTML comment: the template's
+  # own paragraph and comment named design, work and tests, and those module folders passed
+  # unmapped (#274). The comment's text is cut out, so a row with a trailing comment still counts.
   awk '/^## Module map/ { f = 1; next } /^## / { f = 0 }
-       f { gsub(/[`|:]/, " "); for (i = 1; i <= NF; i++) print $i }' "$architecture_file" > "$work/module-map"
+       f { s = $0; out = ""
+           while (s != "") {
+             if (c) { k = index(s, "-->"); if (k) { s = substr(s, k + 3); c = 0 } else s = "" }
+             else { k = index(s, "<!--"); if (k) { out = out substr(s, 1, k - 1); s = substr(s, k + 4); c = 1 }
+                    else { out = out s; s = "" } } }
+           if (out ~ /[|]/ || out ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/) {
+             gsub(/[`|:]/, " ", out); n = split(out, w, " "); for (i = 1; i <= n; i++) print w[i] } }' \
+    "$architecture_file" > "$work/module-map"
   for root in $module_roots; do
     case "$root" in .) prefix="" ;; *) prefix="${root%/}/" ;; esac
     tr '\0' '\n' < "$filelist" | awk -v p="$prefix" '

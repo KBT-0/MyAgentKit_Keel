@@ -77,8 +77,9 @@ records a version writes. A project synced before v0.12 has no record yet, so it
 `--base <commit>` once: the release commit that the changelog's upgrade section names. Use
 the commit the project really came from, because a later commit makes the kit's own changes in
 between read as the project's, and they are dropped without a conflict. So a base passed with
-`--base` is checked first against the project's kit-owned files, which still hold that commit's
-copies (line endings aside). If any of them differs, the run stops before it writes anything
+`--base` is checked first against the project's kit-owned files as the project's last commit
+that changed `docs/kit/.kit-version` holds them, which are that commit's copies (line endings
+aside), even after a plain sync's copies were committed. If any of them differs, the run stops before it writes anything
 and names those files. A rerun merges against the same base again, so a kit change you rejected comes back: reject a
 kit hunk only after the last `--merge` run. Both kit sides are read from the kit's commits, never
 its working tree, and a CRLF project file is merged as LF and written back as CRLF. Files the

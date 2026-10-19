@@ -15,7 +15,7 @@
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
 # diagnose — a hook that could not execute, an older Node resolved from a hook's PATH, a
-# missing second CLI, a commit with no author, a cache npm could not write to, a checkout
+# missing reviewer CLI, a commit with no author, a cache npm could not write to, a checkout
 # on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
 # CDPATH cleared: exported, it sent this cd into another tree with a scripts/ in it.
@@ -175,6 +175,12 @@ if [ "$hooks_path" != .githooks ]; then
 fi
 [ -n "$(git config user.name 2>/dev/null)" ] && [ -n "$(git config user.email 2>/dev/null)" ] ||
   miss "git identity (user.name / user.email)" "git config user.name '<name>' && git config user.email '<email>'"
+# With the hooks path at .githooks git never runs the LFS hooks in .git/hooks: a push uploaded
+# no LFS object and a fresh clone failed on "smudge filter lfs failed" (#164). pre-push is the
+# one that loses data; the others only handle locked files.
+if grep -Eq '^[^#]*filter=lfs' .gitattributes 2>/dev/null && ! grep -Eq 'git[ -]lfs' .githooks/pre-push 2>/dev/null; then
+  miss ".githooks/pre-push does not run Git LFS, although .gitattributes uses filter=lfs (git runs no hook in .git/hooks here, so a push uploads no LFS object)" "commit Git LFS's pre-push, post-checkout and post-commit in .githooks and its post-merge as .githooks/post-merge.project (docs/DEV_SETUP.md §1); never git lfs update --force"
+fi
 
 # --- tools the kit's own scripts need ------------------------------------------------
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
@@ -206,16 +212,19 @@ help_out=; probe_out=
 trap 'rm -f ${help_out:+"$help_out"} ${probe_out:+"$probe_out"}' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# The Claude CLI alone runs the review; any other reviewer is a second CLI, which only a
+# cross-model review needs (docs/DEV_SETUP.md §3).
+reviewer_what="a second CLI, needed only for cross-model review"
 case "$reviewer" in
   codex) reviewer_cli=${REVIEW_CLI_BIN-codex}; override=REVIEW_CLI_BIN ;;
-  claude) reviewer_cli=${CLAUDE_CLI_BIN-claude}; override=CLAUDE_CLI_BIN ;;
+  claude) reviewer_cli=${CLAUDE_CLI_BIN-claude}; override=CLAUDE_CLI_BIN; reviewer_what="the review runs on it" ;;
   *) reviewer_cli=$reviewer ;;
 esac
 if [ -n "$reviewer" ] && [ -z "$reviewer_cli" ]; then
   miss "$override is set to empty, so scripts/review.sh would run an empty command for $reviewer" "unset $override, or set it to the $reviewer executable"
 elif [ -n "$reviewer" ] && ! reviewer_path=$( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
                             command -v "$reviewer_cli" 2>/dev/null ); then
-  miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
+  miss "the $reviewer CLI '$reviewer_cli' that scripts/review.sh calls ($reviewer_what)" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 elif [ "$reviewer" = claude ]; then
   if ! command -v timeout >/dev/null 2>&1; then
     echo "NOTE: Claude CLI --effort probe skipped, no timeout on this machine"
@@ -298,6 +307,38 @@ if [ -f scripts/spawn_worker.sh ]; then
       command -v tmux >/dev/null 2>&1 ||
         miss "tmux, which scripts/spawn_worker.sh needs for worker sessions" "install tmux" ;;
   esac
+fi
+
+# --- the Unity gate's editor and path converter (unity overlay) ----------------------
+# Resolved as scripts/unity_gate.sh resolves it, and never started: the editor opens a window
+# on any probe. So doctor cannot tell whether a UNITY_PATH the owner set is the editor (a
+# wrapper script is fine; the gate names a non-editor after its run).
+# A bare `unity` from PATH must sit in an editor install, Data beside it (Windows, Linux) or
+# inside Unity.app (macOS): Unity Hub puts no editor on PATH, and Unity's separate CLI is
+# installed there as `unity`, which doctor once called ready (#216).
+if [ -f scripts/unity_gate.sh ]; then
+  unity_bin=${UNITY_PATH:-unity} unity_from="UNITY_PATH unset, no unity on PATH"
+  [ -z "${UNITY_PATH:-}" ] || unity_from=UNITY_PATH
+  if ! unity_found=$(command -v "$unity_bin" 2>/dev/null); then
+    miss "the Unity Editor '$unity_bin' that scripts/unity_gate.sh runs, not found ($unity_from)" "set UNITY_PATH to the editor executable (docs/UNITY_SETUP.md §5)"
+  elif [ -z "${UNITY_PATH:-}" ]; then
+    unity_real=$(readlink -f "$unity_found" 2>/dev/null) || unity_real=$unity_found
+    case "$unity_real" in
+      */Unity.app/Contents/MacOS/*) ;;
+      *) [ -d "$(dirname -- "$unity_real")/Data" ] ||
+           miss "the unity on PATH ($unity_found) is not in a Unity Editor install (Unity's separate CLI is also named unity); scripts/unity_gate.sh would run it" "set UNITY_PATH to the editor executable (docs/UNITY_SETUP.md §5)" ;;
+    esac
+  fi
+  # The converter the gate hands the Windows editor its paths with.
+  if [ -n "$windows_sh" ]; then
+    command -v cygpath >/dev/null 2>&1 ||
+      miss "cygpath, which scripts/unity_gate.sh needs to hand the Windows editor its paths" "reinstall Git for Windows (or MSYS2, Cygwin), which ships it"
+  else
+    case "$unity_bin" in
+      *.exe) command -v wslpath >/dev/null 2>&1 ||
+               miss "wslpath, which scripts/unity_gate.sh needs for a Windows Unity.exe" "run the gate in WSL or in Git for Windows' sh, or set UNITY_PATH to an editor for this system" ;;
+    esac
+  fi
 fi
 
 # --- Node as a hook sees it ----------------------------------------------------------

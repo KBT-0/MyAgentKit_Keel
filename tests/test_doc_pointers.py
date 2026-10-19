@@ -413,6 +413,39 @@ class SectionPointerTests(unittest.TestCase):
             with self.subTest(report=name):
                 self.assertIn('](%s)' % name, index)
 
+    def test_the_interview_placeholder_scan_finds_what_the_gate_fails_on(self):
+        # #271: the interview's `grep -rn` listed the exempt files, ignored .gitignore and
+        # missed a marker with a digit, so the agent worked from another list than the gate's.
+        import os, subprocess, tempfile
+        gate = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        pattern, exempt = re.search(r"^hits=\$\(scan_grep '([^']+)' \| grep -Ev '([^']+)'", gate, re.M).groups()
+        phase = (ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8').split('## Phase 4', 1)[1]
+        command = re.search(r'`((?:git )?grep [^`]*\{[^`]*)`', phase)[1]
+        files = {'a.md': b'{{ONE}}\n', 'b.md': b'x\n{{TWO_2}}\n', 'build/c.md': b'{{THREE}}\n',
+                 'setup/x.md': b'{{FOUR}}\n', 'MODULE_AGENTS_TEMPLATE.md': b'{{FIVE}}\n',
+                 'mod/MODULE_AGENTS_TEMPLATE.md': b'{{SIX}}\n', 'bin.dat': b'{{SEVEN}}\0\n',
+                 'lower.md': b'{{lower}}\n', '.gitignore': b'build/\n'}
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, body in files.items():
+                (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
+                (Path(tmp) / name).write_bytes(body)
+            git = lambda *args: subprocess.run(['git', *args], cwd=tmp, check=True, capture_output=True,
+                                               env=env).stdout.decode()
+            git('init', '-q')
+            git('add', 'a.md', 'setup', 'MODULE_AGENTS_TEMPLATE.md', 'bin.dat', '.gitignore')
+            expected = []   # the gate: grep -I over tracked and untracked unignored files, minus exempt
+            for name in git('ls-files', '--cached', '--others', '--exclude-standard').split():
+                body = (Path(tmp) / name).read_bytes()
+                for number, line in enumerate(body.decode().splitlines(), 1):
+                    hit = '%s:%d:%s' % (name, number, line)
+                    if b'\0' not in body and re.search(pattern, line) and not re.search(exempt, hit):
+                        expected.append(hit)
+            found = subprocess.run(['sh', '-c', command], cwd=tmp, capture_output=True, encoding='utf-8', env=env)
+        self.assertEqual(sorted(expected), ['a.md:1:{{ONE}}', 'b.md:2:{{TWO_2}}', 'mod/MODULE_AGENTS_TEMPLATE.md:1:{{SIX}}'])
+        self.assertEqual(sorted(found.stdout.splitlines()), sorted(expected), found.stderr)
+        self.assertIn(pattern, command)
+
 
 if __name__ == '__main__':
     unittest.main()

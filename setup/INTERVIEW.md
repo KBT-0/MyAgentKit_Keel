@@ -359,8 +359,9 @@ binding on everyone who comes after.
 
 ## Phase 4 — write the foundation
 
-Now fill in the files. Work through the placeholders below; `grep -rn '{{[A-Z_]*}}' .` finds
-any you missed, and the gate will find the rest.
+Now fill in the files. Work through the placeholders below;
+`git grep --untracked -InE '\{\{[A-Z0-9_]+\}\}' -- . ':!setup' ':!MODULE_AGENTS_TEMPLATE.md'`
+finds any you missed: it is the scan the gate runs, with the same exempt files.
 
 An installed overlay brings its own placeholders, which are not in these tables — the grep
 above is what catches them, and the overlay's own document explains each one. For Unity

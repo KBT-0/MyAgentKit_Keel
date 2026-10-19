@@ -18,17 +18,27 @@ WRITE = ('#!/bin/sh\nprev=\nfor a in "$@"; do\n'
 
 
 class UnityGateTests(unittest.TestCase):
-    def run_gate(self, stub_body):
+    def run_gate(self, stub_body, stub_name='unity-stub', project=True, tools=None):
+        """tools: {name: script} put first on PATH, as stand-ins for the host's own."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             (tmp / 'scripts').mkdir()
             (tmp / 'scripts/unity_gate.sh').write_bytes(GATE.read_bytes())
-            stub = tmp / 'unity-stub'
+            if project:
+                (tmp / 'proj/ProjectSettings').mkdir(parents=True)
+            stub = tmp / stub_name
             stub.write_text(stub_body, encoding='utf-8', newline='\n')
             stub.chmod(0o755)
+            env = dict(os.environ, UNITY_PATH=stub.as_posix(), UNITY_PROJECT=(tmp / 'proj').as_posix())
+            if tools:
+                (tmp / 'tools').mkdir()
+                for name, body in tools.items():
+                    (tmp / 'tools' / name).write_text(body, encoding='utf-8', newline='\n')
+                    (tmp / 'tools' / name).chmod(0o755)
+                env['PATH'] = str(tmp / 'tools') + os.pathsep + env['PATH']
             result = subprocess.run(['sh', 'scripts/unity_gate.sh'], cwd=tmp, capture_output=True, text=True,
-                                    env=dict(os.environ, UNITY_PATH=stub.as_posix(),
-                                             UNITY_PROJECT=(tmp / 'proj').as_posix()), timeout=60)
+                                    env=env, timeout=60)
+            self.project_created = (tmp / 'proj').exists()
             return result.returncode, result.stdout + result.stderr
 
     def assert_red(self, stub_body, line):
@@ -77,6 +87,31 @@ class UnityGateTests(unittest.TestCase):
     def test_a_nonzero_editor_exit_fails_even_with_passing_results(self):
         self.assert_red((WRITE % '<test-run><test-case name="a" result="Passed" /></test-run>')
                         .replace('exit 0\n', 'exit 1\n'), 'FAIL [unity]: EditMode tests failed')
+
+    def test_an_exe_editor_on_git_for_windows_is_run_with_cygpath_paths(self):
+        # #175: Git for Windows has cygpath, never wslpath; Unity.exe was refused there. The host
+        # is named by a stand-in uname, so this runs the same on every machine.
+        code, out = self.run_gate(WRITE % '<test-run><test-case name="a" result="Passed" /></test-run>',
+                                  stub_name='Unity.exe',
+                                  tools={'uname': '#!/bin/sh\necho MINGW64_NT-10.0-26300\n',
+                                         'cygpath': '#!/bin/sh\n[ "$1" = -m ] || exit 1\nprintf \'%s\\n\' "$2"\n'})
+        self.assertEqual(code, 0, out)
+        self.assertIn('UNITY GATE: PASS', out)
+
+    def test_unity_s_separate_cli_is_named_not_reported_as_failed_tests(self):
+        # #175: Unity's CLI, also named unity, rejects the editor's flags.
+        code, out = self.run_gate('#!/bin/sh\necho "error: unknown option \'-batchmode\'" >&2\nexit 2\n')
+        self.assertEqual(code, 1, out)
+        self.assertIn('is not the Unity Editor (it rejected -batchmode', out)
+        self.assertNotIn('tests failed', out)
+        self.assertIn('UNITY GATE: FAIL', out)
+
+    def test_a_missing_project_folder_is_refused_and_not_created(self):
+        code, out = self.run_gate(WRITE % '<test-run><test-case name="a" result="Passed" /></test-run>',
+                                  project=False)
+        self.assertEqual(code, 1, out)
+        self.assertIn('is not a Unity project (no ProjectSettings folder)', out)
+        self.assertFalse(self.project_created, out)
 
     def test_a_run_that_executed_a_passing_test_passes(self):
         code, out = self.run_gate(WRITE % '<test-run><test-case name="a" result="Passed" /></test-run>')

@@ -36,6 +36,23 @@ line, `chmod +x` or not, and the kit's hook then refuses the commit. No other
 `core.hooksPath` is accepted: `bootstrap.sh` stops on one and names this migration. Others
 refuse too: lefthook will not overwrite a hooks path that points elsewhere without `-f`.
 
+**Git LFS.** With the hooks path at `.githooks`, git never runs the hooks `git lfs install`
+wrote into `.git/hooks`: a push uploads no LFS object, and a fresh clone fails with "smudge
+filter lfs failed" (#164). In a repository whose `.gitattributes` uses `filter=lfs`, commit
+Git LFS's hooks in `.githooks`: `pre-push`, `post-checkout` and `post-commit` under their own
+names, and its `post-merge` as `.githooks/post-merge.project`, which the kit's `post-merge`
+runs first. Each is Git LFS's own body, with the hook's name in the last line:
+
+```sh
+#!/bin/sh
+command -v git-lfs >/dev/null 2>&1 || { echo >&2 "This repository uses Git LFS, but git-lfs is not on PATH."; exit 2; }
+git lfs pre-push "$@"
+```
+
+Add them with `git add --chmod=+x`. Never run `git lfs update --force` (or `install --force`)
+here: it overwrites the kit's `post-merge`. `./scripts/doctor.sh` reports a `pre-push` that
+does not run Git LFS.
+
 Verify it is live:
 
 ```sh
@@ -60,12 +77,15 @@ default `core.autocrlf=true` checks text files out with CRLF: on such a clone th
 hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf` and one
 `text eol=lf` line for each of the gate's hooks, so they check out with LF whatever a
 clone's autocrlf says. Keep those lines. Recommended: `* text=auto` as the first line, so
-every other text file is stored with LF too and a diff never churns on line endings alone (a
-review refuses a line-ending-only diff unless `REVIEW_ALLOW_EOL_ONLY=1`); in a repository that
-already has CRLF files, run `git add --renormalize .` once after adding it and commit that alone
+every other text file is stored with LF too and `git diff` never churns on line endings alone
+(a review refuses a line-ending-only diff unless `REVIEW_ALLOW_EOL_ONLY=1`). The working copy
+still takes the clone's own line endings, CRLF in a default Windows clone: compare two
+working trees with `diff --strip-trailing-cr` or `git diff --no-index --ignore-cr-at-eol`.
+In a repository that already has CRLF files, run `git add --renormalize .` once after adding it and commit that alone
 ([gitattributes](https://git-scm.com/docs/gitattributes)). A clone made before they were
 committed keeps its CRLF copies, because a pull does not check out again a file it did not
-change. Repair it once, with no uncommitted change to the scripts or hooks:
+change. Repair it once, with no uncommitted change to the scripts or hooks (it stops and
+names a file it would rewrite that has one):
 `sh scripts/fix_crlf.sh` (kit-owned; its header says what it rewrites and what it leaves
 alone). It turns each CRLF script and hook into LF and runs `git add --renormalize` on
 them; a file added after the attributes, the script itself included, already checks out
