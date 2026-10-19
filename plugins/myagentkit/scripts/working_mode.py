@@ -110,8 +110,10 @@ def switch_lock(project):
 
 # A line shaped like the key: after any Markdown line markers (bullet, number, quote, heading,
 # table cell), bold, italic or plain, so one in another shape is still refused as unrecognized
-# (v0.11); a sentence that mentions "the working mode: saver" is prose (#257).
-MODE_KEY = re.compile(r'[^\S\r\n]*(?:(?:[-*+>|]|\d+[.)]|#+)[^\S\r\n]*)*(?:\*\*|__|[*_])?working mode'
+# (v0.11); a sentence that mentions "the working mode: saver" is prose (#257). Each marker is
+# one token the loop repeats (`#`, never `#+`): a nested `#+` backtracks exponentially on a line
+# of many '#'.
+MODE_KEY = re.compile(r'[^\S\r\n]*(?:(?:[-*+>|]|\d+[.)]|#)[^\S\r\n]*)*(?:\*\*|__|[*_])?working mode'
                       r'(?:\*\*|__|[*_])?[^\S\r\n]*:', re.I)
 
 

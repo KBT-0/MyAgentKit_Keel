@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -378,6 +379,15 @@ class WorkingModeTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(self.state.read_text(encoding='utf-8'), text)
             self.assertFalse((self.project / '.myagentkit/mode').exists())
+
+    def test_the_key_pattern_stays_linear_on_a_long_marker_run(self):
+        # A nested `#+` in the marker loop backtracked exponentially: 26 '#' took seconds.
+        mode_key = self.module().MODE_KEY
+        for line in ('#' * 26 + 'x', '#' * 5000 + 'x', '# ' * 2000 + 'x', '-*>|1. ' * 800 + 'x'):
+            start = time.monotonic()
+            self.assertIsNone(mode_key.match(line))
+            self.assertLess(time.monotonic() - start, 2, line[:40])
+        self.assertTrue(mode_key.match('### Working mode: solo'))
 
     def test_a_prose_mention_of_the_working_mode_is_not_a_mode_line(self):
         # #257: only a key-shaped line counts; a sentence that says "working mode:" is prose.
