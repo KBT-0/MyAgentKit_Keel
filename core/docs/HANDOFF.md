@@ -61,18 +61,11 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
-   instead of producing the prompt. Choose effort from the "Model routing" table: medium
-   for mechanical work and small fix re-reviews; high for a new mechanism's first round,
-   gate/hook/review-tooling changes and risky diffs. Only the lead chooses xhigh/max and
-   writes the reason in the brief. The brief names the model AND the effort level, and the
-   lead verifies both after the run from the transcript (Claude Code: the `"effort"` field;
-   Codex: the `reasoning effort:` header of its log). An unnamed choice drifts to the lead's
-   own model and effort: Claude Code resolves an omitted sub-agent model to the main
-   conversation's (code.claude.com/docs/en/sub-agents; `docs/WORKFLOW.md`, "Worker cost").
-   Prefer a named sub-agent definition whose frontmatter fixes `model` and `effort`; the
-   guard remains for calls that name a generic agent. `CLAUDE_CODE_EFFORT_LEVEL`, if set,
-   overrides the definition's effort, so the lead checks it is unset before relying on the
-   field.
+   instead of producing the prompt. The brief names the model AND the effort level, chosen
+   from `docs/WORKFLOW.md`, "Model routing" (both tables), and the lead verifies both after
+   the run from the transcript (Claude Code: the `"effort"` field; Codex: the
+   `reasoning effort:` header of its log). Why neither is left to inheritance, and how it is
+   enforced: `docs/WORKFLOW.md`, "Worker cost", rule 5.
 6. **Definition of Done — verifiable:** the exact command or observation that proves the
    task is finished, e.g. "`./scripts/check.sh` prints `CHECK: PASS` with the new test
    visible in the run". Not "it works", not "tests added" — something the implementer can

@@ -578,10 +578,8 @@ boundary so that a round's record names one configuration.
 
 Rules for whoever routes work, binding with any table:
 
-1. **Model and effort are chosen with equal care.** The table sorts work into tiers:
-   mechanical work (renames, figure fixes, data fetches, proof runs, summaries);
-   detail-bearing errands and ordinary reviews; risky and gate reviews and design
-   consultations. The lead picks the model from its tier and effort from the work table above.
+1. **Model and effort are chosen with equal care.** The lead picks the model from the tier
+   table and effort from the work table above; the values live in those two tables only.
    It writes both into the brief, and before the start tells the owner in one plain line which
    model and effort and why ("Sonnet, medium: web research and notes, tier 1"); a skill
    whose template names no model is no exception. The line is the owner's decision (v0.11)
@@ -589,11 +587,9 @@ Rules for whoever routes work, binding with any table:
    (Anthropic, "How we built our multi-agent research system"). Neither is left to a default
    or to inheritance.
    Both start at the cheapest table row that fits: mechanical work, docs, small fixes and
-   re-reviews go to the cheaper model (Sonnet) or a Codex worker at medium; the strongest
-   model at high is for a new mechanism's or a gate change's first round only. Every brief
-   names the model, the effort and the table row, because an unnamed choice drifts to the
-   lead's own model and effort (Claude Code resolves an omitted sub-agent model to the main
-   conversation's, code.claude.com/docs/en/sub-agents, "Choose a model"). Before a batch of more than one paid run (workers, reviews, `codex
+   re-reviews go to tier 1 at medium; the strongest model at high is for a new mechanism's or
+   a gate change's first round only. Every brief names the model, the effort and the table
+   row, because an unnamed choice drifts to the lead's own ("Worker cost", rule 5). Before a batch of more than one paid run (workers, reviews, `codex
    exec` errands), the lead tells the owner in one line how many, which model and which
    effort, and runs them one after another unless the owner asks for parallel: the
    allowance is a limit as real as memory (in one session, twelve parallel reviews spent
@@ -957,7 +953,8 @@ Rules, binding for whoever routes workers:
 5. **Mechanical work goes to the cheaper model at medium effort**: doc fixes, running a
    documented proof, folding notes. Design-bearing code gets the strongest model at high
    effort; reviews follow the "Model routing" effort table. Model and effort are never left
-   to inheritance: a sub-agent runs at its
+   to inheritance: an omitted sub-agent model resolves to the main conversation's
+   (code.claude.com/docs/en/sub-agents, "Choose a model"), a sub-agent runs at its
    lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
    `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call; the Claude Code

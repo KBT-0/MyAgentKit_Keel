@@ -360,6 +360,14 @@ class SectionPointerTests(unittest.TestCase):
             for kit_only in ('dogfood', 'KARARLAR', 'ACCEPTANCE.md', 'Fable 5.1'):
                 self.assertNotIn(kit_only, text, '%s carries kit-internal text' % path)
 
+    def test_model_routing_values_and_the_inheritance_rule_live_once(self):
+        # #142: rule 1 restated the tier table as "the cheaper model (Sonnet)" while the table
+        # said Haiku or Sonnet, and the inheritance rule was copied into four places.
+        docs = {name: ' '.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8').split())
+                for name in ('WORKFLOW.md', 'HANDOFF.md')}
+        self.assertNotIn('cheaper model (Sonnet)', docs['WORKFLOW.md'])
+        self.assertEqual(sum(text.count('omitted sub-agent model') for text in docs.values()), 1)
+
     def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
         # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,
         # and a worker then reports clean against a list the reviewer no longer uses.
