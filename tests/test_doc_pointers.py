@@ -281,6 +281,15 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('At most about 10 lines and 6000 characters per issue', flat)
         self.assertIn('A separate issue only for a security problem, a blocker', flat)
         self.assertIn('once per batch, never per finding', flat)
+        # kfb review Low: an explicit mid-session request was put off to the session's end, and
+        # the permission prompt was called the second gate where standing-approval skips it.
+        self.assertIn('A finding the owner hands this command mid-session is filed now, not put off', flat)
+        self.assertIn('Under `standing-approval` it may not ask at all (§4)', flat)
+        # Both kit-feedback pointers name the standing approval beside the chat yes (decision 57).
+        for name in ('core/docs/WORKFLOW.md', 'setup/RESEARCH_PROTOCOL.md'):
+            text = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+            self.assertNotIn('without an explicit yes', text, name)
+            self.assertIn('`kit_feedback: standing-approval`', text, name)
         interview = (ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8')
         phase = interview.split('## Phase 0.5', 1)[1].split('\n## ', 1)[0]
         self.assertIn('`kit_feedback: ask-each-time`', phase)

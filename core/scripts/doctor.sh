@@ -139,7 +139,8 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
     '#!'*) ;;
     *) case $f in
          .githooks/*.project) miss "$f has no #! line (Git for Windows never runs it; the kit's hook refuses it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
-         scripts/doctor.project.sh) miss "$f has no #! line (Git for Windows never runs it, and doctor skipped it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
+         scripts/doctor.project.sh) project_bare=1
+           miss "$f has no #! line (Git for Windows never runs it, and doctor skipped it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
        esac
        continue ;;
   esac
@@ -510,8 +511,9 @@ fi
 # its render tests) live in scripts/doctor.project.sh, project-owned, as a hook of its own lives
 # beside the kit's as .githooks/<name>.project (#86). It runs last, when it is executable; its
 # lines print as they are, and a non-zero exit is one MISSING. The loop above checks its #!
-# line, line endings and index mode like any other script.
-if [ -x scripts/doctor.project.sh ]; then
+# line, line endings and index mode like any other script; without a #! line it is skipped on
+# every host, as Git for Windows' sh skips it, so the report above holds everywhere.
+if [ -x scripts/doctor.project.sh ] && [ -z "${project_bare-}" ]; then
   scripts/doctor.project.sh; project_status=$?
   [ "$project_status" = 0 ] ||
     miss "scripts/doctor.project.sh reported a problem (exit $project_status)" "see its lines above"

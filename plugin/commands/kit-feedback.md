@@ -49,7 +49,9 @@ One issue per AREA (one script, one doc, one gate) per session, never one per fi
 sweep of one-finding issues costs the maintainer a triage step each and hides that a whole
 area is weak.
 
-- Collect findings during the session and file them at its end. Each finding is ONE
+- Collect findings during the session and file them at its end. A finding the owner hands
+  this command mid-session is filed now, not put off: the area's other collected findings go
+  into the same issue, and a later one in that area becomes a comment on it. Each finding is ONE
   `- [ ]` line: the kit file, the symptom, how to repeat it. A line without a repro is cut;
   each line closes on its own, no prose spanning lines.
 - At most about 10 lines and 6000 characters per issue; more in one area, split by sub-area.
@@ -117,7 +119,9 @@ as text for them to paste by hand. Do not attempt another route.
 
 ## 5. Send
 
-The send command is not pre-approved on purpose; the permission prompt is the second gate.
+The send command is not pre-approved on purpose; the permission prompt is the second gate
+under `ask-each-time`. Under `standing-approval` it may not ask at all (§4), so the printed
+body is the owner's one gate there.
 Only exact read-only command forms are in this command's `allowed-tools`; other arguments
 require a prompt. A pre-approved tool runs
 without a prompt (code.claude.com/docs/en/skills, `allowed-tools`), and a yes in the chat is

@@ -373,7 +373,8 @@ which NO code is written:
   Then the second half, which is what keeps the kit alive rather than merely local:
   **offer to send it upstream.** `/myagentkit:kit-feedback` opens an issue or a pull request
   against the kit repository — it scrubs this project out, shows the exact body, and sends
-  nothing without an explicit yes. A fix that stays local works, which is precisely why the
+  nothing without the owner's yes, in the chat or given in advance as `kit_feedback:
+  standing-approval` (the command's §4). A fix that stays local works, which is precisely why the
   upstream one then never happens and the next project inherits the original problem.
 
 Output: a short `docs/audits/YYYY-MM.md` whose findings carry task ids ("Task ids"), plus the
