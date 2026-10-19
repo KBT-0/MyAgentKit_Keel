@@ -912,6 +912,23 @@ class GateRuleTests(unittest.TestCase):
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
 
+    def test_a_module_may_be_named_by_its_path_from_the_top(self):
+        # A map naming `src/app/` or game/sim, as the template's table invites, failed every
+        # module (#88, #141). A path under another root names nothing there.
+        self.module_root('game engine')
+        for module in ('game/sim', 'game/ui', 'engine/sim'):
+            self.write('%s/file.txt' % module, 'module\n')
+        self.write('docs/ARCHITECTURE.md', '## Module map\n| `game/sim/` | rules |\n- game/ui: menus\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [architecture]: engine/sim is a module folder', out)
+        for module in ('game/sim', 'game/ui'):
+            self.assertNotIn('%s is a module folder' % module, out)
+        self.write('docs/ARCHITECTURE.md', '## Module map\n| `game/sim/` | rules |\n- game/ui: menus\n'
+                                          '| engine/sim | rendering |\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+
     def test_module_names_come_from_table_rows_and_list_entries_only(self):
         # The shipped template's paragraph and comment name design, work and tests: read as
         # names, those module folders passed unmapped (#274). Its multi-line comment holds a

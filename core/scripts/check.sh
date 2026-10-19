@@ -722,7 +722,8 @@ fi
 # is one an agent may rebuild beside it ("NEVER rewrite a system you could not find"). Prefer
 # a check to a promise (KARARLAR B10 inv1#239): every direct subfolder of a module root that
 # holds a file in the scan list must be named, as a whole entry, in the "## Module map" section
-# of docs/ARCHITECTURE.md. module_roots is a VALUE: the folders whose subfolders are modules,
+# of docs/ARCHITECTURE.md: its bare name (app) or its path from the top (src/app, src/app/), so a
+# multi-root map that names game/sim and engine/sim checks each (#88, #141). module_roots is a VALUE: the folders whose subfolders are modules,
 # space-separated, e.g. "src packages". Empty, nothing is checked and a NOTE says so: a
 # single-module project has no module folders. A root with no file at all FAILS: a check over a
 # missing folder finds nothing, which looks like a clean result.
@@ -759,7 +760,7 @@ else
       printf '%s\n' "FAIL [architecture]: the module root $root in scripts/check.sh holds no file the gate sees."
       fail=1; continue; }
     sort -u "$work/modules" | while IFS= read -r module; do
-      grep -qxF -- "$module" "$work/module-map" || {
+      grep -qxF -e "$module" -e "$prefix$module" -e "$prefix$module/" -- "$work/module-map" || {
         printf '%s\n' "FAIL [architecture]: $prefix$module is a module folder that the '## Module map' of $architecture_file does not name."
         echo "                     Add its line in the same task (one line: module, responsibility)."
         : > "$work/module-unnamed"; }

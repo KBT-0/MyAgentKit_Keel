@@ -414,8 +414,8 @@ when they become current, never now.
 
 One value sits beside them, not a placeholder: ask "Which top-level folders hold modules?"
 and write the answer into `module_roots` in `scripts/check.sh` (space-separated). The gate
-then fails when a subfolder of one is not named in the `## Module map` of
-`docs/ARCHITECTURE.md`; empty, it prints a NOTE and checks nothing (a single-module project).
+then fails when a subfolder of one is not named in a table row or list entry of the
+`## Module map` of `docs/ARCHITECTURE.md`, by its bare name (`app`) or its path (`src/app/`); empty, it prints a NOTE and checks nothing (a single-module project).
 
 ### Gates
 
