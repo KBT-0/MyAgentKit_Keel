@@ -1,5 +1,6 @@
 """install.sh fetches the kit into the per-user cache and runs its bootstrap; a rerun reuses the
 cache, and every failure stops before the project is touched."""
+import base64
 import os
 from pathlib import Path
 import re
@@ -34,12 +35,23 @@ class InstallTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def install(self, project, *args, ref='v-test', env=None, command=None):
+    def install(self, project, *args, ref='v-test', env=None, command=None, home=None):
         project.mkdir(exist_ok=True)
-        env = dict(env or os.environ, HOME=str(self.home), MYAGENTKIT_REF=ref,
+        env = dict(env or os.environ, HOME=str(home or self.home), MYAGENTKIT_REF=ref,
                    MYAGENTKIT_REPO=self.source.as_uri())
         return subprocess.run((command or ['sh', str(ROOT / 'install.sh')]) + list(args), cwd=project,
                               env=env, capture_output=True, text=True, encoding='utf-8', errors='replace')
+
+    def powershell(self, project, script, ref='v-test', env=None):
+        """Runs `script` in Windows PowerShell, the Windows default (5.1), from `project`; the
+        kit's own files stand in for every download (irm URL reads the file of that name here)."""
+        shell = shutil.which('powershell') or shutil.which('pwsh')
+        script = ("function Invoke-RestMethod($uri) { [IO.File]::ReadAllText((Join-Path '%s' ($uri -split '/')[-1])) }\n%s"
+                  % (ROOT, script))
+        encoded = base64.b64encode(script.encode('utf-16-le')).decode()
+        return self.install(project, ref=ref, env=env,
+                            command=[shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                                     '-EncodedCommand', encoded])
 
     def project(self, name):
         project = Path(self.tmp.name) / name
@@ -69,7 +81,9 @@ class InstallTests(unittest.TestCase):
                         'commit', '-q', '--allow-empty', '-m', 'next'], check=True)
         subprocess.run(['git', '-C', str(self.source), 'tag', 'v-next'], check=True)
         result = self.install(project, 'sync', '--dry-run', ref='v-next')
-        self.assertIn('sync-kit:', result.stderr + result.stdout)
+        # sync-kit ran on this folder: a project never installed is refused by its own name.
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('synced/docs/kit/.kit-version not found', result.stderr)
         heads = [subprocess.run(['git', '-C', str(folder), 'rev-parse', 'HEAD'], capture_output=True, text=True,
                                 encoding='utf-8', check=True).stdout for folder in (self.cache, self.source)]
         self.assertEqual(heads[0], heads[1])
@@ -101,14 +115,74 @@ class InstallTests(unittest.TestCase):
         changelog = re.search(r'(?m)^## v(\d+\.\d+)(?=\s|$)', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'))[1]
         self.assertEqual(pinned, changelog)
 
+    def test_a_cache_with_edits_to_the_kit_is_not_overwritten(self):
+        home = Path(self.tmp.name) / 'edited-home'
+        home.mkdir()
+        self.install(self.project('edited-first'), '--help', home=home)
+        readme = home / '.myagentkit/kit/README.md'
+        readme.write_bytes(readme.read_bytes() + b'an edit\n')
+        result = self.install(self.project('edited'), home=home)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('has edits to the kit', result.stderr)
+        self.assertTrue(readme.read_bytes().endswith(b'an edit\n'))
+
+    def test_a_bootstrap_that_finds_no_kit_file_stops_unrecorded(self):
+        # A find that lists nothing, as Windows' FIND.EXE does for `find . -type f`.
+        fake = Path(self.tmp.name) / 'no-find'
+        fake.mkdir()
+        (fake / 'find').write_text('#!/bin/sh\nexit 0\n', encoding='utf-8', newline='\n')
+        (fake / 'find').chmod(0o755)
+        project = self.project('nothing-found')
+        result = self.install(project, env=dict(os.environ, PATH=str(fake) + os.pathsep + os.environ['PATH']))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('bootstrap: found no file under', result.stderr)
+        self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
     @unittest.skipUnless(WINDOWS, 'the PowerShell shim is the Windows front door')
-    def test_the_powershell_shim_finds_sh_and_passes_the_arguments_through(self):
-        shell = shutil.which('pwsh') or shutil.which('powershell')
+    def test_the_powershell_shim_passes_a_quoted_argument_whole(self):
+        # Windows PowerShell 5.1 split an argument with quotes and spaces on its way to sh.
         project = Path(self.tmp.name) / 'powershell'
-        result = self.install(project, '--overlay', command=[shell, '-NoProfile', '-File', str(ROOT / 'install.ps1')])
+        result = self.powershell(project, "& '%s' '--x \"b c\" d'; exit $LASTEXITCODE" % (ROOT / 'install.ps1'))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('install: kit v-test', result.stdout)
-        self.assertIn('bootstrap: --overlay needs a name', result.stderr)
+        self.assertIn('bootstrap: unknown option: --x "b c" d', result.stderr)
+    test_the_powershell_shim_passes_a_quoted_argument_whole._kit_platform_skip = not WINDOWS
+
+    @unittest.skipUnless(WINDOWS, 'the PowerShell shim is the Windows front door')
+    def test_the_powershell_shim_takes_gits_own_sh_over_a_bare_one_on_path(self):
+        # A bare usr\bin\sh.exe behind System32 ran the kit with FIND.EXE for find; Git's bin\sh.exe
+        # puts its usr\bin first.
+        git = Path(shutil.which('git'))
+        root = next(folder for folder in git.parents if (folder / 'usr/bin/sh.exe').is_file())
+        path = os.pathsep.join([str(Path(os.environ['SystemRoot']) / 'System32'), str(root / 'usr/bin'), str(git.parent)])
+        project = self.project('powershell-path')
+        result = self.powershell(project, "& '%s'; exit $LASTEXITCODE" % (ROOT / 'install.ps1'),
+                                 env=dict(os.environ, PATH=path))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((project / 'AGENTS.md').is_file(), result.stdout + result.stderr)
+    test_the_powershell_shim_takes_gits_own_sh_over_a_bare_one_on_path._kit_platform_skip = not WINDOWS
+
+    @unittest.skipUnless(WINDOWS, 'the PowerShell shim is the Windows front door')
+    def test_irm_iex_leaves_the_callers_session_as_it_was(self):
+        script = ("$ErrorActionPreference = 'Continue'\n[IO.File]::ReadAllText('%s') | Invoke-Expression\n"
+                  "'after: {0} {1} {2}' -f $ErrorActionPreference, "
+                  "[bool](Get-Variable sh, candidates, code -Scope Global -ErrorAction SilentlyContinue), $LASTEXITCODE"
+                  % (ROOT / 'install.ps1'))
+        result = self.powershell(Path(self.tmp.name) / 'powershell-iex', script, ref='v-no-such-tag')
+        self.assertIn('after: Continue False 1', result.stdout, result.stdout + result.stderr)
+    test_irm_iex_leaves_the_callers_session_as_it_was._kit_platform_skip = not WINDOWS
+
+    @unittest.skipUnless(WINDOWS, 'the PowerShell shim is the Windows front door')
+    def test_the_codex_skills_powershell_form_returns_the_installers_exit_code(self):
+        # An agent runs it through `powershell -Command`, whose exit is 0 when the last statement succeeded.
+        for skill in ('myagentkit-init', 'myagentkit-sync'):
+            with self.subTest(skill=skill):
+                text = (ROOT / 'plugins/myagentkit/skills' / skill / 'SKILL.md').read_text(encoding='utf-8')
+                form = re.search(r'```powershell\n\s*(.*?)\n\s*```', text, re.S)[1].replace('OPTIONS', "'--no-such-option'")
+                result = self.powershell(Path(self.tmp.name) / ('powershell-' + skill), form)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('unknown option: --no-such-option', result.stderr)
+    test_the_codex_skills_powershell_form_returns_the_installers_exit_code._kit_platform_skip = not WINDOWS
 
 
 if __name__ == '__main__':

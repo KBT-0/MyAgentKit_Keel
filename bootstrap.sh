@@ -271,6 +271,10 @@ copy_tree() {
   # The list is read in this shell, not a pipeline's subshell, so the exit trap knows the
   # temporary of a copy a signal cuts short.
   ( cd "$src" && find . -type f -print ) | sed 's|^\./||' > "$files"
+  # Every kit folder holds files: an empty list is a find that is no POSIX find (Windows'
+  # FIND.EXE, a bare usr\bin\sh.exe behind System32), and it read as an install of nothing.
+  [ -s "$files" ] ||
+    die "found no file under $src: the find on PATH is no POSIX find (on Windows, run the kit from Git Bash or Git's bin\\sh.exe); the version is not recorded"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     # Running Python tooling must not change the installed skeleton with local bytecode.

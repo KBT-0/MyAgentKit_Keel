@@ -22,7 +22,7 @@ needs `sh` and Git; on Windows that is Git for Windows.
    in PowerShell:
 
    ```powershell
-   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.ps1))) OPTIONS
+   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.ps1))) OPTIONS; exit $LASTEXITCODE
    ```
 
    It needs the network and writes outside the project (the cache), so the sandbox may refuse

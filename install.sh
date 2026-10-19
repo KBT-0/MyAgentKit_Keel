@@ -34,6 +34,10 @@ if [ ! -d "$kit/.git" ]; then
     die "$kit exists and is no git clone: move it away and rerun; nothing was changed"
   { mkdir -p "$kit" && git init -q "$kit"; } || die "cannot create the kit cache $kit; nothing was changed"
 fi
+# The checkout below overwrites the cache whole: an edit made there is refused, not lost.
+if git -C "$kit" rev-parse -q --verify HEAD >/dev/null && ! git -C "$kit" diff --quiet HEAD; then
+  die "$kit has edits to the kit's files (git -C \"$kit\" status): it is the installer's copy, replaced on every run; save them elsewhere, discard them and rerun; nothing was changed"
+fi
 git -C "$kit" fetch -q "$repo" "$ref" ||
   die "cannot fetch $ref from $repo (no network, or no such tag or branch); set MYAGENTKIT_REF to another; nothing was changed"
 git -C "$kit" -c advice.detachedHead=false checkout -q --force --detach FETCH_HEAD ||
