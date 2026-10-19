@@ -470,6 +470,25 @@ class DoctorTests(unittest.TestCase):
                 git('rm', '-q', '--cached', '.githooks/pre-commit.project')
                 own.unlink()
 
+            # The project's own machine checks run last, from scripts/doctor.project.sh: doctor.sh
+            # is kit-owned, and a project had nowhere to keep them (#86).
+            extra = project / 'scripts/doctor.project.sh'
+            extra.write_text('#!/bin/sh\necho "project: playwright browsers missing"\nexit 1\n', newline='\n')
+            extra.chmod(0o755)
+            git('add', *(['--chmod=+x'] if WINDOWS else []), 'scripts/doctor.project.sh')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('project: playwright browsers missing', red.stdout)
+            self.assertIn('MISSING: scripts/doctor.project.sh reported a problem (exit 1)', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            extra.write_text('#!/bin/sh\necho "project: ready"\n', newline='\n')
+            green = doctor()
+            self.assertEqual(green.returncode, 0, green.stdout)
+            self.assertIn('project: ready', green.stdout)
+            self.assertIn('DOCTOR: ready', green.stdout)
+            git('rm', '-q', '-f', '--cached', 'scripts/doctor.project.sh')
+            extra.unlink()
+
             # A fresh directory of links to the resolved executables: a dangling link or a
             # repeated PATH entry on the host must not break the fixture.
             dangling = tmp / 'dangling-bin'

@@ -10,7 +10,8 @@
 # `brew doctor` (non-zero exit on a problem; docs.brew.sh/Manpage) and `claude doctor`
 # ("read-only installation and settings diagnostics"; code.claude.com/docs/en/cli-reference).
 # One exception to "read-only": the grep probe below runs the owner's interactive shell rc
-# files ($SHELL -ic), bounded by probe_seconds, and only where `timeout` exists.
+# files ($SHELL -ic), bounded by probe_seconds, and only where `timeout` exists. The promise
+# covers the kit's part only: scripts/doctor.project.sh, when the project has one, is its own.
 #
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
@@ -452,6 +453,18 @@ elif [ -n "${SHELL:-}" ]; then
   elif [ "$probe_status" != 0 ] || [ "${grep_is#grep is }" = "$grep_is" ]; then
     printf '%s\n' "NOTE: grep probe did not complete (exit ${probe_status:-unknown}, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
   fi
+fi
+
+# --- the project's own machine checks ------------------------------------------------
+# This file is kit-owned, so a project's own checks (its dependencies installed, a browser for
+# its render tests) live in scripts/doctor.project.sh, project-owned, as a hook of its own lives
+# beside the kit's as .githooks/<name>.project (#86). It runs last, when it is executable; its
+# lines print as they are, and a non-zero exit is one MISSING. The loop above checks its #!
+# line, line endings and index mode like any other script.
+if [ -x scripts/doctor.project.sh ]; then
+  scripts/doctor.project.sh; project_status=$?
+  [ "$project_status" = 0 ] ||
+    miss "scripts/doctor.project.sh reported a problem (exit $project_status)" "see its lines above"
 fi
 
 if [ "$missing" -gt 0 ]; then

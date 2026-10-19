@@ -14,6 +14,8 @@ short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 `scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
 `BEHAVIOUR.md`, the module-rules template, and the two setup documents
 (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
+A project's own machine checks, once in its own `scripts/doctor.sh`, move to
+`scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and
