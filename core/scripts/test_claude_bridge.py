@@ -4460,8 +4460,10 @@ if case == 'archive_failure':
         # The reviewers may now run anything, so they never run in the reviewed repository: each
         # attempt gets a copy of HEAD plus the uncommitted diff, removed when the attempt ends.
         (self.repo / 'new file.txt').write_text('an untracked file\n')
-        # An owner's diff.noprefix must not break the diff applied to the copy.
+        # An owner's diff.noprefix must not break the diff applied to the copy, nor color.ui=always
+        # put ANSI escapes into it (rsel3).
         self.git('config', 'diff.noprefix', 'true')
+        self.git('config', 'color.ui', 'always')
         log = self.root / 'cwd.json'
         self.install_wrapper()
         status = self.git('status', '--porcelain').stdout

@@ -866,8 +866,9 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                           'an end of the reviewed range, and %s. Review a scope without it, or remove the '
                           'attribute (or the filter config) where the checkout still has it'
                           % (os.fsdecode(name), why))
-    # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy.
-    raw_diff = ('--no-ext-diff', '--no-textconv', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
+    # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy;
+    # color.ui=always put ANSI escapes into the patch.
+    raw_diff = ('--no-ext-diff', '--no-textconv', '--no-color', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
     # The filtered paths let through are proven unchanged, so the payload never asks their filter
     # again: a clean driver that answered differently on a later call put its output in the diff.
     # ponytail: one pathspec per LFS file on the command line; tens of thousands reach ARG_MAX.

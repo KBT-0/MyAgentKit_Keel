@@ -204,7 +204,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
         # rpipe review Low: without the bridge's flags an owner's diff.noprefix broke `git apply`
         # in the copy, and a TMPDIR inside the checkout put the copy in the reviewed repository.
-        self.assertIn('git diff HEAD --binary --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/', reviewer)
+        self.assertIn('git diff HEAD --binary --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/', reviewer)
         self.assertIn('must not lie inside the checkout', reviewer)
         self.assertNotIn('its reading list', reviewer)
         self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))

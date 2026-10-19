@@ -20,8 +20,8 @@ Never edit a file of the checkout, even for a moment and even to restore it; not
 prompt enforces that here. A reproduction that needs a change runs in a copy you make outside
 the checkout: `copy=$(mktemp -d)`, which must not lie inside the checkout (else set `TMPDIR`
 to a folder outside it first), then `git archive HEAD | tar -x -C "$copy"`, then
-`git diff HEAD --binary --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ > "$copy.patch"`
-(the flags keep an owner's `diff.noprefix`, external diff or textconv driver out of the patch) and
+`git diff HEAD --binary --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ > "$copy.patch"`
+(the flags keep an owner's `diff.noprefix`, external diff, textconv driver or `color.ui=always` out of the patch) and
 `(cd "$copy" && git apply --binary "$copy.patch")`; copy each new untracked file the diff adds,
 and `rm -rf "$copy" "$copy.patch"` at the end.
 Without a copy, mark the finding REASONED. Mark each finding REPRODUCED or REASONED

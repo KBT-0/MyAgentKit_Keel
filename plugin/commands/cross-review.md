@@ -16,9 +16,11 @@ because it spends budget beyond the gate. Agents do not start it on their own.
 `--reviewer codex`; the project's configured default is at the top of that script, and in
 the solo mode `REVIEW_CLAUDE_MODEL` is pinned to the tier that did not write the change. A
 second vendor is pluggable, never required. **You may be the author here.** If this session
-wrote the diff, the reviewer must not be your own tier, whatever the default says: set
-the reviewer model pin to another tier and check it before launch. With `MYAGENTKIT_AUTHOR`
-set, `review.sh` refuses a reviewer of the author's tier. Failing
+wrote the diff, the reviewer is at least your tier, whatever the default says: a stronger
+tier, or your own top tier in a fresh session (`docs/REVIEW_GATE.md`, "Invariant"); set the
+reviewer model pin and check it before launch. With `MYAGENTKIT_AUTHOR` and
+`MYAGENTKIT_AUTHOR_EFFORT` set, `review.sh` refuses any other pin and a review below your
+effort. Failing
 over to the other configured reviewer happens only when the owner asked for it and
 `--fallback` is passed; the default is no failover. Without `--fallback` the review simply
 fails; record it and continue. If a fallback authored the patch, its findings are advisory,

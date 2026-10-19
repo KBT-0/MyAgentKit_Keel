@@ -16,7 +16,8 @@ welcome, never required: it reduces correlated blind spots but does not remove t
 one controlled measurement found the direction asymmetric (`docs/research/claude-lead-codex.md`,
 finding 4). No published measurement says how much another tier of the same family adds. Every
 review record names the reviewer's model, and the author's model when the lead sets
-`MYAGENTKIT_AUTHOR`; with it, `scripts/review.sh` refuses a reviewer of the author's tier.
+`MYAGENTKIT_AUTHOR`; with it, `scripts/review.sh` refuses a reviewer of a weaker tier, or of
+the author's tier below the family's top.
 
 ## The cleanest evidence for this rule
 
