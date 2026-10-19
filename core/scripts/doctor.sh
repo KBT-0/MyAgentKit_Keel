@@ -139,6 +139,7 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
     '#!'*) ;;
     *) case $f in
          .githooks/*.project) miss "$f has no #! line (Git for Windows never runs it; the kit's hook refuses it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
+         scripts/doctor.project.sh) miss "$f has no #! line (Git for Windows never runs it, and doctor skipped it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
        esac
        continue ;;
   esac

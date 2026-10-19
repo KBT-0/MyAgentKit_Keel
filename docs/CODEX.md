@@ -12,7 +12,7 @@ Claude and Codex reviews every change Claude wrote, a low-tier one included
 reverse, and for what in-session delegation does and does not exist on each side, see
 [delegation-is-not-symmetric.md](delegation-is-not-symmetric.md).
 
-The Codex plugin packages three skills (review, delegate and mode), the standard-library-only
+The Codex plugin packages five skills (init, sync, review, delegate and mode), the standard-library-only
 review adapters behind them and their shared failover dispatcher.
 Existing repositories must merge the kit's `core/.gitignore` private-record exclusions
 before launching the plugin adapters. Ignored, untracked storage is now checked before

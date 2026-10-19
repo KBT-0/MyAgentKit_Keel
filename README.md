@@ -24,6 +24,22 @@ A codebase written by agents decays in four ways, and a better prompt fixes none
 
 ## Install
 
+From your project's root, one line (it needs Git; on Windows, Git for Windows):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh -s -- --overlay claude-code
+```
+
+```powershell
+irm https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.ps1))) --overlay claude-code
+```
+
+It fetches the kit at its release tag into `~/.myagentkit/kit` and runs `bootstrap.sh` there on
+your project; `... | sh -s -- sync` later runs `sync-kit.sh` the same way. With the plugin
+installed (below), `/myagentkit:init` and `/myagentkit:sync` run it for you. Or clone it yourself:
+
 ```sh
 git clone https://github.com/KBT-0/MyAgentKit_Keel.git
 cd /path/to/your-project
@@ -51,7 +67,8 @@ interview asks and can install it. With Claude Code, you type these two (an agen
 /plugin install myagentkit@myagentkit
 ```
 
-That adds `/myagentkit:cross-review`, `/myagentkit:handoff`, `/myagentkit:kit-feedback` and `/myagentkit:mode`.
+That adds `/myagentkit:init`, `/myagentkit:sync`, `/myagentkit:cross-review`,
+`/myagentkit:handoff`, `/myagentkit:kit-feedback` and `/myagentkit:mode`.
 With Codex as the host:
 
 ```sh
@@ -59,7 +76,8 @@ codex plugin marketplace add /absolute/path/to/MyAgentKit_Keel
 codex plugin add myagentkit@personal
 ```
 
-That adds the `$myagentkit-review`, `$myagentkit-delegate` and `$myagentkit-mode` skills
+That adds the `$myagentkit-init`, `$myagentkit-sync`, `$myagentkit-review`,
+`$myagentkit-delegate` and `$myagentkit-mode` skills
 ([docs/CODEX.md](docs/CODEX.md) has the limits).
 
 ## What a project gets
@@ -155,6 +173,7 @@ yes. [CONTRIBUTING.md](CONTRIBUTING.md) is the same process by hand, and
 | Path | What it is |
 |---|---|
 | `bootstrap.sh`, `sync-kit.sh` | Install into a project; propagate a kit update into one. |
+| `install.sh`, `install.ps1` | The one-line front door: fetch the kit's release into `~/.myagentkit/kit`, run either of the two. |
 | `setup/` | The interview an agent runs with you, and the research protocol it follows. |
 | `core/` | What every project receives: the constitution, the docs, the gate, the hooks, the review tooling. |
 | `overlays/` | Optional layers: `claude-code` (workers, sub-agents, hooks), `unity` (assembly layout, the batchmode test gate, an MCP server). |
