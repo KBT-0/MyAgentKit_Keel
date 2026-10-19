@@ -1,0 +1,6 @@
+interface:
+  display_name: "MyAgentKit: Sync the kit"
+  short_description: "Bring the kit's newest release into this project"
+  default_prompt: "Use $myagentkit-sync to bring the newest MyAgentKit release into this project."
+policy:
+  allow_implicit_invocation: false

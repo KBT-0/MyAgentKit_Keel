@@ -134,7 +134,8 @@ REQUIRED_SUITES = {
               'test_usage_summary': 29, 'test_done_audits': 2,
               'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 18 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
-              'test_close_worker': 40 if os.name == 'nt' else 39, 'test_python_fallback': 3},
+              'test_close_worker': 40 if os.name == 'nt' else 39, 'test_python_fallback': 3,
+              'test_install': 6 if os.name == 'nt' else 5},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
@@ -161,7 +162,8 @@ SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4, 'test_gate_checks': 3, '
 LONG = ('test_sync_kit', 'test_guard_destructive_git', 'test_claude_sandbox',
         'test_close_worker_windows', 'test_worker_paths_windows', 'test_review_upgrade')
 SLOW = {'acceptance', 'test_bootstrap', 'test_claude_bridge', 'test_spawn_worker', 'test_spawn_codex',
-        'test_worker_visibility', 'test_doctor', 'test_close_worker', 'locale/test_git_hooks'}
+        'test_worker_visibility', 'test_doctor', 'test_close_worker', 'locale/test_git_hooks',
+        'test_install'}
 # Each tier's time budget (finding 8, Bazel's test-size timeouts): (per-unit cap, whole-tier
 # cap) in seconds, times SCALE on a slow host. A unit over its cap is stopped and fails; a tier
 # over its cap fails; each is named with its seconds. The measured times and headroom are in

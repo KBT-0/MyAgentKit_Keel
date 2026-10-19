@@ -86,6 +86,15 @@ plugin is installed from this repository's marketplace, and an installed plugin 
 until its version string changes (code.claude.com/docs/en/plugins-reference, `version`;
 code.claude.com/docs/en/plugins/loading, "Versions and updates").
 
+`install.sh` pins the kit it fetches to the release tag: raise its `version=` line with the
+other three (`tests/test_install.py` compares it with the changelog), and push the tag
+`v<version>`, the changelog's version, in the same push as the release commit (`git tag v0.12`,
+then `git push --atomic origin master v0.12`). Every one-line install downloads `install.sh` from
+master, so a raised `version=` without its tag on GitHub fails every install until the tag
+arrives, and any change to `install.sh` reaches every new install the moment it is pushed,
+before CI: push it as a release, after the narrow tests pass. `MYAGENTKIT_REF=BRANCH` installs
+from a branch instead.
+
 **Run the kit check** (`./scripts/check.sh`, the launcher of `scripts/check_kit.py`) in its two
 tiers (`docs/research/kit-self-checks.md`, findings 6 to 8). The default run is the fast tier:
 the structural checks and the unit and fixture suites, within ten minutes on the maintainer's

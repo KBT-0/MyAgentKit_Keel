@@ -1,0 +1,6 @@
+interface:
+  display_name: "MyAgentKit: Install into this project"
+  short_description: "Run the kit installer here and start the setup"
+  default_prompt: "Use $myagentkit-init to install MyAgentKit into this project and start the setup interview."
+policy:
+  allow_implicit_invocation: false
