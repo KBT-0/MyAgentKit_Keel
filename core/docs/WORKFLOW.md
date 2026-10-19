@@ -48,7 +48,9 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
 
 1. **Read:** `AGENTS.md` → `docs/PHASES.md` → `docs/STATE.md` → the target folder's
    `AGENTS.md`; `docs/ARCHITECTURE.md` when the task crosses a module boundary (`AGENTS.md`,
-   reading order). Do not explore beyond the files the task lists; context is a budget.
+   reading order; a sub-agent, reviewer or briefed session reads what its brief names
+   instead, as `AGENTS.md` says at its top). Do not explore beyond the files the
+   task lists; context is a budget.
    `docs/PROJECT.md` is read by SECTION, only when the task needs one.
 2. **Plan:** LIST the files you will touch; a diff you can describe in one sentence skips the
    list, and the brief's `Owns:` line holds either way. If the files exceed one module, STOP

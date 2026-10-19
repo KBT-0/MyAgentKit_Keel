@@ -345,6 +345,21 @@ class SectionPointerTests(unittest.TestCase):
                     self.assertTrue('`python` on native Windows' in ' '.join(text.split())
                                     or 'native Windows: python instead of python3' in text)
 
+    def test_the_constitution_carries_project_rules_only(self):
+        # #112: sub-agents load AGENTS.md and followed the lead's reading order; #131: a release's
+        # dogfood rule and kit decision ids shipped into project-owned files; #150: the binding
+        # COMMUNICATION.md was in no reading order.
+        agents = ' '.join((ROOT / 'core/AGENTS.md').read_text(encoding='utf-8').split())
+        head = agents[:agents.index('## What this project is')]
+        self.assertIn('skips the reading order', head)
+        self.assertIn('leaves `docs/STATE.md` to the lead', head)
+        reading = agents[agents.index('## Reading order'):agents.index('## HARD RULES')]
+        self.assertIn('`docs/COMMUNICATION.md`', reading)
+        communication = (ROOT / 'core/docs/COMMUNICATION.md').read_text(encoding='utf-8')
+        for path, text in (('AGENTS.md', agents), ('COMMUNICATION.md', communication)):
+            for kit_only in ('dogfood', 'KARARLAR', 'ACCEPTANCE.md', 'Fable 5.1'):
+                self.assertNotIn(kit_only, text, '%s carries kit-internal text' % path)
+
     def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
         # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,
         # and a worker then reports clean against a list the reviewer no longer uses.

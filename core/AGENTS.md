@@ -6,6 +6,11 @@ binding. It is a map: rules that apply only when one tree is edited live in that
 loads it whole on its own: in Claude Code, `.claude/rules/state.md` points to it when a file
 under `docs/` is read.
 
+**Started by another agent?** A sub-agent, a reviewer or a session started with a brief is
+bound by the HARD RULES. It skips the reading order and "Duties toward {{OWNER_NAME}}": its
+brief or definition names what to read. It leaves `docs/STATE.md` to the lead and reports to
+the agent that started it.
+
 ## What this project is
 
 {{PROJECT_DESCRIPTION}}
@@ -37,6 +42,7 @@ it, each marked DECIDED or OPEN. It is read by section only (reading order, item
    and cite it by number (`PROJECT §4.2`). Never load the whole file, and never copy its text
    elsewhere: a quotation is a duplicate, a citation is not.
 
+The lead also reads `docs/COMMUNICATION.md` (how to talk to {{OWNER_NAME}}) once per session.
 Read only when needed: `docs/GOTCHAS.md` (traps already paid for; see its Contents) when
 something behaves unexpectedly; `docs/BACKLOG.md` when the next task is chosen; as the lead,
 `docs/WORKFLOW.md`, "Worker cost", its first block "The rules in brief", before you brief,
@@ -217,11 +223,6 @@ an explicit "start it here".
   300k recommend `/compact` or a hand-off, whichever is cheaper now, with the number, at the
   next clean stop; at 400k stop now (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is
   the default; a session compacted once hands off.
-- v0.11 dogfood only (deleted once `scripts/context_buckets.py` gives its first report):
-  {{OWNER_NAME}} corrected you and
-  the prompt has no `#fix` → once per session, say that `#fix` in a correcting prompt lets
-  `scripts/context_buckets.py` count it by context size, the data that keeps or moves the
-  context band.
 - A time or token cost you saw repeat, with a cheaper way around it → propose it with a number
   from `scripts/agent_cost.py` or `/usage`. Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}
