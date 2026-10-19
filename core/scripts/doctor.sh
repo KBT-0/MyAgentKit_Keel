@@ -317,9 +317,10 @@ fi
 # inside Unity.app (macOS): Unity Hub puts no editor on PATH, and Unity's separate CLI is
 # installed there as `unity`, which doctor once called ready (#216).
 if [ -f scripts/unity_gate.sh ]; then
-  unity_bin=${UNITY_PATH:-unity}
+  unity_bin=${UNITY_PATH:-unity} unity_from="UNITY_PATH unset, no unity on PATH"
+  [ -z "${UNITY_PATH:-}" ] || unity_from=UNITY_PATH
   if ! unity_found=$(command -v "$unity_bin" 2>/dev/null); then
-    miss "the Unity Editor '$unity_bin' that scripts/unity_gate.sh runs, not found${UNITY_PATH:+ (UNITY_PATH)}${UNITY_PATH:- (UNITY_PATH unset, no unity on PATH)}" "set UNITY_PATH to the editor executable (docs/UNITY_SETUP.md §5)"
+    miss "the Unity Editor '$unity_bin' that scripts/unity_gate.sh runs, not found ($unity_from)" "set UNITY_PATH to the editor executable (docs/UNITY_SETUP.md §5)"
   elif [ -z "${UNITY_PATH:-}" ]; then
     unity_real=$(readlink -f "$unity_found" 2>/dev/null) || unity_real=$unity_found
     case "$unity_real" in

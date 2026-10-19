@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Line-ending repair for a clone made before `.gitattributes` held `eol=lf`. Run it once from
-# the repository root, with no uncommitted change to the scripts or hooks:
+# the project's folder (the repository root, or the folder below it the kit is installed in),
+# with no uncommitted change to the scripts or hooks:
 #
 #   sh scripts/fix_crlf.sh
 #
@@ -69,8 +70,8 @@ $kit_python -I -c 'if 1:
     # file it rewrites, unstaged or staged, would ride into the line-ending commit (#207).
     head = subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"],
                           stdout=subprocess.DEVNULL).returncode == 0
-    dirty = [name for name, data in todo if blob(b":" + name) != data.replace(b"\r\n", b"\n")
-             or head and blob(b"HEAD:" + name) != blob(b":" + name)]
+    dirty = [name for name, data in todo if blob(b":./" + name) != data.replace(b"\r\n", b"\n")
+             or head and blob(b"HEAD:./" + name) != blob(b":./" + name)]
     if dirty:
         sys.stderr.write("STOP: commit or stash the changes in these files first; nothing was changed:\n"
                          + "".join("  %s\n" % os.fsdecode(name) for name in dirty))

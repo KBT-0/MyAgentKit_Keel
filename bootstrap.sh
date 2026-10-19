@@ -456,7 +456,9 @@ if [ -n "$gates" ]; then
   a symlink, folder or special file at such a path, or a symlink or a file in its path,
   is never replaced: move it aside.
 EOF
-  printf '%s\n' "  Re-run:       sh '$kit/bootstrap.sh' '$target'${overlays:+ (with the same --overlay options)}" \
+  # Quoted for a paste, as the hooksPath stop quotes its path: a ' in a path ends the quote.
+  quoted_kit=$(printf '%s' "$kit" | sed "s/'/'\\\\''/g") quoted_target=$(printf '%s' "$target" | sed "s/'/'\\\\''/g")
+  printf '%s\n' "  Re-run:       sh '$quoted_kit/bootstrap.sh' '$quoted_target'${overlays:+ (with the same --overlay options)}" \
     "  The steps:    $kit/docs/RETROFIT.md" "  Finish with:  ./scripts/check.sh"
 fi
 if [ -n "$stops" ]; then
@@ -540,10 +542,17 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   fi
   # With no hooks path git runs .git/hooks, and setting one silences what is there: Git LFS
   # keeps its pre-push there, and a push then uploaded no LFS object (#164). The same stop and
-  # the same migration; only *.sample files (what git init leaves) are not hooks.
+  # the same migration. A hook is what git runs: an executable file under a hook name (githooks(5));
+  # *.sample (what git init leaves), a backup such as pre-commit.bak, or a file without the
+  # executable bit is none. Git Bash's -x is true for a #! file, the one Git for Windows runs.
   if [ -z "$effective" ] && hooks_dir=$(git -C "$target" rev-parse --git-path hooks 2>/dev/null) &&
      ( cd "$target" && cd "$hooks_dir" 2>/dev/null ) && left=$(cd "$target" && cd "$hooks_dir" &&
-       for h in *; do [ ! -f "$h" ] || case "$h" in *.sample) ;; *) printf ' %s' "$h" ;; esac; done) && [ -n "$left" ]; then
+       for h in *; do [ -f "$h" ] && [ -x "$h" ] || continue; case "$h" in
+         applypatch-msg|pre-applypatch|post-applypatch|pre-commit|pre-merge-commit|prepare-commit-msg|\
+         commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|pre-receive|update|\
+         proc-receive|post-receive|post-update|reference-transaction|push-to-checkout|pre-auto-gc|\
+         post-rewrite|sendemail-validate|fsmonitor-watchman|p4-changelist|p4-prepare-changelist|\
+         p4-post-changelist|p4-pre-submit|post-index-change) printf ' %s' "$h" ;; esac; done) && [ -n "$left" ]; then
     rm -f "$part"; part=""
     printf '%s\n' "bootstrap: STOP: $hooks_dir holds hooks git runs today:$left; the kit's hooks path (.githooks) would silence them (Git LFS keeps its pre-push there)." >&2
     printf '%s\n' "  Move each one into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2

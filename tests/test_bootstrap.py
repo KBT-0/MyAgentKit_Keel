@@ -2,6 +2,7 @@
 import os
 import re
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -234,13 +235,15 @@ class BootstrapTests(unittest.TestCase):
             (project / 'scripts').mkdir()
             for name in ('scripts/build.sh', 'scripts/review.sh'):
                 path = project / name
-                path.write_text('staged content\n')
+                # Bytes: text mode wrote CRLF on Windows, and with no system autocrlf
+                # (GIT_CONFIG_NOSYSTEM=1, as the kit check runs) the index held CRLF.
+                path.write_bytes(b'staged content\n')
                 subprocess.run(['git', 'add', name], cwd=project, check=True)
                 path.write_text('unstaged content\n')
             # A tracked kit file is mode-repaired without staging its working content.
             hook = project / '.githooks/commit-msg'
             hook.parent.mkdir()
-            hook.write_text('old staged hook\n')
+            hook.write_bytes(b'old staged hook\n')
             subprocess.run(['git', 'add', '.githooks/commit-msg'], cwd=project, check=True)
             shutil.copyfile(root / 'core/.githooks/commit-msg', hook)
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
@@ -301,16 +304,21 @@ class BootstrapTests(unittest.TestCase):
         for kept in ('scripts/check.sh', '.githooks/pre-commit', '.githooks/pre-merge-commit',
                      '.githooks/commit-msg'):
             with self.subTest(kept=kept), tempfile.TemporaryDirectory() as tmp:
-                project = Path(tmp) / 'project'
+                # A ' in the path: the Re-run line is a command the owner pastes. The target is
+                # `.`: Git for Windows' sh reads a ' in its own arguments as a quote and drops it.
+                project = Path(tmp) / "o'brien"
                 (project / kept).parent.mkdir(parents=True)
                 (project / kept).write_text('#!/bin/sh\nexit 0\n')
-                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), '.'], cwd=project,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn('STOPPING: the gate files already existed', result.stdout)
                 # It named a docs/RETROFIT.md the project does not have and no way to keep a hook (#269).
                 self.assertIn('.githooks/<same name>.project', result.stdout)
-                self.assertRegex(result.stdout, r"Re-run: +sh '\S+/bootstrap\.sh' '")
+                rerun = re.search(r"Re-run: +(.*)", result.stdout)[1]
+                self.assertEqual(shlex.split(rerun)[0], 'sh')
+                self.assertTrue(shlex.split(rerun)[1].endswith('/bootstrap.sh'), rerun)
+                self.assertTrue(shlex.split(rerun)[2].endswith("/o'brien"), rerun)
                 self.assertRegex(result.stdout, r"The steps: +\S+/docs/RETROFIT\.md")
                 self.assertFalse((project / 'docs/kit/.kit-version').exists())
 
@@ -681,6 +689,7 @@ class BootstrapTests(unittest.TestCase):
             hooks.mkdir(exist_ok=True)
             (hooks / 'pre-commit.sample').write_text('#!/bin/sh\n')
             (hooks / 'pre-push').write_text('#!/bin/sh\ngit lfs pre-push "$@"\n')
+            (hooks / 'pre-push').chmod(0o755)
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True,
                                     text=True, timeout=bootstrap_timeout(90))
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -689,8 +698,12 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotEqual(subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath'],
                                                capture_output=True).returncode, 0, 'hooks path set')
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
-            # Only *.sample files: the install goes through.
+            # Only files git never runs: a sample, a backup, a file that is not executable (no #!
+            # line, no executable bit). The install goes through.
             (hooks / 'pre-push').unlink()
+            (hooks / 'pre-commit.bak').write_text('#!/bin/sh\nexit 1\n')
+            (hooks / 'pre-commit.bak').chmod(0o755)
+            (hooks / 'post-checkout').write_text('exit 1\n')
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True,
                                     text=True, timeout=bootstrap_timeout(90))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

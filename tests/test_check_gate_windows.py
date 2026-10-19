@@ -914,19 +914,27 @@ class GateRuleTests(unittest.TestCase):
 
     def test_module_names_come_from_table_rows_and_list_entries_only(self):
         # The shipped template's paragraph and comment name design, work and tests: read as
-        # names, those module folders passed unmapped (#274).
+        # names, those module folders passed unmapped (#274). Its multi-line comment holds a
+        # line with pipes ("Module | Responsibility | ... the design"), so design proves the
+        # comment is skipped. Rows without outer pipes and rows or entries with an inline or
+        # trailing comment still name their module.
+        rows = ('| `economy` | prices |', 'trade | goods', '- market: stalls', '1. port: ships',
+                '| bank | money | <!-- note -->', '| mint <!-- coined --> | coins |', '- shop: sales <!-- x -->')
+        named = ('economy', 'trade', 'market', 'port', 'bank', 'mint', 'shop')
         self.module_root('src')
-        for module in ('economy', 'design', 'work', 'tests'):
+        for module in named + ('design', 'work', 'tests'):
             self.write('src/%s/file.txt' % module, 'module\n')
         text = (ROOT / 'core/docs/ARCHITECTURE.md').read_text(encoding='utf-8')
         self.assertIn('{{MODULE_MAP}}', text)
+        self.assertRegex(text, r'<!--[^\n]*\|[^\n]*design[^\n]*\n')
         self.write('docs/ARCHITECTURE.md', re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture',
-                                                  text.replace('{{MODULE_MAP}}', '| `economy` | prices |')))
+                                                  text.replace('{{MODULE_MAP}}', '\n'.join(rows))))
         code, out = self.run_gate()
         self.assertEqual(code, 1, out)
         for module in ('design', 'work', 'tests'):
             self.assertIn('FAIL [architecture]: src/%s is a module folder' % module, out)
-        self.assertNotIn('src/economy is a module folder', out)
+        for module in named:
+            self.assertNotIn('src/%s is a module folder' % module, out)
 
     def test_historical_audit_ids_are_notes_but_live_state_and_reviews_still_fail(self):
         self.write('docs/audits/2026-01.md', 'K4: audit finding\n')

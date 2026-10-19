@@ -54,7 +54,8 @@ class KitOutputTests(unittest.TestCase):
 
     def test_the_summary_totals_the_tests_this_platform_did_not_run(self):
         # One NOT RUN line per test was easy to scroll past: the summary adds them up, with the
-        # suites left out on this host; a NOT RUN line of another check is no test (#231).
+        # suites left out on this host; a NOT RUN line of another check is no test (#231), and
+        # neither is one a passing test prints of its own (it ran: counted once, in M).
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'suite').mkdir()
@@ -64,7 +65,8 @@ class KitOutputTests(unittest.TestCase):
             said = io.StringIO()
             with contextlib.redirect_stdout(said):
                 check_kit.run_tests(root, 'suite', {'test_kit_probe_skip': 1})
-        printed = said.getvalue() + 'NOT RUN: shellcheck -s sh (not installed)\n'
+        printed = ('NOT RUN: suite.Probe.test_posix (POSIX only)\n' + said.getvalue()
+                   + 'NOT RUN: shellcheck -s sh (not installed)\n')
         unit = [sys.executable, '-c', 'import sys; sys.stdout.write(%r + "UNIT DONE: u\\n")' % printed]
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

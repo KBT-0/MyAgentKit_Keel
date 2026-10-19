@@ -12,6 +12,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 ACTION = '- A rule moved. **ACTION:** copy it into your project-owned workflow.\n'
 WINDOWS = os.name == 'nt'
+# A folder spelled in another letter case is the same folder on Windows and macOS by default;
+# where it is not (Linux), the tests that need that spelling are declared platform skips.
+CASE_FOLDS = Path(tempfile.gettempdir().swapcase()).is_dir()
 
 
 def not_on_windows(case, why):
@@ -604,9 +607,9 @@ class SyncKitTests(unittest.TestCase):
         # The owner's manual check of #184: own_repo compared `pwd -P` strings, which keep the
         # spelling given, so a kit run as c:/users/... (or from a `subst` drive) recorded no base.
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        if not CASE_FOLDS:
+            self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
         with tempfile.TemporaryDirectory() as tmp:
-            if not Path(tmp.swapcase()).is_dir():
-                self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
             self.sync(tmp, '- A change.\n', '--dry-run')
             kit = Path(tmp) / 'kit'
             git = lambda *a: subprocess.run(['git', '-C', str(kit), *a], check=True, env=env,
@@ -619,35 +622,47 @@ class SyncKitTests(unittest.TestCase):
             recorded = Path(tmp) / 'project/docs/kit/.kit-commit'
             self.assertTrue(recorded.exists(), 'no kit commit recorded')
             self.assertEqual(recorded.read_text().strip(), git('rev-parse', 'HEAD'))
+    test_a_kit_path_spelled_in_another_case_still_records_the_kit_commit._kit_platform_skip = \
+        not CASE_FOLDS
 
-    def test_bootstrap_records_the_commit_of_a_kit_clone_of_its_own_and_never_an_outer_one(self):
-        # bootstrap.sh holds the same test as own_repo: a vendored kit recorded the outer
-        # repository's HEAD as its base (round 1 of #184), and a kit path in another letter case
-        # recorded none. A fixture kit, its own clone or inside another repository.
+    def bootstrap_kit(self, own):
+        """Install from a fixture kit, its own clone run by its path in another letter case or
+        one inside another repository; return the recorded kit commit (None for none) and HEAD."""
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
-        for case in ('inside another repository', 'own clone, path in another case'):
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp, \
-                    tempfile.TemporaryDirectory() as project:
-                kit = Path(tmp) / 'kit'
-                if case.startswith('own') and not Path(tmp.swapcase()).is_dir():
-                    self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
-                shutil.copytree(ROOT, kit, ignore=shutil.ignore_patterns('.git', '__pycache__', 'tests'))
-                repo = kit if case.startswith('own') else Path(tmp)
-                for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
-                                             'commit', '-q', '--allow-empty', '-m', 'k']):
-                    subprocess.run(['git', '-C', str(repo), *args], check=True, env=env, capture_output=True)
-                script = str(kit / 'bootstrap.sh')
-                result = subprocess.run(['sh', script.swapcase() if case.startswith('own') else script, project],
-                                        capture_output=True, text=True, env=env, timeout=600)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                recorded = Path(project) / 'docs/kit/.kit-commit'
-                if case.startswith('own'):
-                    head = subprocess.run(['git', '-C', str(kit), 'rev-parse', 'HEAD'], check=True, env=env,
-                                          capture_output=True, text=True).stdout.strip()
-                    self.assertTrue(recorded.exists(), 'no kit commit recorded')
-                    self.assertEqual(recorded.read_text().strip(), head)
-                else:
-                    self.assertFalse(recorded.exists(), recorded.read_text() if recorded.exists() else '')
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as project:
+            kit = Path(tmp) / 'kit'
+            # Not the root's .claude and .myagentkit: they hold the worktrees and a live worker's
+            # locked files, which bootstrap never reads.
+            shutil.copytree(ROOT, kit, ignore=lambda folder, names: {
+                name for name in names if name in ('.git', '__pycache__', 'tests')
+                or Path(folder) == ROOT and name in ('.claude', '.myagentkit')})
+            for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                         'commit', '-q', '--allow-empty', '-m', 'k']):
+                subprocess.run(['git', '-C', str(kit if own else tmp), *args], check=True, env=env,
+                               capture_output=True)
+            script = str(kit / 'bootstrap.sh')
+            result = subprocess.run(['sh', script.swapcase() if own else script, project],
+                                    capture_output=True, text=True, env=env, timeout=600)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            recorded = Path(project) / 'docs/kit/.kit-commit'
+            head = subprocess.run(['git', '-C', str(kit), 'rev-parse', 'HEAD'], check=True, env=env,
+                                  capture_output=True, text=True).stdout.strip()
+            return (recorded.read_text().strip() if recorded.exists() else None), head
+
+    def test_bootstrap_records_no_commit_of_a_repository_around_the_kit(self):
+        # bootstrap.sh holds the same test as own_repo: a vendored kit recorded the outer
+        # repository's HEAD as its base (round 1 of #184).
+        self.assertIsNone(self.bootstrap_kit(own=False)[0])
+
+    def test_bootstrap_records_the_commit_of_a_kit_clone_run_by_a_path_in_another_case(self):
+        # A kit path in another letter case recorded no base (#184). A skip inside a subTest
+        # cannot carry the platform declaration, so this is a test of its own.
+        if not CASE_FOLDS:
+            self.skipTest('a case-sensitive filesystem has no other spelling of the kit path')
+        recorded, head = self.bootstrap_kit(own=True)
+        self.assertEqual(recorded, head)
+    test_bootstrap_records_the_commit_of_a_kit_clone_run_by_a_path_in_another_case._kit_platform_skip = \
+        not CASE_FOLDS
 
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
@@ -1080,6 +1095,25 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual((project / path).read_bytes(), lf, path)
                 self.assertEqual(git('show', ':' + path), lf, path)
             self.assertEqual((project / 'notes.txt').read_bytes(), b'one\r\n')
+
+    def test_fix_crlf_repairs_a_project_below_the_repository_top(self):
+        # git ls-files names paths from the current folder, `git cat-file :<path>` from the top:
+        # run in a subfolder, every CRLF script was refused as "has changes" and none repaired.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / 'sub/scripts/x.sh'
+            script.parent.mkdir(parents=True)
+            script.write_bytes(b'#!/bin/sh\r\ntrue\r\n')
+            git = lambda *args: subprocess.run(['git', '-c', 'core.autocrlf=false', *args], cwd=tmp,
+                                               check=True, capture_output=True, env=env).stdout
+            git('init', '-q')
+            git('add', '-A')
+            git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'fixture')
+            result = subprocess.run(['sh', '-c', textwrap_dedent_dev_setup()], cwd=script.parents[1],
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(script.read_bytes(), b'#!/bin/sh\ntrue\n')
+            self.assertEqual(git('show', ':sub/scripts/x.sh'), b'#!/bin/sh\ntrue\n')
 
     def test_dev_setup_names_the_tested_repair_instead_of_embedding_a_program(self):
         section = (ROOT / 'core/docs/DEV_SETUP.md').read_text(encoding='utf-8')

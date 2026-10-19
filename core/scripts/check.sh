@@ -737,13 +737,19 @@ elif ! grep -q '^## Module map' "$architecture_file" 2>/dev/null; then
 else
   # Split Markdown table cells, code spans and list-entry colons; keep dots and hyphens
   # inside names. grep -w would count api-gateway as naming api, or core.utils as core.
-  # Names come from table rows and list entries only, never from prose or an HTML comment:
-  # the template's own paragraph and comment named design, work and tests, and those module
-  # folders passed unmapped (#274).
+  # Names come from table rows (a line with a pipe: GitHub-flavored Markdown makes the outer
+  # pipes optional) and list entries only, never from prose or an HTML comment: the template's
+  # own paragraph and comment named design, work and tests, and those module folders passed
+  # unmapped (#274). The comment's text is cut out, so a row with a trailing comment still counts.
   awk '/^## Module map/ { f = 1; next } /^## / { f = 0 }
-       f && /<!--/ { c = 1 }
-       f && !c && /^[ \t]*([|]|[-*+][ \t]|[0-9]+[.)][ \t])/ { gsub(/[`|:]/, " "); for (i = 1; i <= NF; i++) print $i }
-       c && /-->/ { c = 0 }' "$architecture_file" > "$work/module-map"
+       f { s = $0; out = ""
+           while (s != "") {
+             if (c) { k = index(s, "-->"); if (k) { s = substr(s, k + 3); c = 0 } else s = "" }
+             else { k = index(s, "<!--"); if (k) { out = out substr(s, 1, k - 1); s = substr(s, k + 4); c = 1 }
+                    else { out = out s; s = "" } } }
+           if (out ~ /[|]/ || out ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/) {
+             gsub(/[`|:]/, " ", out); n = split(out, w, " "); for (i = 1; i <= n; i++) print w[i] } }' \
+    "$architecture_file" > "$work/module-map"
   for root in $module_roots; do
     case "$root" in .) prefix="" ;; *) prefix="${root%/}/" ;; esac
     tr '\0' '\n' < "$filelist" | awk -v p="$prefix" '

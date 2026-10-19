@@ -1069,7 +1069,12 @@ class DoctorTests(unittest.TestCase):
             (project / 'scripts/unity_gate.sh').write_text('#!/bin/sh\n')
             for name, env, prelude, expect in (
                     ('no editor', dict(PATH=path), 'windows_sh=',
-                     "MISSING: the Unity Editor 'unity' that scripts/unity_gate.sh runs, not found"),
+                     "MISSING: the Unity Editor 'unity' that scripts/unity_gate.sh runs, not found"
+                     " (UNITY_PATH unset, no unity on PATH)"),
+                    # The path once printed twice: "not found (UNITY_PATH)/nope/Unity".
+                    ('UNITY_PATH to no file', dict(PATH=path, UNITY_PATH='/nope/Unity'), 'windows_sh=',
+                     "MISSING: the Unity Editor '/nope/Unity' that scripts/unity_gate.sh runs, not found"
+                     " (UNITY_PATH)\n"),
                     ("Unity's CLI on PATH", dict(PATH=str(cli) + os.pathsep + path), 'windows_sh=',
                      'is not in a Unity Editor install'),
                     ('the editor on PATH', dict(PATH=str(editor) + os.pathsep + path), 'windows_sh=', None),
