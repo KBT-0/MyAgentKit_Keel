@@ -401,5 +401,6 @@ else
   die "session $session was found, but writing its records failed; left:${left:- nothing}. Write $session into $record and the decision file's path $question into $qrecord, then answer a question it stops on with: $answer $(q "$session")"
 fi
 printf '%s\n' "spawn_codex: leave all work uncommitted and ready for the lead, with the exact files in the result; the lead cross-reviews the diff, then commits with the usual gate (issue #43)"
+printf '%s\n' "spawn_codex: NOTE: the worker has no network and writes only inside its worktree and the temporary directory, and a fresh worktree has no build tree, dependency cache or virtual environment; the brief's environment line says what to stage or redirect (docs/HANDOFF.md, \"Constraints\"; issue #107)"
 [ -n "$windows" ] || sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_codex: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
 printf '%s\n' "$waiter"

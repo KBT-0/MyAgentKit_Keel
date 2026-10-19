@@ -203,6 +203,12 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('its reading list', reviewer)
         self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
 
+    def test_a_brief_names_what_the_workers_environment_lacks(self):
+        # #107: six briefs of one project re-taught sandbox workarounds by hand.
+        handoff = ' '.join((ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8').split())
+        self.assertIn('A task whose checks build, download or write outside the worktree quotes its '
+                      'environment', handoff)
+
     def test_review_rounds_are_capped_once_and_the_lead_reads_a_short_block(self):
         # #106: inner rounds ran "until no Medium remains", which never ends. #123: the final
         # review was due per branch in WORKFLOW and per release in the gate. #85: the lead's
