@@ -345,6 +345,17 @@ def main(argv=None):
                          "family (--reviewer). A high-tier change on a plan with no tier above the "
                          "author's sets REVIEW_SAME_TIER_EXCEPTION=<reason>"
                          % (", ".join(same), tier(same[0]), names[args.reviewer], pins[args.reviewer]))
+    # Which reviewer runs under the exception, for the attempt's usage record and the one-round
+    # check in prior_rounds(); never inherited.
+    under = {args.reviewer: exception if same else None}
+
+    def mark(provider):
+        if under.get(provider):
+            os.environ[claude_bridge.SAME_TIER_ENV] = under[provider]
+        else:
+            os.environ.pop(claude_bridge.SAME_TIER_ENV, None)
+
+    mark(args.reviewer)
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     original = claude_bridge.snapshot(repo, scope, ref)
     if not original[2].strip():
@@ -417,6 +428,7 @@ def main(argv=None):
     while queue:
         provider = queue.pop(0)
         os.environ["MYAGENTKIT_REVIEW_ATTEMPT"] = str(len(chain["attempts"]) + 1)
+        mark(provider)
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
                    "--" + scope] + ([ref] if ref else [])
@@ -544,6 +556,17 @@ def main(argv=None):
             eligible = False
         substitute_same = [value for value in authors if eligible and tier(value) == tier(pins[other])]
         if substitute_same:
+            # The exception is one round per label: a substitute under it is refused here, as
+            # the primary was before launch, when an earlier round already used it.
+            under[other] = exception
+            mark(other)
+            try:
+                claude_bridge.prior_rounds(repo, os.environ["MYAGENTKIT_TASK_ID"], scope, original[3],
+                                           original[0], original[2], claims)
+            except claude_bridge.BridgeError as refused:
+                chain["fallback_blocked"] = str(refused)
+                eligible, substitute_same = False, []
+        if substitute_same:
             chain["same_tier_exception"] = exception  # in the checkpoint before the substitute runs
         checkpoint(retry)  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
@@ -579,6 +602,7 @@ def main(argv=None):
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
         queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)
+    os.environ.pop(claude_bridge.SAME_TIER_ENV, None)
     print("review dispatch: " + json.dumps(chain))
     if chain["status"] != "completed":
         print("FAIL [review]: requested reviewer %s did not produce a review (%s)%s"

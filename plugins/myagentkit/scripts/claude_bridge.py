@@ -170,6 +170,9 @@ NOISE_SUFFIXES = (".min.js", ".min.css")
 # Past about 400 changed lines a reviewer finds less (SmartBear's Cisco study, a vendor page;
 # the number is an owner choice): a hint to split, while DIFF_LIMIT stays the hard refusal.
 SPLIT_HINT_LINES = 400
+# Set by review_dispatch for an attempt the author's tier runs under REVIEW_SAME_TIER_EXCEPTION:
+# the usage record keeps it, and prior_rounds() allows that exception one round per label.
+SAME_TIER_ENV = "MYAGENTKIT_REVIEW_SAME_TIER"
 
 
 def budgeted(diff: bytes) -> tuple[int, int]:
@@ -1001,7 +1004,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     toward every focus. Carry only the current focus and rounds without a focus.
     """
     rounds = []
-    counts, unfocused = {}, 0
+    counts, excepted = {}, {}  # per focus; None holds the rounds without a focus
     focus = os.environ.get("REVIEW_FOCUS") or None
     # The split hint, once per review: the dispatcher's preflight runs before it sets the chain
     # id, and an adapter inside its chain stays quiet.
@@ -1118,17 +1121,20 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         # Counted before the prompt filter below, so a round no prompt carries still counts.
         # A completed review the dispatcher failed afterwards (stale_checkout) is still carried,
         # since its findings stand as archived, but is no round (chain_failure, #258).
-        if chain_failure(usage, value.get("review_chain_id"), value.get("review_attempt")):
-            pass
-        elif isinstance(task.get("focus"), str) and task["focus"]:
-            counts[task["focus"]] = counts.get(task["focus"], 0) + 1
-        else:
-            unfocused += 1
+        if not chain_failure(usage, value.get("review_chain_id"), value.get("review_attempt")):
+            key = task["focus"] if isinstance(task.get("focus"), str) and task["focus"] else None
+            counts[key] = counts.get(key, 0) + 1
+            if task.get("same_tier_exception"):
+                excepted[key] = excepted.get(key, 0) + 1
         if not task.get("focus") or task.get("focus") == focus:
             rounds.append((str(value.get("recorded_at")), report.decode()))
-    # A focus seen under the label uses its own count; an unset or new focus takes the highest,
-    # so unsetting or renaming the focus never opens a fresh budget.
-    completed = unfocused + (counts[focus] if focus in counts else max(counts.values(), default=0))
+
+    def total(tally):
+        # A focus seen under the label uses its own count; an unset or new focus takes the
+        # highest, so unsetting or renaming the focus never opens a fresh budget.
+        named = {key: number for key, number in tally.items() if key}
+        return tally.get(None, 0) + (named[focus] if focus in named else max(named.values(), default=0))
+    completed = total(counts)
     if claims is None:
         claims = dispositions_text()
     try:
@@ -1138,6 +1144,13 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     if claims is not None and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
+    # The owner's same-tier exception is one round (docs/WORKFLOW.md, "Model routing", rule 7);
+    # REVIEW_ROUND_EXCEPTION does not lift it.
+    if os.environ.get(SAME_TIER_ENV) and total(excepted):
+        raise BridgeError("task label %s already had its round under REVIEW_SAME_TIER_EXCEPTION, and "
+                          "that exception is one round (docs/WORKFLOW.md, \"Model routing\", rule 7): "
+                          "another tier or the other family reviews the fix, or what remains goes "
+                          "to the owner or an issue" % task_id)
     # At most two rounds per focus and label (docs/REVIEW_GATE.md, "Rounds"): a third needs a
     # recorded reason, so a loop that stops converging is seen instead of paid for again.
     if completed >= 2:
@@ -1186,6 +1199,8 @@ def measure(claims: str | None) -> dict:
         # The lead's claim of who wrote the patch (KARARLAR B01-1: accepted rate per author and
         # reviewer pair); review_dispatch refuses the author's tier as reviewer.
         measured["author"] = os.environ["MYAGENTKIT_AUTHOR"].strip()
+    if os.environ.get(SAME_TIER_ENV):
+        measured["same_tier_exception"] = os.environ[SAME_TIER_ENV]  # prior_rounds() allows it one round
     return measured
 
 
@@ -1912,7 +1927,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
         def correct():
             if result is not None and cancelled and not result["cancelled"]:
                 result["cancelled"] = True
-                if result["failure_kind"]:
+                if evidence["failure_kind"]:  # a checkout_unverified result has a completed record
                     result["failure_kind"] = "cancelled"
                     relabel()
                     result.update(status=evidence["status"], error=evidence.get("error"))

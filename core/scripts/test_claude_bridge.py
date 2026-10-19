@@ -2772,6 +2772,54 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(chain['attempts'][0]['cancelled'])
         self.persisted_cancel(chain['attempts'][0])
 
+    def test_a_cancel_while_an_unverified_result_prints_keeps_its_completed_record(self):
+        # rcode r2: the Claude adapter's late correction relabelled a checkout_unverified result
+        # cancelled, and its completed record with it, so the paid round stopped counting; the
+        # Codex adapter kept the record. Both keep it now and only mark the result cancelled.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import claude_bridge
+        import codex_bridge
+        run = agent_process.run
+        # The Codex adapter reads the checkout through claude_bridge, not this suite's copy.
+        for name, main, args, line, module in (
+                ('claude', bridge.main, ['review'], '{', bridge),
+                ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'], 'review invocation: ',
+                 claude_bridge)):
+            with self.subTest(adapter=name):
+                ran, fired, received, snapshot = [], [], [], module.snapshot
+
+                def look(*args):
+                    if ran:
+                        raise module.GitFailed('git diff failed: index cannot be read')
+                    return snapshot(*args)
+
+                def review(*args, **kwargs):
+                    ran.append(True)
+                    return run(*args, **kwargs)
+
+                class Blocked(StringIO):
+                    def write(self, text):
+                        if text.startswith(line) and not fired:
+                            fired.append(text)
+                            send_cancel(signal.SIGTERM)
+                        return super().write(text)
+
+                out = Blocked()
+                env = self.review_env(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLI_BIN=str(self.build_fake_codex()))
+                with patch.dict(os.environ, env), patch.object(module, 'snapshot', look), \
+                        patch.object(agent_process, 'run', review), redirect_stdout(out):
+                    code = main([*args, '--repo', str(self.repo), '--uncommitted'], received.append)
+                self.assertTrue(fired)
+                self.assertEqual(code, 5, out.getvalue())
+                self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']),
+                                 ('checkout_unverified', True), out.getvalue())
+                usage = json.loads(Path(received[0]['usage_record']).read_text())
+                self.assertEqual((usage['status'], usage['failure_kind']), ('completed', None))
+
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the
         # two left the archive saying cancelled and the record quota, and the Codex adapter
@@ -6664,6 +6712,32 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(chain['same_tier_exception'], 'plan without Fable')
                 self.assertIn('REVIEW [same tier]: author claude-opus-5-5 and reviewer claude model '
                               'claude-opus-5', result.stdout)
+
+    def test_the_same_tier_exception_is_one_round_per_label(self):
+        # Owner decision 2026-10-19 (docs/WORKFLOW.md, "Model routing", rule 7: "one round"): a
+        # second round under the exception for the label is refused, for the requested reviewer
+        # and a quota-switch substitute alike, REVIEW_ROUND_EXCEPTION (set by dispatch_result) too.
+        # Another tier still reviews the fix under the label.
+        refused = 'already had its round under REVIEW_SAME_TIER_EXCEPTION'
+        exception = dict(MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
+                         REVIEW_SAME_TIER_EXCEPTION='plan without Fable', MYAGENTKIT_TASK_ID='same-once')
+        result, chain = self.dispatch_result('claude', fallback=False, **exception)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+        self.assertEqual(usage['task']['same_tier_exception'], 'plan without Fable')
+        result, chain = self.dispatch_result('claude', fallback=False, **exception)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIsNone(chain)
+        self.assertIn(refused, result.stdout)
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota', **exception)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+        self.assertIn(refused, chain['fallback_blocked'])
+        self.assertNotIn('same_tier_exception', chain)
+        result, chain = self.dispatch_result('codex', fallback=False, **exception)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+        self.assertNotIn('same_tier_exception', usage['task'])
 
     def test_a_used_up_codex_quota_switches_to_another_tier_of_a_claude_author(self):
         # #225: the switch checks the tier, so a Claude author's review goes to another Claude
