@@ -7090,6 +7090,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         for text in (bridge.REVIEW_RUNS, bridge.REVIEW_READS):
             self.assertNotIn('the suite', text)
 
+    def test_a_reviewer_with_a_shell_is_told_what_its_copy_lacks(self):
+        # #122: the copy holds no file Git ignores and the reviewer has no network, so a build
+        # that needs a build tree, a dependency or a venv cannot run; told nothing, reviewers
+        # spent turns on builds that could not succeed.
+        self.assertIn("The copy holds no files Git ignores (build tree, installed dependencies, "
+                      "virtual environment) and has no network: a check that needs them is NOT RUN; "
+                      "do not build or download them.", bridge.REVIEW_RUNS)
+
     def test_a_setup_fault_or_failed_authentication_never_fails_over(self):
         # KARARLAR D04 inv2#44: a setup fault (authentication among them) is fixed, never failed
         # over: the other reviewer would only hide it, and it fails the same way next time.

@@ -136,7 +136,9 @@ def review_context(task_file=None) -> str:
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise); run anything inside this copy. Run the reproductions "
+    "work, an archive of HEAD otherwise); run anything inside this copy. The copy holds no files "
+    "Git ignores (build tree, installed dependencies, virtual environment) and has no network: a "
+    "check that needs them is NOT RUN; do not build or download them. Run the reproductions "
     "here, and mark findings REPRODUCED with the command that shows each; if a "
     "run is impossible, mark it REASONED and name the command that would reproduce it; list as "
     "NOT RUN what you could not run and why. Never use the network and never call a paid model.")
