@@ -1360,6 +1360,18 @@ def accept_allows(findings: list) -> bool:
                or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\**\s*[^\s*])", item) for item in findings)
 
 
+def stricter_verdict(blocking: list) -> tuple[str, str]:
+    """The verdict an Accept is read as when its own lists hold an item a plain Accept cannot
+    carry (owner decision 59, #120): a blocking finding naming Critical or High makes it
+    Reject, anything else Accept with Manual Checks. Refused, the whole paid review was lost to
+    an inconsistency the stricter verdict settles without dropping an item. Returns the verdict
+    and the check line that says so."""
+    verdict = ("Reject" if any(re.search(r"\b(?:critical|high)\b", item, re.I) for item in blocking)
+               else "Accept with Manual Checks")
+    return verdict, ("The reviewer wrote Accept; the bridge read it as %s, because its own findings "
+                     "or manual checks hold an item a plain Accept cannot carry." % verdict)
+
+
 def validate(envelope: object, mode: str, model: str) -> dict:
     if not isinstance(envelope, dict) or envelope.get("is_error") is not False:
         raise BridgeError("CLI did not return a successful result envelope")
@@ -1398,7 +1410,11 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError("invalid verdict")
         if verdict == "Accept" and (value["manual_checks"] or checks or not accept_allows(findings)
                                     or not accept_allows(value["findings"])):
-            raise BridgeError("Accept contradicts outstanding findings or manual checks")
+            blocking = [item for item in dict.fromkeys(findings + value["findings"]) if not accept_allows([item])]
+            verdict, note = stricter_verdict(blocking)
+            moved = checks + (blocking if verdict != "Reject" else [])
+            value = dict(value, verdict=verdict,
+                         manual_checks=[note] + list(dict.fromkeys(value["manual_checks"] + moved)))
         if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
         if verdict == "Accept with Manual Checks" and not value["manual_checks"]:

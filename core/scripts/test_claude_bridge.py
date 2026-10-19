@@ -112,7 +112,7 @@ if case == 'reject': value.update(verdict='Reject', findings=['file.py:1: concre
 if case == 'manual': value.update(verdict='Accept with Manual Checks', manual_checks=['Verify deployment.'])
 if case == 'missing': result.pop('structured_output')
 if case == 'transcript': print('VERDICT: Accept'); sys.exit(0)
-if case == 'conflict': value['findings'] = ['Unresolved defect.']
+if case == 'conflict': value['verdict'] = 'Reject'
 if case == 'turns': result['subtype'] = 'error_max_turns'
 if case == 'model': result['modelUsage'] = {'different-model': {}}
 if case == 'error': result['is_error'] = True
@@ -654,10 +654,11 @@ class BridgeTests(unittest.TestCase):
                 code = codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model',
                                           '--uncommitted'], received.append)
                 run.assert_called_once()
-                self.assertEqual(code, 0 if clean else 5, out.getvalue())
-                self.assertEqual(received[-1]['status'], 'completed' if clean else 'failed')
-                self.assertEqual(received[-1]['failure_kind'], None if clean else 'invalid_evidence')
-                self.assertEqual(verdicts_of(received[-1]['evidence']), ['VERDICT: Accept'] if clean else [])
+                # #120: a contradicted Accept completes as the stricter verdict, never as Accept.
+                self.assertEqual(code, 0, out.getvalue())
+                self.assertEqual(received[-1]['status'], 'completed')
+                self.assertEqual(received[-1]['failure_kind'], None)
+                self.assertEqual(verdicts_of(received[-1]['evidence']) == ['VERDICT: Accept'], clean)
 
     def test_structured_accept_cannot_hide_severity_or_checks_in_low_continuations(self):
         for body, _, clean in self.continuation_review_cases():
@@ -668,8 +669,7 @@ class BridgeTests(unittest.TestCase):
                 if clean:
                     self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
                 else:
-                    with self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
-                        bridge.validate(envelope, 'review', 'claude-opus-5')
+                    self.assertNotEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'], 'Accept')
 
     def test_codex_accept_cannot_drop_a_finding_or_manual_check_in_a_peer_heading(self):
         from contextlib import redirect_stdout
@@ -694,10 +694,11 @@ class BridgeTests(unittest.TestCase):
                 code = codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model',
                                           '--uncommitted'], received.append)
                 run.assert_called_once()
-                self.assertEqual(code, 0 if heading == '## Testing' else 5, out.getvalue())
-                if heading != '## Testing':
-                    self.assertEqual(received[-1]['failure_kind'], 'invalid_evidence')
-                    self.assertEqual(verdicts_of(received[-1]['evidence']), [])
+                self.assertEqual(code, 0, out.getvalue())
+                # #120: the hidden High reads as Reject, the hidden check as Accept with Manual Checks.
+                expected = ('Accept' if heading == '## Testing' else
+                            'Reject' if re.search('High|Critical', heading) else 'Accept with Manual Checks')
+                self.assertEqual(verdicts_of(received[-1]['evidence']), ['VERDICT: ' + expected])
 
     def test_structured_accept_cannot_hide_heading_findings_or_unverified_checks(self):
         for heading in ('## 1. High: file.py:1 drops records.',
@@ -714,8 +715,11 @@ class BridgeTests(unittest.TestCase):
                 value[field] = [item]
                 envelope = dict(type='result', subtype='success', is_error=False,
                                 modelUsage={'claude-opus-5': {}}, structured_output=value)
-                with self.subTest(field=field, item=item), self.assertRaises(bridge.BridgeError):
-                    bridge.validate(envelope, 'review', 'claude-opus-5')
+                with self.subTest(field=field, item=item):
+                    # #120: a High among the findings reads as Reject; anything else as a check.
+                    self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'],
+                                     'Reject' if field == 'findings' and re.search('High|Critical', item)
+                                     else 'Accept with Manual Checks')
 
     def test_fallback_uses_the_resolved_backend_model_family_and_refuses_unknowns(self):
         from contextlib import redirect_stdout
@@ -815,8 +819,9 @@ class BridgeTests(unittest.TestCase):
         value['verdict'] = 'Accept'
         for item in ('Not run', '## NOT RUN', 'NOT RUN: verify deployment on Windows.'):
             value['manual_checks'] = [item]
-            with self.subTest(item=item), self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
-                bridge.validate(envelope, 'review', 'claude-opus-5')
+            with self.subTest(item=item):
+                self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'],
+                                 'Accept with Manual Checks')
 
     def test_secret_refusal_only_checks_changed_paths_and_lists_every_hit(self):
         for name in ('.env', 'site.key'):
@@ -3474,8 +3479,10 @@ class BridgeTests(unittest.TestCase):
         for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:
             with self.subTest(final=final):
                 self.assertEqual(codex_bridge.verdict_refused(final), not completed)
-        # The whole wrapper once each way: the rule decides its exit and chain record.
-        for final, completed in ((completes[0], True), (refused[0], False)):
+        # The whole wrapper once each way: the rule decides its exit and chain record. A
+        # contradicted Accept now completes as the stricter verdict (#120), so the refused run
+        # is a Reject that names no finding.
+        for final, completed in ((completes[0], True), (next(f for f in refused if 'VERDICT: Reject' in f), False)):
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
                                           REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
@@ -3579,7 +3586,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_bad_cli_evidence_fails_with_its_reason(self):
         cases = {"missing": "structured final", "transcript": "Expecting value",
-                 "conflict": "contradicts", "turns": "incomplete", "model": "modelUsage",
+                 "conflict": "has no findings", "turns": "incomplete", "model": "modelUsage",
                  "error": "successful result", "exit": "exited 9", "mutation": "changed during"}
         for case, reason in cases.items():
             with self.subTest(case=case):
@@ -3723,8 +3730,42 @@ class BridgeTests(unittest.TestCase):
                 if allowed:
                     self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
                 else:
-                    with self.assertRaisesRegex(bridge.BridgeError, 'Accept contradicts'):
-                        bridge.validate(envelope, 'review', 'claude-opus-5')
+                    # #120: read as the stricter verdict, not refused.
+                    self.assertNotEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'], 'Accept')
+
+    def test_a_contradicted_accept_is_read_as_the_stricter_verdict(self):
+        # #120, owner decision 59 A: refused, a whole paid review was lost to its own lists. A
+        # blocking item naming Critical or High makes it Reject; any other item or check makes it
+        # Accept with Manual Checks, the item kept as a check; the first check names the correction.
+        import codex_bridge
+        note = 'The reviewer wrote Accept; the bridge read it as %s'
+        for findings, checks, verdict, moved in (
+                (['High: x.py:1 drops records.'], [], 'Reject', []),
+                (['**Critical** x.py:1 bypasses the gate.', 'Low: a note'], [], 'Reject', []),
+                (['Medium: x.py:1 a defect.'], [], 'Accept with Manual Checks', ['Medium: x.py:1 a defect.']),
+                ([], ['NOT RUN: the Windows suite.'], 'Accept with Manual Checks', ['NOT RUN: the Windows suite.']),
+                (['Low: a note', 'NOT RUN: the deployment.'], [], 'Accept with Manual Checks',
+                 ['NOT RUN: the deployment.'])):
+            value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': checks}
+            envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                        'modelUsage': {'claude-opus-5': {}}, 'structured_output': value}
+            with self.subTest(findings=findings, checks=checks):
+                result = bridge.validate(envelope, 'review', 'claude-opus-5')
+                self.assertEqual(result['verdict'], verdict)
+                self.assertEqual(result['findings'], findings)
+                self.assertTrue(result['manual_checks'][0].startswith(note % verdict), result)
+                self.assertEqual(result['manual_checks'][1:], moved)
+                final = codex_bridge.corrected('## Findings\n\n' + ''.join('- %s\n' % f for f in findings or ['None.'])
+                                               + '\n## Manual checks\n\n' + ''.join('- %s\n' % c for c in checks or ['None.'])
+                                               + '\nVERDICT: Accept\n')
+                self.assertEqual(re.findall(codex_bridge.VERDICT, final, re.M), [verdict])
+                self.assertIn('- ' + note % verdict, final)
+                self.assertFalse(codex_bridge.verdict_refused(final), final)
+        # A Reject that names no finding stays refused: there is no stricter reading of it.
+        envelope['structured_output'] = {'verdict': 'Reject', 'findings': ['None.'], 'manual_checks': []}
+        with self.assertRaisesRegex(bridge.BridgeError, 'Reject has no findings'):
+            bridge.validate(envelope, 'review', 'claude-opus-5')
+        self.assertTrue(codex_bridge.verdict_refused(codex_bridge.corrected('## Findings\n\nNone.\n\nVERDICT: Reject\n')))
 
     def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
         # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin

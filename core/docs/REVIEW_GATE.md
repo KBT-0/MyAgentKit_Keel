@@ -87,6 +87,10 @@ of the one release review. Time target: about 20 minutes per reviewer, the secto
 ## Verdicts and who decides
 
 `Accept` / `Accept with Manual Checks` / `Reject`. Reject only on an open Critical or High.
+An Accept whose own findings or manual checks a plain Accept cannot carry is read as the
+stricter verdict: Reject when such a finding names Critical or High, else Accept with Manual
+Checks; its first manual check names the correction (`scripts/claude_bridge.py`,
+`stricter_verdict`).
 A Medium is fixed in the round when the lead can verify the fix with a test; otherwise it is
 an issue {{OWNER_NAME}} sees at the merge. A Low a reviewer reports goes to `docs/BACKLOG.md`
 or an issue, never fixed in the round, because a fix adds code no reviewer has seen; a defect

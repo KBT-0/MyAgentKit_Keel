@@ -17,7 +17,7 @@ import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
-                           prior_rounds,
+                           prior_rounds, stricter_verdict,
                            review_context, review_parts, recheck, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
@@ -37,6 +37,21 @@ def verdict_refused(final):
     return bool(verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
                 or verdicts[0] == 'Accept with Manual Checks' and not checks
                 or verdicts[0] == 'Reject' and all(placeholder(f) for f in findings))
+
+
+def corrected(final):
+    """Codex's final text with a contradicted Accept read as the stricter verdict, as
+    claude_bridge.validate() does (owner decision 59, #120): the VERDICT line names it and a
+    Manual checks section, first line the correction, carries what moved. Any other text is
+    returned as it is, for verdict_refused() to judge."""
+    if re.findall(VERDICT, final, re.M) != ["Accept"] or not verdict_refused(final):
+        return final
+    findings, checks = review_parts(final)
+    blocking = [item for item in findings if not accept_allows([item])]
+    verdict, note = stricter_verdict(blocking)
+    moved = [] if verdict == "Reject" else blocking
+    final = re.sub(VERDICT, "VERDICT: " + verdict, final, flags=re.M)
+    return final.rstrip("\n") + "\n\n## Manual checks\n\n" + "".join("- %s\n" % item for item in [note] + moved)
 
 
 def main(argv=None, result_sink=None, claims=None):
@@ -220,6 +235,7 @@ def main(argv=None, result_sink=None, claims=None):
                        # printed copy_failed and no reason.
                        "\n\n## Failure\n\nCodex never ran: " + execution["stderr"][-4000:]
                        if reason == "copy_failed" else "")
+            final = corrected(final)
             verdicts = re.findall(VERDICT, final, re.M)
             if not reason and (verdict_refused(final)
                                or not any(v.get("type") == "turn.completed" for v in values)):
