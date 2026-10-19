@@ -11,15 +11,21 @@ to its release tag and runs that kit's `sync-kit.sh` on this folder.
 
 1. Accept only `--dry-run`, `--merge` and `--actions-applied`; refuse anything else and list
    these. Pass `--actions-applied` only when the owner said the ACTION items are applied.
-2. Run, with the Bash tool (Git Bash on Windows):
+2. Ask first. Show the owner: the installer
+   `https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh` downloads the kit
+   from `https://github.com/KBT-0/MyAgentKit_Keel.git` at the release tag it names (or at
+   `MYAGENTKIT_REF` when set) into the cache `~/.myagentkit/kit`, then syncs it into this project
+   (give its full path). Wait for the owner's yes in the chat, in every permission mode, bypass
+   and allow rules included. No yes: run nothing.
+3. Run, with the Bash tool (Git Bash on Windows):
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh -s -- sync OPTIONS
    ```
 
    It is not pre-approved on purpose: it downloads and runs code, and the permission prompt is
-   the owner's gate. On a refusal, give the owner that command to run.
-3. No `install: kit` line in the output means the download failed (curl printed why; the
+   the second gate. On a refusal, give the owner that command to run.
+4. No `install: kit` line in the output means the download failed (curl printed why; the
    pipe still exits 0): say so and stop. Show the output: the changelog entries since the
    project's version are the product, so do not summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and
    the version stays put: list them and apply them only on the owner's go-ahead, then run this

@@ -13,19 +13,25 @@ release tag into `~/.myagentkit/kit` and runs that kit's `bootstrap.sh` on this 
    kit has `claude-code` and `unity`) and `--note "TEXT"`; refuse anything else and list these.
    Never execute raw arguments as shell code: put each value in single quotes, a `'` inside
    written as `'\''`.
-2. Run, with the Bash tool (Git Bash on Windows):
+2. Ask first. Show the owner: the installer
+   `https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh` downloads the kit
+   from `https://github.com/KBT-0/MyAgentKit_Keel.git` at the release tag it names (or at
+   `MYAGENTKIT_REF` when set) into the cache `~/.myagentkit/kit`, then installs it into this project
+   (give its full path). Wait for the owner's yes in the chat, in every permission mode, bypass
+   and allow rules included. No yes: run nothing.
+3. Run, with the Bash tool (Git Bash on Windows):
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh -s -- OPTIONS
    ```
 
    It is not pre-approved on purpose: it downloads and runs code, and the permission prompt is
-   the owner's gate. On a refusal, give the owner that command to run.
-3. No `install: kit` line in the output means the download failed (curl printed why; the
+   the second gate. On a refusal, give the owner that command to run.
+4. No `install: kit` line in the output means the download failed (curl printed why; the
    pipe still exits 0): say so and stop. Show the output. A non-zero exit means nothing was
    installed or bootstrap stopped on a file it will not overwrite: show the reason and stop.
    `MYAGENTKIT_REF` names another kit tag or branch when the release tag cannot be fetched.
-4. On success the output ends with the line that starts the setup. Ask the owner whether to
+5. On success the output ends with the line that starts the setup. Ask the owner whether to
    start it now; on a yes, read `setup/INTERVIEW.md` and follow it.
 
 Raw arguments: `$ARGUMENTS`

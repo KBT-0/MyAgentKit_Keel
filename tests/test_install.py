@@ -172,6 +172,20 @@ class InstallTests(unittest.TestCase):
         self.assertIn('after: Continue False 1', result.stdout, result.stdout + result.stderr)
     test_irm_iex_leaves_the_callers_session_as_it_was._kit_platform_skip = not WINDOWS
 
+    def test_init_and_sync_ask_for_a_yes_before_they_run_the_installer(self):
+        # Owner decision 62: every permission mode, so a bypass or an allow rule is no yes.
+        for path in ('plugin/commands/init.md', 'plugin/commands/sync.md',
+                     'plugins/myagentkit/skills/myagentkit-init/SKILL.md',
+                     'plugins/myagentkit/skills/myagentkit-sync/SKILL.md'):
+            with self.subTest(path=path):
+                text = ' '.join((ROOT / path).read_text(encoding='utf-8').split())
+                ask, run = text.index('2. Ask first.'), text.index('3. Run')
+                self.assertLess(ask, run)
+                for part in ('https://github.com/KBT-0/MyAgentKit_Keel.git', 'MYAGENTKIT_REF',
+                             '~/.myagentkit/kit', 'give its full path', "yes in the chat, in every permission "
+                             'mode, bypass and allow rules included. No yes: run nothing.'):
+                    self.assertIn(part, text[ask:run])
+
     @unittest.skipUnless(WINDOWS, 'the PowerShell shim is the Windows front door')
     def test_the_codex_skills_powershell_form_returns_the_installers_exit_code(self):
         # An agent runs it through `powershell -Command`, whose exit is 0 when the last statement succeeded.

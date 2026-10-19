@@ -12,7 +12,13 @@ kit: the kit's installer, in sync mode, updates the cached kit in `~/.myagentkit
 
 1. Accept only `--dry-run`, `--merge` and `--actions-applied`; refuse anything else and list
    these. Pass `--actions-applied` only when the user said the ACTION items are applied.
-2. Run the installer, in a POSIX shell:
+2. Ask first. Show the user: the installer
+   `https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh` downloads the kit
+   from `https://github.com/KBT-0/MyAgentKit_Keel.git` at the release tag it names (or at
+   `MYAGENTKIT_REF` when set) into the cache `~/.myagentkit/kit`, then syncs it into this project
+   (give its full path). Wait for the user's yes in the chat, in every permission mode, bypass
+   and allow rules included. No yes: run nothing.
+3. Run the installer, in a POSIX shell:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh -s -- sync OPTIONS
@@ -27,7 +33,7 @@ kit: the kit's installer, in sync mode, updates the cached kit in `~/.myagentkit
    It needs the network and writes outside the project (the cache), so the sandbox may refuse
    it or ask for approval. When it cannot run here, give the user the command to run and stop;
    do not try to work around the sandbox.
-3. No `install: kit` line in the output means the download failed: say so and stop. Show the
+4. No `install: kit` line in the output means the download failed: say so and stop. Show the
    output: the changelog entries since the project's version are the product, so do not
    summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and the
    version stays put: list them and apply them only on the user's go-ahead, then run this again
