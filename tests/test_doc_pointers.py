@@ -301,6 +301,12 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('developed on native Windows', readme)
         self.assertNotIn('Linux, WSL and macOS are in CI', readme)
 
+    def test_the_ci_template_clones_the_whole_history(self):
+        # A depth-1 clone of a pull request holds only GitHub's merge commit, so the gate's
+        # Done: history check examined no commit of it (#135).
+        workflow = (ROOT / 'core/.github/workflows/ci.yml').read_text(encoding='utf-8')
+        self.assertRegex(workflow, r'uses: actions/checkout@v\d+\n(?:\s*#.*\n)*\s*with:\n\s*fetch-depth: 0\n')
+
     def test_every_named_section_exists_in_the_file_named(self):
         # A pointer such as (`docs/WORKFLOW.md`, "Writing a gate") sends an agent to one section
         # instead of the whole file; a renamed heading would send it nowhere.
