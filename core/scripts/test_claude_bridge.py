@@ -660,6 +660,26 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[-1]['failure_kind'], None)
                 self.assertEqual(verdicts_of(received[-1]['evidence']) == ['VERDICT: Accept'], clean)
 
+    def test_codex_does_not_load_the_copys_agents_md_as_instructions(self):
+        # #117: Codex loads the root AGENTS.md as instructions; the prompt already names it as
+        # evidence to read, so the lead's constitution reached the reviewer twice, once as orders.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+        commands = []
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            commands.append(command)
+            Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
+            return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=execution), \
+                redirect_stdout(io.StringIO()):
+            codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model', '--uncommitted'], [].append)
+        command = commands[0]
+        self.assertEqual(command[command.index('project_doc_max_bytes=0') - 1], '-c')
+
     def test_structured_accept_cannot_hide_severity_or_checks_in_low_continuations(self):
         for body, _, clean in self.continuation_review_cases():
             value = dict(verdict='Accept', findings=[body], manual_checks=[])

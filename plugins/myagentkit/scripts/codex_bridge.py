@@ -142,7 +142,10 @@ def main(argv=None, result_sink=None, claims=None):
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,
-                       "-c", "approval_policy=never", "-o", str(last), "-m", args.model, "-"]
+                       "-c", "approval_policy=never", "-o", str(last), "-m", args.model,
+                       # #117: the copy's AGENTS.md is evidence the prompt names (REVIEW_DOCS), not
+                       # instructions; 0 bytes loads no project doc (openai/codex agents_md.rs).
+                       "-c", "project_doc_max_bytes=0", "-"]
             capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
             def quota_read():
                 # Optional telemetry: ANY error of the read is "unavailable". Raised, one after

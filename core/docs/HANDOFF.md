@@ -240,7 +240,7 @@ brief instead: its gate review is the lead's (`docs/WORKFLOW.md`, "The lead's st
 branch is ready").
 
 ```
-Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, <target folder>/AGENTS.md
+Read: docs/PHASES.md, docs/STATE.md, <target folder>/AGENTS.md
       (docs/ARCHITECTURE.md only when the task crosses a module boundary)
 
 TASK:   <one sentence — one module>
