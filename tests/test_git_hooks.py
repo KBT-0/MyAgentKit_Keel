@@ -142,9 +142,10 @@ class GitHookTests(unittest.TestCase):
             merge = git('merge', '-q', '--no-edit', 'side')
             self.assertIn('.githooks/post-merge.project has no #! line', merge.stderr)
 
-    def test_a_clean_merge_runs_the_projects_merge_hook_and_not_its_commit_hook(self):
-        # pre-merge-commit hands over to pre-commit --merge, which ran pre-commit.project too:
-        # a hook git never runs on a clean merge (#153).
+    def test_a_clean_merge_runs_the_projects_merge_hook_then_its_commit_hook(self):
+        # Git's own pre-merge-commit runs pre-commit (githooks(5)), so a clean merge runs the
+        # project's pre-merge-commit.project and then its pre-commit.project, once each (#153,
+        # owner decision 60).
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             for name in ('pre-commit', 'pre-merge-commit'):
@@ -160,7 +161,7 @@ class GitHookTests(unittest.TestCase):
             git('checkout', '-q', 'main')
             (root / '.git/project-runs').unlink()
             git('merge', '-q', '--no-edit', 'side')
-            self.assertEqual((root / '.git/project-runs').read_text(encoding='utf-8').split(), ['pre-merge-commit'])
+            self.assertEqual((root / '.git/project-runs').read_text(encoding='utf-8').split(), ['pre-merge-commit', 'pre-commit'])
 
     def docs_project(self, tmp):
         """A gated project whose base commit went through the hooks, so the gate recorded its tree.

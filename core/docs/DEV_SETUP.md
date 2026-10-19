@@ -36,8 +36,9 @@ line, `chmod +x` or not, and the kit's hook then refuses the commit. No other
 `core.hooksPath` is accepted: `bootstrap.sh` stops on one and names this migration. Others
 refuse too: lefthook will not overwrite a hooks path that points elsewhere without `-f`.
 The project's own machine checks (its dependencies installed, a browser its tests need) go
-in `scripts/doctor.project.sh`, project-owned and executable: `scripts/doctor.sh` is kit-owned
-and runs it last, and its non-zero exit is one `MISSING` line.
+in `scripts/doctor.project.sh`, project-owned, executable and starting with a `#!` line
+(without one, Git for Windows never runs it): `scripts/doctor.sh` is kit-owned and runs it
+last, and its non-zero exit is one `MISSING` line.
 
 **Git LFS.** With the hooks path at `.githooks`, git never runs the hooks `git lfs install`
 wrote into `.git/hooks`: a push uploads no LFS object, and a fresh clone fails with "smudge
