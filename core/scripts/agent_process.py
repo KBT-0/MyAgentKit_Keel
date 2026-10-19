@@ -631,8 +631,11 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     # The leader exited (seen without reaping) DRAIN_GRACE_SECONDS ago: what still
                     # holds a pipe is a descendant, which stop_group ends below (#197).
                     nonlocal gone
-                    if gone is None and _exited_unreaped(child, 0):
-                        gone = time.monotonic()
+                    try:
+                        if gone is None and _exited_unreaped(child, 0):
+                            gone = time.monotonic()
+                    except OSError:
+                        pass  # only the grace's look: the wait once the pipes close reports the fault
                     return gone is not None and time.monotonic() - gone >= DRAIN_GRACE_SECONDS
                 # 8,000,000 bytes per stream is the owner's choice of safety cap,
                 # not a provider limit (B03 inv2#65).

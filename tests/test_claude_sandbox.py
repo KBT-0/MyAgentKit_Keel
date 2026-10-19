@@ -7,6 +7,7 @@ adapter would run, its working directory and the records it writes are what is c
 import argparse
 import contextlib
 import errno
+import getpass
 import io
 import json
 import os
@@ -372,9 +373,31 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertTrue(locked.is_dir() and unmarked.is_dir())
         self.assertIn('1 stale review copies could not be removed', err.getvalue())
         self.assertIn('takeown' if os.name == 'nt' else 'rm -rf', err.getvalue())
+        if os.name == 'nt':  # the user named: %USERNAME% is cmd's, PowerShell passes it as text
+            self.assertIn('/grant "%s":F' % getpass.getuser(), err.getvalue())
+            self.assertNotIn('%USERNAME%', err.getvalue())
         self.assertIn('1 stale review copies have no lock marker', err.getvalue())
         for folder in (locked, unmarked):
             self.assertEqual(err.getvalue().count(str(folder)), 1, err.getvalue())
+
+    def test_sweep_says_nothing_of_a_copy_a_parallel_sweep_removed(self):
+        # r1 Low: another sweep removed the stale copy and its lock between this one's look and
+        # its lock; the FileNotFoundError meant "gone", not "no lock marker".
+        old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
+        folder = self.temp / 'myagentkit-codex-raced'
+        folder.mkdir()
+        with claude_bridge.scratch_lock(str(folder), create=True):
+            pass
+        os.utime(folder, (old, old))
+
+        def removed_meanwhile(path, *args, **kwargs):
+            shutil.rmtree(path)
+            os.unlink(path + '.lock')
+            raise FileNotFoundError(path + '.lock')
+        err = io.StringIO()
+        with patch.object(claude_bridge, 'scratch_lock', removed_meanwhile), contextlib.redirect_stderr(err):
+            claude_bridge.sweep('myagentkit-codex-')
+        self.assertNotIn(str(folder), err.getvalue())
 
     def test_sweep_removes_only_old_unheld_orphan_lock_files(self):
         old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60

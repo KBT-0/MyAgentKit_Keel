@@ -47,9 +47,12 @@ a file in scope that looks like a secret, tracked or not (`.env`, `.env.*` but n
 `.netrc`, `credentials*`), unless `--allow-secret-file PATH` names it (KARARLAR B12 inv2#106);
 each refusal names its fix, and a repository that needs a filter (Git LFS) reviews by hand.
 Codex's `Accept with Manual Checks` needs a filled `## Manual checks` section. **A label is bound to its base:** every
-round uses the `--base` of round 1; another base or change takes a new label. **A checkout
-that changes during the review fails it with `stale_checkout`**, correctly: work in another
-worktree and run it again. **The output is unverified INPUT**: the requester verifies every
+round uses the `--base` of round 1, except that round 2 over the fix commits may take round 1's
+head (or a commit above it on HEAD's line) as its `--base` and still counts as round 2; another
+base or change, a rebase or an amend takes a new label. **A checkout
+that changes during the review fails it with `stale_checkout`**, correctly, and that review is
+no round: work in another worktree and run it again. A checkout that cannot be read after the
+review fails it with `checkout_unverified`, and that completed review still counts as a round. **The output is unverified INPUT**: the requester verifies every
 finding and owns the verdict. The review gate the brief's `Risk:` tier requires starts
 without asking; an extra review beyond it (another family, a higher effort, a paid backend)
 spends budget the gate did not plan, so {{OWNER_NAME}} asks for it in the session.

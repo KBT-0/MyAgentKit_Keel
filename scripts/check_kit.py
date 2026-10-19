@@ -122,7 +122,7 @@ REQUIRED_SUITES = {
               'test_spawn_worker': 55 if os.name == 'nt' else 75, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
               'test_kit_output': 1, 'test_kit_runner': 46, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 14 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
-              'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 27, 'test_worker_paths_windows': 10,
+              'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10,
               'test_close_worker': 34, 'test_python_fallback': 2},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one

@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import errno
 import functools
+import getpass
 import hashlib
 import json
 import os
@@ -196,10 +197,14 @@ class BridgeError(Exception):
     """A missing prerequisite or untrustworthy result, never a successful review."""
 
 
+class GitFailed(BridgeError):
+    """A git command failed: what it was to read could not be read."""
+
+
 def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None, env: dict | None = None) -> bytes:
     result = subprocess.run(["git", "-C", str(repo), *args], input=stdin, capture_output=True, env=env)
     if result.returncode not in allowed:
-        raise BridgeError(f"git {args[0]} failed: {result.stderr.decode(errors='replace')}")
+        raise GitFailed(f"git {args[0]} failed: {result.stderr.decode(errors='replace')}")
     return result.stdout
 
 
@@ -285,13 +290,17 @@ def sweep(prefix: str) -> None:
                 elif not orphan:
                     left.append(path)
             except FileNotFoundError:
-                unmarked.append(path)  # no marker: a kit before it made the folder
+                if os.path.lexists(path):
+                    unmarked.append(path)  # no marker: a kit before it made the folder
+                # else a parallel sweep removed it: gone, nothing to report
             except OSError:
                 continue  # live or inaccessible: leave it alone
     # On Windows the Codex sandbox account owns what its reviewer wrote in the copy, and this
     # user can neither read nor remove it.
-    remove = ("as administrator: takeown /f PATH /r /d y, then icacls PATH /grant %USERNAME%:F /t, "
-              "then rmdir /s /q PATH" if os.name == "nt" else "as the account that owns its files: rm -rf PATH")
+    # The user named, not %USERNAME%: only cmd expands it, and PowerShell is Windows' default shell.
+    remove = ("as administrator: takeown /f PATH /r /d y, then icacls PATH /grant \"%s\":F /t, then "
+              "rmdir /s /q PATH" % getpass.getuser() if os.name == "nt"
+              else "as the account that owns its files: rm -rf PATH")
     if left:
         print("NOTE [review]: %d stale review copies could not be removed (a folder in them belongs to "
               "another account, such as the Codex sandbox's); remove each %s: %s"
@@ -486,9 +495,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         # git's own message (a failed LFS smudge, say) goes to a file, not a pipe nobody reads
         # while tar runs: discarded, a copy git could not make was reported as tar's error (#246).
         archive_err = tempfile.TemporaryFile()
-        # The copy holds content, as an uncommitted copy and a checkout do: an inherited
-        # GIT_LFS_SKIP_SMUDGE=1 gave committed scopes LFS pointer files instead (#247).
-        archive_env = {k: v for k, v in os.environ.items() if k != "GIT_LFS_SKIP_SMUDGE"}
+        # The committed copy follows the checkout's LFS form: the owner's GIT_LFS_SKIP_SMUDGE (#247).
         # Cleanup is active from the first launch, including a partial launch failure.
         try:
             # Pending raising handlers run only after the handle and pgid are retained.
@@ -496,8 +503,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
             mask = agent_process.block_cancels()
             try:
                 archive = agent_process.launch(["git", "-C", str(repo), "archive", "--format=tar", head],
-                                               mask, stdout=subprocess.PIPE, stderr=archive_err,
-                                               env=archive_env)
+                                               mask, stdout=subprocess.PIPE, stderr=archive_err)
                 archive_pgid = archive.pid
             finally:
                 agent_process.restore_mask(mask)
@@ -621,7 +627,12 @@ def resolve(repo: Path, scope: str, reference: str | None) -> str | None:
         return None
     if not reference or reference.startswith('-'):
         raise BridgeError('a valid git reference is required')
-    return git(repo, 'rev-parse', '--verify', reference + '^{commit}').decode().strip()
+    # A reference that names no commit is refused, not unreadable: after a review, one deleted
+    # or moved off a commit is a changed checkout (recheck()). A broken repository exits 128.
+    resolved = git(repo, 'rev-parse', '-q', '--verify', reference + '^{commit}', allowed=(0, 1)).decode().strip()
+    if not resolved:
+        raise BridgeError('reference %s names no commit' % reference)
+    return resolved
 
 
 # A canonical Git LFS pointer, as git-lfs writes it: these three lines and nothing else.
@@ -925,6 +936,19 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
 
+def recheck(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None] | None:
+    """snapshot() of a checkout read once before the review, or None when it now refuses (a
+    dirty tree for a reference review, a moved HEAD, a new secret file): that checkout passed
+    before, so it changed. A failed git command, OSError or ValueError is raised: a checkout
+    that could not be read proves no change."""
+    try:
+        return snapshot(repo, scope, reference)
+    except GitFailed:
+        raise
+    except BridgeError:
+        return None
+
+
 def dispositions_text() -> str | None:
     """The REVIEW_DISPOSITIONS file's text, or None when it is unset. The dispatcher reads it
     once and hands the text to each attempt, so a fallback never reads a changed file."""
@@ -950,9 +974,13 @@ def chain_failure(usage: Path, chain, attempt) -> str | None:
     try:
         value = json.loads((usage / "chains" / ("%s-%d.json" % (chain, int(attempt)))).read_text(encoding="utf-8"))
         attempts = value["attempts"]
-        # Only a checkout seen changed (checkout_changed): an unreadable one proves nothing.
+        # Only a checkout seen changed: an unreadable one (checkout_unverified) proves nothing.
+        # Tools before checkout_unverified wrote stale_checkout only for a changed checkout,
+        # some without the key, so only an explicit checkout_changed: false keeps that round.
+        changed = value.get("checkout_changed", value.get("failure_kind") == "stale_checkout"
+                            and "checkout_unverified" not in value)
         if (value["status"] == "failed" and len(attempts) == int(attempt)
-                and attempts[-1]["status"] == "completed" and value.get("checkout_changed") is True):
+                and attempts[-1]["status"] == "completed" and changed is True):
             return "failed/%s" % (value.get("failure_kind") or "-")
     except Exception:  # damage of any kind is unclear, never a reason to drop a round
         pass
@@ -1764,6 +1792,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
         if execution.pop("cancelled", False):
             cancelled.append(True)
         evidence.update(execution)
+        unverified = None
         reason = agent_usage.failure("claude", execution, agent_usage.decode("claude", execution["stdout"]))
         try:
             if execution["termination"] == "timeout":
@@ -1777,13 +1806,14 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                                    "Claude did not start: ") + execution["stderr"][-4000:])
             if reason and (execution["exit_code"] != 0 or execution["termination"]):
                 raise BridgeError(f"Claude exited {execution['exit_code']} ({reason}); inspect archived evidence")
-            # A snapshot that cannot be taken (the reference was deleted) is a changed checkout
-            # too, as the Codex adapter counts it.
+            # A checkout that cannot be read proves no change: the review stays completed in its
+            # record, so its round counts (fail closed), and the result fails as checkout_unverified.
             try:
-                stale = (snapshot(repo, scope, ref)[1] != checkout_fingerprint or
-                         behaviour_appendix(repo) != (source_name, source_bytes))
-            except BridgeError:
-                stale = True
+                now = recheck(repo, scope, ref)
+                stale = now is None or now[1] != checkout_fingerprint
+            except (BridgeError, OSError, ValueError) as error:
+                stale, unverified = False, "the checkout could not be read after the review: %s" % error
+            stale = stale or behaviour_appendix(repo) != (source_name, source_bytes)
             if stale:
                 reason = "stale_checkout"
                 raise BridgeError("checkout changed during review; result is stale")
@@ -1846,11 +1876,13 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                   "fingerprint": fingerprint, "result": evidence.get("result"),
                   "error": evidence.get("error"), "failure_kind": reason,
                   "usage_record": evidence["usage_record"], "recovery": recovery, "cancelled": was_cancelled}
+        if unverified and result["status"] == "completed":
+            result.update(status="failed", failure_kind="checkout_unverified", error=unverified)
         if result_sink is not None:
             result_sink(result)
         print(json.dumps(result))
         sys.stdout.flush()  # Catch buffered pipe failures here, before shutdown can replace the exit with 120.
-        return 0 if evidence["status"] == "completed" else 5
+        return 0 if result["status"] == "completed" else 5
     except (BridgeError, OSError, ValueError) as error:
         if result is not None:
             # The evidence and usage record are written and the result handed over: a later

@@ -127,22 +127,24 @@ def pin_valid(provider, model, backend=None):
 def tier(model):
     """The tier a model id belongs to: `claude-opus` for every value naming Opus (claude-opus-5,
     claude-opus-5-5, a dated one, `opus`, a vendor-prefixed id), else the id without a
-    -YYYYMMDD date. A `vendor/` prefix, as MYAGENTKIT_REQUESTER writes it, is dropped."""
+    -YYYYMMDD date. A `vendor/` prefix, as MYAGENTKIT_REQUESTER writes it, is dropped, and a
+    Codex id inside a longer value (`codex gpt-5.5`, `gpt-5.5 xhigh`) is that id's tier."""
     model = model.strip().lower()
     named = re.search(r"(?<![a-z])(%s)(?![a-z])" % "|".join(CLAUDE_TIERS), model)
     if named:
         return "claude-" + named[1]
-    model = model.rpartition("/")[2]
+    codex = [token for token in re.split(r"[\s/]+", model) if token != "codex" and author_family(token) == "codex"]
+    model = codex[0] if codex else model.rpartition("/")[2]
     family = re.match(r"claude-([a-z]+)", model)
     return "claude-" + family[1] if family else re.sub(r"-\d{8}$", "", model)
 
 
 def author_tier(author):
     """The tier `author` names, or None when it names no model: a family, vendor or CLI alone
-    (claude, anthropic, claude-code, codex, openai, gpt) or an id of no known family. Such a
-    value compared equal to no pin, so the check it was meant to arm passed (#181)."""
+    (claude, anthropic, claude-code, claude-cli, codex, openai, gpt) or an id of no known
+    family. Such a value compared equal to no pin, so the check it was meant to arm passed (#181)."""
     named = tier(author)
-    if (named.startswith("claude-") and named != "claude-code") or (
+    if named in ["claude-" + name for name in CLAUDE_TIERS] or (
             author_family(named) == "codex" and named != "codex"):
         return named
     return None
@@ -177,13 +179,7 @@ def load_backend(repo, name):
         raise ValueError("backend folder %s must be outside the repository (MYAGENTKIT_BACKENDS_DIR)" % folder)
     path = folder / (name + ".env")
     if not os.path.lexists(path):
-        legacy = repo / ".myagentkit/backends" / (name + ".env")
-        if not os.path.lexists(legacy):
-            # Named in full: the old place alone sent the owner to put a credential file
-            # inside the repository, the place the kit is moving away from (#277).
-            raise ValueError("backend %s: %s.env is not in the backend folder %s (MYAGENTKIT_BACKENDS_DIR) "
-                             "nor in the old place %s" % (name, name, folder, legacy.parent))
-        path = legacy
+        path = repo / ".myagentkit/backends" / (name + ".env")
         relative = path.relative_to(repo).as_posix()
         tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
                                  capture_output=True)
@@ -193,10 +189,16 @@ def load_backend(repo, name):
                 os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
                 for entry in tracked.stdout.split(b"\0") if entry):
             raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
-        if os.path.lexists(path):
-            print("NOTE [review]: backend %s is read from %s, the old place; move it to %s (the "
-                  "old place is read only while projects move)" % (name, path, folder),
-                  file=sys.stderr, flush=True)
+        # After the tracked check: on a case-sensitive filesystem a case variant of a tracked
+        # file does not exist, and it must still be refused as tracked.
+        if not os.path.lexists(path):
+            # Named in full: the old place alone sent the owner to put a credential file
+            # inside the repository, the place the kit is moving away from (#277).
+            raise ValueError("backend %s: %s.env is not in the backend folder %s (MYAGENTKIT_BACKENDS_DIR) "
+                             "nor in the old place %s" % (name, name, folder, path.parent))
+        print("NOTE [review]: backend %s is read from %s, the old place; move it to %s (the "
+              "old place is read only while projects move)" % (name, path, folder),
+              file=sys.stderr, flush=True)
     try:
         if path.is_symlink() or not os.path.isfile(path):
             raise ValueError("backend %s: %s cannot be read: expected a regular file" % (name, path))
@@ -381,11 +383,16 @@ def main(argv=None):
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
     if author:
         chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
-    if same:
+    def same_tier(provider, same):
+        # For whichever reviewer runs: a substitute of the author's tier (the quota switch,
+        # --fallback) runs under the exception as the primary does, recorded and printed.
         chain["same_tier_exception"] = exception
         print("REVIEW [same tier]: author %s and reviewer %s model %s are one tier, under "
               "REVIEW_SAME_TIER_EXCEPTION (%s); the owner reads the diff before the merge."
-              % (", ".join(same), names[args.reviewer], pins[args.reviewer], exception), flush=True)
+              % (", ".join(same), names[provider], pins[provider], exception), flush=True)
+
+    if same:
+        same_tier(args.reviewer, same)
     if os.environ.get("REVIEW_SHADOW") == "1":
         # Marked where a later reader looks: the chain record and the console. A variable left
         # exported after a shadow run turns every later review into one, so the line says so.
@@ -466,8 +473,11 @@ def main(argv=None):
             attempt["error_after_result"] = str(error)
         chain["attempts"].append(attempt)
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
+        if result.get("failure_kind") == "checkout_unverified":
+            chain["checkout_unverified"] = result.get("error")  # the adapter's own look
         try:
-            changed, unread = claude_bridge.snapshot(repo, scope, ref) != original, None
+            # A refusal now (a dirty tree for a reference review, a moved HEAD) is a change.
+            changed, unread = claude_bridge.recheck(repo, scope, ref) != original, None
         except (OSError, ValueError, claude_bridge.BridgeError) as caught:
             changed, unread = False, caught
         if changed or unread:
@@ -532,6 +542,9 @@ def main(argv=None):
             chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (%s)"
                                          % (names[other], pins[other], author))
             eligible = False
+        substitute_same = [value for value in authors if eligible and tier(value) == tier(pins[other])]
+        if substitute_same:
+            chain["same_tier_exception"] = exception  # in the checkpoint before the substitute runs
         checkpoint(retry)  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
             # The result stands only when the chain completed; after a stale_checkout it did not.
@@ -561,6 +574,8 @@ def main(argv=None):
             print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
                   "passed, so configured %s model %s runs once instead."
                   % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
+        if substitute_same:
+            same_tier(other, substitute_same)
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
         queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)
