@@ -13,7 +13,8 @@ the timing is written. The reviewer reads this file; running a review is
 session, and the working mode's table names who takes it (`docs/WORKFLOW.md`, "Working modes,
 by name"): in solo, a tier of the same family at least the author's: a stronger tier, or, when
 the author is the family's top tier, that tier again in a fresh session at an effort equal to
-or above the author's; in cross, the other family by the direction rule. A lower tier's review
+or above the author's, high at most, since a review never runs at xhigh or max (owner decision
+64, 2026-10-19); in cross, the other family by the direction rule. A lower tier's review
 of a higher tier's work is an extra opinion only, never the required review alone. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
 self-review was in the same session, not a fresh one (`docs/research/ai-review-workflows.md`,
@@ -23,7 +24,7 @@ rule is written; other documents point here. One family is enough; a second vend
 measurement says how much another tier of the same family adds. The lead names the author's
 model in `MYAGENTKIT_AUTHOR`, and for a top-tier author its effort in
 `MYAGENTKIT_AUTHOR_EFFORT`; `scripts/review.sh` then refuses a reviewer pin of the author's tier
-(the top tier at the author's effort or above excepted) or of a weaker tier, blocks such a
+(the top tier at the author's effort or above, high at most, excepted) or of a weaker tier, blocks such a
 substitute, and records the author in the chain and the usage record. Without the variable the
 lead checks independence before launch. A project's copy states this rule here only: an
 upgrade replaces this whole section and deletes every other statement of who reviews whom,

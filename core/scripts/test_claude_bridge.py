@@ -6793,7 +6793,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='high',
                                    REVIEW_EFFORT='medium'), 'review effort medium is below'),
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='xhigh',
-                                   REVIEW_EFFORT='high'), 'review effort high is below')):
+                                   REVIEW_EFFORT='medium'), 'at high for an author above it')):
             with self.subTest(extra=extra):
                 result = self.run_wrapper('--uncommitted', **dict(fable, **extra))
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -6808,6 +6808,15 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertNotIn('same_tier_exception', chain)
         usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
         self.assertEqual((usage['task']['author'], usage['task']['author_effort']), ('claude-fable-5-1', 'medium'))
+        # Owner decision 64: the requirement is capped at high, so an xhigh or max author's own tier
+        # at high is the required review.
+        for author_effort in ('xhigh', 'max'):
+            result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-fable-5-1', REVIEW_EFFORT='high',
+                                      MYAGENTKIT_AUTHOR_EFFORT=author_effort, MYAGENTKIT_TASK_ID='top-' + author_effort,
+                                      **fable)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+            self.assertEqual(chain['top_tier_review'], {'author_effort': author_effort, 'effort': 'high'})
         result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-opus-5-5', REVIEW_SHADOW='1',
                                   MYAGENTKIT_TASK_ID='extra-opinion', **fable)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

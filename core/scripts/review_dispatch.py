@@ -175,7 +175,8 @@ def judge(model, author, effort):
     "Invariant", owner decision 63): ("below", why) for a weaker tier of the author's family, an
     extra opinion only; ("same", why) for the author's tier below the top, the
     REVIEW_SAME_TIER_EXCEPTION case; ("top", why) for the author's top tier, a fresh session's
-    review, why None when the effort is the author's or above; (None, None) for any other."""
+    review, why None when the effort is the author's or above, capped at high, since a review never
+    runs at xhigh or max (owner decision 64); (None, None) for any other."""
     mine, theirs = tier_rank(model), tier_rank(author)
     if tier(model) == tier(author) and theirs and theirs[1] == theirs[2]:
         named = os.environ.get(AUTHOR_EFFORT_ENV, "").strip().lower()
@@ -183,10 +184,12 @@ def judge(model, author, effort):
             return "top", ("author %s is the top tier of its family, so its own tier reviews it in a fresh "
                            "session at the author's effort or above: set %s to the author's effort (%s)"
                            % (author, AUTHOR_EFFORT_ENV, ", ".join(EFFORTS)))
-        if EFFORTS.index(effort) < EFFORTS.index(named):
+        needed = min(EFFORTS.index(named), EFFORTS.index("high"))
+        if EFFORTS.index(effort) < needed:
             return "top", ("review effort %s is below author %s's effort %s: the top tier reviews its own "
-                           "tier at the author's effort or above (a review runs at low, medium or high), "
-                           "or the other family reviews it (--reviewer)" % (effort, author, named))
+                           "tier at the author's effort or above, at high for an author above it (a review "
+                           "runs at low, medium or high), or the other family reviews it (--reviewer)"
+                           % (effort, author, named))
         return "top", None
     if tier(model) == tier(author):
         stronger = [tier_name(theirs[0], name) for name in TIER_LADDERS[theirs[0]][theirs[1] + 1:]
@@ -198,7 +201,7 @@ def judge(model, author, effort):
                         % (author, tier(author), model, " or ".join(stronger)))
     if mine and theirs and mine[0] == theirs[0] and mine[1] < theirs[1]:
         ladder = [tier_name(theirs[0], name) for name in TIER_LADDERS[theirs[0]]]
-        allowed = ("%s at %s's effort or above, in a fresh session" % (ladder[-1], author)
+        allowed = ("%s at %s's effort or above (high at most), in a fresh session" % (ladder[-1], author)
                    if theirs[1] == theirs[2] else " or ".join(ladder[theirs[1] + 1:]))
         return "below", ("reviewer model %s is a weaker tier than author %s: a lower tier's review of a "
                          "higher tier's work is an extra opinion only, never the required review "
