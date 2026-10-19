@@ -15,7 +15,8 @@ by name"): in solo, a tier of the same family at least the author's: a stronger 
 the author is the family's top tier, that tier again in a fresh session; in cross, the other
 family by the direction rule. Every required review runs at an effort equal to or above the
 author's, high at most, since a review never runs at xhigh or max (owner decisions 64 and 65,
-2026-10-19); one tier's ids of different versions are one tier (gpt-6-astra and gpt-6.1-astra,
+2026-10-19), and an author's effort nobody named counts as high (owner decision 66,
+2026-10-20); one tier's ids of different versions are one tier (gpt-6-astra and gpt-6.1-astra,
 decision 65). A lower tier's review
 of a higher tier's work is an extra opinion only, never the required review alone. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
@@ -24,10 +25,10 @@ self-review was in the same session, not a fresh one (`docs/research/ai-review-w
 rule is written; other documents point here. One family is enough; a second vendor
 (`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. No published
 measurement says how much another tier of the same family adds. The lead names the author's
-model in `MYAGENTKIT_AUTHOR` and its effort in `MYAGENTKIT_AUTHOR_EFFORT`; `scripts/review.sh`
-then refuses a reviewer pin of the author's tier (the top tier excepted) or of a weaker tier, and
-a review below the author's effort (high at most) or with that effort unnamed, blocks such a
-substitute, and records the author in the chain and the usage record. Without the variable the
+model in `MYAGENTKIT_AUTHOR` and its effort in `MYAGENTKIT_AUTHOR_EFFORT` (high when unset);
+`scripts/review.sh` then refuses a reviewer pin of the author's tier (the top tier excepted) or
+of a weaker tier, and a review named below the author's effort (with none named, the review runs
+at it, high at most), blocks such a substitute, and records the author in the chain and the usage record. Without the variable the
 lead checks independence before launch. A project's copy states this rule here only: an
 upgrade replaces this whole section and deletes every other statement of who reviews whom,
 in this file and in `AGENTS.md`, rather than keeping an older paragraph beside it.

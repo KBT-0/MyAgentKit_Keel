@@ -18,9 +18,9 @@ the solo mode `REVIEW_CLAUDE_MODEL` is pinned to the tier that did not write the
 second vendor is pluggable, never required. **You may be the author here.** If this session
 wrote the diff, the reviewer is at least your tier, whatever the default says: a stronger
 tier, or your own top tier in a fresh session (`docs/REVIEW_GATE.md`, "Invariant"); set the
-reviewer model pin and check it before launch. With `MYAGENTKIT_AUTHOR` and
-`MYAGENTKIT_AUTHOR_EFFORT` set, `review.sh` refuses any other pin and a review below your
-effort. Failing
+reviewer model pin and check it before launch. With `MYAGENTKIT_AUTHOR` set, `review.sh`
+refuses any other pin and a review below your effort (`MYAGENTKIT_AUTHOR_EFFORT`, high when
+unset). Failing
 over to the other configured reviewer happens only when the owner asked for it and
 `--fallback` is passed; the default is no failover. Without `--fallback` the review simply
 fails; record it and continue. If a fallback authored the patch, its findings are advisory,

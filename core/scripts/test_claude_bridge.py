@@ -6827,18 +6827,21 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                               'Pin claude-fable at claude-fable-5-1\'s effort or above'),
                              (dict(REVIEW_CLAUDE_MODEL='claude-sonnet-5', MYAGENTKIT_AUTHOR='claude-opus-5'),
                               'Pin claude-fable,'),
-                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1'), 'set MYAGENTKIT_AUTHOR_EFFORT'),
+                             # Owner decision 66: an unnamed author effort counts as high.
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', REVIEW_EFFORT='medium'),
+                              "review effort medium is below author claude-fable-5-1's effort high"),
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='high',
                                    REVIEW_EFFORT='medium'), 'review effort medium is below'),
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='xhigh',
                                    REVIEW_EFFORT='medium'), 'at high for an author above it'),
-                             # Owner decision 65: the effort floor holds for every required review,
-                             # and an unnamed author effort is refused, not passed.
+                             # Owner decision 65: the effort floor holds for every required review;
+                             # decision 66: unnamed, the author's effort is high.
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR='claude-opus-5-5',
                                    MYAGENTKIT_AUTHOR_EFFORT='high', REVIEW_EFFORT='low'),
                               "review effort low is below author claude-opus-5-5's effort high"),
-                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR='claude-opus-5-5'),
-                              'set MYAGENTKIT_AUTHOR_EFFORT')):
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR='claude-opus-5-5',
+                                   REVIEW_EFFORT='medium'),
+                              "review effort medium is below author claude-opus-5-5's effort high")):
             with self.subTest(extra=extra):
                 result = self.run_wrapper('--uncommitted', **dict(fable, **extra))
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -6862,6 +6865,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
             self.assertEqual(chain['top_tier_review'], {'author_effort': author_effort, 'effort': 'high'})
+        # Owner decision 66: with the author's effort unnamed and no review effort named, the
+        # required review runs at high, not refused; for a top-tier author too.
+        for author, label in (('claude-opus-5-5', 'unnamed-opus'), ('claude-fable-5-1', 'unnamed-fable')):
+            result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-fable-5-1',
+                                      MYAGENTKIT_TASK_ID=label, **dict(fable, MYAGENTKIT_AUTHOR=author))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('REVIEW [about to run]: claude model claude-fable-5-1, effort high', result.stdout)
+            chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+            self.assertEqual(chain.get('top_tier_review'), {'author_effort': 'high', 'effort': 'high'}
+                             if author == 'claude-fable-5-1' else None)
         result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-opus-5-5', REVIEW_SHADOW='1',
                                   MYAGENTKIT_TASK_ID='extra-opinion', **fable)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -6882,10 +6895,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
         self.assertEqual(chain['top_tier_review'], {'author_effort': 'high', 'effort': 'high'})
         self.assertIn('REVIEW [top tier]:', result.stdout)
-        # rsel3: a top-tier substitute below the author's effort, or with it unnamed, is blocked
-        # with its reason, never run nor crashed on the missing effort. Only a shadow primary
-        # reaches it: decision 65 refuses a required primary at that effort before it runs.
-        for label, extra in (('sub-top-unset', dict(MYAGENTKIT_AUTHOR_EFFORT='', REVIEW_SHADOW='1')),
+        # rsel3: a top-tier substitute below the author's effort (named, or unnamed and so high,
+        # decision 66) is blocked with its reason, never run. Only a shadow primary reaches it:
+        # decision 65 refuses a required primary at that effort before it runs.
+        for label, extra in (('sub-top-unset', dict(MYAGENTKIT_AUTHOR_EFFORT='', REVIEW_EFFORT='medium',
+                                                    REVIEW_SHADOW='1')),
                              ('sub-top-medium', dict(REVIEW_EFFORT='medium', REVIEW_SHADOW='1'))):
             with self.subTest(label=label):
                 result, chain = self.dispatch_result('codex', fallback=False, MYAGENTKIT_TASK_ID=label,
@@ -6893,8 +6907,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertNotIn('Traceback', result.stdout + result.stderr)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
-                self.assertIn('MYAGENTKIT_AUTHOR_EFFORT' if label.endswith('unset') else 'review effort medium is below',
-                              chain['fallback_blocked'])
+                self.assertIn('review effort medium is below', chain['fallback_blocked'])
                 self.assertNotIn('top_tier_review', chain)
         # rsel3: when the top tier's own review fails and the other family substitutes, the record
         # describes the substitute, not the failed primary.
