@@ -186,6 +186,10 @@ fi
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
   miss "Python 3.11 or newer as python3, python or py (the review tooling needs it)" "install Python 3.11+"
 fi
+# Told, not MISSING: without ShellCheck the gate prints NOT RUN [shellcheck] and still passes,
+# and SC2028, SC2086 and ShellCheck's errors are then checked by nobody (#155).
+command -v shellcheck >/dev/null 2>&1 ||
+  echo "NOTE: shellcheck is not installed, so the gate's ShellCheck step does not run; install it: apt install shellcheck, brew install shellcheck or winget install koalaman.shellcheck"
 # Native Windows Python (os.name 'nt') runs the gate lock, a review and the worktree clean-up
 # its own way, under Git for Windows' sh (or MSYS2, Cygwin). Under any other sh (WSL, where a
 # Windows python.exe on PATH runs through interop) it is handed POSIX paths and takes the

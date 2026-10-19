@@ -307,6 +307,15 @@ class SectionPointerTests(unittest.TestCase):
         workflow = (ROOT / 'core/.github/workflows/ci.yml').read_text(encoding='utf-8')
         self.assertRegex(workflow, r'uses: actions/checkout@v\d+\n(?:\s*#.*\n)*\s*with:\n\s*fetch-depth: 0\n')
 
+    def test_a_missing_shellcheck_is_reported_with_its_install_command(self):
+        # The gate's NOT RUN came on every run with no fix, and doctor called the host ready (#155).
+        install = 'apt install shellcheck, brew install shellcheck or winget install koalaman.shellcheck'
+        gate = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        self.assertRegex(gate, r'NOT RUN \[shellcheck\][^\n]*\n\s*echo " *Install it: ' + re.escape(install))
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+        self.assertIn('command -v shellcheck >/dev/null 2>&1 ||\n  echo "NOTE: shellcheck is not installed', doctor)
+        self.assertIn(install, doctor)
+
     def test_every_named_section_exists_in_the_file_named(self):
         # A pointer such as (`docs/WORKFLOW.md`, "Writing a gate") sends an agent to one section
         # instead of the whole file; a renamed heading would send it nowhere.

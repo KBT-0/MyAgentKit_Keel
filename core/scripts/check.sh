@@ -789,7 +789,9 @@ select_shellcheck_files() {
   done
 }
 if ! command -v shellcheck >/dev/null 2>&1; then
+  # The install line rides along: a NOT RUN printed on every run, with no fix, was read as noise (#155).
   echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
+  echo "                      Install it: apt install shellcheck, brew install shellcheck or winget install koalaman.shellcheck."
 else
   shell_files=$(tr '\0' '\n' < "$filelist" | select_shellcheck_files)
   sc_status=0
