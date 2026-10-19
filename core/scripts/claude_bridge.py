@@ -175,6 +175,8 @@ SPLIT_HINT_LINES = 400
 # Set by review_dispatch for an attempt the author's tier runs under REVIEW_SAME_TIER_EXCEPTION:
 # the usage record keeps it, and prior_rounds() allows that exception one round per label.
 SAME_TIER_ENV = "MYAGENTKIT_REVIEW_SAME_TIER"
+# The author's effort, which a top-tier author's own-tier review must match (owner decision 63).
+AUTHOR_EFFORT_ENV = "MYAGENTKIT_AUTHOR_EFFORT"
 
 
 def budgeted(diff: bytes) -> tuple[int, int]:
@@ -1213,6 +1215,8 @@ def measure(claims: str | None) -> dict:
         # The lead's claim of who wrote the patch (KARARLAR B01-1: accepted rate per author and
         # reviewer pair); review_dispatch refuses the author's tier as reviewer.
         measured["author"] = os.environ["MYAGENTKIT_AUTHOR"].strip()
+    if os.environ.get(AUTHOR_EFFORT_ENV, "").strip():
+        measured["author_effort"] = os.environ[AUTHOR_EFFORT_ENV].strip().lower()
     if os.environ.get(SAME_TIER_ENV):
         measured["same_tier_exception"] = os.environ[SAME_TIER_ENV]  # prior_rounds() allows it one round
     return measured

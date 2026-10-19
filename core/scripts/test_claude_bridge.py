@@ -44,7 +44,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
                       # The lead's author claim: an exported one refused the fixtures' reviewer pin.
-                      'MYAGENTKIT_AUTHOR', 'REVIEW_SAME_TIER_EXCEPTION', 'MYAGENTKIT_ALLOW_SECRET_FILES',
+                      'MYAGENTKIT_AUTHOR', 'MYAGENTKIT_AUTHOR_EFFORT', 'REVIEW_SAME_TIER_EXCEPTION', 'MYAGENTKIT_ALLOW_SECRET_FILES',
                       # Set by the dispatcher for a reviewer under the exception: its own test run
                       # marked the fixture rounds and refused their second one.
                       'MYAGENTKIT_REVIEW_SAME_TIER',
@@ -6779,6 +6779,55 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
         self.assertNotIn('author', chain)
         self.assertNotIn('author', json.loads(Path(chain['attempts'][0]['usage_record']).read_text())['task'])
+
+    def test_the_reviewer_is_at_least_the_author_tier_and_the_top_tier_reviews_its_own(self):
+        # #290, owner decision 63: a weaker tier is refused as the required review, the refusal
+        # naming the allowed pins; the top tier's own review runs in a fresh session at the
+        # author's effort or above and is recorded; a lower tier runs only as a shadow opinion.
+        fable = dict(CLAUDE_CLI_BIN=str(self.fixture), MYAGENTKIT_AUTHOR='claude-fable-5-1')
+        for extra, named in ((dict(REVIEW_CLAUDE_MODEL='claude-opus-5-5', MYAGENTKIT_AUTHOR_EFFORT='high'),
+                              'Pin claude-fable at claude-fable-5-1\'s effort or above'),
+                             (dict(REVIEW_CLAUDE_MODEL='claude-sonnet-5', MYAGENTKIT_AUTHOR='claude-opus-5'),
+                              'Pin claude-fable,'),
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1'), 'set MYAGENTKIT_AUTHOR_EFFORT'),
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='high',
+                                   REVIEW_EFFORT='medium'), 'review effort medium is below'),
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='xhigh',
+                                   REVIEW_EFFORT='high'), 'review effort high is below')):
+            with self.subTest(extra=extra):
+                result = self.run_wrapper('--uncommitted', **dict(fable, **extra))
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(named, result.stdout)
+                self.assertFalse((self.repo / '.myagentkit/usage').exists())
+        result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-fable-5-1',
+                                  MYAGENTKIT_AUTHOR_EFFORT='medium', REVIEW_EFFORT='high', **fable)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('REVIEW [top tier]:', result.stdout)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertEqual(chain['top_tier_review'], {'author_effort': 'medium', 'effort': 'high'})
+        self.assertNotIn('same_tier_exception', chain)
+        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+        self.assertEqual((usage['task']['author'], usage['task']['author_effort']), ('claude-fable-5-1', 'medium'))
+        result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-opus-5-5', REVIEW_SHADOW='1',
+                                  MYAGENTKIT_TASK_ID='extra-opinion', **fable)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIs(json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])['shadow'], True)
+
+    def test_a_substitute_stands_to_the_author_as_the_primary_does(self):
+        # #290: the quota switch to Claude is blocked for a weaker tier than the author's, and the
+        # top tier's own substitute runs at the author's effort or above, recorded.
+        fable = dict(CODEX_FIXTURE_CASE='quota', MYAGENTKIT_AUTHOR='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='high',
+                     REVIEW_EFFORT='high')
+        result, chain = self.dispatch_result('codex', fallback=False, MYAGENTKIT_TASK_ID='sub-below', **fable)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+        self.assertIn('a weaker tier than author claude-fable-5-1', chain['fallback_blocked'])
+        result, chain = self.dispatch_result('codex', fallback=False, MYAGENTKIT_TASK_ID='sub-top',
+                                             REVIEW_CLAUDE_MODEL='claude-fable-5-1', **fable)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
+        self.assertEqual(chain['top_tier_review'], {'author_effort': 'high', 'effort': 'high'})
+        self.assertIn('REVIEW [top tier]:', result.stdout)
 
     def test_a_substitute_of_the_author_tier_is_blocked(self):
         # KARARLAR B01 (1) with lead decision 7: a used-up Codex quota switches to Claude, but never

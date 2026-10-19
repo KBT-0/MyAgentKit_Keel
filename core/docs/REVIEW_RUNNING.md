@@ -29,13 +29,18 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700 (3600 for a high-effort Codex review), at most 3600 |
 | `REVIEW_MAX_TURNS` | Claude turns per attempt |
-| `REVIEW_SHADOW` | `1` measures a reviewer configuration; its verdict closes nothing |
+| `REVIEW_SHADOW` | `1` measures a reviewer configuration, or runs a weaker tier's extra opinion; its verdict closes nothing |
 | `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
 
 `MYAGENTKIT_AUTHOR` names the author's model (`claude-opus-5`, or `claude/claude-opus-5`):
-a reviewer pin of the author's tier is refused with exit 2 before any model runs, a substitute
-of that tier is blocked, and the chain and the usage record carry it as `author`. Without it
-the lead checks the author's model before launch (`docs/REVIEW_GATE.md`, "Invariant").
+a reviewer pin of the author's tier is refused with exit 2 before any model runs, and so is a
+weaker tier of the author's family, whose review runs only as an extra opinion
+(`REVIEW_SHADOW=1`); a substitute of either is blocked, and the chain and the usage record
+carry it as `author`. When the author is its family's top tier, its own tier reviews at an
+effort equal to or above `MYAGENTKIT_AUTHOR_EFFORT`, the author's effort, which the run then
+needs; the chain records the pair as `top_tier_review` and the usage record as
+`author_effort`. Without `MYAGENTKIT_AUTHOR` the lead checks the author's model before launch
+(`docs/REVIEW_GATE.md`, "Invariant").
 
 Exit 2 means a wrong round was refused: keyless dispositions, an earlier archive missing or
 edited, a round that does not continue its label, a diff over 400000 bytes with its rounds
