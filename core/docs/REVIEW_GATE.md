@@ -12,9 +12,11 @@ the timing is written. The reviewer reads this file; running a review is
 **The session that wrote a patch never reviews or approves it.** The review runs in a FRESH
 session, and the working mode's table names who takes it (`docs/WORKFLOW.md`, "Working modes,
 by name"): in solo, a tier of the same family at least the author's: a stronger tier, or, when
-the author is the family's top tier, that tier again in a fresh session at an effort equal to
-or above the author's, high at most, since a review never runs at xhigh or max (owner decision
-64, 2026-10-19); in cross, the other family by the direction rule. A lower tier's review
+the author is the family's top tier, that tier again in a fresh session; in cross, the other
+family by the direction rule. Every required review runs at an effort equal to or above the
+author's, high at most, since a review never runs at xhigh or max (owner decisions 64 and 65,
+2026-10-19); one tier's ids of different versions are one tier (gpt-6-astra and gpt-6.1-astra,
+decision 65). A lower tier's review
 of a higher tier's work is an extra opinion only, never the required review alone. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
 self-review was in the same session, not a fresh one (`docs/research/ai-review-workflows.md`,
@@ -22,9 +24,9 @@ self-review was in the same session, not a fresh one (`docs/research/ai-review-w
 rule is written; other documents point here. One family is enough; a second vendor
 (`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. No published
 measurement says how much another tier of the same family adds. The lead names the author's
-model in `MYAGENTKIT_AUTHOR`, and for a top-tier author its effort in
-`MYAGENTKIT_AUTHOR_EFFORT`; `scripts/review.sh` then refuses a reviewer pin of the author's tier
-(the top tier at the author's effort or above, high at most, excepted) or of a weaker tier, blocks such a
+model in `MYAGENTKIT_AUTHOR` and its effort in `MYAGENTKIT_AUTHOR_EFFORT`; `scripts/review.sh`
+then refuses a reviewer pin of the author's tier (the top tier excepted) or of a weaker tier, and
+a review below the author's effort (high at most) or with that effort unnamed, blocks such a
 substitute, and records the author in the chain and the usage record. Without the variable the
 lead checks independence before launch. A project's copy states this rule here only: an
 upgrade replaces this whole section and deletes every other statement of who reviews whom,

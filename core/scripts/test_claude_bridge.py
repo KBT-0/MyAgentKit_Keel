@@ -410,7 +410,8 @@ except ValueError as error:
                 repo = self.project(tmp)
                 (repo / 'real.txt').write_bytes(b'changed\n')
                 result = self.review(repo, '--reviewer', primary, '--fallback', STUB_QUOTA=primary,
-                                     MYAGENTKIT_AUTHOR='claude-sonnet-5' if primary == 'claude' else 'gpt-5.5')
+                                     MYAGENTKIT_AUTHOR='claude-sonnet-5' if primary == 'claude' else 'gpt-5.5',
+                                     MYAGENTKIT_AUTHOR_EFFORT='low')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 for provider, model in (('codex', 'codex-fixture'), ('claude', 'claude-fixture')):
                     spend = 'REVIEW [about to run]: %s model %s, effort medium' % (provider, model)
@@ -765,7 +766,7 @@ class BridgeTests(unittest.TestCase):
                                               'ANTHROPIC_AUTH_TOKEN=fixture-token\nANTHROPIC_MODEL=' + model + '\n')
             out = io.StringIO()
             with self.subTest(author=author, model=model), \
-                    patch.dict(os.environ, self.review_env(MYAGENTKIT_AUTHOR=author)), \
+                    patch.dict(os.environ, self.review_env(MYAGENTKIT_AUTHOR=author, MYAGENTKIT_AUTHOR_EFFORT='low')), \
                     patch.object(review_dispatch.codex_bridge, 'main', side_effect=unavailable), \
                     patch.object(review_dispatch.claude_bridge, 'main', side_effect=completed) as fallback, \
                     redirect_stdout(out):
@@ -6074,7 +6075,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 return 5
             return main
         with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='lead-key',
-                                                   MYAGENTKIT_AUTHOR='claude/claude-sonnet-5')), \
+                                                   MYAGENTKIT_AUTHOR='claude/claude-sonnet-5',
+                                                   MYAGENTKIT_AUTHOR_EFFORT='low')), \
                 patch.object(review_dispatch.claude_bridge, 'main', adapter('claude')), \
                 patch.object(review_dispatch.codex_bridge, 'main', adapter('codex')), redirect_stdout(io.StringIO()):
             review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
@@ -6102,7 +6104,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
     def test_unavailable_claude_uses_codex_only_with_fallback(self):
         result = self.run_wrapper('--uncommitted', '--fallback', FIXTURE_CASE='quota',
-                                  MYAGENTKIT_AUTHOR='claude-sonnet-5',
+                                  MYAGENTKIT_AUTHOR='claude-sonnet-5', MYAGENTKIT_AUTHOR_EFFORT='low',
                                   CLAUDE_CLI_BIN=str(self.fixture),
                                   REVIEW_CLAUDE_MODEL='claude-opus-5',
                                   REVIEW_CODEX_MODEL='codex-fixture-model',
@@ -6122,6 +6124,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                    REVIEW_CODEX_MODEL='codex-fixture-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task',
                    MYAGENTKIT_AUTHOR='claude-sonnet-5' if primary == 'claude' else 'gpt-5.5',
+                   MYAGENTKIT_AUTHOR_EFFORT='low',
                    REVIEW_ROUND_EXCEPTION='fixture: the chain tests run more than two rounds')
         env.update(extra)
         result = self.run_wrapper('--reviewer', primary, *(['--fallback'] if fallback else []), **env)
@@ -6801,7 +6804,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertIn('the author never reviews its own patch', result.stdout)
                 self.assertIn('docs/REVIEW_GATE.md', result.stdout)
                 self.assertFalse((self.repo / '.myagentkit/usage').exists())
-        result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR='claude-sonnet-5', **env)
+        result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR='claude-sonnet-5', MYAGENTKIT_AUTHOR_EFFORT='low', **env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
         self.assertEqual(chain['author'], 'claude-sonnet-5')
@@ -6826,7 +6829,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='high',
                                    REVIEW_EFFORT='medium'), 'review effort medium is below'),
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='xhigh',
-                                   REVIEW_EFFORT='medium'), 'at high for an author above it')):
+                                   REVIEW_EFFORT='medium'), 'at high for an author above it'),
+                             # Owner decision 65: the effort floor holds for every required review,
+                             # and an unnamed author effort is refused, not passed.
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR='claude-opus-5-5',
+                                   MYAGENTKIT_AUTHOR_EFFORT='high', REVIEW_EFFORT='low'),
+                              "review effort low is below author claude-opus-5-5's effort high"),
+                             (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', MYAGENTKIT_AUTHOR='claude-opus-5-5'),
+                              'set MYAGENTKIT_AUTHOR_EFFORT')):
             with self.subTest(extra=extra):
                 result = self.run_wrapper('--uncommitted', **dict(fable, **extra))
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -6870,6 +6880,42 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
         self.assertEqual(chain['top_tier_review'], {'author_effort': 'high', 'effort': 'high'})
         self.assertIn('REVIEW [top tier]:', result.stdout)
+        # rsel3: a top-tier substitute below the author's effort, or with it unnamed, is blocked
+        # with its reason, never run nor crashed on the missing effort. Only a shadow primary
+        # reaches it: decision 65 refuses a required primary at that effort before it runs.
+        for label, extra in (('sub-top-unset', dict(MYAGENTKIT_AUTHOR_EFFORT='', REVIEW_SHADOW='1')),
+                             ('sub-top-medium', dict(REVIEW_EFFORT='medium', REVIEW_SHADOW='1'))):
+            with self.subTest(label=label):
+                result, chain = self.dispatch_result('codex', fallback=False, MYAGENTKIT_TASK_ID=label,
+                                                     REVIEW_CLAUDE_MODEL='claude-fable-5-1', **dict(fable, **extra))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn('Traceback', result.stdout + result.stderr)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+                self.assertIn('MYAGENTKIT_AUTHOR_EFFORT' if label.endswith('unset') else 'review effort medium is below',
+                              chain['fallback_blocked'])
+                self.assertNotIn('top_tier_review', chain)
+        # rsel3: when the top tier's own review fails and the other family substitutes, the record
+        # describes the substitute, not the failed primary.
+        result, chain = self.dispatch_result('claude', MYAGENTKIT_TASK_ID='sub-other', REVIEW_CLAUDE_MODEL='claude-fable-5-1',
+                                             **dict(fable, FIXTURE_CASE='quota', CODEX_FIXTURE_CASE='accept'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude', 'codex'])
+        self.assertNotIn('top_tier_review', chain)
+
+    def test_one_ladder_tier_in_any_version_is_one_tier(self):
+        # Owner decision 65: gpt-6-astra and gpt-6.1-astra are one tier, so the top tier's effort
+        # floor and the same-tier refusal hold across a version bump; Claude ids go by family name.
+        import review_dispatch
+        os.environ['MYAGENTKIT_AUTHOR_EFFORT'] = 'high'
+        self.assertEqual(review_dispatch.tier('gpt-6.1-astra'), review_dispatch.tier('openai/gpt-6-astra'))
+        self.assertEqual(review_dispatch.tier('gpt-5.5'), 'gpt-5.5')
+        self.assertEqual(review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'high'), ('top', None))
+        kind, why = review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'low')
+        self.assertEqual(kind, 'top')
+        self.assertIn('review effort low is below', why)
+        self.assertEqual(review_dispatch.judge('gpt-6-sol', 'gpt-6.1-sol', 'high')[0], 'same')
+        self.assertEqual(review_dispatch.judge('claude-opus-5', 'claude-opus-5-5', 'high')[0], 'same')
+        self.assertEqual(review_dispatch.judge('gpt-6-astra', 'gpt-6.1-sol', 'high'), (None, None))
 
     def test_a_substitute_of_the_author_tier_is_blocked(self):
         # KARARLAR B01 (1) with lead decision 7: a used-up Codex quota switches to Claude, but never

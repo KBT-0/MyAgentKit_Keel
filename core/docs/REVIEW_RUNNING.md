@@ -36,9 +36,10 @@ with a note to move it (KARARLAR D09 inv2#80).
 a reviewer pin of the author's tier is refused with exit 2 before any model runs, and so is a
 weaker tier of the author's family, whose review runs only as an extra opinion
 (`REVIEW_SHADOW=1`); a substitute of either is blocked, and the chain and the usage record
-carry it as `author`. When the author is its family's top tier, its own tier reviews at an
-effort equal to or above `MYAGENTKIT_AUTHOR_EFFORT`, the author's effort, which the run then
-needs; high meets an xhigh or max author, since a review never runs above high; the chain records the pair as `top_tier_review` and the usage record as
+carry it as `author`. With it the run needs `MYAGENTKIT_AUTHOR_EFFORT`, the author's effort,
+and refuses a review below it (the effort rule is `docs/REVIEW_GATE.md`, "Invariant"); a
+shadow run closes nothing and is not checked. When the author is its family's top tier and its
+own tier reviews, the chain records the pair as `top_tier_review` and the usage record as
 `author_effort`. Without `MYAGENTKIT_AUTHOR` the lead checks the author's model before launch
 (`docs/REVIEW_GATE.md`, "Invariant").
 

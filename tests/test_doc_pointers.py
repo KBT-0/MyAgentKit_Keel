@@ -512,8 +512,16 @@ class SectionPointerTests(unittest.TestCase):
         for path in [*ROOT.glob('core/**/*'), *ROOT.glob('plugins/**/*')]:
             if path.is_file() and path.suffix in ('.md', '.py', '.sh'):
                 self.assertNotIn('decisions.md', path.read_text(encoding='utf-8'), path)
-        self.assertIn("names an entry of the kit maintainer's decision log, which the kit does not ship",
-                      ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split()))
+        workflow = ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split())
+        self.assertIn("names an entry of the kit maintainer's decision log, which the kit does not ship", workflow)
+        # rsel3: the top tier reviews itself in a fresh session (Invariant), so WORKFLOW never sends
+        # a review to "another tier" or "the tier that did not write the change"; the effort rule
+        # holds for every required review and is written once, in REVIEW_GATE.
+        self.assertNotIn('another tier of the same family', workflow)
+        self.assertNotIn('the tier that did not write the change', workflow)
+        self.assertNotIn("effort or above, high at most", workflow)
+        self.assertIn("Every required review runs at an effort equal to or above the author's, high at most",
+                      ' '.join((ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8').split()))
 
     def test_setup_docs_match_solo_mode_and_the_shipped_files(self):
         read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
