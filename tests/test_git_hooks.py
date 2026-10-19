@@ -142,6 +142,26 @@ class GitHookTests(unittest.TestCase):
             merge = git('merge', '-q', '--no-edit', 'side')
             self.assertIn('.githooks/post-merge.project has no #! line', merge.stderr)
 
+    def test_a_clean_merge_runs_the_projects_merge_hook_and_not_its_commit_hook(self):
+        # pre-merge-commit hands over to pre-commit --merge, which ran pre-commit.project too:
+        # a hook git never runs on a clean merge (#153).
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for name in ('pre-commit', 'pre-merge-commit'):
+                own = root / '.githooks' / (name + '.project')
+                own.write_text('#!/bin/sh\necho %s >> .git/project-runs\n' % name, encoding='utf-8', newline='\n')
+                own.chmod(0o755)
+            git('add', '-A')
+            git('commit', '-q', '-m', 'project hooks')
+            git('checkout', '-q', '-b', 'side', 'HEAD~1')
+            (root / 'side').write_text('s\n', encoding='utf-8')
+            git('add', 'side')
+            git('commit', '-q', '-m', 'side')
+            git('checkout', '-q', 'main')
+            (root / '.git/project-runs').unlink()
+            git('merge', '-q', '--no-edit', 'side')
+            self.assertEqual((root / '.git/project-runs').read_text(encoding='utf-8').split(), ['pre-merge-commit'])
+
     def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
         # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit)
         # never takes it, whatever the merge brings in.
