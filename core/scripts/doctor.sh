@@ -294,6 +294,31 @@ if [ -f .claude/settings.json ] && grep -q '"onFailure"' .claude/settings.json 2
   fi
 fi
 
+# --- guard hooks the committed settings do not register (Claude Code overlay) ---------
+# A worktree worker runs HEAD's .claude/settings.json (spawn_worker.sh; the working file only
+# when HEAD has none): a sync copied five guards, the merged settings stayed uncommitted, and
+# every worker ran without them while doctor said ready (#101). Every file under .claude/hooks
+# is named in the overlay's settings (py.sh as the wrapper, after_compact.txt through cat).
+if [ -d .claude/hooks ]; then
+  if registered=$(git show HEAD:.claude/settings.json 2>/dev/null); then
+    git diff --quiet HEAD -- .claude/settings.json 2>/dev/null ||
+      echo "NOTE: .claude/settings.json differs from the committed one; worktree workers run the committed one, so the owner commits it"
+  else
+    registered=$(cat .claude/settings.json 2>/dev/null)
+  fi
+  for f in .claude/hooks/*; do
+    [ -f "$f" ] || continue
+    case $registered in
+      *"/$f"*) ;;
+      *) miss "$f is not registered in the committed .claude/settings.json (worktree workers run without it)" "add its entry from the kit's overlay settings.json and commit it (the owner's edit, docs/UPDATING.md), or move the file out of .claude/hooks" ;;
+    esac
+  done
+  # Only $CLAUDE_PROJECT_DIR paths: a user-level hook under ~/.claude/hooks is not this checkout's.
+  for f in $(printf '%s\n' "$registered" | grep -o 'PROJECT_DIR}\{0,1\}/\.claude/hooks/[A-Za-z0-9_.-]*' | sed 's|.*/\.claude/|.claude/|' | sort -u); do
+    [ -f "$f" ] || miss ".claude/settings.json registers $f, which does not exist" "sync the kit again, or remove the entry and commit settings.json"
+  done
+fi
+
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.
 # Sources (D02 inv2#145): code.claude.com/docs/en/agent-teams;

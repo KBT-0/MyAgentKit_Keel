@@ -1126,6 +1126,42 @@ class DoctorTests(unittest.TestCase):
             (project / '.githooks/pre-push').write_text('#!/bin/sh\ngit lfs pre-push "$@"\n')
             self.assertEqual(run(), '')
 
+    def test_a_hook_file_the_committed_settings_do_not_register_is_not_ready(self):
+        # #101: a sync copied five guards, settings.json was merged but not committed, and
+        # every worktree worker (which runs the committed settings) ran without them.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            git = lambda *args: subprocess.run(['git', '-C', tmp, '-c', 'user.name=t', '-c', 'user.email=t@t',
+                                                *args], capture_output=True, check=True)
+            git('init', '-q')
+            (project / '.claude/hooks').mkdir(parents=True)
+            settings = project / '.claude/settings.json'
+            entry = '"command": "sh \\"$CLAUDE_PROJECT_DIR/.claude/hooks/%s\\""'
+            write = lambda *names: settings.write_text('{%s}\n' % ', '.join(entry % n for n in names))
+            (project / '.claude/hooks/guard_a.py').write_text('')
+            write('guard_a.py')
+            git('add', '-A')
+            git('commit', '-qm', 'base')
+            run = lambda: self.doctor_section('# --- guard hooks the committed settings', '# On native Windows',
+                                              project, os.environ)
+            self.assertEqual(run(), '')
+            (project / '.claude/hooks/guard_b.py').write_text('')
+            out = run()
+            self.assertIn('MISSING: .claude/hooks/guard_b.py is not registered in the committed '
+                          '.claude/settings.json', out)
+            self.assertEqual(out.count('MISSING:'), 1, out)
+            write('guard_a.py', 'guard_b.py')  # merged, not committed: the workers still miss it
+            out = run()
+            self.assertIn('MISSING: .claude/hooks/guard_b.py is not registered', out)
+            self.assertIn('NOTE: .claude/settings.json differs from the committed one', out)
+            git('commit', '-qam', 'register')
+            self.assertEqual(run(), '')
+            (project / '.claude/hooks/guard_a.py').unlink()
+            out = run()
+            self.assertIn('MISSING: .claude/settings.json registers .claude/hooks/guard_a.py, which does not exist',
+                          out)
+            self.assertEqual(out.count('MISSING:'), 1, out)
+
     def test_missing_mode_helper_names_the_command_not_the_gate(self):
         # Execute the installed required-file checks without bootstrapping an unrelated project.
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
