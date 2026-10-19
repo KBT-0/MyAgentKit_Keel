@@ -7,9 +7,10 @@ loads it whole on its own: in Claude Code, `.claude/rules/state.md` points to it
 under `docs/` is read.
 
 **Started by another agent?** A sub-agent, a reviewer or a session started with a brief is
-bound by the HARD RULES. It skips the reading order and "Duties toward {{OWNER_NAME}}": its
-brief or definition names what to read. It leaves `docs/STATE.md` to the lead and reports to
-the agent that started it.
+bound by the HARD RULES and by the STOP and MENTION ONCE lists in "Duties toward
+{{OWNER_NAME}}", which it raises to the agent that started it. It skips the reading order and
+the rest of that section: its brief or definition names what to read. It leaves
+`docs/STATE.md` to the lead and reports to the agent that started it.
 
 ## What this project is
 

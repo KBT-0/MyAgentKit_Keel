@@ -48,9 +48,9 @@ the rules below exist).
   List the files changed and the tests with their result lines (red and green for a gate
   check), or use a table.
   It always ends with two sections, "Not run / not verified" and "Noticed, not fixed".
+  Write "none" in an empty section. These two sections do not count toward the cap.
 - A plugin's injected style (ponytail's "one runnable check", "at most three short lines")
   never replaces these report rules or the project's test rules (`AGENTS.md`).
-  Write "none" in an empty section. These two sections do not count toward the cap.
 - In a worktree-isolated session run plain commands only, one per call. Claude Code refuses
   a command it cannot prove keeps git inside your worktree: `$(...)` or a variable around a
   program, a loop, `sh -c` or `source` of a string, `flock <lock> <cmd>` when the command

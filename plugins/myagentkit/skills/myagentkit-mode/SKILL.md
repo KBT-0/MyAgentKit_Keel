@@ -13,9 +13,9 @@ above this skill) with `--project <absolute project root>`. The helper records t
 disagreement on reads, and prints the canonical rules. Both records are shared across tools. Do not
 commit.
 
-STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline", in its order
-(`--read-state`, edit the returned PATH, `--replace-state "PATH" --expect SHA256`; on refusal,
-read it again), from the project root. Only a mode switch changes the "Working mode:" line; a
+STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline" (a direct Read and Edit;
+a shell write uses `--read-state`, edit the returned PATH, `--replace-state "PATH" --expect
+SHA256`, from the project root). Only a mode switch changes the "Working mode:" line; a
 mode name from before v0.11 may become `solo`, `cross` or `saver` this way.
 
 If the helper prints an ACTION, show it and stop.

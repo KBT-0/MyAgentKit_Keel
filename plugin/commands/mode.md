@@ -12,9 +12,9 @@ line of `docs/STATE.md`, detects disagreement on reads, and prints the canonical
 files are shared across tools; STATE.md is committed with the next authorized commit. Do not
 commit merely to switch modes. The project root must be the owner's current checkout.
 
-STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline", in its order
-(`--read-state`, edit the returned PATH, `--replace-state "PATH" --expect SHA256`; on refusal,
-read it again). Only a mode switch changes the "Working mode:" line; a mode name from before
+STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline" (a direct Read and Edit;
+a shell write uses `--read-state`, edit the returned PATH, `--replace-state "PATH" --expect
+SHA256`). Only a mode switch changes the "Working mode:" line; a mode name from before
 v0.11 may become `solo`, `cross` or `saver` this way.
 
 If the helper prints an ACTION, show it and stop.

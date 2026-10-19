@@ -81,7 +81,7 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    tool+model trace ("The state, backlog and phase files" says why). Unwritten progress does
    not exist. A next task or a parked item goes to
    `docs/BACKLOG.md`, which is read when the next task is chosen, not every session.
-   Publish session edits through the compare-and-swap protocol below, never by overwriting STATE.md directly.
+   Edit it as `docs/AGENTS.md`, "STATE.md discipline", says, never touching the "Working mode:" line.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it, and go on with work that does not depend on it.
 

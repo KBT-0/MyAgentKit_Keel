@@ -38,7 +38,7 @@ whenever the owner asks what a term means.
 - **sensor**: a deterministic check added to the gate for a class of bug reviewers kept
   finding.
 - **state helper**: `scripts/working_mode.py --read-state` / `--replace-state`, the
-  compare-and-swap way to change `docs/STATE.md` (`docs/AGENTS.md`).
+  compare-and-swap way a shell write changes `docs/STATE.md` (`docs/AGENTS.md`).
 - **token**: the unit the model counts text in and is billed by, roughly a word fragment.
 - **worktree**: a second checkout of the same repository in another folder, so two tasks do
   not touch the same files.
