@@ -37,8 +37,12 @@ version forward: a tool can ship several versions between two passes, so a versi
 sharper baseline than a date. Without a baseline you will rediscover the same things every
 time, spend the budget re-reading them, and bury the one genuinely new item in the noise.
 
-If there is no log, say so, and set today's date and today's versions as the baseline for the
-next pass.
+If the project has no log yet (a new project), the kit's own reports are the baseline:
+`docs/research/README.md` in the kit checkout the bootstrap ran from (or the kit's
+repository) lists each report with its date. Research what changed since the newest date
+there, and read a report's findings before you research its area again. Write the pass,
+with today's date and versions, into the project's new `RESEARCH_LOG.md`; that entry is the
+next pass's baseline.
 
 ## Scope of the search
 

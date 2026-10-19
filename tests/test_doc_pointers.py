@@ -386,6 +386,13 @@ class SectionPointerTests(unittest.TestCase):
             with self.subTest(doc=path.name):
                 self.assertIn('never replaces these', ' '.join(path.read_text(encoding='utf-8').split()))
 
+    def test_a_new_projects_research_pass_starts_from_the_kits_reports(self):
+        # #157: with no project log, every bootstrap ran a full ecosystem pass.
+        protocol = ' '.join((ROOT / 'setup/RESEARCH_PROTOCOL.md').read_text(encoding='utf-8').split())
+        self.assertIn("the kit's own reports", protocol)
+        self.assertIn('`docs/research/README.md`', protocol)
+        self.assertTrue((ROOT / 'docs/research/README.md').is_file())
+
     def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
         # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,
         # and a worker then reports clean against a list the reviewer no longer uses.
