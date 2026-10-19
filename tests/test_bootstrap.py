@@ -263,7 +263,7 @@ class BootstrapTests(unittest.TestCase):
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
                                      '--overlay', 'claude-code'], capture_output=True, text=True, timeout=bootstrap_timeout(90))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            expected = set(project.glob('scripts/*.sh')) | set(project.glob('.githooks/*')) | set(project.glob('.claude/hooks/*'))
+            expected = set(project.glob('scripts/*.sh')) | set(project.glob('.githooks/*')) | set(project.glob('.claude/hooks/*.[ps][yh]'))
             expected = {p.relative_to(project).as_posix() for p in expected if p.is_file()}
             # The owner's next add must preserve bootstrap's recorded modes.
             subprocess.run(['git', 'add', '-A'], cwd=project, check=True, capture_output=True)
@@ -273,6 +273,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertGreater(len(expected), 3)
             for name in expected:
                 self.assertEqual(modes[name], b'100755', name)
+            # A text file in the hooks folder is no script (#273).
+            self.assertEqual(modes['.claude/hooks/after_compact.txt'], b'100644')
 
     def test_bytecode_is_not_installed(self):
         root = Path(__file__).resolve().parents[1]
@@ -306,6 +308,10 @@ class BootstrapTests(unittest.TestCase):
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn('STOPPING: the gate files already existed', result.stdout)
+                # It named a docs/RETROFIT.md the project does not have and no way to keep a hook (#269).
+                self.assertIn('.githooks/<same name>.project', result.stdout)
+                self.assertRegex(result.stdout, r"Re-run: +sh '\S+/bootstrap\.sh' '")
+                self.assertRegex(result.stdout, r"The steps: +\S+/docs/RETROFIT\.md")
                 self.assertFalse((project / 'docs/kit/.kit-version').exists())
 
     def test_a_gate_path_that_is_not_a_regular_file_stops_unread(self):
@@ -664,6 +670,33 @@ class BootstrapTests(unittest.TestCase):
         return {line.strip() for line in stdout.splitlines() if line.startswith(' ' * 13)
                 and line.strip() and ' ' not in line.strip()}
 
+    def test_a_hook_in_the_git_hooks_folder_stops_the_install(self):
+        # With no hooks path git ran .git/hooks, and bootstrap's .githooks silenced it: Git LFS's
+        # pre-push stopped running, and a push uploaded no LFS object (#164).
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            subprocess.run(['git', 'init', '-q', str(project)], check=True)
+            hooks = project / '.git/hooks'
+            hooks.mkdir(exist_ok=True)
+            (hooks / 'pre-commit.sample').write_text('#!/bin/sh\n')
+            (hooks / 'pre-push').write_text('#!/bin/sh\ngit lfs pre-push "$@"\n')
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True,
+                                    text=True, timeout=bootstrap_timeout(90))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('holds hooks git runs today: pre-push;', result.stderr)
+            self.assertIn('.githooks/<same name> itself', result.stderr)
+            self.assertNotEqual(subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath'],
+                                               capture_output=True).returncode, 0, 'hooks path set')
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+            # Only *.sample files: the install goes through.
+            (hooks / 'pre-push').unlink()
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True,
+                                    text=True, timeout=bootstrap_timeout(90))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The gate refuses every commit until the interview is done, and says so (#177).
+            self.assertIn('EVERY commit in this', result.stdout)
+
     def test_a_hooks_path_of_the_project_s_own_stops_the_install(self):
         # core.hooksPath=.husky was replaced by .githooks in silence: the project's hooks
         # stopped running. The install stops, names the path, and records no version.
@@ -834,7 +867,8 @@ class BootstrapTests(unittest.TestCase):
             lines = [l for l in stopped.stderr.splitlines() if 'its own path' in l]
             self.assertTrue(lines, stopped.stdout + stopped.stderr)
             line = lines[0]
-            command = line.split('one line, ', 1)[1].rstrip('.').replace('<name>', 'pre-commit')
+            # "... two lines, #!/bin/sh and exec '<path>/<name>' "$@" (Git for Windows ...)" since #165.
+            command = 'exec ' + line.split(' and exec ', 1)[1].split(' (Git for Windows', 1)[0].replace('<name>', 'pre-commit')
             (project / "owner's-hooks/pre-commit").write_text('#!/bin/sh\nexit 7\n')
             (project / "owner's-hooks/pre-commit").chmod(0o755)
             probe = subprocess.run(['sh', '-c', command], cwd=project, capture_output=True, text=True)

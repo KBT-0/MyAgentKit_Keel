@@ -64,6 +64,7 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 
 skiplist=$(mktemp) || die "cannot create a temp file"
 files=$(mktemp) || { rm -f "$skiplist"; die "cannot create a temp file"; }
+reason=$(mktemp) || { rm -f "$skiplist" "$files"; die "cannot create a temp file"; }
 executables=""
 part=""
 wiring=""
@@ -82,7 +83,7 @@ committed() {
 # and the hooks it now names may not be there. A signal ends the run through here too. The
 # temporary is removed only after `committed` has read it.
 finish() {
-  rm -f "$skiplist" "$files"
+  rm -f "$skiplist" "$files" "$reason"
   if [ "$1" -ne 0 ] && ! committed; then
     if [ -n "$wiring" ]; then
       if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
@@ -213,22 +214,31 @@ check_attributes() (
     while [ "${parent%/*}" != "$parent" ]; do
       parent=${parent%/*}
       rel="$parent/.gitattributes"
-      if [ ! -f "$probe/$rel" ] && [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ]; then
+      if [ ! -f "$probe/$rel" ] && [ -f "$target/$rel" ] && [ -z "$(blocked "$rel")" ]; then
         mkdir -p "$probe/$parent"
         cat "$target/$rel" > "$probe/$rel" || die "cannot read the project's own $rel; nothing was changed"
       fi
     done
   done < "$probe/paths"
+  # One git for every path, not one each (#219); a path git answered nothing for fails as one
+  # without eol=lf.
+  git -C "$probe" check-attr --stdin eol < "$probe/paths" > "$probe/eol" 2>/dev/null || : > "$probe/eol"
   while IFS= read -r dest; do
-    eol=$(git -C "$probe" check-attr eol -- "$dest" 2>/dev/null) || eol=""
+    eol=""
+    while IFS= read -r line; do
+      [ "${line%: eol: *}" != "$dest" ] || { eol=${line##*: eol: }; break; }
+    done < "$probe/eol"
     case "$dest" in .githooks/*) rule='.githooks/* text eol=lf' ;; *.sh) rule='*.sh text eol=lf' ;; *) rule='*.py text eol=lf' ;; esac
-    [ "${eol##*: eol: }" = lf ] ||
+    [ "$eol" = lf ] ||
       die "an attribute for $dest overrides the kit's rule '$rule' (the file would check out without eol=lf); remove that rule and run bootstrap again; nothing was changed"
   done < "$probe/paths"
 )
 
+# executable REL — lists the scripts and hooks git or a gate runs directly. A hook folder's
+# plain text file (.claude/hooks/after_compact.txt) is no script (#273). sync-kit.sh holds the
+# same patterns; a test holds the two equal.
 executable() {
-  case "$1" in *.sh|.githooks/*|.claude/hooks/*) executables="$executables$1
+  case "$1" in *.sh|.githooks/*|.claude/hooks/*.py) executables="$executables$1
 " ;; esac
 }
 
@@ -254,7 +264,9 @@ copy_tree() {
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
     # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
-    if [ -n "$(blocked "$dest")" ]; then
+    # Read through a file: a `$(...)` per file forked a shell each time, slow on Windows (#219).
+    blocked "$dest" > "$reason"
+    if [ -s "$reason" ]; then
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -291,7 +303,7 @@ EOF
     fi
     # Copied to a sibling and moved over: a `cp` cut short on the destination itself was
     # taken by the retry for the owner's own differing file, and the version recorded over it.
-    mkdir -p "$target/$(dirname "$dest")"
+    case "$dest" in */*) [ -d "$target/${dest%/*}" ] || mkdir -p "$target/${dest%/*}" ;; esac
     put "$target/$dest" "$src/$rel"
     executable "$dest"
   done < "$files"
@@ -334,12 +346,17 @@ done
 # The executable bit does not survive every filesystem, and a gate that cannot run is a
 # gate that is not there. CI dies on this with exit 126 (docs/GOTCHAS.md). Only on what
 # `blocked` passes: chmod through a symlink changes the file it points to, outside the project.
+# One chmod for all of them, and below one git per question, not one per file: a process per
+# file took one to two minutes on native Windows (#219).
+nl='
+'
+set --
 while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  chmod +x "$target/$f"
+  [ -z "$f" ] || set -- "$@" "$target/$f"
 done <<EXECUTABLES
 $executables
 EXECUTABLES
+[ $# -eq 0 ] || chmod +x "$@"
 
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo_prefix=$(git -C "$target" rev-parse --show-prefix)
@@ -348,32 +365,53 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # files and ignored files stay out of the index. New scripts are staged only at the
   # repository top level, and only once the stamp is written: a stopped install leaves nothing
   # new in the owner's index. A subfolder install prints the command for the owner instead.
-  stage=""
+  # Each index line reads "MODE BLOB STAGE<tab>PATH"; an unmerged path has no stage 0.
+  set --
   while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
-      mode=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $1 }')
-      [ -n "$mode" ] || die "cannot repair the executable mode of an unmerged kit file: $f"
-      case "$mode" in
-        100644)
-          blob=$(printf '%s\n' "$indexed" | awk '$1 == "100644" && $3 == 0 { print $2 }')
-          git -C "$target" update-index --cacheinfo "100755,$blob,$repo_prefix$f"
-          printf 'bootstrap: repaired staged executable mode: %s\n' "$f" ;;
-        100755) : ;;
-        *) printf 'bootstrap: NOTE: keeping index mode %s for %s (not a regular file)\n' "$mode" "$f" ;;
-      esac
-    elif ! grep -qxF -e "$f" "$skiplist" && ! git -C "$target" check-ignore -q -- "$f"; then
-      if [ -z "$repo_prefix" ]; then
-        stage="$stage$f
-"
-      else
-        printf 'bootstrap: NOTE: %s was not staged; from %s run:\n' "$f" "$target"
-        printf '  git add --chmod=+x -- "%s"\n' "$(printf '%s' "$f" | sed 's/[\\"$`]/\\&/g')"
-      fi
-    fi
+    [ -z "$f" ] || set -- "$@" "$f"
   done <<EXECUTABLES
 $executables
 EXECUTABLES
+  indexed=$nl
+  [ $# -eq 0 ] || indexed=$nl$(git -C "$target" --literal-pathspecs ls-files -s -- "$@")$nl
+  skipped=$nl$(cat "$skiplist")$nl
+  stage=""
+  new=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$indexed" in
+      *"	$f$nl"*)
+        entry=${indexed%%"	$f$nl"*}; entry=${entry##*$nl}
+        [ "${entry##* }" = 0 ] || die "cannot repair the executable mode of an unmerged kit file: $f"
+        mode=${entry%% *}; blob=${entry#* }; blob=${blob%% *}
+        case "$mode" in
+          100644)
+            git -C "$target" update-index --cacheinfo "100755,$blob,$repo_prefix$f"
+            printf 'bootstrap: repaired staged executable mode: %s\n' "$f" ;;
+          100755) : ;;
+          *) printf 'bootstrap: NOTE: keeping index mode %s for %s (not a regular file)\n' "$mode" "$f" ;;
+        esac ;;
+      *) case "$skipped" in *"$nl$f$nl"*) ;; *) new="$new$f$nl" ;; esac ;;
+    esac
+  done <<EXECUTABLES
+$executables
+EXECUTABLES
+  # A failed check-ignore names nothing, and its files are staged, as one per file did.
+  ignored=$nl
+  [ -z "$new" ] || ignored=$nl$(printf '%s' "$new" | git -C "$target" check-ignore --stdin 2>/dev/null)$nl || :
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$ignored" in *"$nl$f$nl"*) continue ;; esac
+    if [ -z "$repo_prefix" ]; then
+      stage="$stage$f
+"
+    else
+      printf 'bootstrap: NOTE: %s was not staged; from %s run:\n' "$f" "$target"
+      printf '  git add --chmod=+x -- "%s"\n' "$(printf '%s' "$f" | sed 's/[\\"$`]/\\&/g')"
+    fi
+  done <<NEW
+$new
+NEW
 fi
 
 if [ -s "$skiplist" ]; then
@@ -409,12 +447,17 @@ if [ -n "$gates" ]; then
   it is a no-op, this install just gave you the paperwork of a gate with none of the gate.
 
   For each one: move yours aside, re-run to install the kit's file (files an earlier run
-  copied are identical and pass), then carry what yours did into it by hand (docs/RETROFIT.md).
+  copied are identical and pass). A hook of yours keeps running unchanged as
+  .githooks/<same name>.project (executable, with a #! line): the kit's hook runs it first,
+  with git's arguments (docs/DEV_SETUP.md once installed). Kit-owned files are overwritten by
+  the next sync, so never carry your hook's logic into them. A check.sh of yours: carry its
+  commands into the kit's check.sh by hand.
   --force instead overwrites EVERY differing regular file listed above, not only these;
   a symlink, folder or special file at such a path, or a symlink or a file in its path,
   is never replaced: move it aside.
-  Finish with:  ./scripts/check.sh
 EOF
+  printf '%s\n' "  Re-run:       sh '$kit/bootstrap.sh' '$target'${overlays:+ (with the same --overlay options)}" \
+    "  The steps:    $kit/docs/RETROFIT.md" "  Finish with:  ./scripts/check.sh"
 fi
 if [ -n "$stops" ]; then
   echo
@@ -459,8 +502,9 @@ fi
 # The kit commit this install came from, the base of sync-kit.sh --merge (a kit that is no git
 # clone of its own has none: one inside another repository answered with that repository's HEAD).
 # Written before the stamp, which stays the last write. sync-kit.sh's own_repo is the same test.
-if top=$(git -C "$kit" rev-parse --show-toplevel 2>/dev/null) &&
-   [ "$(CDPATH= cd -- "$top" && pwd -P)" = "$(CDPATH= cd -- "$kit" && pwd -P)" ] &&
+# Git answers whether the kit folder is its repository's top: two path strings differed for a
+# kit path in another letter case or through a subst drive, and no commit was recorded.
+if kit_prefix=$(git -C "$kit" rev-parse --show-prefix 2>/dev/null) && [ -z "$kit_prefix" ] &&
    commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
   put "$target/docs/kit/.kit-commit" <<EOF
 $commit
@@ -492,6 +536,19 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
     quoted=$(printf '%s' "$effective" | sed "s/'/'\\\\''/g")
     printf '%s\n' "  A hook that finds its checks by its own path (\$0, its folder) stays where it is: the .project file is then two lines, #!/bin/sh and exec '$quoted/<name>' \"\$@\" (Git for Windows runs no file without a #! line)." >&2
     printf '%s\n' "  Then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
+    exit 1
+  fi
+  # With no hooks path git runs .git/hooks, and setting one silences what is there: Git LFS
+  # keeps its pre-push there, and a push then uploaded no LFS object (#164). The same stop and
+  # the same migration; only *.sample files (what git init leaves) are not hooks.
+  if [ -z "$effective" ] && hooks_dir=$(git -C "$target" rev-parse --git-path hooks 2>/dev/null) &&
+     ( cd "$target" && cd "$hooks_dir" 2>/dev/null ) && left=$(cd "$target" && cd "$hooks_dir" &&
+       for h in *; do [ ! -f "$h" ] || case "$h" in *.sample) ;; *) printf ' %s' "$h" ;; esac; done) && [ -n "$left" ]; then
+    rm -f "$part"; part=""
+    printf '%s\n' "bootstrap: STOP: $hooks_dir holds hooks git runs today:$left; the kit's hooks path (.githooks) would silence them (Git LFS keeps its pre-push there)." >&2
+    printf '%s\n' "  Move each one into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2
+    printf '%s\n' "  (executable; the kit's hook runs it first, with git's arguments; post-merge cannot veto), any other name (pre-push, ...) as .githooks/<same name> itself;" >&2
+    printf '%s\n' "  commit them, so every clone runs them (docs/DEV_SETUP.md). Then rerun bootstrap.sh. Never run 'git lfs update --force' here: it overwrites the kit's post-merge." >&2
     exit 1
   fi
   wiring=1
@@ -534,5 +591,6 @@ Foundation copied. Now open your CLI agent here and say:
 
 Nothing is configured yet, and ./scripts/check.sh will FAIL until the interview fills in
 the placeholders. That failure is the point: it is the gate telling you the truth about a
-project that has not been set up.
+project that has not been set up. The commit hook runs that gate, so EVERY commit in this
+clone is refused until the interview is done: finish it in one sitting (docs/RETROFIT.md).
 EOF

@@ -6,6 +6,14 @@ That makes the mechanics easy. The sequencing is the part that needs care.
 **Do not big-bang an in-flight project.** Take the steps in this order; each one is
 independently useful, and each one is small enough to abandon if it turns out not to fit.
 
+**The install itself is one sitting.** `bootstrap.sh` wires the pre-commit gate at once, and
+the gate fails on every `{{PLACEHOLDER}}` marker left in the installed files: from the install
+until the setup interview (`setup/INTERVIEW.md`) has filled them all, EVERY commit in that
+clone is refused, an unrelated one too. Run the interview straight after the install. Only
+the owner may bypass the hook meanwhile (`--no-verify`); CI and other clones are not affected,
+since `core.hooksPath` is local. The steps below are the order in which the interview's
+answers are worth getting right, not commits to spread over weeks.
+
 ## The order, and why
 
 ### 1. `scripts/check.sh` and `.githooks/pre-commit`
@@ -14,7 +22,14 @@ Start here even if the gate initially checks almost nothing. It establishes the 
 everything else depends on: ONE definition of green that CI, the hook and every agent run.
 
 Wire the build and test command first, get it passing, then add boundary checks one at a
-time — each with its negative test. Do not try to encode every rule you have ever wanted on
+time — each with its negative test.
+
+A hook the project already had keeps running beside the kit's: move it to
+`.githooks/<same name>.project` (executable, with a `#!` line), and the kit's hook of that
+name runs it first with git's arguments; a hook name the kit does not ship (`pre-push`, ...)
+goes to `.githooks/<same name>` itself. A one-line `.project` file can `exec` the hook where
+it lives (`docs/DEV_SETUP.md`). Never merge a hook's logic into a kit-owned hook: the next
+sync overwrites it. Do not try to encode every rule you have ever wanted on
 day one; a gate that fails constantly on pre-existing violations gets bypassed within a
 week, and then you have taught everyone that bypassing it is normal.
 
