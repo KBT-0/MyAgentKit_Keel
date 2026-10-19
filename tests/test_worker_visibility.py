@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -149,7 +150,8 @@ class Base(unittest.TestCase):
 
     def run_script(self, script, *args, path_first=(), stdout=None, **extra):
         env = {k: v for k, v in os.environ.items()
-               if k not in ('WSL_DISTRO_NAME', 'TERM_PROGRAM', 'TMUX', 'TMUX_PANE', 'KIT_WT')}
+               if k not in ('WSL_DISTRO_NAME', 'TERM_PROGRAM', 'TMUX', 'TMUX_PANE', 'KIT_WT', 'DISPLAY',
+                            'WAYLAND_DISPLAY', 'TERMINAL')}
         path = os.pathsep.join([*map(str, path_first), str(self.bin), os.environ['PATH']])
         env.update(PATH=path, VIS_STATE=str(self.state), KIT_WT=posix(self.bin / 'wt-stub'), **extra)
         redirect = ''
@@ -322,6 +324,27 @@ class ShowTests(Base):
         self.assertIn('did not return within 5 s', result.stdout)
         self.assertIn('attach by hand: tmux attach -t a', result.stdout)
 
+    def test_a_linux_desktop_opens_its_terminal_and_a_headless_host_attaches_by_hand(self):
+        # x-terminal-emulator is the launcher stub: it attaches the session it names (#238).
+        (self.bin / 'x-terminal-emulator').write_text(LAUNCHER)
+        (self.bin / 'x-terminal-emulator').chmod(0o755)
+        result = self.run_script(SHOW, 'a', 'b-2', VIS_SESSIONS='a b-2', DISPLAY=':0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('shown: a\n', result.stdout)
+        self.assertIn('shown: b-2\n', result.stdout)
+        # One window per session; native Windows hands the stub tmux's path in its own form.
+        launches = sorted(self.log('x-terminal-emulator').splitlines())
+        self.assertEqual(len(launches), 2, launches)
+        for line, n in zip(launches, ('a', 'b-2')):
+            self.assertRegex(line, r"^\['-e', '[^']*/bin/tmux', 'attach', '-t', '=%s'\]$" % n)
+        for f in self.state.glob('attached-*'):
+            f.unlink()
+        (self.state / 'x-terminal-emulator.log').unlink()
+        result = self.run_script(SHOW, 'a', VIS_SESSIONS='a')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('attach by hand: tmux attach -t a\n', result.stdout)
+        self.assertEqual(self.log('x-terminal-emulator'), '')
+
     def test_a_launcher_that_hangs_is_bounded(self):
         start = time.monotonic()
         result = self.run_script(SHOW, 'a', VIS_MODE='hang', **self.WSL)
@@ -484,6 +507,78 @@ class WatchTests(Base):
         self.assertIn('WAITING: w1, on a permission prompt', result.stdout)
         self.assertIn('Do you want to proceed?', result.stdout)
         self.assertIsNone(re.search(r'[\x00-\x09\x0b-\x1f\x7f]', result.stdout + result.stderr))
+
+    def test_the_other_question_hints_are_a_question(self):
+        # The several-questions and editor forms of the hint, read from the 2.1.302 bundle, so
+        # written here: tests/fixtures/panes holds real captures only (#237).
+        for hint in ('Enter to select · Tab/Arrow keys to navigate · Esc to cancel',
+                     'Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel'):
+            with self.subTest(hint=hint):
+                pane = self.tmp / 'pane.txt'
+                pane.write_text(' Which name?\n\n❯ 1. Keep it\n  2. Rename it\n  3. Type something.\n\n'
+                                + hint + '\n', encoding='utf-8')
+                result = self.run_script(WATCH, '--once', 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('WAITING: w1, on a question (rule UNVERIFIED, Claude Code 2.1.302)', result.stdout)
+
+    def test_idle_says_the_worker_may_be_parked_on_its_own_background_job(self):
+        # The Stop hook writes idle at every turn end, a park on a background job too (#186).
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        (workers / 'w1.state').write_bytes(b'idle 2026-10-18T10:00:00 1\n')
+        result = self.watch('--once', 'w1', VIS_UNAME='MINGW64_NT-10.0')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout.splitlines()[0],
+                         'watch_workers: IDLE: w1, its session stopped: a question in its tab, a usage limit or '
+                         'an error, or a park on its own background job (it goes on by itself when the job ends), '
+                         'with no new result report (its state file: idle 2026-10-18T10:00:00 1)')
+
+    def test_a_windows_worker_whose_supervisor_ended_is_gone_once(self):
+        # Its exit record, or its .live record whose lock dropped (a closed tab, a kill) (#185).
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        win = dict(VIS_UNAME='MINGW64_NT-10.0')
+        live = workers / 'w1.live'
+        live.write_bytes(b'123\n')
+        # Held as codex_worker.py's supervisor holds it: nothing to report.
+        hold = ('import importlib.util, os, sys, time\nfrom pathlib import Path\n'
+                'spec = importlib.util.spec_from_file_location("cw", sys.argv[1])\n'
+                'cw = importlib.util.module_from_spec(spec); spec.loader.exec_module(cw)\n'
+                'cw.lock(cw.shared_open(Path(sys.argv[2]), os.O_RDWR)); print("locked", flush=True); time.sleep(60)\n')
+        helper = subprocess.Popen([sys.executable, '-c', hold, str(SCRIPTS / 'codex_worker.py'), str(live)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(helper.stdout.readline(), 'locked\n')
+            result = self.watch('--once', 'w1', **win)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        finally:
+            helper.kill()
+            helper.wait()
+            helper.stdout.close()
+        dropped = ('watch_workers: GONE: w1, its supervisor ended without an exit record (its tab closed or it '
+                   'was killed): read its result file\n')
+        self.assertEqual(self.watch('--once', 'w1', **win).stdout, dropped)
+        self.assertEqual(self.watch('--once', 'w1', **win).stdout, '')
+        (workers / 'w1.exit').write_text('claude exited 1 at 2026-10-18T10:00:00\n')
+        result = self.watch('--once', 'w1', **win)
+        self.assertEqual((result.returncode, result.stdout), (0, 'watch_workers: GONE: w1, its session ended '
+                         '(claude exited 1 at 2026-10-18T10:00:00): read its result file\n'), result.stderr)
+        self.assertEqual(self.watch('--once', 'w1', **win).stdout, '')
+
+    def test_the_default_window_is_55_minutes(self):
+        # Under the one-hour prompt cache: a quiet window's wake reads the lead's cache (#187).
+        # `date` gives the start, then one second past 55 minutes, then past 110.
+        clock = self.tmp / 'clock'
+        clock.mkdir()
+        (clock / 'date').write_text('#!/bin/sh\nn=$(cat "$VIS_STATE/dates" 2>/dev/null || echo 0)\n'
+                                    'echo $((n + 1)) >"$VIS_STATE/dates"\n'
+                                    'case $n in 0) echo 1000 ;; 1) echo 4301 ;; *) echo 7601 ;; esac\n')
+        (clock / 'sleep').write_text('#!/bin/sh\n:\n')
+        for stub in ('date', 'sleep'):
+            (clock / stub).chmod(0o755)
+        result = self.watch('w1', pane='working.txt', path_first=[clock])
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'watch_workers: nothing was waiting on a person within 55 minute(s): w1\n')
 
     def test_the_pattern_table_lists_every_rule_with_its_flag(self):
         result = self.run_script(WATCH, '--list-patterns')
@@ -698,6 +793,72 @@ class ResultTests(Base):
         result = self.run_script(WATCH, '--max-minutes', '1', '--result', 'w1=docs/w1.md', 'w1',
                                  VIS_SESSIONS='w1', VIS_PANE=str(PANES / 'working-auto.txt'))
         self.assertTrue(result.stdout.startswith('watch_workers: DONE: w1'), result.stdout)
+
+    def test_an_uncommitted_default_result_of_this_run_is_read_once(self):
+        # The kit's default RESULT-NAME.md is never committed (#167): it is read from the working
+        # file once this run published it, newer than NAME.result-path and with the ready marker.
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        start = workers / 'w1.result-path'
+        start.write_text('RESULT-w1.md\n')
+        then = time.time() - 60
+        os.utime(start, (then, then))
+        report, outside = self.cwd / 'RESULT-w1.md', self.tmp / 'outside.md'
+        ready = (HEAD % ('completed', 'none') + '\nbody\n<!-- codex-worker: ready -->\r\n\n').encode()
+        done = 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none (result file RESULT-w1.md)\n'
+        for platform in ({}, {'VIS_UNAME': 'MINGW64_NT-10.0'}):
+            with self.subTest(platform=platform):
+                for f in [*workers.glob('w1.watch-*'), *self.state.glob('opt-*'), report]:
+                    f.unlink(missing_ok=True)
+                watch = lambda: self.run_script(WATCH, '--once', '--result', 'w1=RESULT-w1.md', 'w1', VIS_SESSIONS='w1',
+                                                VIS_PANE=str(PANES / 'working-auto.txt'), **platform)
+                report.write_text(HEAD % ('completed', 'none'))
+                self.assertEqual(watch().stdout, '', 'a result without the ready marker was read')
+                report.write_bytes(ready)
+                os.utime(report, (then - 30, then - 30))
+                self.assertEqual(watch().stdout, '', "an earlier run's result was read")
+                report.unlink()
+                outside.write_bytes(ready)
+                report.symlink_to(outside)
+                self.assertEqual(watch().stdout, '', 'a symlink was read')
+                report.unlink()
+                report.write_bytes(ready)
+                if platform:  # its stop wrote idle: the result is reported instead of IDLE
+                    (workers / 'w1.state').write_bytes(b'idle 2026-10-18T10:00:00 1\n')
+                result = watch()
+                self.assertEqual((result.returncode, result.stdout), (0, done), result.stderr)
+                if not platform:
+                    self.assertEqual(watch().stdout, '', 'the same result was reported twice')
+
+    def published(self, data):
+        # An uncommitted docs/w1.md this run published: newer than NAME.result-path.
+        start = self.cwd / '.myagentkit/workers/w1.result-path'
+        start.parent.mkdir(parents=True, exist_ok=True)
+        start.write_text('docs/w1.md\n')
+        then = time.time() - 60
+        os.utime(start, (then, then))
+        self.file.write_bytes(data)
+
+    def test_a_bom_result_is_done_as_codex_worker_reads_it(self):
+        # A UTF-8 BOM (PowerShell 5.1 Set-Content -Encoding UTF8) was MALFORMED here but DONE
+        # for codex_worker.py; both the working file and the committed blob are read the same way.
+        done = 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none (result file docs/w1.md)\n'
+        data = b'\xef\xbb\xbf' + (HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n').encode()
+        self.published(data)
+        self.assertEqual(self.watch().stdout, done, 'the uncommitted BOM result')
+        self.commit(data + b'more\n')
+        self.assertEqual(self.watch().stdout, done, 'the committed BOM result')
+
+    def test_a_crlf_result_committed_later_is_not_reported_again(self):
+        # Under core.autocrlf=true the committed blob is LF: the once-marker of the uncommitted
+        # CRLF file must be the blob git stores, or the commit reports the same result twice.
+        self.git('config', 'core.autocrlf', 'true')
+        data = (HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n').replace('\n', '\r\n').encode()
+        self.published(data)
+        self.assertIn('DONE: w1', self.watch().stdout)
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'r')
+        self.assertEqual(self.watch().stdout, '', 'the same result was reported again after its commit')
 
     def test_a_malformed_head_is_never_done(self):
         for head, why in (('', 'line 1'), ('Kind: finished\nTask: T\nAttempt: 1\nRemaining: none\n', 'line 1'),
@@ -1031,7 +1192,8 @@ class ContextTests(Base):
         self.assertEqual(self.watch(STATUS, '--once', quote=quote).stdout, '')
         result = self.watch('', '--max-minutes', '0', quote=quote)
         self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, no context figure: its status line '
-                         'is unparsable (said once; nothing is guessed)\n')
+                         'is unparsable (said once; nothing is guessed)\n'
+                         'watch_workers: nothing was waiting on a person within 0 minute(s): w1\n')
         self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once', quote=quote).stdout)
 
     def test_a_quoted_status_line_is_not_the_status_row(self):
@@ -1076,9 +1238,11 @@ class ContextTests(Base):
                     f.unlink()
                 # --once is spawn_worker.sh's start-up check, before the status line is drawn.
                 self.assertEqual(self.watch(status or STATUS, '--once', drop=drop).stdout, '')
+                # The note ends no watch (#188): the window-end line follows it.
                 result = self.watch(status or STATUS, '--max-minutes', '0', drop=drop)
                 self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, no context figure: its status line '
-                                 'is %s (said once; nothing is guessed)\n' % what)
+                                 'is %s (said once; nothing is guessed)\n'
+                                 'watch_workers: nothing was waiting on a person within 0 minute(s): w1\n' % what)
                 result = self.watch(status or STATUS, '--max-minutes', '0', drop=drop)
                 self.assertTrue(result.stdout.startswith('watch_workers: nothing was waiting'), result.stdout)
                 # A figure that appears later past the line is still reported.

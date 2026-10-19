@@ -30,8 +30,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
 PANES = ROOT / 'tests/fixtures/panes'
-INSTRUCTION = ("Read %s and follow it. Do not ask questions in this pane: write a question into your "
-               "result file and go on with what does not depend on it.")
+INSTRUCTION = ("Read {brief} and follow it. Your result file is {result}: its first four lines are Kind: "
+               "completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and "
+               "Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as "
+               "a temporary file beside it renamed over it with {python} {worker} --publish TEMPORARY_FILE "
+               "DESTINATION: without them the supervisor never sees it. A published completed or handoff result "
+               "ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this "
+               "pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the "
+               "same way, to {question}, which ends this session for the lead's answer; until then go on with "
+               "what does not depend on it.")
 
 TMUX = r'''#!/usr/bin/env python3
 import os, subprocess, sys
@@ -310,7 +317,11 @@ ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_the_behaviour_appendix_reaches_the_worker_unless_turned_off',
               'test_two_signals_do_not_repeat_cleanup',
               'test_unsafe_names_are_refused_without_changing_worker_files',
-              'test_worker_name_boundary_fits_every_generated_filename'}
+              'test_worker_name_boundary_fits_every_generated_filename',
+              'test_help_on_missing_arguments_shows_the_usage',
+              'test_a_leftover_question_refuses_a_fresh_spawn_before_any_session',
+              'test_the_instruction_names_the_publish_protocol',
+              'test_the_watch_line_names_the_result_path'}
 ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
                    'test_worktree_accepts_backslash_windows_settings',
                    'test_worktree_inherits_untracked_project_hooks',
@@ -399,6 +410,22 @@ class SpawnWorkerTests(unittest.TestCase):
                and not k.startswith(('ANTHROPIC_', 'KIT_WORKER_'))}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                     WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'), **LEAD_ENV)
+
+    def spelled(self, path, tab=False):
+        # A path as the spawn hands it on: physical, and on the Windows tab path cygpath -m's
+        # spelling (the real one on Windows, the stub's C: and the POSIX path elsewhere).
+        path = self.physical(Path(path))
+        if not tab:
+            return path
+        return (subprocess.run(['cygpath', '-m', path], capture_output=True, text=True, check=True)
+                .stdout.rstrip('\n') if WINDOWS else 'C:' + path)
+
+    def instruction(self, brief, tab=False, name='w1'):
+        # The one line the worker gets, for the default result in the caller's folder.
+        spelled = lambda path: shq(self.spelled(path, tab))
+        return INSTRUCTION.format(brief=spelled(brief), result=spelled(self.cwd / ('RESULT-%s.md' % name)),
+                                  python='python3', worker=spelled(SCRIPT.with_name('codex_worker.py')),
+                                  question=spelled(self.cwd / ('QUESTION-%s.md' % name)))
 
     def launched(self):
         path = self.state / 'claude.json'
@@ -761,6 +788,10 @@ exit 0
                                      result.stdout + result.stderr)
                     if tab:
                         self.assertTrue(json.loads((self.state / 'wt.json').read_text())[-1].endswith('\nexit 0\n'))
+                    if tab and ends:
+                        # #185: the exit record outlives the tab, in the workers folder the watcher reads.
+                        (record,) = (self.tmp / 'real').rglob('w1.exit')
+                        self.assertIn(' published at ', record.read_text())
         # The result path is recorded: close_worker.sh --finished reads it after a merge.
         (record,) = (self.tmp / 'real').rglob('w1.result-path')
         self.assertTrue(record.read_text().strip().endswith('/report.md'), record.read_text())
@@ -948,8 +979,49 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         # Two sentences, ONE submitted line: the second keeps questions out of the pane.
         submitted = (self.state / 'submitted').read_text().splitlines()
-        self.assertEqual(submitted, [INSTRUCTION % shq(self.physical(self.brief))])
+        self.assertEqual(submitted, [self.instruction(self.brief)])
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
+
+    def test_help_on_missing_arguments_shows_the_usage(self):
+        # #239: the printed header range stopped before the Usage block.
+        result = self.spawn(choose=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('Usage: spawn_worker.sh', result.stdout)
+
+    def test_a_leftover_question_refuses_a_fresh_spawn_before_any_session(self):
+        # #235: the supervisor refused it inside the new tmux session, whose pane closed with the error.
+        self.tmux_checkout()
+        (self.cwd / 'QUESTION-w1.md').write_text('an earlier decision\n')
+        with safe_tmux_scratch() as scratch:
+            result = self.spawn('w1', str(self.brief), TMPDIR=scratch)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('QUESTION-w1.md from an earlier run is unanswered in', result.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
+
+    def test_the_instruction_names_the_publish_protocol(self):
+        # #189: it named no result path, header, end marker, --publish or question path, so a
+        # worker that followed it published nothing its supervisor reads and was never ended.
+        for tab in self.backend_paths():
+            with self.subTest(windows=bool(tab)):
+                (self.state / 'claude.json').unlink(missing_ok=True)
+                result = self.spawn('w1', str(self.brief), '--batch', **tab)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                line = self.launched()['argv'][0] if tab else (self.state / 'submitted').read_text()
+                for words in ('Your result file is ' + shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab))),
+                              '<!-- codex-worker: ready -->', ' --publish TEMPORARY_FILE DESTINATION',
+                              'to ' + shq(self.spelled(self.cwd / 'QUESTION-w1.md', bool(tab)))):
+                    self.assertIn(words, line)
+
+    def test_the_watch_line_names_the_result_path(self):
+        # #167: it named PATH, "the result file its brief names", for the lead to fill in.
+        for tab in self.backend_paths():
+            with self.subTest(windows=bool(tab)):
+                result = self.spawn('w1', str(self.brief), '--batch', **tab)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('spawn_worker: watch it, as a background command: scripts/watch_workers.sh '
+                              '--result w1=%s w1\n' % shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab))),
+                              result.stdout)
+                (self.state / 'claude.json').unlink()
 
     def test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab(self):
         # No tmux there: the instruction is the session's first prompt, ahead of the variadic
@@ -1001,14 +1073,12 @@ exit 0
         self.assertFalse((self.state / 'wt.json').exists(), 'a tab opened for a name already running')
         launched = self.launched()
         self.assertIsNotNone(launched, result.stderr)
-        # The brief by Windows' spelling of its path, which the worker's tools know.
-        shown = (subprocess.run(['cygpath', '-m', self.physical(brief)], capture_output=True, text=True,
-                                check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(brief))
+        # Every path by Windows' spelling, which the worker's tools know (self.instruction).
         # --settings is the owner's settings with the worker's state hooks added (the next case).
         argv = launched['argv']
         merged = json.loads(Path(self.windows_path(argv[8])).read_text())
         self.assertEqual(merged['permissions'], {'defaultMode': 'auto'})
-        self.assertEqual(argv[:8] + argv[9:], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
+        self.assertEqual(argv[:8] + argv[9:], [self.instruction(brief, tab=True), '-n', 'w1', '--model', 'm', '--effort',
                                                'high', '--settings', '--allowedTools', tools,
                                                '--disallowedTools', 'AskUserQuestion'])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
@@ -1059,7 +1129,8 @@ exit 0
         # The tab measures claude's own run, under its supervisor, and waits for Enter after a
         # quick end of any status.
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
-        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_EXIT='[^']*\.exit' KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
+        # Its exit record is the workers folder's w5.exit, which the watcher reads (#185).
+        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_EXIT='.*/\.myagentkit/workers/w5\.exit' KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
         self.assertIn("-c 'exec env -u CLAUDE_CODE_CHILD_SESSION ", tab)
         self.assertIn('press Enter to close', tab)
 
@@ -1249,11 +1320,14 @@ exit 0
         workers.mkdir(parents=True)
         (workers / 'w1.state').write_text('idle 2026-10-16T12:00:00 1 context_tokens=314000\n')
         (workers / 'w1.watch-state-context').write_text('red\n')
+        # #185: an earlier run's exit and live records, which the watcher reads.
+        for stale in ('w1.exit', 'w1.live'):
+            (workers / stale).write_text('exited at 2026-10-16T12:00:00\n')
         with safe_tmux_scratch() as scratch:
             result = self.spawn('w1', str(self.brief), '--batch', TMPDIR=scratch)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse((workers / 'w1.state').exists())
-        self.assertFalse((workers / 'w1.watch-state-context').exists())
+        for stale in ('w1.state', 'w1.watch-state-context', 'w1.exit', 'w1.live'):
+            self.assertFalse((workers / stale).exists(), stale)
         self.assertIn('Read ', (self.state / 'submitted').read_text())
 
     def test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own(self):
@@ -1428,7 +1502,7 @@ exit 0
         result = self.spawn('w4', 'briefs/task.md', CDPATH=str(self.tmp / 'elsewhere'))
         self.assertEqual(result.returncode, 0, result.stderr)
         submitted = (self.state / 'submitted').read_text().splitlines()
-        self.assertEqual(submitted[0], INSTRUCTION % shq(self.physical(self.cwd / 'briefs/task.md')))
+        self.assertEqual(submitted[0], self.instruction(self.cwd / 'briefs/task.md', name='w4'))
 
     def test_a_brief_name_ending_in_a_newline_is_refused(self):
         # $(basename ...) stripped the trailing newline: "task.md<newline>" was checked and

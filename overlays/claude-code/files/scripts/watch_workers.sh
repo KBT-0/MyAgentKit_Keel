@@ -19,8 +19,11 @@
 # waiting_patterns.txt beside this script (the rules and why they look at the last line only
 # are explained there). It prints one block per session that is GONE or WAITING, with the
 # last pane lines for a WAITING one, and exits 0. Nothing waiting after --max-minutes
-# (default 110) prints one line saying so and exits 0. The 45 s, the 10 s floor and the 110
-# minutes are the owner's choice, not measurements; so are the display limits (the last 15
+# (default 55; 0 checks once, then prints the line) prints one line saying so and exits 0.
+# The 55 minutes stay under the one-hour prompt cache the kit pins (promptCacheTtl "1h" in
+# .claude/settings.json), so a quiet window's wake reads the lead's cache instead of rewriting
+# it; they also fit the two-hour limit on unattended background commands below. The 45 s and
+# the 10 s floor are the owner's choice, not measurements; so are the display limits (the last 15
 # pane lines, 200 bytes a line, six question lines). A local interactive lead has no limit on a
 # background command; an unattended one (`-p`, the Agent SDK, CI) stops it after 30 minutes
 # unless started with a `timeout` (at most two hours): pass one there (Claude Code tools
@@ -42,7 +45,12 @@
 #   `Kind: completed` is DONE; blocked, handoff and progress are reported as BLOCKED, HANDOFF
 #   and PROGRESS (not done); a missing or malformed head is MALFORMED (not done). A file with
 #   questions under "## Open questions for ..." is QUESTIONS with their text, first. Each
-#   committed version of the file is reported once.
+#   committed version of the file is reported once. A file not in HEAD (the kit's default
+#   RESULT-NAME.md, never committed: docs/HANDOFF.md) is read from the working file instead,
+#   once per content, when this run published it: a regular file, not a symlink, newer than
+#   .myagentkit/workers/NAME.result-path (spawn_worker.sh writes it at every spawn and resume,
+#   so an older file is an earlier run's), its last non-blank line the supervisor's ready
+#   marker `<!-- codex-worker: ready -->` (without it the worker is still writing).
 # - The `context` rule in waiting_patterns.txt finds the context figure (<used>/<window>) in
 #   the pane's status line: the line right under the input box's bottom rule (a line of `─`
 #   only), which is the second or third line from the bottom (the mode line may follow), with
@@ -52,9 +60,11 @@
 #   "Worker cost", rule 8) and a share of the window (default 50%): on a 1M window 50% is 500k,
 #   past the band's 400k ceiling, and context rot grows with tokens, not with the share
 #   (Anthropic, "Context windows"). `--context-warn NNNk` sets the count, `--context-warn NN%`
-#   (or a bare NN) the share. A status line without the figure, or none, is CONTEXT once too, and the figure is
-#   never guessed; --once skips that note, as spawn_worker.sh runs it before the status line
-#   is drawn.
+#   (or a bare NN) the share. A status line without the figure, or none, is a CONTEXT note
+#   once too, and the figure is never guessed. The note is printed but ends no watch: it
+#   reaches the lead with the next report or the window-end line (a lead wake per worker for
+#   a status line the kit does not ship cost too much). --once skips it, as spawn_worker.sh
+#   runs it before the status line is drawn.
 #   Worktree hook snapshots use the same override; a percentage needs a pane window figure.
 #   Without an override their bands come from context_size.py, once per band per session.
 # The once-markers are user options of the tmux session, so they end with it. Every report
@@ -69,12 +79,16 @@
 # A waiting line is WAITING, before the
 # result file is read. Legacy `waiting input` means idle, with no state event; once per worker
 # the watcher says its hook is from an older kit and asks for a re-spawn.
-# An idle line, when the result file says nothing new, is IDLE: the worker
-# stopped (a question in the tab, a usage limit, an error). Each event (the whole line, id
-# included) is reported once; the once-markers are NAME.watch-* files beside it, which
-# spawn_worker.sh removes. There is no GONE and no pane context figure there, and no tmux is
-# needed. An invalid state file is an observation failure (exit 3); an absent or zero-byte one
-# means no signal yet. A session name is letters, digits, - and _, not starting with -
+# The Stop hook writes an idle line at every turn end: when the result file says nothing new
+# it is IDLE, the worker's session stopped: a question in the tab, a usage limit or an error,
+# or a park on its own background job (it goes on by itself when the job ends). Each event
+# (the whole line, id included) is reported once; the once-markers are NAME.watch-* files
+# beside it, which spawn_worker.sh removes. After the result and before the idle line, GONE:
+# the supervisor's exit record NAME.exit there (its first line, once per line), or, with none,
+# its NAME.live record whose lock dropped (a closed tab or a kill; the lock is checked by
+# codex_worker.py's own gone()). A record older than NAME.result-path is an earlier run's.
+# There is no pane context figure there, and no tmux is needed. An invalid state file is an
+# observation failure (exit 3); an absent or zero-byte one means no signal yet. A session name is letters, digits, - and _, not starting with -
 # (spawn_worker.sh's rule): anything else is a usage error (exit 2).
 set -eu
 
@@ -98,7 +112,7 @@ plain() {
     die "a session name or result path contains a control character or a newline; it is not printed"
 }
 
-interval=45; max=110; warn_abs=""; warn_pct=50; warn_set=""; once=""; results=""
+interval=45; max=55; warn_abs=""; warn_pct=50; warn_set=""; once=""; results=""
 while [ $# -gt 0 ]; do
   case $1 in
     --context-warn)
@@ -263,11 +277,14 @@ report() {
   say "  look at it: scripts/show_workers.sh $name   (or: tmux attach -t $name)" || return 2
 }
 
-# Line $1 of file $2, control bytes and trailing blanks removed.
-hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
+# Line $1 of file $2, a leading UTF-8 BOM (codex_worker.py reads past it too, #169), control
+# bytes and trailing blanks removed.
+bom=$(printf '\357\273\277')
+hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C sed "s/^$bom//" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
 
-# Report NAME's result file and return 0 when it is committed, its tree is clean and this
-# version was not reported yet; return 1 otherwise, 2 when the report could not be written.
+# Report NAME's result file and return 0 when it is committed and its tree is clean, or it is
+# not in HEAD and this run published it (the header says how), and this version was not
+# reported yet; return 1 otherwise, 2 when the report could not be written.
 # The once-marker is queued only after the blob was read and its report written: a failed
 # read or write is done again on the next run.
 result() {
@@ -295,19 +312,33 @@ EOF
     say "watch_workers: $1: could not read the tree of $head for $f: $(tr '\n' ' ' <"$err")" >&2
     failed=1; return 1
   fi
-  [ -n "$entry" ] || return 1
-  mode=${entry%% *}; blob=${entry#* }; blob=${blob#* }; blob=${blob%%"	"*}
-  dirty=$(git -C "$d" status --porcelain 2>/dev/null) || return 1
-  [ -z "$dirty" ] || return 1
-  [ "$(git -C "$d" rev-parse -q --verify HEAD 2>/dev/null)" = "$head" ] || return 1
-  [ "$(mark "$1" result)" != "$blob" ] || return 1
-  case $mode in 100644|100755) ;; *)
-    say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done" || return 2
-    return ;;
-  esac
-  if ! git -C "$d" cat-file blob "$blob" >"$body" 2>"$err"; then
-    say "watch_workers: $1: could not read the committed result $blob: $(tr '\n' ' ' <"$err")" >&2
-    failed=1; return 1
+  if [ -z "$entry" ]; then
+    # Not in HEAD: the kit's default result, never committed (#167). Its bytes are copied once
+    # and only the copy is read; the copy's blob id is the marker. NAME.result-path is the
+    # run's start: an older file is an earlier run's. No ready marker: still being written.
+    rp=$wdir/$1.result-path
+    [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1
+    cat -- "$f" >"$body" 2>/dev/null || return 1
+    ready=$(LC_ALL=C tr -d '\r' <"$body" | LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)
+    [ "$ready" = '<!-- codex-worker: ready -->' ] || return 1
+    # Hashed as git would store it (eol and attribute filters of its path): a later commit of
+    # the same content under core.autocrlf=true has this id and is not reported again.
+    blob=$(git -C "$d" hash-object --path="${f##*/}" --stdin <"$body" 2>/dev/null) || return 1
+    [ "$(mark "$1" result)" != "$blob" ] || return 1
+  else
+    mode=${entry%% *}; blob=${entry#* }; blob=${blob#* }; blob=${blob%%"	"*}
+    dirty=$(git -C "$d" status --porcelain 2>/dev/null) || return 1
+    [ -z "$dirty" ] || return 1
+    [ "$(git -C "$d" rev-parse -q --verify HEAD 2>/dev/null)" = "$head" ] || return 1
+    [ "$(mark "$1" result)" != "$blob" ] || return 1
+    case $mode in 100644|100755) ;; *)
+      say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done" || return 2
+      return ;;
+    esac
+    if ! git -C "$d" cat-file blob "$blob" >"$body" 2>"$err"; then
+      say "watch_workers: $1: could not read the committed result $blob: $(tr '\n' ' ' <"$err")" >&2
+      failed=1; return 1
+    fi
   fi
   k=$(hl 1 "$body"); t=$(hl 2 "$body"); a=$(hl 3 "$body"); r=$(hl 4 "$body")
   case $a in "Attempt: "*) a=${a#Attempt: } ;; *) a=x ;; esac
@@ -383,15 +414,56 @@ tab() {
     case $line in "waiting question "*) what="a question" ;; *) what="a permission prompt" ;; esac
     say "watch_workers: WAITING: $1, on $what (its state file: $line)$(context_label "$line")" || return 2
   else
-    say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)$(context_label "$line")" || return 2
+    say "watch_workers: IDLE: $1, its session stopped: a question in its tab, a usage limit or an error, or a park on its own background job (it goes on by itself when the job ends), with no new result report (its state file: $line)$(context_label "$line")" || return 2
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
   setmark "$1" state "$line"
 }
 
+# ended LIVE: whether the supervisor that locked LIVE has ended, by codex_worker.py's own gone().
+# No Python, or any failure, counts as not ended. The interpreters are spawn_worker.sh's.
+ended() {
+  for p in python3 python 'py -3'; do
+    pyrc=0
+    # shellcheck disable=SC2086 # py -3 splits on purpose
+    $p -I -c 'import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])
+cw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cw)
+sys.exit(0 if cw.gone(Path(sys.argv[2]), 0) else 1)' "$here/codex_worker.py" "$1" </dev/null >/dev/null 2>&1 || pyrc=$?
+    case $pyrc in 0) return 0 ;; 1) return 1 ;; esac  # else not found, or a Store alias: the next
+  done
+  return 1
+}
+
+# Native Windows: report once that NAME's supervisor ended: its exit record (its first line),
+# else its .live record whose lock dropped. A record older than NAME.result-path (the run's
+# start) is an earlier run's. Return 1 when nothing is said, 2 when the report could not be written.
+gone_tab() {
+  rp=$wdir/$1.result-path; x=$wdir/$1.exit; l=$wdir/$1.live; v=""; dropped=""
+  # The lock first, as codex_worker.py --wait reads it: an exit record written between the two
+  # reads is still seen below, never reported as a dropped lock.
+  if [ -f "$l" ] && [ ! "$l" -ot "$rp" ]; then
+    v=$(cat -- "$l" 2>/dev/null) || v=""
+    if [ -n "$v" ] && [ "$(mark "$1" live)" != "$v" ] && ended "$l"; then dropped=1; fi
+  fi
+  if [ -f "$x" ] && [ ! "$x" -ot "$rp" ]; then
+    e=$(LC_ALL=C sed -n 1p "$x" 2>/dev/null | LC_ALL=C tr -d '\001-\037\177')
+    # Empty: being written; the next check reads it.
+    [ -n "$e" ] && [ "$(mark "$1" exit)" != "$e" ] || return 1
+    say "watch_workers: GONE: $1, its session ended ($e): read its result file" || return 2
+    setmark "$1" exit "$e"
+    return 0
+  fi
+  [ -n "$dropped" ] || return 1
+  say "watch_workers: GONE: $1, its supervisor ended without an exit record (its tab closed or it was killed): read its result file" || return 2
+  setmark "$1" live "$v"
+}
+
 # Report the context figure in NAME's status line ($win) when it is past the warning line,
 # or (not with --once) when there is none; once per session. Return 1 when nothing is said,
-# 2 when the report could not be written (and no marker is queued).
+# 2 when the report could not be written (and no marker is queued), 4 after the no-figure note.
 context() {
   if [ -z "$warn_abs" ]; then
     # A project's older context_size.py (it has no KIT-OWNED line, so sync keeps it) cannot
@@ -462,6 +534,7 @@ context() {
   [ -z "$once" ] && [ -z "$said" ] || return 1
   say "watch_workers: CONTEXT: $1, no context figure: its status line is $2 (said once; nothing is guessed)" || return 2
   setmark "$1" context noted
+  return 4
 }
 
 end=$(( $(date +%s) + max * 60 ))
@@ -480,16 +553,18 @@ while :; do
       # A report that could not be written ends the run like a failed capture; w stays x
       # when the buffer cannot even be opened.
       w=x
-      # On Windows: the state line's WAITING first, then the result, then its IDLE;
+      # On Windows: the state line's WAITING first, then the result, then GONE, then its IDLE;
       # the optional API context count is part of either state report.
       { w=1; [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
+        [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; gone_tab "$n" || w=$?; }
         [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }
       } >>"$out" || :
       case $w in
         0) found=1 ;;
         1) ;;
         3) failed=1 ;;
+        4) ;;  # the no-figure note: printed, but no wake; the run goes on (#188)
         *) say "watch_workers: $n: could not write its report: the report buffer failed" >&2; failed=1 ;;
       esac
     fi

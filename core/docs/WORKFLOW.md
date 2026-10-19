@@ -1251,7 +1251,9 @@ command printed by spawn as a background command, also when spawn found no sessi
 notifies the lead of DONE, BLOCKED, HANDOFF or PROGRESS after a result from this run is
 published with the end marker (by a rename over an older result), and of EXITED when the worker
 stopped without publishing one, even when its wrapper was killed; no commit or lead polling is
-needed. After PROGRESS or HANDOFF the worker goes on, and `--wait` prints its exact follow-up
+needed. `--since` (the launch time) is required. With neither the `.live` nor the exit record
+300 s after the launch, the wait ends with NOT STARTED: the tab or session failed before the
+supervisor ran; the lead looks at it, and running the same wait again is safe. After PROGRESS or HANDOFF the worker goes on, and `--wait` prints its exact follow-up
 command (`--stale` set to the reported result's content hash, the same `--since`; other
 contents count as new, by rename or by in-place rewrite, and a byte-identical republication
 does not): the lead runs that one next, since spawn's command would return the same result

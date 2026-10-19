@@ -149,7 +149,9 @@ printed by spawn as a background command; it reports DONE for a published uncomm
 and neither can an in-place edit of it: spawn captures FILE_ID before launch, and a new result
 is published by the rename. A file that changed in the run but sat unchanged for 60 s
 without the result header and ready marker (a free-form report) ends the wait with NOT A
-RESULT instead of a silent wait; the lead reads it by hand. Other result
+RESULT instead of a silent wait; the lead reads it by hand. `--since` (the launch time) is
+required; with no supervisor record 300 s after the launch the wait ends with NOT STARTED (the
+tab failed before the supervisor ran; running the same wait again is safe). Other result
 kinds report BLOCKED, HANDOFF or PROGRESS. A completed result, a handoff or a decision ends
 the session; a progress result leaves it running. After HANDOFF, `--wait` prints how to continue
 the session with `--resume`. After PROGRESS, `--wait` also prints its exact follow-up

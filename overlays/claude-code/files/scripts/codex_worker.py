@@ -18,6 +18,10 @@ READY = '<!-- codex-worker: ready -->'
 REFUSALS = 50  # consecutive Windows refusals of one path a poller waits through, about five seconds
 REFUSED = {}  # path: its consecutive refusals
 SETTLED = 60  # seconds a changed file sits unchanged before --wait calls it NOT A RESULT
+# A bound, not a measurement: the supervisor writes its .live record before it launches the worker,
+# so a run with neither that record nor an exit record this long after its launch never started.
+# Wide enough for a loaded Windows host, where the tab's shell and python can take minutes to start.
+START = 300
 STALE_LOCK = 600  # seconds an index.lock sits unchanged, with no gate running, before it counts as left behind
 CHECKED = {}  # path: (id, size, mtime_ns) last read by not_a_result, and its verdict
 
@@ -42,10 +46,22 @@ def renamed(source, target):
             time.sleep(.02)
 
 
+def decoded(data):
+    """A result's or question's bytes as text, never a decode error (#169): UTF-16 by its BOM
+    (PowerShell 5.1's Out-File or >), else UTF-8 with a BOM dropped (Set-Content -Encoding UTF8);
+    bytes in another code page (cp1254 Set-Content) read as U+FFFD instead of ending the wait.
+    Line ends become \\n as a text-mode read made them: a CRLF result keeps its content hash."""
+    if data[:2] in (b'\xff\xfe', b'\xfe\xff'):
+        text = data.decode('utf-16', 'replace')
+    else:
+        text = data.decode('utf-8-sig', 'replace')
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+
+
 def published(path):
     """The text of a decision published with its end marker, '' without one, None when refused."""
     try:
-        text = path.read_text(encoding='utf-8').strip()
+        text = decoded(path.read_bytes()).strip()
     except FileNotFoundError:
         REFUSED.pop(path, None)
         return ''
@@ -95,9 +111,9 @@ def result_kind(path, since=0, stale=None):
         if seen and seen[0] == (info.st_ino, info.st_size, info.st_mtime_ns, since, stale):
             REFUSED.pop(path, None)
             return seen[1]
-        with path.open(encoding='utf-8') as file:
+        with path.open('rb') as file:
             info = os.fstat(file.fileno())
-            text = file.read().strip()
+            text = decoded(file.read()).strip()
     except FileNotFoundError:
         REFUSED.pop(path, None)
         return '', None
@@ -125,7 +141,7 @@ def not_a_result(path, since, stale):
         if CHECKED.get(path, (None,))[0] != key:  # read once per change: Windows refuses a rename over an open file
             with path.open('rb') as file:
                 info = os.fstat(file.fileno())
-                text = file.read().decode('utf-8', 'replace').strip()
+                text = decoded(file.read()).strip()
             key = identity(info)
             if not settled(info) or identity(path.stat()) != key:
                 return False  # changed while read: the next poll reads it
@@ -341,9 +357,10 @@ def posix_tree(pid, force=False):
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == '--wait':
         options = dict(zip(sys.argv[3::2], sys.argv[4::2]))
-        if len(sys.argv) % 2 == 0 or set(options) - {'--since', '--exit', '--stale'}:
-            raise ValueError('usage: codex_worker.py --wait RESULT [--since START] [--stale ID] [--exit RECORD]')
-        result, since = Path(sys.argv[2]), float(options.get('--since', 0))
+        # --since is required: without it an earlier run's complete result read as DONE at once (#191).
+        if len(sys.argv) % 2 == 0 or set(options) - {'--since', '--exit', '--stale'} or '--since' not in options:
+            raise ValueError('usage: codex_worker.py --wait RESULT --since START [--stale ID] [--exit RECORD]')
+        result, since = Path(sys.argv[2]), float(options['--since'])
         record = Path(options['--exit']) if '--exit' in options else None
         stale = options.get('--stale')
         if stale is None:
@@ -353,6 +370,7 @@ def main():
         elif not stale.startswith('sha256:'):
             stale = 'sha256:' + stale.partition(':')[2]  # INO:HASH, printed before the hash alone decided
         pin(result, stale)
+        started = False  # this run's .live record seen: the wait is open-ended from then on
         while True:
             # Read first: what the supervisor published or recorded before it ended is seen below.
             ended = record is not None and gone(record.with_suffix('.live'), since)
@@ -366,7 +384,7 @@ def main():
                     # The worker goes on. The same wait with this result as the stale one reports the
                     # next; --since stays the run's start, which the .live and .exit records are read by.
                     again = [Path(sys.executable).as_posix(), Path(sys.argv[0]).absolute().as_posix(),
-                             '--wait', sys.argv[2], '--since', options.get('--since', '0'),
+                             '--wait', sys.argv[2], '--since', options['--since'],
                              '--stale', str(published_id or 0)] + (['--exit', options['--exit']] if record else [])
                     print('codex_worker: the worker goes on; run as the next background command for its next '
                           'result: ' + ' '.join(map(shlex.quote, again)), flush=True)
@@ -387,6 +405,20 @@ def main():
                 print('codex_worker: EXITED (its supervisor ended without an exit record: its tab closed '
                       'or it was killed) without publishing a new result: ' + str(result), flush=True)
                 return 0
+            if record and not started and time.time() > since + START:
+                # A failed `cd` or a python missing from the tab's login shell runs no supervisor,
+                # which writes neither record: without this the wait never returned (#191).
+                try:
+                    started = record.with_suffix('.live').stat().st_mtime >= since
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    started = True  # a record that cannot be read is no proof it is missing
+                if not started:
+                    print('codex_worker: NOT STARTED: no supervisor record within %d s of the launch (its tab '
+                          'or session failed before the supervisor ran: look at it; running the same wait '
+                          'again is safe) and no new result: %s' % (START, result), flush=True)
+                    return 0
             time.sleep(0.1)
     if sys.argv[1:2] == ['--publish']:
         # The worker's own last step: its finished temporary file renamed over the destination.
@@ -414,7 +446,7 @@ def supervise():
     result = Path(sys.argv[2]) if separator == 3 else None
     answered = question_id(question)
     if answered is not None and os.environ.get('KIT_WORKER_RESUME') != '1':
-        raise ValueError('question file already exists; answer with spawn_codex.sh --resume')
+        raise ValueError('question file already exists; answer it with --resume (spawn_codex.sh or spawn_worker.sh)')
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
     stale = (int(os.environ['KIT_WORKER_STALE']) or None if 'KIT_WORKER_STALE' in os.environ
              else baseline(result, since))

@@ -250,12 +250,13 @@ class CodexWorkerTests(unittest.TestCase):
             result = self.run_worker(question, 'from pathlib import Path; Path(%r).touch()' % str(started))
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('question file already exists', result.stderr)
+            self.assertIn('spawn_worker.sh', result.stderr, 'a Claude worker was told only of spawn_codex.sh (#235)')
             self.assertFalse(started.exists())
 
     def test_uncommitted_completed_result_closes_worker_and_background_wait_reports_done(self):
         with tempfile.TemporaryDirectory() as tmp:
             question, result = Path(tmp) / 'q.md', Path(tmp) / 'result.md'
-            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result)],
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', '0'],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 result.write_text('Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n')
@@ -285,7 +286,7 @@ class CodexWorkerTests(unittest.TestCase):
     def test_ready_blocked_result_before_question_unblocks_the_leads_waiter(self):
         with tempfile.TemporaryDirectory() as tmp:
             question, result = Path(tmp) / 'q.md', Path(tmp) / 'result.md'
-            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result)],
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', '0'],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 code = ('from pathlib import Path; import os,time; p=Path(%r); '
@@ -382,7 +383,8 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertFalse(working.exists(), 'a HANDOFF result left its worker session open')
             self.assertFalse(question.exists())
             output = io.StringIO()
-            with mock.patch('sys.argv', [str(SCRIPT), '--wait', str(result)]), mock.patch('sys.stdout', output):
+            with mock.patch('sys.argv', [str(SCRIPT), '--wait', str(result), '--since', '0']), \
+                    mock.patch('sys.stdout', output):
                 self.assertEqual(module().main(), 0)
             self.assertIn('codex_worker: HANDOFF: ', output.getvalue())
             self.assertNotIn('the worker goes on', output.getvalue())
@@ -482,6 +484,65 @@ class CodexWorkerTests(unittest.TestCase):
                                      '--exit', str(record)], capture_output=True, text=True, timeout=10)
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
             self.assertIn('EXITED (exit 3', waiter.stdout)
+
+    def test_wait_reads_a_result_or_question_in_another_encoding(self):
+        # #169: a cp1254 byte ended --wait (and the supervisor) with a codec error, and a BOM hid
+        # the result header, so a valid result read as NOT A RESULT.
+        complete = 'Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, data in (('cp1254.md', (complete + 'Note: g\u00fcn\u015fen\n' + READY).encode('cp1254')),
+                               ('bom.md', b'\xef\xbb\xbf' + (complete + READY).encode('utf-8'))):
+                result = Path(tmp) / name
+                result.write_bytes(data)
+                waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', '0'],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(waiter.returncode, 0, waiter.stderr)
+                self.assertIn('DONE: ' + str(result), waiter.stdout)
+            question = Path(tmp) / 'q.md'
+            for encoding in ('utf-8-sig', 'utf-16'):
+                question.write_bytes(('A or B?\n' + READY).encode(encoding))
+                self.assertEqual(module().published(question), 'A or B?\n' + READY, encoding)
+
+    def test_wait_without_since_is_refused(self):
+        # #191: without --since an earlier run's complete result read as DONE at once.
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp) / 'result.md'
+            result.write_text('Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n' + READY)
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(waiter.returncode, 0)
+            self.assertIn('--since START', waiter.stderr)
+            self.assertNotIn('DONE', waiter.stdout)
+
+    def test_wait_reports_a_supervisor_that_never_started(self):
+        # #191: a tab whose `cd` or python failed runs no supervisor, which writes neither the .live
+        # nor the exit record; the wait polled forever. Once .live is there it stays open-ended.
+        # r1: 120 s fired on a loaded host while the supervisor was still starting; the bound is 300 s.
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            loaded = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since',
+                                       str(time.time() - 200), '--exit', str(record)],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                time.sleep(1.5)
+                self.assertIsNone(loaded.poll(), 'a launch 200 s ago was reported as never started')
+            finally:
+                loaded.kill()
+                loaded.communicate()
+            args = [sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(time.time() - 400),
+                    '--exit', str(record)]
+            waiter = subprocess.run(args, capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('NOT STARTED: no supervisor record within 300 s', waiter.stdout)
+            self.assertIn('running the same wait again is safe', waiter.stdout)
+            record.with_suffix('.live').write_bytes(b'')  # started; an empty record is no ended supervisor
+            waiter = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                time.sleep(1.5)
+                self.assertIsNone(waiter.poll(), 'a started supervisor was reported as never started')
+            finally:
+                waiter.kill()
+                waiter.communicate()
 
     def test_wait_reports_a_settled_file_that_is_not_a_result(self):
         # v0.11: a free-form report (no header, no ready marker) kept the wait silent forever.
@@ -1066,7 +1127,7 @@ class CodexWorkerTests(unittest.TestCase):
                 command = next(line.partition('next result: ')[2] for line in output.splitlines()
                                if 'next result: ' in line)
                 return shlex.split(command)[1:]
-            args = [str(SCRIPT), '--wait', str(result), '--stale', '0', '--exit', str(record)]
+            args = [str(SCRIPT), '--wait', str(result), '--since', '0', '--stale', '0', '--exit', str(record)]
             with mock.patch.object(Path, 'stat', lambda path, *a, **k: reused(stat(path, *a, **k))), \
                     mock.patch.object(worker.os, 'fstat', lambda fd: reused(fstat(fd))), \
                     mock.patch.object(worker, 'pin'):
@@ -1150,7 +1211,7 @@ class CodexWorkerTests(unittest.TestCase):
             fresh.write_text('A new question.\n' + READY)
             child = mock.Mock(returncode=None)
             child.poll.return_value = None
-            reading, reads, renaming = Path.read_text, [], []
+            reading, reads, renaming = Path.read_bytes, [], []
             def read(path, *args, **kwargs):
                 if path == question:
                     reads.append(worker.question_id(path))
@@ -1162,7 +1223,7 @@ class CodexWorkerTests(unittest.TestCase):
                 if fresh.exists():
                     os.replace(fresh, question)
                     renaming.append(True)
-            with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), mock.patch.object(Path, 'read_text', read), \
+            with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), mock.patch.object(Path, 'read_bytes', read), \
                     mock.patch.object(worker.time, 'sleep', publish), mock.patch.object(worker, 'stop'):
                 if os.name == 'nt':
                     self.assertEqual(worker.watch(child, question, None, answered=answered), 0)
@@ -1325,7 +1386,7 @@ class CodexWorkerTests(unittest.TestCase):
             polls = iter([None] * 10)
             child = mock.Mock(returncode=0)
             child.poll.side_effect = lambda: next(polls, 0)
-            reading, reads, sleeps = Path.read_text, [], []
+            reading, reads, sleeps = Path.read_bytes, [], []
             def read(path, *args, **kwargs):
                 if path == question:
                     reads.append(path)
@@ -1334,7 +1395,7 @@ class CodexWorkerTests(unittest.TestCase):
                 sleeps.append(seconds)
                 if len(sleeps) == 5:
                     question.write_text('A question.\n' + READY)
-            with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), mock.patch.object(Path, 'read_text', read), \
+            with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), mock.patch.object(Path, 'read_bytes', read), \
                     mock.patch.object(worker.time, 'sleep', sleep), mock.patch.object(worker, 'stop'), \
                     mock.patch('sys.stdout', new=io.StringIO()) as output:
                 self.assertEqual(worker.watch(child, question, None), 0)
@@ -1372,7 +1433,7 @@ class CodexWorkerTests(unittest.TestCase):
         denied, absent = PermissionError(13, 'sharing violation'), FileNotFoundError(2, 'not published yet')
         with tempfile.TemporaryDirectory() as tmp:
             for read, method, refused, missing in ((worker.result_kind, 'stat', ('', None), ('', None)),
-                                                   (worker.published, 'read_text', None, '')):
+                                                   (worker.published, 'read_bytes', None, '')):
                 path = Path(tmp) / (read.__name__ + '.md')
                 with self.subTest(read=read.__name__), mock.patch.object(worker.os, 'name', 'nt'):
                     with mock.patch.object(Path, method, side_effect=[denied, absent] * (worker.REFUSALS + 1)):
