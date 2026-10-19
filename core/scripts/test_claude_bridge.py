@@ -7053,6 +7053,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(chain['selected_reviewer'], 'claude')
         self.assertIn('quota_exhausted', chain['switched'])
         self.assertIn('SWITCH [review]: codex quota is exhausted', result.stdout)
+        # #121: the record written before the switch says it follows; the last one names none.
+        first = Path(chain['chain_record']).with_name(Path(chain['chain_record']).name.replace('-2.json', '-1.json'))
+        self.assertEqual(json.loads(first.read_text())['next_attempt'], {'reviewer': 'claude', 'why': 'quota switch'})
+        self.assertNotIn('next_attempt', chain)
         self.assertIn('FALLBACK REVIEWER: the requested reviewer codex (quota_exhausted)',
                       Path(chain['attempts'][1]['evidence']).read_text())
         # Claude's own exhausted quota switches nothing: without --fallback the review fails.
@@ -7084,7 +7088,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                               (3, '', [600, 1200], 'failed'),
                                               # "0 seconds" is a delay, not a missing one (batch 4 r1 High).
                                               (1, ' Please try again in 0 seconds.', [0], 'completed')):
-            calls, slept, flags, out = [], [], [], io.StringIO()
+            calls, slept, flags, pending, out = [], [], [], [], io.StringIO()
 
             def sleep(delay):
                 # #280: the checkpoint written before the wait says a retry follows.
@@ -7092,7 +7096,12 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 chain_id = os.environ['MYAGENTKIT_REVIEW_CHAIN_ID']
                 newest = max((self.repo / '.myagentkit/usage/chains').glob(chain_id + '-*.json'),
                              key=lambda path: int(path.stem.rpartition('-')[2]))
-                flags.append(json.loads(newest.read_text())['recovery']['automatic_retry'])
+                record = json.loads(newest.read_text())
+                flags.append(record['recovery']['automatic_retry'])
+                # #121: the record also names the attempt that follows and when.
+                pending.append(record['next_attempt']['reviewer'] == 'codex'
+                               and 'rate_limited retry' in record['next_attempt']['why']
+                               and bool(record['next_attempt']['not_before']))
 
             with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
                     MYAGENTKIT_TASK_ID='capacity-%d' % failures,
@@ -7104,6 +7113,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
                 self.assertEqual(slept, waits)
                 self.assertEqual(flags, [True] * len(waits))
+                self.assertEqual(pending, [True] * len(waits))
+                self.assertNotIn('next_attempt', chain)
                 self.assertIs(chain['recovery']['automatic_retry'], False)
                 self.assertEqual(len(calls), len(waits) + 1)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'] * len(calls))

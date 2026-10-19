@@ -8,7 +8,8 @@ import re
 import stat
 import subprocess
 import sys
-from time import sleep
+from datetime import datetime, timezone
+from time import sleep, time
 import uuid
 
 import agent_usage
@@ -568,6 +569,15 @@ def main(argv=None):
                 eligible, substitute_same = False, []
         if substitute_same:
             chain["same_tier_exception"] = exception  # in the checkpoint before the substitute runs
+        # A lead reading the records after a cut-off sees that another attempt follows: the retry
+        # sleeps first, and the quota switch runs without --fallback (#121).
+        chain.pop("next_attempt", None)
+        if retry:
+            chain["next_attempt"] = {"reviewer": names[provider], "why": "rate_limited retry %d of %d"
+                                     % (retries + 1, CAPACITY_RETRIES), "not_before": datetime.fromtimestamp(
+                                         time() + delay, timezone.utc).isoformat()}
+        elif chain["status"] != "completed" and eligible:
+            chain["next_attempt"] = {"reviewer": names[other], "why": "quota switch" if switch else "fallback"}
         checkpoint(retry)  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
             # The result stands only when the chain completed; after a stale_checkout it did not.
