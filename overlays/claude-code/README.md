@@ -220,7 +220,10 @@ in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 
 The overlay's files also carry the core's `{{PROJECT_NAME}}`, `{{OWNER_NAME}}` and
 `{{RISKY_AREAS}}`, filled with the same values as the core files. `diff-reviewer.md` ships
-with `effort: high`: reviews run at high effort.
+with `effort: high`: reviews run at high effort. A project that already has its own reviewer
+agent under `.claude/agents` keeps one definition, not two: merge what its own carries into
+`diff-reviewer.md` and delete it, or keep its own and delete `diff-reviewer.md`. Two
+definitions for one job is the decay signal `AGENTS.md` names, and a lead then picks either.
 
 If the project has no such jobs, keep `.claude/agents/worker.md` (it pins model, effort and
 the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn_worker.sh`

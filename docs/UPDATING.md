@@ -15,6 +15,17 @@ short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 `BEHAVIOUR.md`, the module-rules template, and the two setup documents
 (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
 
+The review adapters (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
+`scripts/review_dispatch.py` and the scripts they import) carry no marker yet, but each
+upgrade's checklist replaces them whole too. A line a project adds to them, such as its own
+check of a reviewer's final report, is lost at the next upgrade. The adapters have no
+project hook for such a check today: send it upstream (`/myagentkit:kit-feedback`) so it
+lands in the kit, and keep it as a marked patch with a `docs/STATE.md` line until then.
+
+An upgrade that adds a Claude Code agent definition (`.claude/agents/*.md`) next to one the
+project already has for the same job, such as its own reviewer beside `diff-reviewer.md`,
+keeps one of the two (the overlay's README says how).
+
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and
 their negative tests. All of them were customised during setup. Overwriting them would
