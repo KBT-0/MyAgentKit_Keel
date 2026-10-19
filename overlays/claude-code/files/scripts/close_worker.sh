@@ -341,7 +341,7 @@ mine() {
   [ -e "$top/.myagentkit/workers/$1.pid" ] || [ -e "$top/.myagentkit/workers/$1.result-path" ] || return 0
   ids=$(cat -- "$top/.myagentkit/workers/$1.pid" 2>/dev/null) || { printf '%s' "$all"; return 3; }
   own=""
-  for p in $all; do case " $(echo $ids) " in *" $p "*) own="$own${own:+ }$p" ;; esac; done
+  for p in $all; do case " $(printf '%s ' $ids)" in *" $p "*) own="$own${own:+ }$p" ;; esac; done
   printf '%s' "$own"
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
@@ -561,7 +561,9 @@ for name; do
   elif ! command -v tmux >/dev/null 2>&1; then
     say "$name: no tmux session (tmux is not installed); nothing to end"
   elif has "$name"; st=$?; [ "$st" -eq 1 ]; then
-    say "$name: no tmux session named $name${other:+ started in this checkout (the one in $other is another checkout's, never ended here)}; nothing to end"
+    # Built outside "${other:+...}": shellcheck cannot parse a single quote there.
+    [ -z "$other" ] || other=" started in this checkout (the one in $other is another checkout's, never ended here)"
+    say "$name: no tmux session named $name$other; nothing to end"
   elif [ "$st" -eq 2 ]; then
     fail "$name: tmux could not say whether session $name exists, so it may still run: $err"
   elif [ -n "$dry" ]; then
