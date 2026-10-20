@@ -1,5 +1,8 @@
 {
   "autoCompactWindow": 450000,
+  "worktree": {
+    "bgIsolation": "none"
+  },
   "hooks": {
     "PreToolUse": [
       {
