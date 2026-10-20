@@ -1107,8 +1107,12 @@ will be thin.
 
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session with a brief file. By default
 it is a Claude Code background session (`claude --bg`, on native Windows and POSIX alike, where
-`claude --help` lists `--bg`); a Windows Terminal tab (native Windows) or tmux is the fallback,
-and `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one. A background session is keyed on the id
+`claude --help` lists `--bg` within 10 s); a Windows Terminal tab (native Windows) or tmux is
+the fallback, `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one, and the spawn prints the host it
+took. A name a running tab, tmux or background worker holds is refused on every host. The
+worker's variables (`MYAGENTKIT_ROLE`) travel in its merged settings, never on the launch line:
+the background service a launch starts gives that launch's environment to every later session,
+the owner's own too. A background session is keyed on the id
 the launch prints (`.myagentkit/workers/NAME.id`), seen in `claude agents` or with
 `claude attach ID`, and ended by its detached `codex_worker.py` with `claude stop ID` once its
 result is published. Three traps (`docs/research/worker-orchestration-spike.md`): its folder
