@@ -1376,6 +1376,15 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(published.returncode, 0, published.stderr)
             self.assertFalse(fresh.exists())
             self.assertEqual(module().result_kind(result)[0], 'DONE')
+            # bge2e: a question published without its end marker never ended the session; the
+            # step refuses it, so the worker sees why at once, and moves nothing.
+            fresh.write_text('May I start part two?\n')
+            published = subprocess.run([sys.executable, str(SCRIPT), '--publish', str(fresh), str(result)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertEqual(published.returncode, 1)
+            self.assertIn('its last line is not ' + READY, published.stderr)
+            self.assertTrue(fresh.exists())
+            self.assertEqual(module().result_kind(result)[0], 'DONE')
 
     def test_an_unchanged_new_question_is_read_once_and_a_changed_one_again(self):
         worker = module()

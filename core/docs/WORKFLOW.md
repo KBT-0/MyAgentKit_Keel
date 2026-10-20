@@ -1249,7 +1249,8 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
   or finished result atomically: write a temporary file beside it, end with
   `<!-- codex-worker: ready -->`, then rename it into place with `codex_worker.py --publish
-  TEMPORARY_FILE DESTINATION` (spawn's instruction names it), which retries for about two
+  TEMPORARY_FILE DESTINATION` (spawn's instruction names it; it refuses a file without the
+  marker, which the supervisor would never see), which retries for about two
   seconds a rename Windows refuses while a poll reads the file, and end the turn immediately.
   `codex_worker.py` allows ten seconds for the turn to flush (`KIT_WORKER_GRACE` overrides
   the grace period), then closes only that worker's process tree, using a Windows job or

@@ -489,6 +489,10 @@ def main():
         # The worker's own last step: its finished temporary file renamed over the destination.
         if len(sys.argv) != 4:
             raise ValueError('usage: codex_worker.py --publish TEMPORARY_FILE DESTINATION')
+        # A question without the marker never ended its session (bge2e): refused here, the worker sees why.
+        if not decoded(Path(sys.argv[2]).read_bytes()).strip().endswith(READY):
+            raise ValueError('%s: its last line is not %s; add it and publish again: without it the supervisor '
+                             'never sees it' % (sys.argv[2], READY))
         renamed(sys.argv[2], sys.argv[3])
         return 0
     if sys.argv[1:2] == ['--detach']:

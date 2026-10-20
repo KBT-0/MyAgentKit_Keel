@@ -38,7 +38,8 @@ INSTRUCTION = ("Read {brief} and follow it. Your result file is {result}: its fi
                "DESTINATION: without them the supervisor never sees it. A published completed or handoff result "
                "ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this "
                "pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the "
-               "same way, to {question}, which ends this session for the lead's answer; until then go on with "
+               "same way and with the same last line, to {question}, which ends this session for the lead's "
+               "answer; until then go on with "
                "what does not depend on it.")
 
 TMUX = r'''#!/usr/bin/env python3
