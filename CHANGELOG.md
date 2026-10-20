@@ -15,6 +15,31 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 `sync-kit.sh` prints these entries to a project whose recorded kit version is older than v0.12.
 
+- **Workers run as Claude Code background sessions** (owner decision 77; research
+  `docs/research/worker-orchestration-spike.md` and `-spike-posix.md`). `spawn_worker.sh` starts
+  a worker with `claude --bg` on every platform whose CLI lists `--bg`; the Windows Terminal tab
+  and tmux stay as the fallback, and `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one. It records
+  `NAME.host`, `NAME.id` and the full `NAME.session`, and prints `claude agents`, `claude attach
+  ID` and `claude logs ID` to see the worker. A worker's settings carry `worktree.bgIsolation:
+  none` (it never pushes on its own), `MYAGENTKIT_ROLE=worker` in `env` and no commit
+  attribution. `--resume` wakes the same session by its full id from the worker's folder.
+  The new `list_workers.sh` lists this checkout's workers (host, id, state, what it waits for,
+  result); `watch_workers.sh` reports a background worker DONE, BLOCKED, WAITING or GONE from its
+  row in `claude agents --json --all`; `close_worker.sh` ends it with `claude stop` and `claude
+  rm` by id, never by name and never with `claude daemon stop`. **ACTION**: run `claude` once in
+  the project's main checkout and accept the trust prompt, or a background spawn is refused with
+  that instruction.
+
+- **A watch never loops silently on a worker it cannot see.** A name with no record in the
+  watching checkout and no session exits 2 and names the worktree that holds its records, or
+  reads the `--result NAME=PATH` given; the printed watch line runs from the checkout holding
+  the records, and a second printed line is a plain until-loop on the result file.
+
+- **A finished worker's worktree is removed after its merge.** The gate's own state in the
+  worktree's git folder (`kit-stop-gate.tree`, `check-gated-tree`) no longer counts as unsaved
+  work. `codex_worker.py --publish` refuses a question file without the end marker, which left
+  the session waiting forever; `close_worker.sh` no longer fails a project's shellcheck (SC2086).
+
 - **The lead's done signal is a disk watch, not an idle notice** (owner order 2026-10-20).
   `spawn_worker.sh` prints `sh scripts/watch_workers.sh --result NAME=PATH NAME` first, on tmux and
   on a Windows Terminal tab, to run as one background command whose exit wakes the lead; a

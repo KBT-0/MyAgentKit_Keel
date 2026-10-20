@@ -19,6 +19,16 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   side does and drops its Markdown parser (`review_parts` stays for the archive text). Not run
   in batch 4: the run spends Codex quota, and the owner was away.
 
+## Filed from v0.12 bg worker migration (bge2e, bgspawn, bgmanage)
+
+- `show_workers.sh` says "runs in the background" for a session whose state is done (bge2e Low).
+- A finished bg session's row can vanish from `claude agents --all` without a kit `claude rm`
+  (bge2e e2e2); close treats it as nothing to end, a later `--resume` of such a session is untried.
+- POSIX: the bg suites' minimums (test_spawn_worker 94, test_codex_worker 67/66,
+  test_worker_visibility 94, test_close_worker 49, test_sync_kit 58) are the Windows deltas, not
+  measured: the first CI run must confirm. `MYAGENTKIT_ROLE=worker` seen inside a live bg worker's
+  hook is asserted only through the merged settings (bgspawn NOT RUN).
+
 ## Filed from v0.12 release prep
 
 - bootstrap.sh / sync-kit.sh reviewer detection does not scan a symlinked `.claude/agents`
