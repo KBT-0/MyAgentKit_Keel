@@ -282,16 +282,25 @@ relpath() {
     *) return 1 ;;
   esac
 }
+# The overlays the project took: the presence of their files is the only record of it, so an
+# overlay with at least one of its kit-owned files in the project counts as taken.
+taken=" "
+while IFS= read -r src; do
+  relpath "$src" && [ "$overlay" -eq 1 ] && [ -e "$target/$rel" ] || continue
+  o=${src#"$kit/overlays/"}; taken="$taken${o%%/*} "
+done < "$work_list"
 while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
   why=$(blocked "$rel")
-  # An overlay file is synced only where it already exists: its presence is the only record
-  # of whether the project took that overlay, and installing an overlay is bootstrap's job.
+  # An absent overlay file is installed only in a project that took its overlay: a new
+  # kit-owned script there (v0.12's list_workers.sh, which the synced watch and close scripts
+  # call) arrives with the sync. Installing an overlay itself is bootstrap's job.
   # A symlink in its path is no absence: a dangling one fails `-e` and was skipped without a
   # word, and a symlinked folder had the kit's file written through it outside the project.
   if [ "$overlay" -eq 1 ] && [ ! -e "$target/$rel" ]; then
-    case "$why" in "symlink: "*) ;; *) continue ;; esac
+    o=${src#"$kit/overlays/"}
+    case "$why" in "symlink: "*) ;; *) case "$taken" in *" ${o%%/*} "*) ;; *) continue ;; esac ;; esac
   fi
   found=1
   if [ -n "$why" ]; then

@@ -45,10 +45,13 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
 wdir=$top/.myagentkit/workers
 json="" listed=y
 if [ "$mode" = row ] || grep -qsx bg "$wdir"/*.host; then
-  if ! json=$(claude agents --json --all 2>&1); then
-    say "claude agents --json --all failed: $json" >&2
+  # Its stdout alone is the list: a notice on stderr (an update) broke the parse.
+  errf=$(mktemp) || { say "cannot make a temporary file" >&2; exit 2; }
+  if ! json=$(claude agents --json --all 2>"$errf"); then
+    say "claude agents --json --all failed: $json$(cat -- "$errf")" >&2
     json="" listed=n
   fi
+  rm -f -- "$errf"
 fi
 printf '%s' "$json" | $kit_python -I -c 'import json, os, re, subprocess, sys
 mode, wdir, top, name, listed = sys.argv[1:]

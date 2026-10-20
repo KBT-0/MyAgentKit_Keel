@@ -602,6 +602,10 @@ class WatchTests(Base):
 
 
 HEAD = 'Kind: %s\nTask: T-7\nAttempt: 2\nRemaining: %s\n'
+READY = '\n<!-- codex-worker: ready -->\n'
+IDLE = ('watch_workers: IDLE: w1, its background session aaaa0001 is done with no new result report and its '
+        'process still idles: a question in its view, a usage limit or an error, or a park on its own background '
+        'job (it goes on by itself when the job ends): claude attach aaaa0001\n')
 STATUS = '58k/1.0M'  # in the real status line of working-auto.txt
 
 
@@ -1331,9 +1335,8 @@ class BackgroundTests(Base):
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=28256, status='idle'))
         result = self.watch()
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
-        self.assertEqual(result.stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is done with no '
-                         'new result report; its process still idles (a question in its view, a usage limit or an '
-                         'error, or a park on its own background job): claude attach aaaa0001\n')
+        # done with a live process is a turn end, as the tab path's IDLE: the lead re-arms after it.
+        self.assertEqual(result.stdout, IDLE)
         self.assertEqual(self.watch().stdout, '')
         for state in ('stopped', 'failed'):
             self.rows(agent('aaaa0001', 'w1', self.cwd, state))
@@ -1358,9 +1361,60 @@ class BackgroundTests(Base):
     def test_a_question_file_wins_over_the_state(self):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'done'))
-        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n')
-        self.assertEqual(self.watch().stdout, 'watch_workers: QUESTION: w1, a decision waits in QUESTION-w1.md: '
-                         'read it and answer it\n')
+        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
+        result = self.watch()
+        self.assertTrue(result.stdout.startswith('watch_workers: QUESTION: w1, a decision waits in '), result.stdout)
+        self.assertTrue(result.stdout.endswith('/QUESTION-w1.md: read it and answer it\n'), result.stdout)
+        self.assertEqual(self.watch().stdout, '')
+
+    def test_the_question_is_read_in_the_workers_folder_and_only_once_published(self):
+        # The supervisor, the worker's instruction and close_worker.sh put QUESTION-NAME.md in the
+        # worker's folder (.claude/worktrees/NAME, else the checkout), never beside a --result
+        # elsewhere; a draft without the end marker is no question yet, and ends no session.
+        self.spawned('w1')
+        tree = self.cwd / '.claude/worktrees/w1'
+        tree.mkdir(parents=True)
+        self.rows(agent('aaaa0001', 'w1', tree, 'stopped'))
+        (tree / 'QUESTION-w1.md').write_text('A or B?\n')
+        watch = lambda: self.run_bg(WATCH, '--once', '--result', 'w1=sub/R.md', 'w1')
+        self.assertIn('GONE: w1', watch().stdout, 'a draft question hid a session that ended')
+        (self.workers / 'w1.watch-bg').unlink()
+        (tree / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
+        result = watch()
+        self.assertTrue(result.stdout.startswith('watch_workers: QUESTION: w1, a decision waits in '), result.stdout)
+        self.assertTrue(result.stdout.endswith('/.claude/worktrees/w1/QUESTION-w1.md: read it and answer it\n'),
+                        result.stdout)
+        self.assertEqual(watch().stdout, '', 'a published question ended the session by design: no GONE')
+
+    def test_a_report_ends_the_background_watch_loop(self):
+        # bg() left the loop's own w at 1 after a WAITING or GONE, so found was never set and the
+        # background watch ran to --max-minutes after its report.
+        self.spawned('w1')
+        for row, said in ((agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=1), 'WAITING: w1'),
+                          (agent('aaaa0001', 'w1', self.cwd, 'stopped'), 'GONE: w1'),
+                          (agent('aaaa0001', 'w1', self.cwd, 'done', pid=1), 'IDLE: w1')):
+            with self.subTest(said=said):
+                self.rows(row)
+                result = self.run_bg(WATCH, '--max-minutes', '0', '--result', 'w1=RESULT-w1.md', 'w1')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(said, result.stdout)
+                self.assertNotIn('nothing was waiting', result.stdout)
+
+    def test_only_a_published_final_result_hides_the_sessions_end(self):
+        # The supervisor stops a session only on a decision, DONE or HANDOFF (codex_worker.py):
+        # a draft or a blocked result leaves it running, so its idle or end is still said.
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=1))
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none'))
+        self.assertEqual(self.watch().stdout, IDLE, 'a draft result hid an idle session')
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('blocked', 'a decision') + READY)
+        self.assertIn('BLOCKED: w1', self.watch().stdout)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'failed'))
+        self.assertIn('GONE: w1, its background session aaaa0001 is failed', self.watch().stdout,
+                      'a blocked result hid a session that ended')
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('handoff', 'the lead') + READY)
+        self.assertIn('HANDOFF: w1', self.watch().stdout)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
         self.assertEqual(self.watch().stdout, '')
 
     def test_a_list_that_cannot_be_read_is_an_observation_failure(self):
@@ -1382,7 +1436,7 @@ class BackgroundTests(Base):
     def test_a_question_or_a_final_result_ends_the_session_without_a_gone(self):
         # The supervisor stops a session 10 s after its question or final result: no GONE then.
         self.spawned('w1')
-        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n')
+        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=1))
         self.assertIn('QUESTION: w1', self.watch().stdout)
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
@@ -1413,6 +1467,22 @@ class BackgroundTests(Base):
         self.assertEqual(result.stdout, 'show_workers: w1 runs in the background: claude attach aaaa0001   '
                          '(claude agents lists every session; nothing opened)\n')
         self.assertEqual(self.log('wt-stub') + self.log('tmux'), '')
+        # Spawned on the other host: its attach fails here ('No job matching'), so none is printed.
+        other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if os.name == 'nt' else ('D:/p/RESULT-w1.md', 'windows')
+        (self.workers / 'w1.result-path').write_text(other + '\n')
+        result = self.run_bg(SHOW, 'w1', WSL_DISTRO_NAME='Test-1')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'show_workers: w1 runs in the background on %s, whose sessions this host '
+                         'cannot see: claude attach aaaa0001 there   (nothing opened)\n' % word)
+
+    def test_a_notice_on_the_listers_stderr_is_not_part_of_the_list(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=1, waitingFor='permission prompt'))
+        result = self.watch(AGENTS_NOTICE='Update available: run claude update')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('WAITING: w1, waiting for: permission prompt', result.stdout)
+        self.assertIn('w1\tbg\taaaa0001\tblocked\tpermission prompt\tn',
+                      self.run_bg(LIST, AGENTS_NOTICE='Update available').stdout)
 
     def test_the_list_has_one_line_per_worker_of_this_checkout(self):
         self.spawned('w1')

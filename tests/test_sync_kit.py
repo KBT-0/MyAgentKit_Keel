@@ -521,6 +521,28 @@ class SyncKitTests(unittest.TestCase):
             self.assertNotIn('rerun the sync to install', result.stdout)
             self.assertNotIn('RETROFIT', result.stdout)
 
+    def test_a_new_overlay_file_reaches_a_project_that_took_the_overlay_only(self):
+        # v0.12's list_workers.sh: the synced watch and close scripts call it, and a sync that
+        # skipped every absent overlay file left them failing on every background worker. A
+        # project with another file of the overlay took it; one with none never did.
+        for took in (True, False):
+            with self.subTest(took=took), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                for name in ('tool.sh', 'new.sh'):
+                    src = kit / 'overlays/o/files/scripts' / name
+                    src.parent.mkdir(parents=True, exist_ok=True)
+                    src.write_text('#!/bin/sh\n# KIT-OWNED: fixture %s\n' % name)
+                if took:
+                    (project / 'scripts').mkdir()
+                    (project / 'scripts/tool.sh').write_text('#!/bin/sh\n# KIT-OWNED: an older copy\n')
+                result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
+                self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+                self.assertEqual((project / 'scripts/new.sh').exists(), took, result.stdout)
+                self.assertEqual('new:     scripts/new.sh' in result.stdout, took, result.stdout)
+                if took:
+                    self.assertTrue(os.access(project / 'scripts/new.sh', os.X_OK) or WINDOWS)
+
     def test_a_kit_owned_path_that_is_not_a_regular_file_is_a_conflict_unread(self):
         # `cmp` on a FIFO at a kit-owned path blocked forever, and a symlink to an identical
         # copy read as "same": anything but a regular file is a conflict, never read.

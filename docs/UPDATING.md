@@ -132,9 +132,11 @@ inside it, in the build command (WORKFLOW, "Writing a gate"). A sync that leaves
 or leaves a check without its fixture test, is not finished.
 
 Overlay files are installed once and then belong to the project: the sync updates one only
-if it is kit-owned and the project already has it. The kit-owned ones are the Claude Code
+if it is kit-owned and the project already has it, and installs a kit-owned one the project
+lacks only when the project has another kit-owned file of that overlay (a new worker script
+such as `list_workers.sh`, which the synced watch and close scripts call). The kit-owned ones are the Claude Code
 overlay's worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
-`waiting_patterns.txt`, `close_worker.sh`) and its clean-up scripts (`clean_worktrees.sh`,
+`waiting_patterns.txt`, `close_worker.sh`, `list_workers.sh`) and its clean-up scripts (`clean_worktrees.sh`,
 `clean_worktrees.py`); the checklist names each other overlay file that changed. Re-run `bootstrap.sh --overlay <name>` if
 you want a new file from one: it adds what is missing, passes over files identical to the
 kit's and lists the ones that differ without touching them; only `--force` overwrites (as
