@@ -33,6 +33,9 @@ jobs:
         tier: [fast, slow]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        # The tags: without a v* tag (depth 1 has none) the kit check's ACTION check is NOT RUN.
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
@@ -60,6 +63,9 @@ jobs:
         tier: [fast, slow]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        # The tags: without a v* tag (depth 1 has none) the kit check's ACTION check is NOT RUN.
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}

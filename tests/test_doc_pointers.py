@@ -372,6 +372,10 @@ class SectionPointerTests(unittest.TestCase):
         # Done: history check examined no commit of it (#135).
         workflow = (ROOT / 'core/.github/workflows/ci.yml').read_text(encoding='utf-8')
         self.assertRegex(workflow, r'uses: actions/checkout@v\d+\n(?:\s*#.*\n)*\s*with:\n\s*fetch-depth: 0\n')
+        # The kit's own jobs: with no tag in a depth-1 clone, the ACTION check never ran in CI.
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        self.assertEqual(len(re.findall(r'uses: actions/checkout@\w+ # v\d+\n(?:\s*#.*\n)*\s*with:\n'
+                                        r'\s*fetch-depth: 0\n', workflow)), 2)
 
     def test_a_missing_shellcheck_is_reported_with_its_install_command(self):
         # The gate's NOT RUN came on every run with no fix, and doctor called the host ready (#155).

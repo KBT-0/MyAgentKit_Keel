@@ -11,6 +11,11 @@ if __name__ == '__main__':
         raise SystemExit('KIT CHECK: FAIL - Python 3.11 or newer is required')
 
     def terminate(sig, frame):
+        # A unit's group got the signal too. unittest records a SystemExit as a test error and
+        # runs the next test, which starts new shells and git: a unit exits at once.
+        if '--unit' in sys.argv:
+            import os
+            os._exit(128 + sig)
         raise SystemExit(128 + sig)
     signal.signal(signal.SIGTERM, terminate)
     if hasattr(signal, 'SIGHUP'):
@@ -132,7 +137,7 @@ REQUIRED_SUITES = {
               'test_codex_worker': 65 if os.name == 'nt' else 67 if Path('/proc/self/fd').is_dir() else 66, 'test_working_mode': 52,
               'test_worker_visibility': 95 if os.name == 'nt' or os.path.exists('/dev/full') else 94, 'test_doc_pointers': 28,
               'test_usage_summary': 33, 'test_done_audits': 2,
-              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 48, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 50 if os.name == 'nt' else 49, 'test_python_fallback': 3,
               'test_install': 12 if os.name == 'nt' else 8},
@@ -471,8 +476,9 @@ def check_actions(root):
         r'^(# |<!-- )KIT-OWNED:', (root / name).read_text(encoding='utf-8', errors='replace'), re.M)]
     if not owned:
         return
-    newest = re.search(r'^## (v\d+\.\d+)(?=\s|$)(.*?)(?=^## v|\Z)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'),
-                       re.M | re.S)
+    # After a release tag the next cycle's items sit under "## Unreleased" until its release.
+    newest = re.search(r'^## (Unreleased\b[^\n]*|v\d+\.\d+)(?=\s|$)(.*?)(?=^## v|\Z)',
+                       (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M | re.S)
     if not newest or re.match(r'v\d+\.\d+', tag).group() == newest.group(1):
         raise RuntimeError('project-owned kit files changed since %s, and CHANGELOG has no newer version '
                            'for their ACTION items: %s' % (tag, ', '.join(owned)))
@@ -1316,10 +1322,7 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
                 for child in children:
                     if child.poll() is None:
                         if os.name == 'nt':
-                            try:
-                                child.terminate()
-                            except ProcessLookupError:
-                                pass
+                            stop_tree(child)
                         else:
                             signal_unit(child, signal.SIGTERM)
             pool.shutdown(wait=True, cancel_futures=True)
