@@ -632,6 +632,16 @@ class ResultTests(Base):
                 self.assertEqual(result.stdout, 'watch_workers: %s: w1, task T-7, attempt 2, remaining: '
                                  'none (result file docs/w1.md)\n' % word)
 
+    def test_a_gone_session_still_reports_its_result(self):
+        # The supervisor ends a finished worker's session ten seconds after its result: the
+        # next poll found it GONE and never read the result (#294).
+        self.commit(HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n')
+        result = self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', 'w1', VIS_SESSIONS='')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'watch_workers: GONE: w1 (the tmux session no longer exists: '
+                         'read its result file)\nwatch_workers: DONE: w1, task T-7, attempt 2, remaining: '
+                         'none (result file docs/w1.md)\n')
+
     def test_a_result_counts_only_committed_on_a_clean_tree_and_once(self):
         self.file.write_text(HEAD % ('completed', 'none'))
         self.assertEqual(self.watch().stdout, '', 'an uncommitted file was read')

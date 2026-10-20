@@ -18,7 +18,7 @@
 # `tmux capture-pane`, which costs the worker nothing, and matches its bottom against
 # waiting_patterns.txt beside this script (the rules and why they look at the last line only
 # are explained there). It prints one block per session that is GONE or WAITING, with the
-# last pane lines for a WAITING one, and exits 0. Nothing waiting after --max-minutes
+# last pane lines for a WAITING one and the result report of a GONE one, and exits 0. Nothing waiting after --max-minutes
 # (default 55; 0 checks once, then prints the line) prints one line saying so and exits 0.
 # The 55 minutes stay under the one-hour prompt cache the kit pins (promptCacheTtl "1h" in
 # .claude/settings.json), so a quiet window's wake reads the lead's cache instead of rewriting
@@ -547,6 +547,16 @@ while :; do
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
+      # A finished worker's session ends ten seconds after its result, mostly before the next
+      # poll: a GONE session's result is read too (#294).
+      if [ "$st" = GONE ]; then
+        w=x
+        { w=0; result "$n" || w=$?; } >>"$out" || :
+        case $w in
+          0|1) ;;
+          *) say "watch_workers: $n: could not write its report: the report buffer failed" >&2; failed=1 ;;
+        esac
+      fi
       # shellcheck disable=SC2086 # the state's fields: split on purpose
       report "$n" $st || { say "watch_workers: $n: could not write its report to stdout" >&2; failed=1; }
     else
