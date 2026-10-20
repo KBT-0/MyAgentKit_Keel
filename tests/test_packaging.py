@@ -113,6 +113,33 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(check().returncode, 1)
             subprocess.run(script, check=True, capture_output=True, env=ENV)
             self.assertTrue(version().startswith("0.13.0+codex."))
+            # #156: each command and skill names the plugin's kit version, stamped with it.
+            command = root / "plugin/commands/mode.md"
+            command.parent.mkdir()
+            command.write_bytes(b"# mode\r\n\r\nThis plugin is kit v0.1. Read docs/kit/.kit-version.\r\n")
+            skill.write_bytes(b"This plugin is kit v0.12.\n")
+            result = check()
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("plugin/commands/mode.md names another kit version", result.stderr)
+            subprocess.run(script, check=True, capture_output=True, env=ENV)
+            self.assertEqual(command.read_bytes(), b"# mode\r\n\r\nThis plugin is kit v0.13. Read docs/kit/.kit-version.\r\n")
+            self.assertEqual(skill.read_bytes(), b"This plugin is kit v0.13.\n")
+            self.assertEqual(check().returncode, 0, check().stderr)
+
+    def test_every_command_and_skill_compares_the_projects_kit_version_with_its_own(self):
+        # #156: one user-level plugin serves projects synced at other kit versions, unsaid.
+        kit = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
+        own = "This plugin is kit v%s." % ".".join(kit.split(".")[:2])
+        files = sorted((ROOT / "plugin/commands").glob("*.md")) + sorted(ROOT.glob("plugins/myagentkit/skills/*/SKILL.md"))
+        self.assertGreaterEqual(len(files), 11)
+        for path in files:
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                text = " ".join(path.read_text(encoding="utf-8").split())
+                self.assertEqual(text.count("This plugin is kit v"), 1)
+                self.assertIn(own, text)
+                self.assertIn("`docs/kit/.kit-version`", text)
+                self.assertIn("never stop for it", text)
+                self.assertIn("`/myagentkit:sync`" if path.parent.name == "commands" else "`myagentkit-sync` skill", text)
 
 
 if __name__ == "__main__":
