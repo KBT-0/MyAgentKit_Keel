@@ -132,7 +132,7 @@ REQUIRED_SUITES = {
               'test_codex_worker': 62 if os.name == 'nt' else 64 if Path('/proc/self/fd').is_dir() else 63, 'test_working_mode': 52,
               'test_worker_visibility': 79 if os.name == 'nt' or os.path.exists('/dev/full') else 78, 'test_doc_pointers': 28,
               'test_usage_summary': 33, 'test_done_audits': 2,
-              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 20 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 42 if os.name == 'nt' else 41, 'test_python_fallback': 3,
               'test_install': 12 if os.name == 'nt' else 8},
@@ -691,8 +691,9 @@ def shell_scripts(root):
 def shell_portability(root):
     """The kit's shell lint and `shellcheck -s sh` over the repo's non-ignored sh scripts.
 
-    shellcheck fails only on SC3xxx (undefined in POSIX sh, a bashism) and on errors; its
-    warnings and notes stay a reviewer's. It reads no rc file and no SHELLCHECK_OPTS, so a
+    shellcheck fails on SC3xxx (undefined in POSIX sh, a bashism), on errors, and on SC2028 and
+    SC2086, which a project's gate refuses in every shell file, the kit's installed ones too
+    (core/scripts/check.sh); its other warnings and notes stay a reviewer's. It reads no rc file and no SHELLCHECK_OPTS, so a
     developer's settings cannot hide a code. Without shellcheck the check is NOT RUN, except
     on CI's Linux job, whose image has it, where its absence fails.
     """
@@ -713,9 +714,9 @@ def shell_portability(root):
     result = subprocess.run([tool, '--norc', '-s', 'sh', '-f', 'gcc', *map(str, paths)], capture_output=True,
                             text=True, encoding='utf-8', errors='replace', timeout=limit(300), env=env)
     refused = [line for line in result.stdout.splitlines()
-               if ': error:' in line or re.search(r'\[SC3\d{3}\]$', line)]
+               if ': error:' in line or re.search(r'\[SC(3\d{3}|2028|2086)\]$', line)]
     if refused or result.returncode not in (0, 1):
-        raise RuntimeError('shellcheck -s sh: a bashism or an error:\n'
+        raise RuntimeError('shellcheck -s sh: a bashism, an error, SC2028 or SC2086:\n'
                            + '\n'.join(refused or [result.stdout + result.stderr]))
 
 

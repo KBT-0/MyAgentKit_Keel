@@ -386,6 +386,7 @@ mine() {
   [ -e "$top/.myagentkit/workers/$1.pid" ] || [ -e "$top/.myagentkit/workers/$1.result-path" ] || return 0
   ids=$(cat -- "$top/.myagentkit/workers/$1.pid" 2>/dev/null) || { printf '%s' "$all"; return 3; }
   own=""
+  # shellcheck disable=SC2086 # $ids splits on purpose: one process id per word
   for p in $all; do case " $(printf '%s ' $ids)" in *" $p "*) own="$own${own:+ }$p" ;; esac; done
   printf '%s' "$own"
 }
