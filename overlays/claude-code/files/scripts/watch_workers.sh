@@ -92,6 +92,21 @@
 # There is no pane context figure there, and no tmux is needed. An invalid state file is an
 # observation failure (exit 3); an absent or zero-byte one means no signal yet. A session name is letters, digits, - and _, not starting with -
 # (spawn_worker.sh's rule): anything else is a usage error (exit 2).
+#
+# A Claude Code background session (NAME.host bg, on every host) has no pane and needs no tmux:
+# its row in `claude agents --json --all` (list_workers.sh --row: by NAME.id) is read instead.
+# A file wins over any state: first QUESTION-NAME.md beside the --result path, newer than
+# NAME.result-path (`QUESTION: NAME, a decision waits in PATH`, once per content), then the result
+# as above. Then blocked is WAITING with its waitingFor (`no reason given` when the row names
+# none: docs/research/worker-orchestration-spike-posix.md); done, stopped, failed and absent (no
+# row, as after `claude rm`) are GONE, done with a process still idling says so; working says
+# nothing. A question, or a result other than progress, of this run ended the session by design
+# (the supervisor stops it 10 s later): no GONE then. Nor within a minute of the spawn or resume
+# (NAME.id or NAME.result-path that new): the spike saw no row at first, and a resumed row reads
+# done until it wakes. Each state (with what it waits for) is said once, in the file
+# NAME.watch-bg, cleared when the session works again. A worker spawned on the other host (native
+# Windows or WSL: their lists are disjoint) is ELSEWHERE, once. A list that cannot be read, or two
+# rows of the name and no NAME.id, is exit 3 (`watch_workers: NAME: could not list ...`).
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -163,7 +178,11 @@ for n in "$@"; do case $seen in *"$nl$n$nl"*) ;; *) seen=$seen$n$nl ;; esac; don
 # tab, and the hooks spawn_worker.sh gives it keep its state line in $wdir/NAME.state.
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
-[ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
+# isbg NAME: whether NAME runs as a Claude Code background session (NAME.host bg); no tmux then.
+isbg() { [ "$(cat -- "$wdir/$1.host" 2>/dev/null)" = bg ]; }
+if [ -z "$windows" ] && ! command -v tmux >/dev/null; then
+  for n in "$@"; do isbg "$n" || die "tmux is not installed"; done
+fi
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
 body=$(mktemp) || { rm -f "$win" "$qs"; die "cannot make a temporary file"; }
@@ -185,7 +204,7 @@ cutb() {
 # that exits 3. mark reads only the stored marker: a name is watched once per run, so its
 # queue is never read.
 mark() {
-  if [ -z "$windows" ]; then
+  if [ -z "$windows" ] && ! isbg "$1"; then
     v=$(tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null) || v=""
     [ -z "$v" ] || { printf '%s\n' "$v"; return 0; }
   fi
@@ -299,7 +318,8 @@ result() {
   setmark "$1" result "$blob"
 }
 
-report_result() {
+# rfile NAME: its --result path in $f, or nothing.
+rfile() {
   # No `case` inside $( ): bash 3.2, macOS's sh, cannot parse its pattern's `)` there.
   f=""
   while IFS= read -r r; do
@@ -307,6 +327,10 @@ report_result() {
   done <<EOF
 $results
 EOF
+}
+
+report_result() {
+  rfile "$1"
   [ -n "$f" ] || return 1
   case $f in */*) d=${f%/*} ;; *) d=. ;; esac
   # The commit is what is trusted: the head is read from the committed blob, never the working
@@ -425,6 +449,71 @@ tab() {
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
   setmark "$1" state "$line"
+}
+
+# A background session NAME (NAME.host bg), by its row in `claude agents --json --all`
+# (list_workers.sh --row). Return 0 when something was said, 1 when nothing, 2 when the report
+# could not be written, 3 when the sessions cannot be listed.
+bg() {
+  if ! row=$(sh "$here/list_workers.sh" --row "$1" 2>"$err"); then
+    say "watch_workers: $1: could not list the background sessions: $(tr '\n' ' ' <"$err")" >&2
+    failed=1; return 3
+  fi
+  IFS='	' read -r bstate bwait bpid _ bid _ <<EOF
+$row
+EOF
+  key="$bstate ${bwait-}"
+  if [ "$bstate" = ambiguous ]; then
+    say "watch_workers: $1: no $wdir/$1.id, and several background sessions named $1 run in its folder ($bwait): stop the wrong one by its id (claude stop ID)" >&2
+    failed=1; return 3
+  fi
+  if [ "$bstate" = elsewhere ]; then
+    [ "$(mark "$1" bg)" != "$key" ] || return 1
+    say "watch_workers: ELSEWHERE: $1, its background session was started on $bwait, whose session list this host cannot see: watch it there" || return 2
+    setmark "$1" bg "$key"; return 0
+  fi
+  # The question first, then the result. A question or a result other than progress, of this
+  # run (newer than NAME.result-path), ended the session by design: no GONE for it.
+  rp=$wdir/$1.result-path; settled=""
+  rfile "$1"
+  if [ -n "$f" ]; then
+    case $f in */*) q=${f%/*}/QUESTION-$1.md ;; *) q=QUESTION-$1.md ;; esac
+    if [ -f "$q" ] && [ ! "$q" -ot "$rp" ]; then
+      settled=1
+      sum=$(cksum <"$q" 2>/dev/null) || sum=""
+      if [ -n "$sum" ] && [ "$(mark "$1" question)" != "$sum" ]; then
+        say "watch_workers: QUESTION: $1, a decision waits in $q: read it and answer it" || return 2
+        setmark "$1" question "$sum"; return 0
+      fi
+    fi
+    [ ! -f "$f" ] || [ "$f" -ot "$rp" ] || [ "$(hl 1 "$f")" = "Kind: progress" ] || settled=1
+  fi
+  w=0; result "$1" || w=$?
+  [ "$w" -eq 1 ] || return "$w"
+  case $bstate in
+    working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""; return 1 ;;
+    blocked)
+      [ "$(mark "$1" bg)" != "$key" ] || return 1
+      [ "$bwait" != - ] || bwait="no reason given"  # POSIX spike: blocked may name nothing
+      say "watch_workers: WAITING: $1, waiting for: $bwait (background session $bid, state blocked)" || return 2
+      say "  look at it: claude attach $bid   (claude agents lists every session)" || return 2
+      setmark "$1" bg "$key"; return 0 ;;
+    done|stopped|failed|absent) ;;
+    *) return 1 ;;  # a state this kit does not know says nothing
+  esac
+  [ -z "$settled" ] && [ "$(mark "$1" bg)" != "$key" ] || return 1
+  # The spike saw no row for the first seconds after a launch, and a resumed row reads done
+  # until it wakes: a spawn or resume less than a minute old is not GONE yet.
+  [ -z "$(find "$wdir/$1.id" "$rp" -mmin -1 2>/dev/null)" ] || return 1
+  if [ "$bstate" = absent ]; then
+    bid=$(cat -- "$wdir/$1.id" 2>/dev/null) || bid=""
+    say "watch_workers: GONE: $1, its background session ${bid:-named $1} is no longer listed (claude agents --all): read its result file" || return 2
+  elif [ "$bstate" = done ] && [ "$bpid" != - ]; then
+    say "watch_workers: GONE: $1, its background session $bid is done with no new result report; its process still idles (a question in its view, a usage limit or an error, or a park on its own background job): claude attach $bid" || return 2
+  else
+    say "watch_workers: GONE: $1, its background session $bid is $bstate with no new result report: read its result file" || return 2
+  fi
+  setmark "$1" bg "$key"
 }
 
 # ended LIVE: whether the supervisor that locked LIVE has ended, by codex_worker.py's own gone().
@@ -550,7 +639,7 @@ while :; do
   : >"$out"
   for n in "$@"; do
     tab_read=""; line=""
-    st=$(classify "$n")
+    st=""; isbg "$n" || st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
@@ -572,11 +661,12 @@ while :; do
       w=x
       # On Windows: the state line's WAITING first, then the result, then GONE, then its IDLE;
       # the optional API context count is part of either state report.
-      { w=1; [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
+      { w=1; if isbg "$n"; then w=0; bg "$n" || w=$?; else
+        [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
         [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; gone_tab "$n" || w=$?; }
         [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }
-      } >>"$out" || :
+      fi; } >>"$out" || :
       case $w in
         0) found=1 ;;
         1) ;;
@@ -591,10 +681,10 @@ while :; do
   [ -z "$failed" ] || exit 3
   cat "$out" || { say "watch_workers: could not write its report to stdout" >&2; exit 3; }
   printf '%s' "$pending" | while IFS='	' read -r n k v; do
-    if [ -n "$windows" ] || { [ "$k" = result ] && [ -d "$wdir" ]; }; then
+    if [ -n "$windows" ] || isbg "$n" || { [ "$k" = result ] && [ -d "$wdir" ]; }; then
       printf '%s\n' "$v" >"$wdir/$n.watch-$k" 2>/dev/null || true
     fi
-    [ -n "$windows" ] || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
+    [ -n "$windows" ] || isbg "$n" || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
   done
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0

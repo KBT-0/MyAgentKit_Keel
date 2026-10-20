@@ -13,6 +13,7 @@ needs from the host is shaped in the helpers below: a Python stub is started thr
 MSYS runtime re-parses a command line), and the audit prints a Windows path with / for its
 backslashes (clean_worktrees.py show(), #243).
 """
+import json
 import os
 from pathlib import Path
 import shutil
@@ -121,6 +122,46 @@ if os.environ.get('CLOSE_TASKKILL_IGNORED'):
 lines = open(path).read().splitlines() if os.path.exists(path) else []
 open(path, 'w').write(''.join(line + '\n' for line in lines if line.split(' ')[0] != pid))
 """
+
+# Claude Code's background-session CLI: `agents --json --all` prints the rows in AGENTS_FILE (a
+# JSON list shaped as the spike saw them, docs/research/worker-orchestration-spike.md, 4); `stop`
+# and `rm` take an id and answer with the CLI's words; every call is logged beside the file.
+# AGENTS_ERROR: a list that cannot be read. AGENTS_STOP_IGNORED: a stop the session survives.
+CLAUDE = r'''#!/usr/bin/env python3
+import json, os, sys
+path = os.environ['AGENTS_FILE']
+args = sys.argv[1:]
+with open(path + '.log', 'a') as log:
+    log.write(repr(args) + '\n')
+rows = json.load(open(path)) if os.path.exists(path) else []
+if args[:1] == ['agents']:
+    if os.environ.get('AGENTS_ERROR'):
+        sys.exit(os.environ['AGENTS_ERROR'])
+    print(json.dumps(rows, indent=2))
+    sys.exit(0)
+if args[:1] in (['stop'], ['rm']) and len(args) == 2:
+    row = [r for r in rows if r['id'] == args[1]]
+    if not row:
+        sys.exit("No job matching '%s'. Run 'claude agents' to list running sessions." % args[1])
+    if args[0] == 'rm':
+        rows.remove(row[0])
+        print('removed ' + args[1])
+    elif not os.environ.get('AGENTS_STOP_IGNORED'):
+        for key in ('pid', 'status', 'waitingFor'):
+            row[0].pop(key, None)
+        if row[0]['state'] != 'done':  # a finished session stays done after its stop (spike, 6)
+            row[0]['state'] = 'stopped'
+        print('stopped ' + args[1])
+    json.dump(rows, open(path, 'w'))
+    sys.exit(0)
+sys.exit('claude stub: unexpected call %r' % args)
+'''
+
+
+def agent(id, name, cwd, state, **extra):
+    """One row of `claude agents --json --all`, as the spike printed them."""
+    return dict(id=id, cwd=str(cwd), kind='background', name=name, sessionId=id + '-5137-4293-88d5-c4339d1ce56c',
+                startedAt=1792518463331, state=state, **extra)
 
 
 def stub(path, body, python=False, cmd=False):
@@ -425,6 +466,121 @@ class CloseWorkerTests(unittest.TestCase):
         out = self.close('w1')
         self.assertIn("['kill-session', '-t', '=w1']", self.calls())
         self.assertEqual(self.sessions(), [], out)
+
+    def background(self, name, *rows, id='aaaa0001'):
+        """A worker spawn_worker.sh started as a Claude Code background session (NAME.host bg,
+        NAME.id), and the rows `claude agents --json --all` lists. The ids are no real session's."""
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True, exist_ok=True)
+        (records / (name + '.host')).write_text('bg\n')
+        if id:
+            (records / (name + '.id')).write_text(id + '\n')
+        stub(self.tmp / 'bin/claude', CLAUDE, python=True)
+        (self.tmp / 'agents.json').write_text(json.dumps(list(rows)))
+        return {'AGENTS_FILE': str(self.tmp / 'agents.json')}
+
+    def claude_calls(self):
+        log = self.tmp / 'agents.json.log'
+        return [c for c in (log.read_text().splitlines() if log.exists() else []) if not c.startswith("['agents'")]
+
+    def rows(self):
+        return json.loads((self.tmp / 'agents.json').read_text())
+
+    def test_a_background_worker_is_stopped_and_removed_by_its_id_then_audited(self):
+        # The contract (v0.12): by id, never by name, never `claude daemon stop`; `claude rm` keeps a
+        # lead-made worktree (spike, 5), so the kit's audit stays the one path that removes it.
+        path = self.worker('w1', session=False)
+        env = self.background('w1', agent('aaaa0001', 'w1', path, 'done', pid=28256, status='idle'),
+                              # A copy a resume with flags started, under the same name (spike, 6).
+                              agent('bbbb0002', 'w1', path, 'working', pid=28288, status='busy'),
+                              agent('cccc0003', 'w1', self.tmp / 'other/.claude/worktrees/w1', 'working', pid=1))
+        out = self.close('--dry-run', 'w1', **env)
+        self.assertIn('close_worker: w1: dry run: would stop its background session aaaa0001 (claude stop) and '
+                      'remove its row (claude rm)', out)
+        self.assertEqual(self.claude_calls(), [], out)
+        out = self.close('w1', **env)
+        self.assertEqual(self.claude_calls(), ["['stop', 'aaaa0001']", "['rm', 'aaaa0001']"], out)
+        self.assertEqual([r['id'] for r in self.rows()], ['bbbb0002', 'cccc0003'])
+        self.assertIn('close_worker: w1: background session aaaa0001 stopped and removed (claude stop, claude rm)', out)
+        self.assertFalse(path.exists(), out)
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        # Only the audit lists tmux sessions; none is ended in it.
+        self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
+        for record in ('w1.host', 'w1.id'):
+            self.assertFalse((self.main / '.myagentkit/workers' / record).exists(), record)
+        self.assertNotIn('daemon', (self.tmp / 'agents.json.log').read_text())
+
+    def test_a_background_session_already_ended_is_only_removed_and_a_removed_one_is_nothing_to_end(self):
+        path = self.worker('w1', session=False)
+        env = self.background('w1', agent('aaaa0001', 'w1', path, 'stopped'))
+        out = self.close('w1', **env)
+        self.assertEqual(self.claude_calls(), ["['rm', 'aaaa0001']"], out)
+        self.assertFalse(path.exists(), out)
+        env = self.background('w2')
+        out = self.close('w2', **env)
+        self.assertIn('close_worker: w2: no background session aaaa0001 is listed (claude agents --all); nothing to end\n', out)
+
+    def test_another_checkouts_background_session_is_never_stopped(self):
+        # #171 on the bg path: the id's row must have started in this worker's folder.
+        path = self.worker('w1', session=False)
+        env = self.background('w1', agent('aaaa0001', 'w1', self.tmp / 'other', 'working', pid=5))
+        out = self.close('w1', code=1, **env)
+        self.assertIn('close_worker: FAILED: w1: background session aaaa0001 runs in ', out)
+        self.assertIn("not in this worker's folder; another checkout's session is never stopped here", out)
+        self.assertEqual(self.claude_calls(), [], out)
+        self.assertTrue(path.is_dir(), out)
+
+    def test_with_no_recorded_id_the_one_row_of_the_name_in_its_folder_is_the_worker(self):
+        # The contract's fallback (name + cwd); two such rows are no proof of which is this worker.
+        path = self.worker('w1', session=False)
+        row = agent('aaaa0001', 'w1', path, 'working', pid=5)
+        env = self.background('w1', row, agent('dddd0004', 'w1', self.tmp / 'other', 'working', pid=6), id=None)
+        out = self.close('w1', **env)
+        self.assertEqual(self.claude_calls(), ["['stop', 'aaaa0001']", "['rm', 'aaaa0001']"], out)
+        path = self.worker('w2', session=False)
+        env = self.background('w2', agent('aaaa0001', 'w2', path, 'working', pid=5),
+                              agent('bbbb0002', 'w2', path, 'working', pid=6), id=None)
+        out = self.close('w2', code=1, **env)
+        self.assertIn('close_worker: FAILED: w2: no ', out)
+        self.assertIn('several background sessions named w2 run in its folder (aaaa0001 bbbb0002)', out)
+        self.assertEqual(self.claude_calls(), ["['stop', 'aaaa0001']", "['rm', 'aaaa0001']"], out)
+        self.assertTrue(path.is_dir(), out)
+
+    def test_a_background_session_that_survives_its_stop_or_an_unreadable_list_keeps_the_worktree(self):
+        path = self.worker('w1', session=False)
+        env = self.background('w1', agent('aaaa0001', 'w1', path, 'blocked', pid=5, waitingFor='permission prompt'))
+        out = self.close('w1', code=1, AGENTS_ERROR='connect ECONNREFUSED', **env)
+        self.assertIn('close_worker: FAILED: w1: could not list the background sessions, so w1 may still run: ', out)
+        self.assertIn('connect ECONNREFUSED', out)
+        self.assertEqual(self.claude_calls(), [], out)
+        self.assertTrue(path.is_dir(), out)
+        out = self.close('w1', code=1, AGENTS_STOP_IGNORED='1', **env)
+        self.assertIn('close_worker: FAILED: w1: background session aaaa0001 still runs after claude stop; '
+                      'its worktree is not touched', out)
+        self.assertEqual(self.claude_calls(), ["['stop', 'aaaa0001']"], out)
+        self.assertTrue(path.is_dir(), out)
+        self.assertTrue((self.main / '.myagentkit/workers/w1.id').exists())
+
+    def test_a_background_worker_started_on_the_other_host_is_never_closed_here(self):
+        # The native-Windows and the WSL `claude agents` lists are disjoint (POSIX spike, 9): a row
+        # missing here is no proof the session ended. NAME.result-path's form names the spawn's host.
+        path = self.worker('w1', session=False)
+        env = self.background('w1')
+        other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if NT else ('D:/p/RESULT-w1.md', 'windows')
+        (self.main / '.myagentkit/workers/w1.result-path').write_text(other + '\n')
+        out = self.close('w1', code=1, **env)
+        self.assertIn('close_worker: FAILED: w1: its background session was started on %s, whose session list '
+                      'this host cannot see: close it there; nothing is done for w1' % word, out)
+        self.assertEqual(self.claude_calls(), [], out)
+        self.assertTrue(path.is_dir(), out)
+
+    def test_a_merge_leaves_a_running_background_worker_without_a_completed_result(self):
+        path = self.worker('w1', session=False)
+        env = self.background('w1', agent('aaaa0001', 'w1', path, 'working', pid=5))
+        out = self.close('--finished', 'w1', **env)
+        self.assertIn('close_worker: w1: left as it is: its background session aaaa0001 still runs', out)
+        self.assertEqual(self.claude_calls(), [], out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_on_native_windows_a_codex_worker_closes_beside_another_checkouts_claude_session_of_the_name(self):
         # Round-1 review of #171: a Codex worker has no NAME.pid, and another project's `claude -n w1`
