@@ -48,8 +48,10 @@ if args[0] == 'list-clients':
     if name in os.environ.get('VIS_ATTACHED', '').split() or os.path.exists(os.path.join(st, 'attached-' + name)):
         print('/dev/pts/9: %s [120x30 xterm-256color] (attached,UTF-8)' % name)
     sys.exit(0 if name in sessions else 1)
-# The watcher's once-markers are user options of the session.
+# The watcher's once-markers are user options of the session: they end with it.
 if args[0] in ('set-option', 'show-options'):
+    if name not in sessions or os.path.exists(os.path.join(st, 'gone-' + name)):
+        sys.exit("can't find session: " + name)
     opt = os.path.join(st, 'opt-%s-%s' % (name, args[-2] if args[0] == 'set-option' else args[-1]))
     if args[0] == 'set-option':
         with open(opt, 'w') as f:
@@ -641,6 +643,18 @@ class ResultTests(Base):
         self.assertEqual(result.stdout, 'watch_workers: GONE: w1 (the tmux session no longer exists: '
                          'read its result file)\nwatch_workers: DONE: w1, task T-7, attempt 2, remaining: '
                          'none (result file docs/w1.md)\n')
+
+    def test_a_result_reported_while_live_is_not_reported_again_once_gone(self):
+        # The once-marker lived on the tmux session only: once it ended, the same DONE came back
+        # on every later run (#294). The marker file under .myagentkit/workers/ outlives it.
+        (self.cwd / '.git' / 'info' / 'exclude').write_text('.myagentkit/\n')
+        (self.cwd / '.myagentkit' / 'workers').mkdir(parents=True)
+        self.commit(HEAD % ('completed', 'none'))
+        self.assertIn('DONE: w1', self.watch().stdout)
+        result = self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', 'w1', VIS_SESSIONS='')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'watch_workers: GONE: w1 (the tmux session no longer exists: '
+                         'read its result file)\n')
 
     def test_a_result_counts_only_committed_on_a_clean_tree_and_once(self):
         self.file.write_text(HEAD % ('completed', 'none'))

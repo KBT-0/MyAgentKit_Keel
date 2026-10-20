@@ -178,8 +178,8 @@ Each rule is flagged:
 its input box (the idle notice covers that), a dialog drawn differently by a later version
 (capture it, add the rule with its version), and a terminal other than the three above.
 
-A session that is neither gone nor waiting is checked for two more things, and every report
-exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
+A session that is not waiting is checked for two more things (a GONE one for its result only),
+and every report exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
 
 - **The result file**, named per session with `--result NAME=PATH`. Once the file is in HEAD
   of the tree that holds it and that tree is clean, the watcher reads its head from the
