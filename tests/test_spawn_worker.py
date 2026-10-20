@@ -2225,7 +2225,7 @@ class DoneSignalGuidanceTests(unittest.TestCase):
         self.assertIn('On 2026-10-20, 4 of 5 subscriptions', workflow)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
         self.assertIn('run `review.sh` itself as the background command', running)
-        self.assertIn("until grep -q -e '^review dispatch: ' -e '^FAIL \[review\]: '", running)
+        self.assertIn(r"until grep -q -e '^review dispatch: ' -e '^FAIL \[review\]: '", running)
         self.assertNotIn('kill -0', running)
 
 
