@@ -165,12 +165,14 @@ class OverlaySettingsTests(unittest.TestCase):
         guards = [h for e in self.settings['hooks']['PreToolUse'] for h in e['hooks']]
         self.assertEqual(sorted(h['command'].split('/')[-1].rstrip('"') for h in guards),
                          ['guard_destructive_git.py', 'guard_private_email.py', 'guard_root_scan.py',
-                          'guard_worker_route.py'])
+                          'guard_secret_files.py', 'guard_worker_route.py'])
         for hook in guards:
             with self.subTest(hook=hook['command']):
                 # guard_root_scan fails open (#298, lead decision D1): it only saves a CPU core, and
-                # a stalled guard must not refuse every shell call.
-                self.assertEqual(hook.get('onFailure'), None if 'guard_root_scan' in hook['command'] else 'block')
+                # a stalled guard must not refuse every shell call; guard_secret_files likewise
+                # must not refuse every edit (#297).
+                fails_open = any(g in hook['command'] for g in ('guard_root_scan', 'guard_secret_files'))
+                self.assertEqual(hook.get('onFailure'), None if fails_open else 'block')
         # A blocking guard that times out refuses an ordinary command: a loaded Windows host took
         # over 10 s for sh, the Python launcher and the interpreter (leeway, 2026-10-18; measured
         # 0.5-2.6 s per start idle-loaded), while the hook's own work is about 0.1 s.
@@ -184,6 +186,10 @@ class OverlaySettingsTests(unittest.TestCase):
         root_scan = [e['matcher'] for e in self.settings['hooks']['PreToolUse']
                      if 'guard_root_scan' in e['hooks'][0]['command']]
         self.assertEqual(root_scan, ['|'.join(SHELL_TOOLS)])
+        # #297: every Claude Code tool that writes a file (MultiEdit is no longer one).
+        secret = [e['matcher'] for e in self.settings['hooks']['PreToolUse']
+                  if 'guard_secret_files' in e['hooks'][0]['command']]
+        self.assertEqual(secret, ['Edit|Write|NotebookEdit'])
 
     def test_every_command_guard_covers_every_shell_tool(self):
         # #93, #213: a guard wired to "Bash" alone let PowerShell and Monitor calls through. The

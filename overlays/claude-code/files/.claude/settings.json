@@ -93,6 +93,16 @@
         ]
       },
       {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secret_files.py\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Agent|Task",
         "hooks": [
           {

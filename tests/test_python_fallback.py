@@ -26,7 +26,7 @@ class PythonFallbackTests(unittest.TestCase):
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
         self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
-                                                'guard_private_email.py', 'guard_root_scan.py', 'guard_worker_route.py', 'plain_report.py',
+                                                'guard_private_email.py', 'guard_root_scan.py', 'guard_secret_files.py', 'guard_worker_route.py', 'plain_report.py',
                                                 'progress_reminder.py'], commands)
         for command in python_hooks.values():
             self.assertTrue(command.startswith('sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" '), command)
