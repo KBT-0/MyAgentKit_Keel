@@ -661,6 +661,77 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[-1]['failure_kind'], None)
                 self.assertEqual(verdicts_of(received[-1]['evidence']) == ['VERDICT: Accept'], clean)
 
+    def test_codex_failed_turn_message_reaches_the_evidence(self):
+        # #292: a refused model's turn.failed message lived only in the usage record's raw stdout.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+        message = "The 'x' model is not supported when using Codex with a ChatGPT account."
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            return dict(exit_code=1, stdout=json.dumps({'type': 'turn.failed', 'error': {'message': message}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        received = []
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=execution), \
+                redirect_stdout(io.StringIO()):
+            codex_bridge.main(['--repo', str(self.repo), '--model', 'x', '--uncommitted'], received.append)
+        self.assertEqual((received[-1]['status'], received[-1]['failure_kind']), ('failed', 'cli_error'))
+        self.assertIn('## Failure\n\nCodex reported: ' + message,
+                      Path(received[-1]['evidence']).read_text(encoding='utf-8'))
+
+    def codex_evidence(self, run, *patches):
+        from contextlib import ExitStack, redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+        received = []
+        with ExitStack() as stack:
+            for each in (patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=run),
+                         redirect_stdout(io.StringIO()), *patches):
+                stack.enter_context(each)
+            codex_bridge.main(['--repo', str(self.repo), '--model', 'x', '--uncommitted'], received.append)
+        return received[-1], Path(received[-1]['evidence']).read_text(encoding='utf-8')
+
+    def test_codex_recovered_error_is_not_blamed_for_a_later_failure(self):
+        # A reconnect Codex recovered from did not fail the run: a stale checkout must not end
+        # its evidence with "Codex reported: Reconnecting...".
+        from unittest.mock import patch
+        import codex_bridge
+        stream = '\n'.join(json.dumps(v) for v in ({'type': 'error', 'message': 'Reconnecting... 1/5'},
+                                                   {'type': 'turn.completed'}))
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            return dict(exit_code=0, stdout=stream, stderr='', termination=None, duration_ms=1)
+
+        result, evidence = self.codex_evidence(
+            execution, patch.object(codex_bridge, 'recheck', return_value=(None, 'changed')))
+        self.assertEqual(result['failure_kind'], 'stale_checkout')
+        self.assertNotIn('Codex reported', evidence)
+
+    def test_codex_failure_text_of_its_own_wins_and_reported_text_is_capped(self):
+        # A run_failed run keeps its own supervision text, not the stream's turn.failed message.
+        failed = json.dumps({'type': 'turn.failed', 'error': {'message': 'turn broke'}})
+
+        def broken(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            return dict(exit_code=None, stdout=failed, stderr='supervisor broke', termination='run_failed',
+                        launched=True, duration_ms=1)
+
+        result, evidence = self.codex_evidence(broken)
+        self.assertEqual(result['failure_kind'], 'run_failed')
+        self.assertIn('supervisor broke', evidence)
+        self.assertNotIn('Codex reported', evidence)
+
+        # A long message keeps only its last 4000 characters.
+        long = 'A' * 100 + 'B' * 4000
+
+        def refused(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            return dict(exit_code=1, stdout=json.dumps({'type': 'turn.failed', 'error': {'message': long}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        result, evidence = self.codex_evidence(refused)
+        self.assertIn('Codex reported: ' + 'B' * 4000, evidence)
+        self.assertNotIn('A', evidence.split('Codex reported: ', 1)[1])
+
     def test_codex_does_not_load_the_copys_agents_md_as_instructions(self):
         # #117: Codex loads the root AGENTS.md as instructions; the prompt already names it as
         # evidence to read, so the lead's constitution reached the reviewer twice, once as orders.
