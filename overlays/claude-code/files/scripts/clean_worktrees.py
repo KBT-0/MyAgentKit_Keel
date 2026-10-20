@@ -1161,7 +1161,8 @@ def audit(record, ctx):
             out.append('not a regular file (a symlink, FIFO, socket or device), outside a disposable folder: %s'
                        % names(odd))
         if unique:
-            out.append('files with no identical copy in main, outside a disposable folder: %s' % names(unique))
+            out.append('files with no identical copy in main, outside a disposable folder: %s; copy each to the same '
+                       'path in the main checkout or delete it in the worktree, then close again' % names(unique))
         if mounted:
             out.append('its copy in main is below a mount point: a mount inside main is not main: %s' % names(mounted))
         if suggest:
