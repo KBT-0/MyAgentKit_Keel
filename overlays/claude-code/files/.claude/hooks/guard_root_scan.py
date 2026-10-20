@@ -28,7 +28,7 @@ import re
 import sys
 
 MAX_DEPTH = 3  # ponytail: a fixed bound; the depth of C:/*/*/* stays in the seconds
-ROOT = re.compile(r"|[A-Za-z]:|/[A-Za-z]|/mnt/[A-Za-z]|/cygdrive/[A-Za-z]")
+ROOT = re.compile(r"|[A-Za-z]:|/[A-Za-z]|/mnt(?:/[A-Za-z])?|/cygdrive(?:/[A-Za-z])?")
 ESCAPE = {"bash": "\\", "ps": "`", "cmd": "^"}
 SEPARATORS = {"bash": ";&|()<>`\n", "ps": ";&|()<>\n", "cmd": "&|()<>\n"}
 # A command that runs the rest of its words, with those of its options that take a value.
@@ -36,7 +36,10 @@ WRAPPERS = {"sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"}
             "nice": {"-n", "--adjustment"}, "ionice": {"-c", "-n", "--class", "--classdata"},
             "env": {"-u", "--unset", "-C", "--chdir"}, "stdbuf": {"-i", "-o", "-e"},
             "time": {"-f", "-o", "--format", "--output"}, "timeout": {"-s", "-k", "--signal", "--kill-after"},
-            "nohup": set(), "command": set(), "exec": {"-a"}, "builtin": set()}
+            "nohup": set(), "command": set(), "exec": {"-a"}, "builtin": set(),
+            "xargs": {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--delimiter",
+                      "--arg-file", "--max-chars"}}
+KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}  # the command follows the keyword
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 GCI = {"get-childitem", "gci", "dir", "ls"}
 ADVICE = ("Search inside the project instead (`find . -name x`, `rg PATTERN src/`, a Glob or Grep "
@@ -45,12 +48,13 @@ ADVICE = ("Search inside the project instead (`find . -name x`, `rg PATTERN src/
 
 
 def root(word, windows=False):
-    """Whether WORD names a filesystem or drive root (a trailing / or /* included). PowerShell and
-    cmd have no /c drive form: there `/c` is a switch or a folder."""
+    """Whether WORD names a filesystem or drive root (a trailing /, /. or /* included; /mnt and
+    /cygdrive hold every drive). PowerShell and cmd have no /c drive form: there `/c` is a switch
+    or a folder."""
     w = word.replace("\\", "/")
     if not w or "/" not in w and ":" not in w:
         return False
-    w = re.sub(r"(?:/\**)+$", "", w)
+    w = re.sub(r"(?:/[.*]*)+$", "", w)
     return bool(ROOT.fullmatch(w)) and not (windows and re.fullmatch(r"/[A-Za-z]", w))
 
 
@@ -112,9 +116,9 @@ def walk(name, args, shell, cwd):
     current folder: CWD, when a cd named a root."""
     windows, bound = shell != "bash", None
     if name == "find":
-        # Paths come before the first expression word; -H, -L, -P, -D LIST and -O3 before them.
+        # Paths come before the first expression word; -H, -L, -P, -D LIST, -O3 and -- before them.
         i = 0
-        while i < len(args) and (args[i] in ("-H", "-L", "-P", "-D") or re.fullmatch(r"-O\d*", args[i])):
+        while i < len(args) and (args[i] in ("-H", "-L", "-P", "-D", "--") or re.fullmatch(r"-O\d*", args[i])):
             i += 2 if args[i] == "-D" else 1
         paths = []
         for a in args[i:]:
@@ -126,8 +130,8 @@ def walk(name, args, shell, cwd):
         valued, named, depths = SEARCHERS[name]
         paths, bound, label = operands(args, valued.__contains__, named), depth(args, depths), name
     elif name in ("grep", "egrep", "fgrep"):
-        if not any(a in ("--recursive", "--dereference-recursive", "--directories=recurse")
-                   or re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*", a) for a in args):
+        if not any(a in ("--recursive", "--dereference-recursive") or re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*", a)
+                   for a in args) and not re.search(r"(?:^| )(?:-d|--directories)[ =]?recurse(?: |$)", " ".join(args)):
             return None
         paths, label = operands(args, GREP_VALUED.__contains__, {"-e", "-f", "--regexp", "--file"}), name + " -r"
     elif name == "tree":
@@ -169,10 +173,12 @@ def walk(name, args, shell, cwd):
 def commands(text, shell):
     """The simple commands of TEXT as word lists, read as SHELL reads them: quotes and escapes
     taken off, an escaped newline joined, `#` at the start of a word a comment to the end of its
-    line (not in cmd), and a heredoc's body skipped (bash: it is data)."""
+    line (not in cmd), and a heredoc's body skipped (bash: it is data). A `$(...)` or a bash
+    backtick inside double quotes runs: its text is read as commands too (ponytail: a `)` quoted
+    inside it ends it early)."""
     esc, seps, quotes = ESCAPE[shell], SEPARATORS[shell], '"' if shell == "cmd" else "'\""
     text = text.replace("\r\n", "\n")
-    found, command, word, heredocs, delimiter = [], [], None, [], False
+    found, command, word, heredocs, delimiter, subs = [], [], None, [], False, []
     i = 0
     while i <= len(text):
         c = text[i] if i < len(text) else "\n"
@@ -188,6 +194,18 @@ def commands(text, shell):
                         and (shell == "ps" or text[j + 1] in '"\\$`\n'):
                     part += text[j + 1].strip("\n")
                     j += 2
+                    continue
+                if c == '"' and shell != "cmd" and (text.startswith("$(", j) or shell == "bash" and text[j] == "`"):
+                    start = j + (2 if text[j] == "$" else 1)
+                    if text[j] == "$":
+                        k, level = start, 1
+                        while level and k < len(text):
+                            level += {"(": 1, ")": -1}.get(text[k], 0)
+                            k += 1
+                    else:
+                        k = text.find("`", start) + 1 or len(text)
+                    subs.append(text[start:k - 1])
+                    part, j = part + text[j:k], k
                     continue
                 part += text[j]
                 j += 1
@@ -228,7 +246,7 @@ def commands(text, shell):
             continue
         word = (word or "") + c
         i += 1
-    return found
+    return found + [argv for sub in subs for argv in commands(sub, shell)]
 
 
 def unwrap(argv):
@@ -237,6 +255,9 @@ def unwrap(argv):
     while argv:
         name = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
         if re.match(r"\w+=", argv[0]):
+            argv = argv[1:]
+            continue
+        if name in KEYWORDS:
             argv = argv[1:]
             continue
         if name not in WRAPPERS:

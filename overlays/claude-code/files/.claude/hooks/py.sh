@@ -16,12 +16,13 @@
 # A guard fails closed: any exit but 2 lets the tool call through
 # (https://code.claude.com/docs/en/hooks). Any other hook only reports: exit 2 from
 # UserPromptSubmit would block every prompt, and from Stop would refuse every stop.
-# The hook's own file name decides, never a folder above it.
+# The hook's own file name decides, never a folder above it. The root-scan guard fails open:
+# a guard that cannot run must not refuse every shell call (#298).
 fail() {
   printf '%s\n' "$1" >&2
   name=${2##*/}
   name=${name##*\\}
-  case "$name" in guard_*) exit 2 ;; esac
+  case "$name" in guard_root_scan.py) exit 1 ;; guard_*) exit 2 ;; esac
   exit 1
 }
 

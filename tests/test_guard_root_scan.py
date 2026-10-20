@@ -81,6 +81,21 @@ REFUSED = [
     ('Bash', 'cmd //c "dir C:\\x.h /s"'),
     ('PowerShell', r'cmd /c "dir C:\ /s"'),
     ('PowerShell', r'cmd /c dir \*.h /s/b'),
+    # orphpy: misses found by running leeway's guard table (343f9c0) against this hook.
+    ('Bash', 'find /mnt'),  # every WSL drive
+    ('Bash', 'find /cygdrive -name x'),
+    ('Bash', 'find /. -name x'),
+    ('Bash', 'grep -d recurse foo /'),
+    ('Bash', 'grep --directories recurse foo /'),
+    ('Bash', 'echo a | xargs grep -r foo /'),
+    ('Bash', 'find . -name a | xargs -n 1 grep -r foo /'),
+    ('Bash', 'find -- / -name x'),
+    ('Bash', 'git commit -m "note `find / -name x`"'),  # a substitution in double quotes runs
+    ('Bash', 'echo "$(find / -name x)"'),
+    ('Bash', 'echo "`find / -name x`"'),
+    ('Bash', 'if true; then find / -name x; fi'),
+    ('Bash', 'while true; do du -sh /; done'),
+    ('PowerShell', r'Write-Output "$(gci C:\ -Recurse)"'),
 ]
 ALLOWED = [
     ('Bash', 'find . -name x.h'),
@@ -131,6 +146,17 @@ ALLOWED = [
     ('Bash', 'cd / && rg foo src'),
     ('PowerShell', r'cmd /c "dir C:\work /s"'),
     ('PowerShell', r'cmd /c "dir C:\ /b"'),
+    # orphpy: what leeway's table lets through stays allowed beside the new rows above.
+    ('Bash', 'find /mnt/c/work -name x'),
+    ('Bash', 'find /.cache -name x'),
+    ('Bash', 'grep -d skip foo /etc/hosts'),
+    ('Bash', 'echo a | xargs grep -r foo src'),
+    ('Bash', 'git commit -m "Refuse \\`find /\\` searches"'),
+    ('Bash', 'git commit -m "$(cat <<\'EOF\'\nfind / walks the disk\nEOF\n)"'),
+    ('Bash', "echo '$(find / -name x)'"),
+    ('Bash', 'if true; then find . -name x; fi'),
+    ('PowerShell', r'Write-Output "`$(gci C:\ -Recurse)"'),
+    ('PowerShell', r"Write-Output '$(gci C:\ -Recurse)'"),
 ]
 
 

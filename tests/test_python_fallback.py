@@ -100,13 +100,14 @@ class PythonFallbackTests(unittest.TestCase):
         self.assertIn('additionalContext', nudged.stdout)
         # No interpreter runs at all: a guard blocks (exit 2) and says why; any other hook only
         # reports, since exit 2 from UserPromptSubmit or Stop would block every prompt or refuse
-        # every stop.
+        # every stop. The root-scan guard fails open: it must not refuse every shell call (#298).
         (bin_dir / 'python').write_text('#!/bin/sh\nexit 9009\n', encoding='utf-8', newline='\n')
         (bin_dir / 'py').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8', newline='\n')
         (bin_dir / 'py').chmod(0o755)
         sh = shutil.which('sh')
         # The hook's file name decides, never a folder above it (Codex review of f68a68d).
-        for hook, code in (('guard_destructive_git.py', 2), ('context_size.py', 1), ('guard_x/context_size.py', 1),
+        for hook, code in (('guard_destructive_git.py', 2), ('guard_root_scan.py', 1), ('context_size.py', 1),
+                           ('guard_x/context_size.py', 1),
                            ('guard_x\\context_size.py', 1), ('a\\guard_y.py', 2)):
             with self.subTest(no_python=hook):
                 script = Path(str(project / '.claude/hooks') + '/' + hook)  # py.sh refuses a missing file first
@@ -197,7 +198,8 @@ class PythonFallbackTests(unittest.TestCase):
                               capture_output=True, timeout=60)
         self.assertEqual(bare.returncode, 2, bare.stderr)
         self.assertIn('no Python found', bare.stderr)
-        for name, code in (('context_size.py', 1), ('plain_report.py', 1), ('guard_gone.py', 2)):
+        for name, code in (('context_size.py', 1), ('plain_report.py', 1), ('guard_gone.py', 2),
+                           ('guard_root_scan.py', 1)):
             with self.subTest(missing=name):
                 result, _ = hook(name)
                 self.assertEqual(result.returncode, code, result.stderr)
