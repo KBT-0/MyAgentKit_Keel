@@ -634,7 +634,7 @@ if [ -n "$for_commit" ]; then
     echo "NOTE [scan]: the gate checked the working tree; these paths are not what this commit records:"
     printf '%s\n' "$unrecorded" | head -10 | sed 's/^/             /'
     unrecorded_count=$(printf '%s\n' "$unrecorded" | wc -l)
-    [ "$unrecorded_count" -le 10 ] || echo "             and $((unrecorded_count - 10)) more"
+    [ "$unrecorded_count" -le 10 ] || printf '%s\n' "             and $((unrecorded_count - 10)) more"
   fi
 fi
 
@@ -793,6 +793,7 @@ agents_limit=24576
 codex_in_use=""
 grep -Eq '^(DEFAULT_REVIEWER="codex"|CODEX_MODEL="[^"]+")' scripts/review.sh 2>/dev/null && codex_in_use=1
 tr '\0' '\n' < "$filelist" | grep -E '(^|/)AGENTS\.md$' | while IFS= read -r f; do
+  f=${f#./}  # the file list's ./ before a name that starts with -, never a folder
   total=0 prefix="" rest=$f
   while :; do
     [ -f "${prefix}AGENTS.md" ] && total=$((total + $(wc -c < "${prefix}AGENTS.md")))
@@ -803,10 +804,10 @@ done > "$work/agents-over"
 if [ -s "$work/agents-over" ]; then
   if [ -n "$codex_in_use" ]; then
     echo "FAIL [agents-size]: an AGENTS.md chain Codex loads (each AGENTS.md from the root down to it) is not under"
-    echo "                    $agents_limit bytes (24 KiB), the margin under Codex's 32768-byte project_doc_max_bytes:"
+    printf '%s\n' "                    $agents_limit bytes (24 KiB), the margin under Codex's 32768-byte project_doc_max_bytes:"
     fail=1
   else
-    echo "NOTE [agents-size]: an AGENTS.md chain is not under $agents_limit bytes; Codex, once scripts/review.sh names it,"
+    printf '%s\n' "NOTE [agents-size]: an AGENTS.md chain is not under $agents_limit bytes; Codex, once scripts/review.sh names it,"
     echo "                    drops what passes its 32768-byte project_doc_max_bytes:"
   fi
   cat "$work/agents-over"

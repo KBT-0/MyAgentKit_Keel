@@ -129,8 +129,24 @@ class GateCheckTests(unittest.TestCase):
         out = self.assert_red('FAIL [agents-size]')
         self.assertIn('  - docs/game/AGENTS.md: 24603 bytes', out)
         self.assertNotIn('  - docs/AGENTS.md:', out)
+        # Round-1 review: Codex as the default reviewer is in use without a model pin; Claude as
+        # the reviewer with no Codex pin is not (lead decision: a NOTE).
+        write(self.project / 'scripts/review.sh', 'DEFAULT_REVIEWER="codex"\nCODEX_MODEL=""\n')
+        self.assert_red('FAIL [agents-size]')
+        write(self.project / 'scripts/review.sh', 'DEFAULT_REVIEWER="claude"\nCODEX_MODEL=""\n')
+        self.assertIn('NOTE [agents-size]', self.assert_green())
         (self.project / 'docs/game/AGENTS.md').unlink()
         self.assert_green()
+
+    def test_an_agents_chain_under_a_folder_that_starts_with_a_dash_counts_the_root_once(self):
+        # Round-1 review of #143: the file list's ./ before `-notes` read as a folder, and the
+        # root AGENTS.md counted twice.
+        write(self.project / 'scripts/review.sh', 'CODEX_MODEL="x"\n')
+        write(self.project / 'AGENTS.md', 'r' * 13000 + '\n')
+        write(self.project / '-notes/AGENTS.md', 'n' * 99 + '\n')
+        self.assertNotIn('[agents-size]', self.assert_green())
+        write(self.project / '-notes/AGENTS.md', 'n' * 11999 + '\n')
+        self.assertIn('  - -notes/AGENTS.md: 25001 bytes', self.assert_red('FAIL [agents-size]'))
 
     def test_a_missing_boundary_checks_file_fails(self):
         (self.project / 'scripts/boundary_checks.sh').unlink()
