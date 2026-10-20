@@ -1253,10 +1253,12 @@ checks, not claims established by fixtures.
 
 ## Last ecosystem research pass
 
-**Never run.** The kit was extracted from a working project on 2026-07-26 without a
-research pass of its own. The first `bootstrap.sh` run must therefore treat every
-ecosystem claim in these files as unverified and run `setup/RESEARCH_PROTOCOL.md` from
-scratch.
+The kit has not run `setup/RESEARCH_PROTOCOL.md` as one full ecosystem pass of its own. Its
+baseline is dated work instead: the research reports in `docs/research/README.md` (2026-10-13
+to 2026-10-18, newest 2026-10-18), one targeted check (the 2026-09-05 Codex-host delegation
+check against Claude Code 2.1.261 and Codex 0.153.4, below) and the web source check of 60
+claims on 2026-10-16. A project's first pass starts from there and researches what changed
+since (`setup/RESEARCH_PROTOCOL.md`, "The baseline").
 
 ---
 
