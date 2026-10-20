@@ -3856,7 +3856,17 @@ class BridgeTests(unittest.TestCase):
                 ([], ['High availability: confirm failover on staging.'], 'Accept with Manual Checks',
                  ['High availability: confirm failover on staging.']),
                 ([], ['Critical path: time the deploy.'], 'Accept with Manual Checks',
-                 ['Critical path: time the deploy.'])):
+                 ['Critical path: time the deploy.']),
+                # rsel4: REVIEW_PROMPT asks for the severity, then the file and line; a `(` or a
+                # path/location token after the severity makes it a finding, a plain word does not.
+                (['High x.py:1 drops records.'], [], 'Reject', []),
+                (['High (x.py:1): drops records.'], [], 'Reject', []),
+                (['Critical (data loss) x.py:1 bypasses the gate.'], [], 'Reject', []),
+                (['High core/x drops records.'], [], 'Reject', []),
+                (['High C:\\x drops records.'], [], 'Reject', []),
+                (['High line:12 drops records.'], [], 'Reject', []),
+                ([], ['High availability confirm failover on staging.'], 'Accept with Manual Checks',
+                 ['High availability confirm failover on staging.'])):
             value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': checks}
             envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
                         'modelUsage': {'claude-opus-5': {}}, 'structured_output': value}
@@ -3872,6 +3882,9 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(re.findall(codex_bridge.VERDICT, final, re.M), [verdict])
                 self.assertIn('- ' + note % verdict, final)
                 self.assertFalse(codex_bridge.verdict_refused(final), final)
+        # The Codex text form with no manual checks section (rsel4).
+        final = codex_bridge.corrected('## Findings\n\n- High x.py:1 drops records.\n\nVERDICT: Accept')
+        self.assertEqual(re.findall(codex_bridge.VERDICT, final, re.M), ['Reject'])
         # A Reject that names no finding stays refused: there is no stricter reading of it.
         envelope['structured_output'] = {'verdict': 'Reject', 'findings': ['None.'], 'manual_checks': []}
         with self.assertRaisesRegex(bridge.BridgeError, 'Reject has no findings'):

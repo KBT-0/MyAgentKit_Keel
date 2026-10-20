@@ -1247,9 +1247,11 @@ SEVERITY_FIRST = re.compile(r"(?i)(?:critical|high|medium|low|pre-existing)\b")
 SEVERITY_HEADING = re.compile(r"\b(?:critical|high|medium|low|pre-existing)\b", re.I)
 # A Critical or High an item leads with, its markup removed: after an issue number (`Issue 3:
 # High — ...`), a `Severity:` label or in brackets (`[High] ...`), and followed by a separator,
-# so `High availability: confirm failover` is a check, not a High (decision 59, rsel3).
+# a `(` or a path/location token (`High x.py:1 ...`, REVIEW_PROMPT's layout), so `High
+# availability: confirm failover` is a check, not a High (decision 59, rsel3, rsel4).
 BLOCKING_SEVERITY = re.compile(r"(?i)(?:(?:issue|finding)[ \t]*#?\d+[ \t]*[:.)—–-]?[ \t]*"
-                               r"|severity[ \t]*[:—–-]?[ \t]*)?\[?(?:critical|high)[ \t]*(?:[:\]—–]|-(?![-\w])|$)")
+                               r"|severity[ \t]*[:—–-]?[ \t]*)?\[?(?:critical|high)"
+                               r"(?:[ \t]*(?:[:\]—–(]|-(?![-\w])|$)|[ \t]+\S*?(?:[/\\]|\.\w|:\d))")
 UNVERIFIED = re.compile(r"\b(?:not run|could not (?:verify|be verified))\b", re.I)
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
