@@ -4018,6 +4018,107 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             bridge.snapshot(self.repo, 'commit', past)
 
+    def kit_upgrade(self, edit='', crlf=False, record=True):
+        """#114: a kit clone with core/x.sh (KIT-OWNED), and a project commit that copies it to
+        x.sh (plus `edit`), records the kit commit (or `record`) and changes file.py."""
+        kit = self.root / 'kit'
+        kit.mkdir()
+
+        def run(*args):
+            return subprocess.run(['git', '-C', str(kit), *args], check=True, capture_output=True)
+        run('init', '-q')
+        run('config', 'core.autocrlf', 'true' if crlf else 'false')
+        (kit / 'core').mkdir()
+        source = '# KIT-OWNED: do not edit locally\necho kit\n'
+        (kit / 'core/x.sh').write_bytes(source.encode())
+        run('add', '.')
+        run('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null',
+            '-c', 'commit.gpgsign=false', 'commit', '-qm', 'kit')
+        kit_commit = run('rev-parse', 'HEAD').stdout.decode().strip()
+        data = source + edit
+        (self.repo / 'x.sh').write_bytes((data.replace('\n', '\r\n') if crlf else data).encode())
+        if record:
+            (self.repo / 'docs/kit').mkdir(parents=True)
+            (self.repo / 'docs/kit/.kit-commit').write_text((kit_commit if record is True else record) + '\n')
+        self.commit_fixture('Kit upgrade')
+        return kit, kit_commit
+
+    def test_a_kit_upgrade_commit_reviews_only_the_project_files(self):
+        # #114 (lead decisions 1, 2): a kit-owned file equal to the kit's blob leaves the diff and
+        # is named as verified by hash in the prompt, the evidence and the chain record.
+        kit, kit_commit = self.kit_upgrade()
+        blob = self.git('rev-parse', 'HEAD:x.sh').stdout.decode().strip()
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(extra=['--commit', 'HEAD', '--kit-verified', str(kit)],
+                                       env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        prompt = log.read_text(encoding='utf-8')
+        diff = prompt.partition('\nDiff:\n')[2]
+        self.assertIn('+changed', diff)
+        self.assertNotIn('x.sh', diff)
+        self.assertIn('Verified by hash, not reviewed: these changed paths are byte for byte the kit\'s own '
+                      'files at kit commit %s' % kit_commit, prompt)
+        self.assertIn('\n  x.sh (blob %s)\n' % blob, prompt)
+        self.assertIn('## Kit-verified files (verified by hash, not reviewed)\n\n- x.sh, blob %s, kit commit %s\n'
+                      % (blob, kit_commit), Path(result['evidence']).read_text(encoding='utf-8'))
+        result, chain = self.dispatch_result(fallback=False, args=('--commit', 'HEAD', '--kit-verified', '--kit', str(kit)))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(chain['kit_verified'], [{'path': 'x.sh', 'blob': blob, 'kit_commit': kit_commit}])
+        self.assertIn('- x.sh, blob %s' % blob, Path(chain['attempts'][0]['evidence']).read_text(encoding='utf-8'))
+
+    def test_a_kit_owned_file_the_project_edited_stays_in_the_diff(self):
+        kit, _ = self.kit_upgrade(edit='echo local\n')
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(extra=['--commit', 'HEAD', '--kit-verified', str(kit)],
+                                       env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        prompt = log.read_text(encoding='utf-8')
+        self.assertIn('+echo local', prompt.partition('\nDiff:\n')[2])
+        self.assertNotIn('Verified by hash', prompt)
+        self.assertIn('## Kit-verified files (verified by hash, not reviewed)\n\nNone.\n',
+                      Path(result['evidence']).read_text(encoding='utf-8'))
+
+    def test_an_unknown_or_missing_kit_commit_verifies_nothing(self):
+        from contextlib import redirect_stderr
+        kit, _ = self.kit_upgrade(record='1' * 40)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        self.assertIn('NOTE [review]: --kit-verified verified no file: the kit clone %s lacks kit commit %s'
+                      % (kit, '1' * 40), err.getvalue())
+        self.git('rm', '-q', 'docs/kit/.kit-commit')
+        self.commit_fixture('No kit commit')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        self.assertIn('records no kit commit in docs/kit/.kit-commit; every changed file is reviewed', err.getvalue())
+
+    def test_a_crlf_checkout_of_a_kit_file_verifies(self):
+        # sync-kit.sh's hash-object --path rule: the kit clone's line-ending settings normalise it.
+        kit, kit_commit = self.kit_upgrade(crlf=True)
+        blob = self.git('rev-parse', 'HEAD:x.sh').stdout.decode().strip()
+        self.assertIn(b'\r\n', self.git('cat-file', 'blob', blob).stdout)
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit),
+                         [{'path': 'x.sh', 'blob': blob, 'kit_commit': kit_commit}])
+
+    def test_the_diff_limit_refusal_names_its_size_and_largest_files(self):
+        (self.repo / 'big.txt').write_text('x' * 99 + '\n' * 1 + ('y' * 99 + '\n') * 4500)
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        message = str(caught.exception)
+        self.assertRegex(message, r'diff is \d+ bytes, over the limit of 400000 bytes')
+        self.assertRegex(message, r'the largest: big\.txt \(\d+ bytes\), file\.py \(\d+ bytes\); split the task')
+
+    def test_kit_verified_needs_a_claude_commit_review(self):
+        import review_dispatch
+        for argv, why in ((['--reviewer', 'codex', '--commit', 'HEAD', '--kit-verified'], '--reviewer claude'),
+                          (['--uncommitted', '--kit-verified'], 'a --commit only'),
+                          (['--commit', 'HEAD', '--kit', str(self.root)], 'for --kit-verified only')):
+            with self.subTest(argv=argv), self.assertRaises(ValueError) as caught:
+                review_dispatch.main(['--repo', str(self.repo), *argv])
+            self.assertIn(why, str(caught.exception))
+        self.assertEqual(self.run_wrapper('--kit-verified').returncode, 2)
+
     def test_archiving_does_not_recursively_expand_the_next_review(self):
         _, first = self.run_bridge()
         _, second = self.run_bridge()
@@ -6162,7 +6263,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('FALLBACK [review]: this review is by codex, not the requested claude',
                       result.stdout)
 
-    def dispatch_result(self, primary='claude', fallback=True, **extra):
+    def dispatch_result(self, primary='claude', fallback=True, args=(), **extra):
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
                    REVIEW_CODEX_MODEL='codex-fixture-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task',
@@ -6170,7 +6271,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                    MYAGENTKIT_AUTHOR_EFFORT='low',
                    REVIEW_ROUND_EXCEPTION='fixture: the chain tests run more than two rounds')
         env.update(extra)
-        result = self.run_wrapper('--reviewer', primary, *(['--fallback'] if fallback else []), **env)
+        result = self.run_wrapper('--reviewer', primary, *(['--fallback'] if fallback else []), *args, **env)
         line = next((s.removeprefix('review dispatch: ') for s in result.stdout.splitlines()
                      if s.startswith('review dispatch: ')), None)
         return result, json.loads(line) if line else None
