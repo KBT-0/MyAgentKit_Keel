@@ -83,6 +83,17 @@
         ]
       },
       {
+        "matcher": "Bash|PowerShell|Monitor|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_root_scan.py\"",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
         "matcher": "Agent|Task",
         "hooks": [
           {

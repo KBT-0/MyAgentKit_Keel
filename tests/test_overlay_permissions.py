@@ -164,7 +164,8 @@ class OverlaySettingsTests(unittest.TestCase):
         # says `onFailure: block` (Claude Code v2.1.295+, https://code.claude.com/docs/en/hooks).
         guards = [h for e in self.settings['hooks']['PreToolUse'] for h in e['hooks']]
         self.assertEqual(sorted(h['command'].split('/')[-1].rstrip('"') for h in guards),
-                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_worker_route.py'])
+                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_root_scan.py',
+                          'guard_worker_route.py'])
         for hook in guards:
             with self.subTest(hook=hook['command']):
                 self.assertEqual(hook.get('onFailure'), 'block')
@@ -177,6 +178,7 @@ class OverlaySettingsTests(unittest.TestCase):
                     self.assertGreaterEqual(entry['hooks'][0].get('timeout', 600), 30)
         matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
         self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
+        self.assertIn('|'.join(SHELL_TOOLS) + '|Glob|Grep', matchers)  # #298: a walk from a root
 
     def test_every_command_guard_covers_every_shell_tool(self):
         # #93, #213: a guard wired to "Bash" alone let PowerShell and Monitor calls through. The
@@ -184,7 +186,7 @@ class OverlaySettingsTests(unittest.TestCase):
         for path in (SETTINGS, SETTINGS.parents[4] / '.claude/settings.json'):  # overlay, kit's own
             for entry in json.loads(path.read_text(encoding='utf-8'))['hooks']['PreToolUse']:
                 command = entry['hooks'][0]['command']
-                if 'guard_destructive_git' in command or 'guard_private_email' in command:
+                if any(g in command for g in ('guard_destructive_git', 'guard_private_email', 'guard_root_scan')):
                     with self.subTest(path=str(path), hook=command):
                         self.assertLessEqual(set(SHELL_TOOLS), set(entry['matcher'].split('|')))
 

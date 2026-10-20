@@ -26,7 +26,7 @@ class PythonFallbackTests(unittest.TestCase):
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
         self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
-                                                'guard_private_email.py', 'guard_worker_route.py', 'plain_report.py',
+                                                'guard_private_email.py', 'guard_root_scan.py', 'guard_worker_route.py', 'plain_report.py',
                                                 'progress_reminder.py'], commands)
         for command in python_hooks.values():
             self.assertTrue(command.startswith('sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" '), command)
@@ -61,6 +61,9 @@ class PythonFallbackTests(unittest.TestCase):
         mailed = run(['sh', '-c', python_hooks['guard_private_email.py']],
                      json.dumps({'tool_name': 'WebFetch', 'tool_input': {'url': 'https://x.example/?m=owner@example.com'}}))
         self.assertEqual(mailed.returncode, 2, mailed.stderr)
+        rooted = run(['sh', '-c', python_hooks['guard_root_scan.py']],
+                     json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'find / -name x.h'}}))
+        self.assertEqual(rooted.returncode, 2, rooted.stderr)
         # A subagent names its model and effort, or it inherits the lead's; a fork cannot.
         route = python_hooks['guard_worker_route.py']
         for call, code in (({'prompt': 'x'}, 2), ({'model': 'sonnet'}, 2), ({'effort': 'medium'}, 2),
