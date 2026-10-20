@@ -93,6 +93,28 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertNotIn('Unreadable', out)
         self.assertNotIn('Tier', out)
 
+    def test_a_record_without_a_hash_keeps_its_verdict_as_unverified(self):
+        # Records from before v0.9 carry no evidence_sha256 (#291); a hashed record stays strict.
+        path = self.record('a', 'T', b'VERDICT: Reject\n')
+        record = json.loads(path.read_text(encoding='utf-8'))
+        del record['evidence_sha256']
+        path.write_text(json.dumps(record), encoding='utf-8')
+        self.record('b', 'T', b'VERDICT: Accept\n')
+        (self.repo / 'docs/reviews/b.md').write_bytes(b'VERDICT: Reject\n')
+        out = self.summary()
+        self.assertIn('  round=1 kind=review callee=claude model=opus effort=unknown verdict=Reject hash=none', out)
+        self.assertIn('  round=2 kind=review callee=claude model=opus effort=unknown verdict=none (evidence mismatch)'
+                      ' duration=', out)
+
+    def test_a_moved_checkout_finds_its_archive_under_docs_reviews(self):
+        # Records store the absolute archive path; a moved or recloned checkout reads the basename (#291).
+        path = self.record('a', 'T', b'VERDICT: Accept\n')
+        record = json.loads(path.read_text(encoding='utf-8'))
+        record['evidence'] = str(self.repo / 'gone/docs/reviews/a.md')
+        path.write_text(json.dumps(record), encoding='utf-8')
+        self.assertIn('  round=1 kind=review callee=claude model=opus effort=unknown verdict=Accept duration=',
+                      self.summary())
+
     def test_rounds_and_rejects_are_totalled_by_behaviour_appendix(self):
         # The A/B of issue #74: the same totals with BEHAVIOUR.md on and off; a record from
         # before the field (or from Codex) is unknown, never counted as either side.

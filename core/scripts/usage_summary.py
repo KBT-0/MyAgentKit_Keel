@@ -6,7 +6,8 @@ Only the review adapters write records, so worker and sub-agent errands are not 
 A round is a completed review attempt unless the checkpoint its dispatcher wrote after it says
 the chain failed (claude_bridge.chain_failure, the rule of the two-round cap too);
 a shadow run (REVIEW_SHADOW=1) is listed apart and is no round. A verdict is read only from
-an archive whose bytes still match the record's sha256; the findings are counted from it.
+an archive whose bytes still match the record's sha256, or unverified (hash=none) from one
+whose record has none; the findings are counted from it.
 The author's dispositions carried by a round answer the earlier rounds under its label, so
 their counts are credited to those rounds' configurations, split by the findings each round
 listed, as author-claimed acceptance: accepted = fixed + deferred, out of fixed + disproved +
@@ -55,17 +56,26 @@ def valid_record(record):
 def evidence_fields(repo, record):
     """Effort, verdict and finding count from the archive, or why it has no verdict."""
     effort, path = 'unknown', record.get('evidence')
-    record['findings'] = 0
+    record['findings'], record['unhashed'] = 0, False
     if not isinstance(path, str) or not path:
         return effort, None, None
     path = Path(path)
     if not path.is_absolute():
         path = repo / path
-    try:
-        data = path.read_bytes()
-    except OSError:
+    # The adapters store an absolute path, so a moved or recloned checkout looks for the
+    # archive under its own docs/reviews/ before calling it missing (#291).
+    for candidate in (path, repo / 'docs/reviews' / path.name):
+        try:
+            data = candidate.read_bytes()
+            break
+        except OSError:
+            pass
+    else:
         return effort, None, 'evidence missing'
-    if hashlib.sha256(data).hexdigest() != record.get('evidence_sha256'):
+    # A record from before v0.9 has no hash: its verdict is read and marked hash=none.
+    if record.get('evidence_sha256') is None:
+        record['unhashed'] = True
+    elif hashlib.sha256(data).hexdigest() != record['evidence_sha256']:
         return effort, None, 'evidence mismatch'
     content = data.decode('utf-8', 'replace')
     if content.lstrip().startswith('{'):
@@ -252,6 +262,8 @@ def main():
             verdict = record['verdict'] or f'none ({printable(record["why"] or "no verdict line")})'
             if record['shadow']:
                 verdict += ' (shadow)'
+            if record['unhashed'] and record['verdict']:
+                verdict += ' hash=none'
             print(f'  {"round=%d" % record["number"] if record["round"] else "not a round"}'
                   + (f' focus={printable(focus)}' if focus else '') +
                   f' kind={printable(record["task"]["kind"])}'
