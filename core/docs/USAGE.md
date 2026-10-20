@@ -40,7 +40,9 @@ model and effort: review rounds, verdicts, duration and rejects; `--task LABEL` 
 one label. Rounds are numbered per `REVIEW_FOCUS`, as the two-round cap counts them. A round
 is a completed review unless the checkpoint its dispatcher wrote after it says the chain
 failed, the same rule the two-round cap uses (`docs/REVIEW_GATE.md`, "Rounds"); a verdict is read only from an archive that
-still matches its record's sha256. Worker and sub-agent errands write no record, so they
+still matches its record's sha256; a record from before v0.9 has none, so its verdict is read
+unverified and marked `hash=none`, and an archive whose recorded absolute path is gone (a moved
+or recloned checkout) is read from `docs/reviews/<name>`. Worker and sub-agent errands write no record, so they
 are not in it.
 
 The summary also measures each reviewer configuration (model, effort, backend):
