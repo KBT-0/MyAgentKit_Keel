@@ -28,10 +28,14 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 - **A changed worktree-disposable list shows what it would remove before it removes it**
   (#288 point 2; `scripts/clean_worktrees.py`, Claude Code overlay). A removal that takes files
   only the changed committed list makes disposable waits one `--apply` (the post-merge hook's
-  run): that run prints it as `would remove ...` with the reason, and the next one removes it.
-  The list a full `--apply` ran with is kept in the git directory
-  (`kit-worktree-disposable-applied`); a project with none recorded adopts the list in force.
-  Nothing to do: the next sync brings the script.
+  run, or close_worker.sh's `--apply --only=NAME`): that run prints it as `would remove ...`
+  with the reason, and the next one removes it; a dry run prints it as `would preview ...` and
+  counts it as kept. The list a full `--apply` ran with is kept in the git directory
+  (`kit-worktree-disposable-applied`), and each worktree's own preview beside it
+  (`kit-worktree-disposable-previewed/`): a worktree kept for another reason when the list
+  changes keeps the list it was covered by, so it is previewed before the new list removes it.
+  A project with no list recorded adopts the list in force; a record that cannot be read
+  covers nothing. Nothing to do: the next sync brings the script.
 
 - **The project gate keeps every AGENTS.md chain Codex loads under 24 KiB** (#143;
   `scripts/check.sh`, `[agents-size]`). Codex joins the AGENTS.md of each folder from the root
