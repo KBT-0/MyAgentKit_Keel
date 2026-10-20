@@ -61,6 +61,10 @@ if args[0] == 'list-sessions':
         sys.exit(0)
     print('\n'.join(sessions))
     sys.exit(0)
+if args[0] == 'list-panes':  # the pane process ids: the file `panes`, else none
+    panes = os.path.join(st, 'panes')
+    sys.stdout.write(open(panes).read() if os.path.exists(panes) else '')
+    sys.exit(0)
 target = args[args.index('-t') + 1]
 if not target.startswith('='):
     sys.exit('inexact target ' + target)
@@ -745,6 +749,40 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: dry run: would end tmux session w1', out)
         self.assertIn('clean_worktrees: dry run:', out)
         self.assertIn('close_worker: dry run: nothing was changed', out)
+
+    def test_the_processes_its_session_started_are_ended_with_it_and_nothing_else(self):
+        # #298: a background tool command outlived the SIGHUP of its session and kept a CPU core
+        # busy for hours. The pane's process tree is ended; a process outside it is not.
+        if NT:
+            sys.stderr.write('\nNOT RUN: close_worker ends the session process tree (POSIX only: '
+                             'Git for Windows ps cannot list parents; taskkill /T ends the tree there)\n')
+            return
+        self.worker('w1')
+        pane = subprocess.Popen(['sh', '-c', 'sleep 300 & sh -c "sleep 300; :" & wait'])
+        other = subprocess.Popen(['sleep', '300'])
+        for proc in (pane, other):
+            self.addCleanup(proc.wait)
+            self.addCleanup(proc.kill)
+        tree = []
+        for _ in range(50):  # until the pane's children and grandchild run
+            listing = [l.split() for l in subprocess.run(['ps', '-A', '-o', 'pid=', '-o', 'ppid='], capture_output=True,
+                                                         text=True).stdout.splitlines()]
+            tree = [str(pane.pid)]
+            for _ in range(3):
+                tree += [pid for pid, ppid in listing if ppid in tree and pid not in tree]
+            tree = tree[1:]
+            if len(tree) >= 3:
+                break
+            time.sleep(0.1)
+        self.assertEqual(len(tree), 3, tree)
+        (self.tmp / 'panes').write_text('%d\n' % pane.pid)
+        out = self.close('w1')
+        self.assertIn('close_worker: w1: ended the processes its session started (process ', out)
+        pane.wait(timeout=10)  # its background sleep ended, so its `wait` returned
+        for pid in tree:
+            with self.subTest(pid=pid):
+                self.assertNotEqual(subprocess.run(['kill', '-0', pid], capture_output=True).returncode, 0, out)
+        self.assertIsNone(other.poll(), 'a process outside the session was ended')
 
     def test_a_worktree_committed_a_moment_ago_is_removed_the_quiet_period_lifted(self):
         # The real clock: the worker's last commit is seconds old. The hook would keep it.
