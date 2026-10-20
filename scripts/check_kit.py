@@ -127,7 +127,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 20, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
               'test_sync_kit': 58 if case_folds() else 57, 'test_doctor': 13, 'test_git_hooks': 37, 'test_stop_hook': 11, 'test_context_hook': 14, 'test_communication_hooks': 37, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 66 if os.name == 'nt' else 65, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
-              'test_spawn_worker': 59 if os.name == 'nt' else 79, 'test_spawn_codex': 52 if os.name == 'nt' else 59 if shutil.which('dash') else 58,
+              'test_spawn_worker': 60 if os.name == 'nt' else 81, 'test_spawn_codex': 52 if os.name == 'nt' else 59 if shutil.which('dash') else 58,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 62 if os.name == 'nt' else 64 if Path('/proc/self/fd').is_dir() else 63, 'test_working_mode': 52,
               'test_worker_visibility': 79 if os.name == 'nt' or os.path.exists('/dev/full') else 78, 'test_doc_pointers': 28,

@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 `sync-kit.sh` prints these entries to a project whose recorded kit version is older than v0.12.
 
+- **The lead's done signal is a disk watch, not an idle notice** (owner order 2026-10-20).
+  `spawn_worker.sh` prints `sh scripts/watch_workers.sh --result NAME=PATH NAME` first, on tmux and
+  on a Windows Terminal tab, to run as one background command whose exit wakes the lead; a
+  `notify_when_idle` subscription is optional, because 4 of 5 supervised closes sent no notice. A
+  background review runs `review.sh` itself as the background command, or is waited on through
+  its log, never a pid. WORKFLOW, REVIEW_RUNNING and the overlay README say the same; a lead that
+  copied the old spawn steps should start the watch at every spawn.
+
 - **A new hook refuses an agent's write to a secret file** (#297; `guard_secret_files.py`,
   PreToolUse on Edit, Write and NotebookEdit). `.env*`, `.dev.vars*`, `credentials` with no or a
   config extension, `*.pem`, `*.key`, `.npmrc` and `.netrc` are refused; templates (`.example`,
