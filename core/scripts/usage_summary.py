@@ -19,7 +19,7 @@ from collections import defaultdict
 import hashlib
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import sys
 
@@ -59,12 +59,13 @@ def evidence_fields(repo, record):
     record['findings'], record['unhashed'] = 0, False
     if not isinstance(path, str) or not path:
         return effort, None, None
-    path = Path(path)
+    # The adapters store an absolute path, so a moved or recloned checkout looks for the
+    # archive under its own docs/reviews/ before calling it missing (#291); the basename splits
+    # on both separators, so a record written on Windows is found on POSIX too.
+    name, path = PureWindowsPath(path).name, Path(path)
     if not path.is_absolute():
         path = repo / path
-    # The adapters store an absolute path, so a moved or recloned checkout looks for the
-    # archive under its own docs/reviews/ before calling it missing (#291).
-    for candidate in (path, repo / 'docs/reviews' / path.name):
+    for candidate in (path, repo / 'docs/reviews' / name):
         try:
             data = candidate.read_bytes()
             break

@@ -115,6 +115,27 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertIn('  round=1 kind=review callee=claude model=opus effort=unknown verdict=Accept duration=',
                       self.summary())
 
+    def test_a_windows_evidence_path_finds_its_archive_on_any_host(self):
+        # A Windows record read on POSIX: Path keeps the backslashes, so the basename splits on both.
+        path = self.record('a', 'T', b'VERDICT: Accept\n')
+        record = json.loads(path.read_text(encoding='utf-8'))
+        record['evidence'] = r'C:\gone\docs\reviews\a.md'
+        path.write_text(json.dumps(record), encoding='utf-8')
+        self.assertIn('  round=1 kind=review callee=claude model=opus effort=unknown verdict=Accept duration=',
+                      self.summary())
+
+    def test_an_unhashed_record_without_a_verdict_is_not_marked_hash_none(self):
+        # hash=none qualifies a verdict; a record with no verdict has nothing to qualify.
+        for name, status in (('a', 'completed'), ('b', 'failed')):
+            path = self.record(name, 'T', b'no verdict here\n', status=status, reason='quota')
+            record = json.loads(path.read_text(encoding='utf-8'))
+            del record['evidence_sha256']
+            path.write_text(json.dumps(record), encoding='utf-8')
+        out = self.summary()
+        self.assertIn('verdict=none (no verdict line)', out)
+        self.assertIn('verdict=none (failed/quota)', out)
+        self.assertNotIn('hash=none', out)
+
     def test_rounds_and_rejects_are_totalled_by_behaviour_appendix(self):
         # The A/B of issue #74: the same totals with BEHAVIOUR.md on and off; a record from
         # before the field (or from Codex) is unknown, never counted as either side.
