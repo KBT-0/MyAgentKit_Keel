@@ -246,7 +246,7 @@ Use the mtime of `<chain>-0.json` as the review start time. The number of possib
 one, plus up to two capacity retries of Codex (a wait of up to 20 minutes before each), plus one
 quota switch or fallback. After a cut-off, treat the review as running for at least
 `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times
-the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`),
+the number of possible attempts plus the capacity waits and overhead (about 4 h 40 min with 3600 s: four attempts and two 20-minute waits),
 unless the latest record shows it is finished as above.
 This window is a lower bound, not proof that an orphaned reviewer stopped.
 After the window, the lead still confirms completion in the process listing.

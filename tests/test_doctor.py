@@ -491,6 +491,8 @@ class DoctorTests(unittest.TestCase):
             bare = doctor()
             self.assertEqual(bare.returncode, 1, bare.stdout)
             self.assertIn('MISSING: scripts/doctor.project.sh has no #! line', bare.stdout)
+            # POSIX sh ran a mode-755 file without #! anyway, so "doctor skipped it" was false there.
+            self.assertNotIn('project: ready', bare.stdout)
             self.assertNotIn('DOCTOR: ready', bare.stdout)
             git('rm', '-q', '-f', '--cached', 'scripts/doctor.project.sh')
             extra.unlink()

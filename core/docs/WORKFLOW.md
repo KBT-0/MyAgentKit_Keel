@@ -373,7 +373,8 @@ which NO code is written:
   Then the second half, which is what keeps the kit alive rather than merely local:
   **offer to send it upstream.** `/myagentkit:kit-feedback` opens an issue or a pull request
   against the kit repository — it scrubs this project out, shows the exact body, and sends
-  nothing without an explicit yes. A fix that stays local works, which is precisely why the
+  nothing without the owner's yes, in the chat or given in advance as `kit_feedback:
+  standing-approval` (the command's §4). A fix that stays local works, which is precisely why the
   upstream one then never happens and the next project inherits the original problem.
 
 Output: a short `docs/audits/YYYY-MM.md` whose findings carry task ids ("Task ids"), plus the
@@ -513,15 +514,21 @@ snapshot of a file another process may be editing right now.
 
 The tiers below sort the work; the working mode in force ("Working modes, by name") says
 which side takes each tier. The model names are this kit's as of 2026-10-08: replace them
-with what the owner's subscriptions offer today (rule 4).
+with what the owner's subscriptions offer today (rule 4). The top model the plan has is the
+lead (it plans, briefs, routes and merges); the workers are the tiers below it (owner's
+choice, 2026-10-19; rule 2 says when the top model takes an errand itself).
 
 | Tier | Work | Codex | Claude |
 |---|---|---|---|
 | 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5, medium effort |
 | 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, high effort, only for design-bearing work |
 | 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, high effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.1 when the lead picks it |
+| Review | The required review of any change, chosen per task like a worker | at least the author's tier: a stronger one; for an Astra author, Astra again in a fresh session | the same rule: for a Fable author, Fable in a fresh session |
 
-The prices behind the table come from third-party summaries of OpenAI's launch figures:
+The review row is `docs/REVIEW_GATE.md`, "Invariant", with its sources (Anthropic's separate
+writer and reviewer sessions, `docs/research/ai-review-workflows.md` [1]; self-review's zero
+gain measured in the same session, [25]); no source measured the tier order, which is the
+owner's choice. The prices behind the table come from third-party summaries of OpenAI's launch figures:
 Luna costs about a twentieth of Sol's token price, and Sol 6.1 about a fifth of Astra's.
 Neither the per-model Codex allowance nor the quality claims were verified. **The table is
 provisional**: API token prices say nothing about how much each model draws from a
@@ -541,9 +548,9 @@ from the author's (`docs/REVIEW_GATE.md`, "Invariant", says who takes it).
 
 The table decides the AUTHOR and REVIEWER roles and may change its mind each month. A swap is
 recorded in `scripts/review.sh` and in `docs/STATE.md`; the review records stay comparable
-across it because both directions publish one format. **Limit:** a high-tier or critical
-change is never reviewed by a weaker tier than its author's, so a budget swap moves only the
-low and medium tier roles (`docs/research/claude-lead-codex.md`, findings 4 and 9: a weaker
+across it because both directions publish one format. **Limit:** no change is reviewed by a
+weaker tier than its author's alone (the review row), so a budget swap moves the authors, never
+a review below its author (`docs/research/claude-lead-codex.md`, findings 4 and 9: a weaker
 reviewer of a stronger author measured worse than the author alone).
 
 Caveat worth stating once: a more autonomous model fills ambiguity by itself instead of
@@ -703,7 +710,7 @@ side it runs on.
 
 | Mode | Writes | Reviews | Fixes the findings |
 |---|---|---|---|
-| `solo` | one model family's workers, by tier | a fresh session of another tier of the same family | the author's side ("Worker cost", rule 2) |
+| `solo` | one model family's workers, by tier | a fresh session of a stronger tier of the same family; the top tier's own work, that tier in a fresh session | the author's side ("Worker cost", rule 2) |
 | `cross` | both families, each task by fit | the other family by the direction rule, in a fresh session | the author's side ("Worker cost", rule 2) |
 | `saver` | the side that is not low | the low side, within a small budget, at low and medium tier; a high or critical change as in cross | the side that is not low |
 
@@ -720,11 +727,11 @@ review cost 1.7 to 2.3 times, and its gain depends on the direction).
 
 - **Writes:** the family's workers do all the implementation, at the tier table's column
   for that family.
-- **Reviews and fixes:** the author and the reviewer are different tiers, each in a fresh
-  bridged session with no shared context: Opus authors and Fable reviews it, or Sonnet for a
-  low or medium tier change, or the reverse. The lead picks both by the tier table; a
-  high-tier or critical change is never reviewed by a weaker tier than its author's ("Model
-  routing", the limit). A second session of the author's own tier
+- **Reviews and fixes:** the author and the reviewer each run in a fresh bridged session with
+  no shared context, and the reviewer is at least the author's tier ("Model routing", the
+  review row): Sonnet authors and Opus or Fable reviews it, Opus authors and Fable reviews it,
+  and Fable, the top tier, authors and Fable reviews it in a fresh session; the review's
+  effort follows `docs/REVIEW_GATE.md`, "Invariant". A second session of the author's own tier below the top
   is never the review, with one exception: on a plan with no tier above the author's (Opus
   without Fable), a high-tier or critical change gets Opus in a fresh session, at high effort,
   one round, plus {{OWNER_NAME}}'s diff read (owner decision, 2026-10-16; the same-model review
@@ -737,7 +744,8 @@ review cost 1.7 to 2.3 times, and its gain depends on the direction).
   are what keeps the review independent, since a fresh context is not biased toward code it
   just wrote (code.claude.com/docs/en/best-practices).
 - **The reviewer:** `scripts/review.sh --reviewer claude` (or `DEFAULT_REVIEWER="claude"`)
-  with `REVIEW_CLAUDE_MODEL` set for that run to the tier that did not write the change. It
+  with `REVIEW_CLAUDE_MODEL` set for that run to a tier at least the author's (the review row
+  above). It
   is the existing per-reviewer Claude pin, so the review records stay in one format, and
   `--model` applies only to the session it starts (code.claude.com/docs/en/model-config).
   `CODEX_MODEL` stays empty: `--fallback` then has no other reviewer to hand the review to.
@@ -777,7 +785,8 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   (owner decision, 2026-10-15). Claude reviews what Codex wrote. Codex reviews what Claude
   wrote, a low-tier change's light pass included, one pass, report only, at medium effort, and
   the lead checks each Codex finding before it enters a fix round. When Codex's allowance is
-  exhausted, another Claude tier than the author's takes the review, and the lead records the
+  exhausted, a Claude tier at least the author's takes the review (`docs/REVIEW_GATE.md`,
+  "Invariant"), and the lead records the
   switch in the task's STATE line and reports it. A high-tier change has two focus reviewers
   under one label (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the
   strongest Claude tier takes one focus and Codex the other. Findings go to the author's side

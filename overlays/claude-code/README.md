@@ -545,10 +545,9 @@ the core and readable by anything.
 
 ## What `/myagentkit:cross-review` needs
 
-A DIFFERENT model from the one authoring the change, in a fresh session. In solo mode, the
-default, that is another Claude tier through the Claude CLI already on the machine:
-`--reviewer claude` with `REVIEW_CLAUDE_MODEL` pinned to the tier that did not write the
-change (`docs/REVIEW_GATE.md`, "Invariant"). A second CLI is optional and serves cross mode
+A reviewer of at least the author's tier, in a fresh session (`docs/REVIEW_GATE.md`,
+"Invariant"). In solo mode, the default, that is a Claude tier through the Claude CLI
+already on the machine: `--reviewer claude` with `REVIEW_CLAUDE_MODEL` pinned to it. A second CLI is optional and serves cross mode
 only: `scripts/review.sh` ships adapters for two, selected with `--reviewer codex` or
 `--reviewer claude`, and both archive the same evidence. When the configured reviewer's CLI
 is missing, the command reports it and falls back to the paste-by-hand template in

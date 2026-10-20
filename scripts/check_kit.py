@@ -130,12 +130,12 @@ REQUIRED_SUITES = {
               'test_spawn_worker': 59 if os.name == 'nt' else 79, 'test_spawn_codex': 52 if os.name == 'nt' else 59 if shutil.which('dash') else 58,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 62 if os.name == 'nt' else 64 if Path('/proc/self/fd').is_dir() else 63, 'test_working_mode': 52,
-              'test_worker_visibility': 77 if os.name == 'nt' or os.path.exists('/dev/full') else 76, 'test_doc_pointers': 25,
+              'test_worker_visibility': 77 if os.name == 'nt' or os.path.exists('/dev/full') else 76, 'test_doc_pointers': 28,
               'test_usage_summary': 29, 'test_done_audits': 2,
               'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 18 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 40 if os.name == 'nt' else 39, 'test_python_fallback': 3,
-              'test_install': 11 if os.name == 'nt' else 7},
+              'test_install': 12 if os.name == 'nt' else 8},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite

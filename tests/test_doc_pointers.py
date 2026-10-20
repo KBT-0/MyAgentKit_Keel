@@ -114,7 +114,7 @@ class SectionPointerTests(unittest.TestCase):
                      'A review is finished only when that latest record has status `completed`, or status `failed` and no `next_attempt`.',
                      'The number of possible attempts is one, plus up to two capacity retries of Codex (a wait of up to 20 minutes before each), plus one quota switch or fallback.',
                      'Use the mtime of `<chain>-0.json` as the review start time.',
-                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`), unless the latest record shows it is finished as above.',
+                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times the number of possible attempts plus the capacity waits and overhead (about 4 h 40 min with 3600 s: four attempts and two 20-minute waits), unless the latest record shows it is finished as above.',
                      'This window is a lower bound, not proof that an orphaned reviewer stopped.',
                      'After the window, the lead still confirms completion in the process listing.',
                      'On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.',
@@ -128,6 +128,8 @@ class SectionPointerTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 self.assertIn(rule, gotchas)
         self.assertNotIn("grep -v -F 'grep -F'", gotchas)
+        # rpipe review Low: "about two hours" was the window before the capacity retries counted.
+        self.assertNotIn('about two hours', gotchas)
         self.assertNotIn('every other row is a survivor', gotchas)
         self.assertNotIn('It ignores its own rows', gotchas)
         self.assertNotIn("Only a review's own reviewer process holds no checkout lock.", gotchas)
@@ -200,6 +202,10 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn("the author's side's early check, not the gate's review", reviewer)
         self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
         self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
+        # rpipe review Low: without the bridge's flags an owner's diff.noprefix broke `git apply`
+        # in the copy, and a TMPDIR inside the checkout put the copy in the reviewed repository.
+        self.assertIn('git diff HEAD --binary --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/', reviewer)
+        self.assertIn('must not lie inside the checkout', reviewer)
         self.assertNotIn('its reading list', reviewer)
         self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
 
@@ -275,6 +281,15 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('At most about 10 lines and 6000 characters per issue', flat)
         self.assertIn('A separate issue only for a security problem, a blocker', flat)
         self.assertIn('once per batch, never per finding', flat)
+        # kfb review Low: an explicit mid-session request was put off to the session's end, and
+        # the permission prompt was called the second gate where standing-approval skips it.
+        self.assertIn('A finding the owner hands this command mid-session is filed now, not put off', flat)
+        self.assertIn('Under `standing-approval` it may not ask at all (§4)', flat)
+        # Both kit-feedback pointers name the standing approval beside the chat yes (decision 57).
+        for name in ('core/docs/WORKFLOW.md', 'setup/RESEARCH_PROTOCOL.md'):
+            text = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+            self.assertNotIn('without an explicit yes', text, name)
+            self.assertIn('`kit_feedback: standing-approval`', text, name)
         interview = (ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8')
         phase = interview.split('## Phase 0.5', 1)[1].split('\n## ', 1)[0]
         self.assertIn('`kit_feedback: ask-each-time`', phase)
@@ -497,8 +512,21 @@ class SectionPointerTests(unittest.TestCase):
         for path in [*ROOT.glob('core/**/*'), *ROOT.glob('plugins/**/*')]:
             if path.is_file() and path.suffix in ('.md', '.py', '.sh'):
                 self.assertNotIn('decisions.md', path.read_text(encoding='utf-8'), path)
-        self.assertIn("names an entry of the kit maintainer's decision log, which the kit does not ship",
-                      ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split()))
+        workflow = ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split())
+        self.assertIn("names an entry of the kit maintainer's decision log, which the kit does not ship", workflow)
+        # rsel3: the top tier reviews itself in a fresh session (Invariant), so WORKFLOW never sends
+        # a review to "another tier" or "the tier that did not write the change"; the effort rule
+        # holds for every required review and is written once, in REVIEW_GATE.
+        # rsel4: nor any other doc the kit ships or keeps (reviews are archived evidence).
+        for path in [*ROOT.glob('*.md'), *[p for d in ('core', 'plugin', 'plugins', 'overlays', 'setup', 'docs')
+                                           for p in (ROOT / d).glob('**/*.md')]]:
+            if 'reviews' not in path.relative_to(ROOT).parts:
+                text = ' '.join(path.read_text(encoding='utf-8').split())
+                self.assertEqual([p for p in ('another tier of the same family', 'the tier that did not write',
+                                              "another Claude tier than the author's") if p in text], [], path)
+        self.assertNotIn("effort or above, high at most", workflow)
+        self.assertIn("Every required review runs at an effort equal to or above the author's, high at most",
+                      ' '.join((ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8').split()))
 
     def test_setup_docs_match_solo_mode_and_the_shipped_files(self):
         read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())

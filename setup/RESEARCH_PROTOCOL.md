@@ -136,7 +136,8 @@ per finding:
 
 If yes, run `/myagentkit:kit-feedback`, or follow `CONTRIBUTING.md` in the kit repository if
 the plugin is not installed. Either way the rule is the same: scrub the project out, show
-the full body, send nothing without an explicit yes.
+the full body, send nothing without the owner's yes, in the chat or given in advance as the
+project's `kit_feedback: standing-approval`.
 
 Worth sending: a tool the kit should know about, a rejection worth recording so nobody
 re-litigates it, an ecosystem claim in these files that turned out to be stale or wrong.

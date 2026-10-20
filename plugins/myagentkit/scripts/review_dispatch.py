@@ -117,6 +117,11 @@ BACKEND_MAX_BYTES = 64 * 1024
 # `Opus 5.5`), a Bedrock-style id (us.anthropic.claude-opus-5-v1:0) and the older
 # claude-3-5-sonnet-20241022 form compare as the tier they run (#181).
 CLAUDE_TIERS = ("opus", "sonnet", "haiku", "fable")
+# Each family's tiers, weakest first; the last is the family's top tier (docs/WORKFLOW.md, "Model
+# routing"). A tier on no ladder (an older Codex id such as gpt-5.5, a backend's model) has no rank.
+TIER_LADDERS = {"claude": ("haiku", "sonnet", "opus", "fable"), "codex": ("luna", "sol", "astra")}
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+AUTHOR_EFFORT_ENV = claude_bridge.AUTHOR_EFFORT_ENV
 
 
 def pin_valid(provider, model, backend=None):
@@ -129,13 +134,18 @@ def tier(model):
     """The tier a model id belongs to: `claude-opus` for every value naming Opus (claude-opus-5,
     claude-opus-5-5, a dated one, `opus`, a vendor-prefixed id), else the id without a
     -YYYYMMDD date. A `vendor/` prefix, as MYAGENTKIT_REQUESTER writes it, is dropped, and a
-    Codex id inside a longer value (`codex gpt-5.5`, `gpt-5.5 xhigh`) is that id's tier."""
+    Codex id inside a longer value (`codex gpt-5.5`, `gpt-5.5 xhigh`) is that id's tier, and a
+    Codex id naming a ladder tier is that tier in any version (gpt-6-astra = gpt-6.1-astra,
+    `gpt-astra`; owner decision 65)."""
     model = model.strip().lower()
     named = re.search(r"(?<![a-z])(%s)(?![a-z])" % "|".join(CLAUDE_TIERS), model)
     if named:
         return "claude-" + named[1]
     codex = [token for token in re.split(r"[\s/]+", model) if token != "codex" and author_family(token) == "codex"]
     model = codex[0] if codex else model.rpartition("/")[2]
+    ladder = re.search(r"(?<![a-z])(%s)(?![a-z])" % "|".join(TIER_LADDERS["codex"]), model)
+    if ladder and author_family(model) == "codex":
+        return "gpt-" + ladder[1]
     family = re.match(r"claude-([a-z]+)", model)
     return "claude-" + family[1] if family else re.sub(r"-\d{8}$", "", model)
 
@@ -149,6 +159,66 @@ def author_tier(author):
             author_family(named) == "codex" and named != "codex"):
         return named
     return None
+
+
+def tier_rank(model):
+    """(family, rank, top rank) of a model's tier on its family's ladder, rank 0 the weakest, or
+    None for a tier on no ladder."""
+    named = tier(model)
+    family = author_family(named)
+    ladder = TIER_LADDERS.get(family, ())
+    ranks = [rank for rank, name in enumerate(ladder) if re.search(r"(?<![a-z])%s(?![a-z])" % name, named)]
+    return (family, ranks[0], len(ladder) - 1) if ranks else None
+
+
+def tier_name(family, name):
+    return "claude-" + name if family == "claude" else "a Codex %s model" % name
+
+
+def judge(model, author, effort):
+    """How reviewer `model` at `effort` stands to the patch's author (docs/REVIEW_GATE.md,
+    "Invariant", owner decision 63): ("below", why) for a weaker tier of the author's family, an
+    extra opinion only; ("same", why) for the author's tier below the top, the
+    REVIEW_SAME_TIER_EXCEPTION case; ("top", why) for the author's top tier, a fresh session's
+    review, why None when the effort is the author's or above, capped at high, since a review never
+    runs at xhigh or max (owner decision 64); ("effort", why) for any other review below that effort,
+    since the floor holds for every required review (owner decision 65); (None, None) for any other.
+    An unnamed author effort counts as high, the cap (owner decision 66)."""
+    mine, theirs = tier_rank(model), tier_rank(author)
+    named = author_effort()
+    low = (named not in EFFORTS and "%s %r names no effort: set it to the author's effort (%s), or leave "
+           "it unset for high" % (AUTHOR_EFFORT_ENV, named, ", ".join(EFFORTS))
+           or EFFORTS.index(effort) < min(EFFORTS.index(named), EFFORTS.index("high"))
+           and "review effort %s is below author %s's effort %s: the required review runs at the author's "
+           "effort or above, at high for an author above it (a review runs at low, medium or high; "
+           "docs/REVIEW_GATE.md, \"Invariant\")" % (effort, author, named))
+    if tier(model) == tier(author) and theirs and theirs[1] == theirs[2]:
+        return "top", (low and low + "; the top tier reviews its own in a fresh session, or the other "
+                       "family reviews it (--reviewer)" or None)
+    if tier(model) == tier(author):
+        stronger = [tier_name(theirs[0], name) for name in TIER_LADDERS[theirs[0]][theirs[1] + 1:]
+                    ] if theirs else ["another tier"]
+        return "same", ("author %s is the tier (%s) reviewer model %s would run: the author never reviews "
+                        "its own patch (docs/REVIEW_GATE.md, \"Invariant\"). Pin a stronger tier (%s) or "
+                        "the other family (--reviewer). A high-tier change on a plan with no tier above "
+                        "the author's sets REVIEW_SAME_TIER_EXCEPTION=<reason>"
+                        % (author, tier(author), model, " or ".join(stronger)))
+    if mine and theirs and mine[0] == theirs[0] and mine[1] < theirs[1]:
+        ladder = [tier_name(theirs[0], name) for name in TIER_LADDERS[theirs[0]]]
+        allowed = ("%s at %s's effort or above (high at most), in a fresh session" % (ladder[-1], author)
+                   if theirs[1] == theirs[2] else " or ".join(ladder[theirs[1] + 1:]))
+        return "below", ("reviewer model %s is a weaker tier than author %s: a lower tier's review of a "
+                         "higher tier's work is an extra opinion only, never the required review "
+                         "(docs/REVIEW_GATE.md, \"Invariant\"). Pin %s, or the other family (--reviewer); "
+                         "an extra opinion runs with REVIEW_SHADOW=1, whose verdict closes nothing"
+                         % (model, author, allowed))
+    return ("effort", low) if low else (None, None)
+
+
+def author_effort():
+    """The author's effort; unnamed, it counts as high, the cap (owner decision 66), so the
+    required review runs at high."""
+    return os.environ.get(AUTHOR_EFFORT_ENV, "").strip().lower() or "high"
 
 
 def author_family(model):
@@ -291,8 +361,7 @@ def main(argv=None):
     parser.add_argument("--reviewer", choices=("claude", "codex"), default="claude")
     parser.add_argument("--claude-model", default=os.environ.get("REVIEW_CLAUDE_MODEL", ""))
     parser.add_argument("--codex-model", default=os.environ.get("REVIEW_CODEX_MODEL", ""))
-    parser.add_argument("--effort", choices=("low", "medium", "high"),
-                        default=claude_bridge.default_effort())  # no xhigh for a review
+    parser.add_argument("--effort", choices=("low", "medium", "high"))  # no xhigh for a review
     # Off by default: the requested reviewer is usually chosen because the other model
     # authored the patch, so a silent substitute could be the author reviewing itself.
     parser.add_argument("--allow-fallback", action="store_true")
@@ -330,6 +399,12 @@ def main(argv=None):
     if author and author_tier(author) is None:
         raise ValueError("MYAGENTKIT_AUTHOR %r names no model tier, so the author's tier cannot be checked: "
                          "name the author's model id (claude-opus-5-5, claude/claude-sonnet-5, gpt-5.5)" % author)
+    if args.effort is None:
+        # Unnamed, the effort follows the brief's tier, raised to the author's (high at most): the
+        # required review runs there (owner decisions 65, 66); a lower one named is refused below.
+        args.effort = claude_bridge.default_effort()
+        if author and author_effort() in EFFORTS:
+            args.effort = EFFORTS[max(EFFORTS.index(args.effort), min(EFFORTS.index(author_effort()), 2))]
     authors = [author] if author else []
     # The owner's exception (docs/WORKFLOW.md, solo; 2026-10-16): on a plan with no tier above the
     # author's, a high-tier change is reviewed by the author's tier in a fresh session at high
@@ -338,14 +413,14 @@ def main(argv=None):
     if exception and (os.environ.get("REVIEW_RISK") != "high" or args.effort != "high"):
         raise ValueError("REVIEW_SAME_TIER_EXCEPTION is for a high-tier change only: it needs "
                          "REVIEW_RISK=high and effort high (docs/WORKFLOW.md, \"Working modes, by name\", solo)")
-    same = [value for value in authors if tier(value) == tier(pins[args.reviewer])]
-    if same and not exception:
-        raise ValueError("author %s is the tier (%s) reviewer %s model %s would run: the author never "
-                         "reviews its own patch (docs/REVIEW_GATE.md, \"Invariant\"). Pin another tier "
-                         "(REVIEW_CLAUDE_MODEL), never a weaker one for a high-tier change, or the other "
-                         "family (--reviewer). A high-tier change on a plan with no tier above the "
-                         "author's sets REVIEW_SAME_TIER_EXCEPTION=<reason>"
-                         % (", ".join(same), tier(same[0]), names[args.reviewer], pins[args.reviewer]))
+    # Owner decision 63 (#290): the reviewer is at least the author's tier; the top tier reviews its
+    # own tier in a fresh session at the author's effort or above, with no exception named.
+    kind, why = judge(pins[args.reviewer], author, args.effort) if author else (None, None)
+    # A shadow run closes nothing, so neither a weaker tier nor a lower effort blocks it.
+    if (kind in ("below", "effort") and os.environ.get("REVIEW_SHADOW") != "1" or kind == "top" and why
+            or kind == "same" and not exception):
+        raise ValueError(why)
+    same = authors if kind == "same" else []
     # Which reviewer runs under the exception, for the attempt's usage record and the one-round
     # check in prior_rounds(); never inherited.
     under = {args.reviewer: exception if same else None}
@@ -395,6 +470,18 @@ def main(argv=None):
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
     if author:
         chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
+
+    def top_tier(provider):
+        # The top tier's own review (owner decision 63): recorded and printed, for whichever runs.
+        chain["top_tier_review"] = {"author_effort": author_effort(),
+                                    "effort": args.effort}
+        print("REVIEW [top tier]: author %s is the top tier of its family, so reviewer %s model %s, "
+              "its own tier, reviews it in a fresh session at effort %s (the author's: %s)."
+              % (author, names[provider], pins[provider], args.effort, chain["top_tier_review"]["author_effort"]),
+              flush=True)
+
+    if kind == "top":
+        top_tier(args.reviewer)
     def same_tier(provider, same):
         # For whichever reviewer runs: a substitute of the author's tier (the quota switch,
         # --fallback) runs under the exception as the primary does, recorded and printed.
@@ -551,11 +638,16 @@ def main(argv=None):
             eligible = False
         # The tier, not the family: in solo another tier of the author's family reviews, so a
         # Claude author's Codex review that ran out of quota goes to another Claude tier (#225).
-        if eligible and not exception and any(tier(value) == tier(pins[other]) for value in authors):
+        # A substitute stands to the author as the primary does (owner decision 63).
+        sub_kind, sub_why = judge(pins[other], author, args.effort) if eligible else (None, None)
+        if sub_kind in ("below", "effort") and os.environ.get("REVIEW_SHADOW") != "1" or sub_kind == "top" and sub_why:
+            chain["fallback_blocked"] = "other reviewer %s: %s" % (names[other], sub_why)
+            eligible = False
+        if eligible and not exception and sub_kind == "same":
             chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (%s)"
                                          % (names[other], pins[other], author))
             eligible = False
-        substitute_same = [value for value in authors if eligible and tier(value) == tier(pins[other])]
+        substitute_same = authors if eligible and sub_kind == "same" else []
         if substitute_same:
             # The exception is one round per label: a substitute under it is refused here, as
             # the primary was before launch, when an earlier round already used it.
@@ -609,6 +701,10 @@ def main(argv=None):
                   % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
         if substitute_same:
             same_tier(other, substitute_same)
+        # The record describes the review that runs, never the failed primary's pin.
+        chain.pop("top_tier_review", None)
+        if sub_kind == "top":
+            top_tier(other)
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
         queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)

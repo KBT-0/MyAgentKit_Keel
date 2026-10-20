@@ -122,9 +122,9 @@ server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); th
 
 ## 3. The reviewing model — the Claude CLI alone is enough
 
-`docs/REVIEW_GATE.md` asks for risky diffs to be reviewed by a DIFFERENT model in a fresh
-session. `scripts/review.sh` automates that. In solo mode, the default, it needs only the
-Claude CLI you already use: the reviewer is another Claude tier, pinned in
+`docs/REVIEW_GATE.md` asks for risky diffs to be reviewed in a fresh session by a tier at
+least the author's. `scripts/review.sh` automates that. In solo mode, the default, it needs
+only the Claude CLI you already use: the reviewer is a Claude tier, pinned in
 `REVIEW_CLAUDE_MODEL` (`docs/REVIEW_GATE.md`, "Invariant"; `docs/WORKFLOW.md`, "Working
 modes, by name"). A second CLI, such as Codex, is optional and serves cross mode only.
 It runs from any shell the gate runs from, native Windows included (Git for Windows' `sh`
@@ -143,7 +143,8 @@ consolation prize.
 
 `scripts/review.sh` uses the project's configured default reviewer and pinned models. The
 solo default is `./scripts/review.sh --uncommitted --reviewer claude` with
-`REVIEW_CLAUDE_MODEL` set to the tier that did not write the change (below). Only for the
+`REVIEW_CLAUDE_MODEL` set to a tier at least the author's (`docs/REVIEW_GATE.md`,
+"Invariant"). Only for the
 optional Codex direction (`codex exec -s workspace-write …`), check:
 
 ```sh

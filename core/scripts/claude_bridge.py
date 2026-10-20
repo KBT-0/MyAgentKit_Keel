@@ -175,6 +175,8 @@ SPLIT_HINT_LINES = 400
 # Set by review_dispatch for an attempt the author's tier runs under REVIEW_SAME_TIER_EXCEPTION:
 # the usage record keeps it, and prior_rounds() allows that exception one round per label.
 SAME_TIER_ENV = "MYAGENTKIT_REVIEW_SAME_TIER"
+# The author's effort, which a top-tier author's own-tier review must match (owner decision 63).
+AUTHOR_EFFORT_ENV = "MYAGENTKIT_AUTHOR_EFFORT"
 
 
 def budgeted(diff: bytes) -> tuple[int, int]:
@@ -864,8 +866,9 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                           'an end of the reviewed range, and %s. Review a scope without it, or remove the '
                           'attribute (or the filter config) where the checkout still has it'
                           % (os.fsdecode(name), why))
-    # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy.
-    raw_diff = ('--no-ext-diff', '--no-textconv', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
+    # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy;
+    # color.ui=always put ANSI escapes into the patch.
+    raw_diff = ('--no-ext-diff', '--no-textconv', '--no-color', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
     # The filtered paths let through are proven unchanged, so the payload never asks their filter
     # again: a clean driver that answered differently on a later call put its output in the diff.
     # ponytail: one pathspec per LFS file on the command line; tens of thousands reach ARG_MAX.
@@ -1213,6 +1216,8 @@ def measure(claims: str | None) -> dict:
         # The lead's claim of who wrote the patch (KARARLAR B01-1: accepted rate per author and
         # reviewer pair); review_dispatch refuses the author's tier as reviewer.
         measured["author"] = os.environ["MYAGENTKIT_AUTHOR"].strip()
+    if os.environ.get(AUTHOR_EFFORT_ENV, "").strip():
+        measured["author_effort"] = os.environ[AUTHOR_EFFORT_ENV].strip().lower()
     if os.environ.get(SAME_TIER_ENV):
         measured["same_tier_exception"] = os.environ[SAME_TIER_ENV]  # prior_rounds() allows it one round
     return measured
@@ -1240,6 +1245,13 @@ SECTIONS = ("findings", "manual checks", "notes", "summary", "verdict")
 MARKUP = re.compile(r"^[ \t]*(?:(?:[-+*]|\d+[.)]|#{1,6})[ \t]+)?[*_ \t]*")
 SEVERITY_FIRST = re.compile(r"(?i)(?:critical|high|medium|low|pre-existing)\b")
 SEVERITY_HEADING = re.compile(r"\b(?:critical|high|medium|low|pre-existing)\b", re.I)
+# A Critical or High an item leads with, its markup removed: after an issue number (`Issue 3:
+# High — ...`), a `Severity:` label or in brackets (`[High] ...`), and followed by a separator,
+# a `(` or a path/location token (`High x.py:1 ...`, REVIEW_PROMPT's layout), so `High
+# availability: confirm failover` is a check, not a High (decision 59, rsel3, rsel4).
+BLOCKING_SEVERITY = re.compile(r"(?i)(?:(?:issue|finding)[ \t]*#?\d+[ \t]*[:.)—–-]?[ \t]*"
+                               r"|severity[ \t]*[:—–-]?[ \t]*)?\[?(?:critical|high)"
+                               r"(?:[ \t]*(?:[:\]—–(]|-(?![-\w])|$)|[ \t]+\S*?(?:[/\\]|\.\w|:\d))")
 UNVERIFIED = re.compile(r"\b(?:not run|could not (?:verify|be verified))\b", re.I)
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
@@ -1368,7 +1380,12 @@ def stricter_verdict(blocking: list) -> tuple[str, str]:
     Reject, anything else Accept with Manual Checks. Refused, the whole paid review was lost to
     an inconsistency the stricter verdict settles without dropping an item. Returns the verdict
     and the check line that says so."""
-    verdict = ("Reject" if any(re.search(r"\b(?:critical|high)\b", item, re.I) for item in blocking)
+    # The item's leading severity, as finding_start() reads it: a word match anywhere read
+    # `Medium: the high-effort run` and `NOT RUN: the high-tier focus` as High (rsel).
+    # Closing emphasis separates too: `**Critical** x.py:1 ...` is a Critical.
+    leading = [review_item(re.sub(r"\s", " ", re.sub(r"[*_]", "", re.sub(
+        r"(?i)\b(critical|high)(?:\*+|_+(?!\w))", r"\1:", item)))) for item in blocking]
+    verdict = ("Reject" if any(BLOCKING_SEVERITY.match(item) for item in leading)
                else "Accept with Manual Checks")
     return verdict, ("The reviewer wrote Accept; the bridge read it as %s, because its own findings "
                      "or manual checks hold an item a plain Accept cannot carry." % verdict)
@@ -1412,10 +1429,14 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError("invalid verdict")
         if verdict == "Accept" and (value["manual_checks"] or checks or not accept_allows(findings)
                                     or not accept_allows(value["findings"])):
-            blocking = [item for item in dict.fromkeys(findings + value["findings"]) if not accept_allows([item])]
+            # A severity-first check is a finding, as review_parts() reads Codex's Manual checks
+            # section: the two adapters read one Accept with a High check alike (rsel).
+            marked = review_parts("## Manual checks\n" + "\n".join(value["manual_checks"]))[0]
+            blocking = [item for item in dict.fromkeys(findings + value["findings"] + marked) if not accept_allows([item])]
             verdict, note = stricter_verdict(blocking)
             moved = checks + (blocking if verdict != "Reject" else [])
             value = dict(value, verdict=verdict,
+                         findings=list(dict.fromkeys(value["findings"] + (marked if verdict == "Reject" else []))),
                          manual_checks=[note] + list(dict.fromkeys(value["manual_checks"] + moved)))
         if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
