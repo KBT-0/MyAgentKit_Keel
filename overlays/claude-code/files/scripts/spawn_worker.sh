@@ -2,9 +2,9 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Open a SEPARATE Claude Code worker session in tmux and hand it a brief file. On native
 # Windows (Git for Windows' sh, MSYS2, Cygwin), which has no tmux, it opens as a Windows
-# Terminal tab instead (see "Native Windows" below), and what follows about showing,
-# watching and closing a tmux session does not apply there. Nothing can read that tab, so
-# there the worker's --settings gain a Notification and a Stop hook (the owner's settings and
+# Terminal tab instead (see "Native Windows" below), and what follows about showing a tmux
+# session does not apply there (watching and closing have Windows paths of their own). Nothing
+# can read that tab, so there the worker's --settings gain a Notification and a Stop hook (the owner's settings and
 # hooks are kept; the merged file is .myagentkit/workers/NAME.settings.json) that write its
 # state line, `waiting permission|question TIME ID [context_tokens=N]` or
 # `idle TIME ID [context_tokens=N]`, to .myagentkit/workers/NAME.state, which watch_workers.sh
@@ -67,10 +67,14 @@
 # MYAGENTKIT_ROLE=worker: the worker's report is for the lead, so the plain-words Stop hook
 # (plain_report.py) steps aside (docs/COMMUNICATION.md, "Workers").
 #
-# The lead then subscribes once with SendMessage `notify_when_idle` (on native Windows only
-# when the spawn printed "is a peer session"; a tmux worker registers) and reads the result
-# FILE the brief asks the worker to write. It does not poll and it does not chat with the
-# worker: every message to an idle session is a full-context turn. After reading the file
+# The lead then starts the printed `sh scripts/watch_workers.sh --result NAME=PATH NAME` as ONE
+# background command, on every platform: its exit is the done signal (the result file, GONE or
+# WAITING), and the lead starts it again after every report but DONE and GONE. It may also
+# subscribe with SendMessage `notify_when_idle` (a peer session; a tmux worker registers), but
+# never relies on that alone: the supervisor's close of a finished worker often sends no idle
+# notice (4 of 5 closes on 2026-10-20). It reads the result FILE the brief asks the worker to
+# write. It does not poll and it does not chat with the worker: every message to an idle
+# session is a full-context turn. After reading the file
 # the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it ends by
 # itself only on a completed result or a decision (--result above).
 #
@@ -625,6 +629,11 @@ sessions() {
             pids.append(pid)
     sys.stdout.write(" ".join(pids))' "$1"
 }
+# The disk is the done signal on every platform: a supervised close often sends no idle notice
+# (4 of 5 on 2026-10-20), so the watch comes first, before the optional subscription.
+watch_line() {
+  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): sh scripts/watch_workers.sh --result $name=$(q "$cresult") $name"
+}
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
@@ -691,17 +700,17 @@ if [ -n "$windows" ]; then
     i=$((i + 1)); sleep 1
   done
   printf '%s\n' "spawn_worker: '$name' started with $brief in a Windows Terminal tab; watch it there"
+  watch_line
   sid=""; [ -z "$peer" ] || sid=$($kit_python -I -c 'import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8")).get("sessionId", ""))' "$reg/$peer.json" 2>/dev/null) || sid=""
   ctl "session id" "$sid"
   printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${sid:-SESSION_ID}"
   if [ -n "$peer" ]; then
-    printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; subscribe once with SendMessage notify_when_idle"
+    printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; you may also subscribe with SendMessage notify_when_idle, but a supervised close often sends no notice: never rely on it alone"
   else
-    printf '%s\n' "spawn_worker: WARNING: '$name' (process $pids) is not registered as a peer session (unusual: a spawned worker normally registers): ListAgents does not list it, SendMessage cannot reach it, and no notice comes when it stops on a question, a usage limit or an error. The watcher below reports its waits and its end; its result file is the done signal"
+    printf '%s\n' "spawn_worker: WARNING: '$name' (process $pids) is not registered as a peer session (unusual: a spawned worker normally registers): ListAgents does not list it, SendMessage cannot reach it, and no notice comes when it stops on a question, a usage limit or an error. The watcher above reports its waits and its end"
   fi
-  printf '%s\n' "spawn_worker: the result file is the done signal; once you decide the session is finished, close it: scripts/close_worker.sh $name"
-  printf '%s\n' "spawn_worker: watch it, as a background command: scripts/watch_workers.sh --result $name=$(q "$cresult") $name"
+  printf '%s\n' "spawn_worker: once you decide the session is finished, close it: scripts/close_worker.sh $name"
   exit 0
 fi
 
@@ -778,6 +787,8 @@ if tmux capture-pane -p -t "$name" -J | grep -qE '^❯.*(\[Pasted text|and follo
   tmux send-keys -t "$name" Enter
 fi
 printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
+watch_line
+printf '%s\n' "spawn_worker: you may also subscribe with SendMessage notify_when_idle, but a supervised close often sends no notice: never rely on it alone"
 # The session does not end when its task does: a pilot worker wrote its result file and sat
 # idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
 # background job. A published `Kind: completed` result file is the end signal: its supervisor
@@ -789,4 +800,3 @@ if [ -n "$batch" ]; then
 else
   sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_worker: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
 fi
-printf '%s\n' "spawn_worker: watch it, as a background command: scripts/watch_workers.sh --result $name=$(q "$cresult") $name"
