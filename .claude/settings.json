@@ -35,6 +35,16 @@
         ]
       },
       {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_secret_files.py\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Agent|Task",
         "hooks": [
           {

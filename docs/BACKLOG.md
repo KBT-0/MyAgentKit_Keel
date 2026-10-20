@@ -30,3 +30,15 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - v0.10 upgrade checklist: the `rev-list --before=<date>` guess at a v0.10 project's `--base` can
   pick a later kit commit than the one the project synced from; sync-kit's base check stops only
   when a kit-owned file differs (mfix r2 light review manual check; kept, owner may revisit).
+- check.sh once exited 1 after `KIT CHECK: PASS` with no message (concurrent git and review
+  activity); a rerun under `bash -x` was clean, not reproduced.
+- #293 code half (v0.13, gate round accounting): write worktree review records to the main
+  checkout's usage dir (`git rev-parse --git-common-dir`), let a `--commit` round continue an
+  `--uncommitted` round 1 of the same change, and fall back when `prior_rounds` evidence paths
+  point into a removed worktree.
+- #294: watch_workers.sh never checks a committed result against NAME.result-path's age, so after
+  `spawn_worker.sh --resume` the first poll reports the earlier run's committed result again.
+- #297: guard_secret_files.py does not see a shell write of a secret file (`echo >> .env`, `cp`,
+  `Set-Content`) nor a read.
+- #295 / #294 / usagesum: POSIX-only runs owed to the first CI run (test_clean_worktrees, the
+  watch_workers suite under dash and macOS sh, the Windows-path usage_summary test's red).

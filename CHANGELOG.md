@@ -15,6 +15,35 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 `sync-kit.sh` prints these entries to a project whose recorded kit version is older than v0.12.
 
+- **A new hook refuses an agent's write to a secret file** (#297; `guard_secret_files.py`,
+  PreToolUse on Edit, Write and NotebookEdit). `.env*`, `.dev.vars*`, `credentials` with no or a
+  config extension, `*.pem`, `*.key`, `.npmrc` and `.netrc` are refused; templates (`.example`,
+  `.sample`, `.template`, `.dist`) and source files such as `credentials.py` pass. The owner edits
+  such a file from the terminal, so a secret never passes through an agent's context. It fails
+  open on unreadable input or a missing Python. Shell writes and reads are not seen.
+
+- **watch_workers.sh reports a finished worker even when its session is already gone** (#294).
+  A GONE session's result file is read first, so it reports DONE (or BLOCKED, HANDOFF) beside
+  GONE, and a result reported once is not reported again after the session ends.
+
+- **A failed Codex review names Codex's own error** (#292). A `turn.failed` or `error` event's
+  message (a refused model, for one) ends the evidence as `## Failure — Codex reported: ...`
+  instead of "No final message", only when the run failed on Codex's side.
+
+- **usage_summary.py reads older and moved review records** (#291). A record written before v0.9
+  (no sha256) shows its verdict marked `hash=none` instead of `evidence mismatch`; an archive whose
+  recorded absolute path is gone (a moved or recloned checkout, a Windows path read on POSIX) is
+  read from `docs/reviews/<name>`. Hashed records keep the strict check.
+
+- **REVIEW_RUNNING says where a worker's own review rounds count** (#293). A `review.sh` round a
+  worker runs in its worktree is an inner round, not one of the lead's two; the lead's review of
+  the merged change starts its own label in the main checkout with the worker's archive as
+  dispositions.
+
+- **A worktree kept for unmerged files says what to do** (#295). `clean_worktrees.py` tells you to
+  copy each file to the same path in the main checkout or delete it, then close again;
+  `worker.md` tells a worker to delete its helper script before its last commit.
+
 - **bootstrap.sh and sync-kit.sh list a project's own reviewer agent beside diff-reviewer.md**
   (#161). When `.claude/agents/diff-reviewer.md` exists, every other `.md` under
   `.claude/agents` (subfolders too, as Claude Code reads them) whose front matter `name:` holds
