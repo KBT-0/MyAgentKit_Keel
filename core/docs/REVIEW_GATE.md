@@ -73,10 +73,13 @@ Every tier's review is a gate: the change does not pass without its result
 
 At most two rounds under one label (`MYAGENTKIT_TASK_ID`); both adapters refuse a third
 (`claude_bridge.prior_rounds`). A high-tier change keeps one label and rounds count per
-`REVIEW_FOCUS`, so its logic and portability reviewers each get round 1 and round 2. A review
-without a focus counts toward every focus. The rounds used are the current focus's count; an
-unset or never-seen focus takes the highest count under the label, so unsetting or renaming
-the focus never opens a fresh budget. The prompt's "round N" is that count plus one, and it
+`REVIEW_FOCUS`, so its logic and portability reviewers each get round 1 and round 2, run in
+parallel or one after the other alike (each focus its own). A review without a focus counts
+toward every focus. The rounds used are the current focus's count plus the reviews without a
+focus; a named focus not seen under the label yet starts at 0, so logic round 1 and round 2
+and then portability round 1 run without an exception. An unset focus takes the highest count
+under the label, so leaving the focus out never opens a fresh budget, and a third round of any
+one focus is refused. The prompt's "round N" is that count plus one, and it
 carries only the current focus's earlier reports and reports without a focus.
 Every completed review whose archive matches its record is carried and counts. It leaves the
 count only when the checkpoint the dispatcher wrote after that same attempt says the chain

@@ -18,6 +18,23 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, 
 prints none of these entries to a project. Tag v0.11 only together with that rename: while
 this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
+- **A new review focus starts its own round count** (#102, #248; owner decision 67;
+  `scripts/claude_bridge.py`, `prior_rounds`). A high-tier change's natural order, logic round 1,
+  fix, logic round 2, then portability, was refused before any model ran: a focus not seen under
+  the label took the highest count. Now a named focus counts its own rounds plus the rounds without
+  a focus, so portability gets its round 1 and round 2 after logic used both; its third still needs
+  `REVIEW_ROUND_EXCEPTION`, and an unset focus still takes the highest count. Only `logic` and
+  `portability` exist, so a made-up name opens nothing. `scripts/usage_summary.py` numbers the
+  rounds the same way. `docs/REVIEW_GATE.md` ("Rounds") states the rule. Nothing to do: the next
+  sync brings both scripts and the doc.
+
+- **A bridged reviewer gets the behaviour appendix without the author's rules** (#228;
+  `scripts/claude_bridge.py`, `BEHAVIOUR.md`). The three bullets a reviewer cannot act on
+  (finish the scope with its check, design before code, one test per behaviour change) carry
+  `<!-- author-only -->`, and a review's prompt leaves those bullets out; a proposal and a
+  spawned worker still get the whole file. The review's `behaviour_sha256` and fingerprint name
+  the bytes the reviewer got. Nothing to do: the next sync brings both files.
+
 - **Every plugin command and Codex skill says when the project's kit version is another**
   (#156). Each one names the plugin's kit version (`This plugin is kit v0.11.`, stamped by
   `scripts/package_codex_plugin.py`, whose `--check` refuses a stale one), reads the project's

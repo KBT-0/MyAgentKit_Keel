@@ -1134,7 +1134,8 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     the author's dispositions (`claims`, else the REVIEW_DISPOSITIONS file) ride along as
     claims to verify.
     Rounds count per REVIEW_FOCUS (KARARLAR B02 inv2#10); a round without a focus counts
-    toward every focus. Carry only the current focus and rounds without a focus.
+    toward every focus, and a new named focus starts its own count. Carry only the current
+    focus and rounds without a focus.
     """
     rounds = []
     counts, excepted = {}, {}  # per focus; None holds the rounds without a focus
@@ -1262,10 +1263,10 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             rounds.append((str(value.get("recorded_at")), report.decode()))
 
     def total(tally):
-        # A focus seen under the label uses its own count; an unset or new focus takes the
-        # highest, so unsetting or renaming the focus never opens a fresh budget.
+        # A named focus uses its own count, 0 for one not seen under the label yet (#102, owner
+        # decision 67); an unset focus takes the highest, so unsetting it never opens a fresh budget.
         named = {key: number for key, number in tally.items() if key}
-        return tally.get(None, 0) + (named[focus] if focus in named else max(named.values(), default=0))
+        return tally.get(None, 0) + (named.get(focus, 0) if focus else max(named.values(), default=0))
     completed = total(counts)
     if claims is None:
         claims = dispositions_text()
@@ -1781,6 +1782,24 @@ def behaviour_appendix(root: Path) -> tuple[str | None, bytes]:
     return None, b""
 
 
+AUTHOR_ONLY = b"<!-- author-only -->"
+
+
+def reviewer_appendix(text: bytes) -> bytes:
+    """The appendix without its bullets marked author-only (#228): a reviewer cannot act on
+    "Design before code" or "Every behaviour change gets one test"."""
+    kept, bullet = [], []
+    for line in text.splitlines(keepends=True) + [b""]:
+        # A bullet's wrapped lines are indented and go with it.
+        if bullet and line[:1] in (b" ", b"	") and line.strip():
+            bullet.append(line)
+            continue
+        if not any(AUTHOR_ONLY in part for part in bullet):
+            kept += bullet
+        bullet = [line]
+    return b"".join(kept)
+
+
 def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
     """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS.
     `verified`: the dispatcher's kit_verified() list for --kit-verified; None computes it here."""
@@ -1962,11 +1981,15 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
                 # autocrlf on Windows, so only a line-ending difference between the copy and the
                 # source is tolerated. Anything else (export-subst, an LFS pointer) is a copy the
                 # owner did not see and fails closed. behaviour_sha256 names the bytes the
-                # reviewer saw; the fingerprint hashes the eol-normalised bytes so records of the
-                # same state agree across hosts; staleness is checked against the source bytes.
-                normalised = behaviour_bytes.replace(b"\r\n", b"\n")
-                if behaviour != source_name or normalised != source_bytes.replace(b"\r\n", b"\n"):
+                # reviewer saw (a review gets the reviewer variant, #228); the fingerprint hashes
+                # those bytes eol-normalised so records of the same state agree across hosts;
+                # staleness is checked against the source bytes.
+                if behaviour != source_name or (behaviour_bytes.replace(b"\r\n", b"\n")
+                                                != source_bytes.replace(b"\r\n", b"\n")):
                     raise BridgeError("behaviour appendix differs from the reviewed snapshot")
+                if args.mode == "review":
+                    behaviour_bytes = reviewer_appendix(behaviour_bytes)
+                normalised = behaviour_bytes.replace(b"\r\n", b"\n")
                 behaviour_sha256 = hashlib.sha256(behaviour_bytes).hexdigest() if behaviour else None
                 fingerprint = hashlib.sha256(
                     checkout_fingerprint.encode() + b"\0behaviour\0" + (behaviour or "").encode()

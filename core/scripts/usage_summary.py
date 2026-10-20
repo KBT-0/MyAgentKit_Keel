@@ -226,8 +226,9 @@ def main():
             if record['round']:
                 earlier.append(record)
                 # Exactly as claude_bridge.prior_rounds counts toward the cap: an unfocused round
-                # counts toward every focus, and a focus not seen yet takes the highest count.
-                record['number'] = 1 + unfocused + (counts[focus] if focus in counts
+                # counts toward every focus, a named focus not seen yet starts at its own 0 and an
+                # unfocused round takes the highest count.
+                record['number'] = 1 + unfocused + (counts.get(focus, 0) if focus
                                                     else max(counts.values(), default=0))
                 if focus:
                     counts[focus] = counts.get(focus, 0) + 1

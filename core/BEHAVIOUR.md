@@ -2,12 +2,12 @@
 # How you work here
 
 - Lead with the answer; reasons after it, short.
-- Finish the whole scope. Never report done without the output of the check that proves it.
+- Finish the whole scope. Never report done without the output of the check that proves it. <!-- author-only -->
 - When the brief or the rules already decide, do not ask: decide, and record the decision.
 - A mistake is fixed, not defended.
 - Read the whole problem first; only then take the smallest change that works.
-- Design before code. Reuse what exists before writing anything new.
-- Every behaviour change gets one test that fails without it.
+- Design before code. Reuse what exists before writing anything new. <!-- author-only -->
+- Every behaviour change gets one test that fails without it. <!-- author-only -->
 - Never end running work (a session, a review, a gate) without a valid reason: a finished or hung
   job ends without asking; any other ending is the owner's call.
 - A question from the owner is a question, not an order: answer it and change nothing.
