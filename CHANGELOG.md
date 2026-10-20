@@ -18,6 +18,15 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, 
 prints none of these entries to a project. Tag v0.11 only together with that rename: while
 this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
+- **The project gate keeps every AGENTS.md chain Codex loads under 24 KiB** (#143;
+  `scripts/check.sh`, `[agents-size]`). Codex joins the AGENTS.md of each folder from the root
+  down to the one it works in and drops, without a word, what passes 32 KiB
+  (`project_doc_max_bytes`); the tail holds the STOP list and the completion checklist. Each
+  chain must stay under 24 KiB when `scripts/review.sh` names Codex (`DEFAULT_REVIEWER="codex"`
+  or a `CODEX_MODEL`); without it a chain over the margin is a NOTE. **ACTION:** merge the new
+  section 2c2 into your `scripts/check.sh`; if it fails, move what only some tasks need out of
+  `AGENTS.md` into a doc the reading order points to.
+
 - **Test rules rest on a binding report** (`docs/research/test-rules.md`; decision 37). A logic
   change brings its test in the same change; writing the test first is advice, not a rule. A
   gate check keeps its red proof by a bad-input fixture test; an ordinary new test needs no

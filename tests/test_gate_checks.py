@@ -117,6 +117,21 @@ class GateCheckTests(unittest.TestCase):
         project.unlink()
         self.assert_red('FAIL [project]: docs/PROJECT.md does not exist')
 
+    def test_an_agents_chain_codex_loads_fails_over_24_kib_only_where_codex_is_in_use(self):
+        # #143: Codex drops what passes 32 KiB of the joined AGENTS.md chain without a word.
+        write(self.project / 'AGENTS.md', 'r' * 16000 + '\n')
+        write(self.project / 'docs/AGENTS.md', 'd' * 8000 + '\n')
+        self.assertNotIn('[agents-size]', self.assert_green())
+        write(self.project / 'docs/game/AGENTS.md', 'g' * 600 + '\n')  # 16001 + 8001 + 601 bytes
+        out = self.assert_green()  # no Codex named in scripts/review.sh
+        self.assertIn('NOTE [agents-size]', out)
+        write(self.project / 'scripts/review.sh', 'DEFAULT_REVIEWER="claude"\nCODEX_MODEL="gpt-5.5"\n')
+        out = self.assert_red('FAIL [agents-size]')
+        self.assertIn('  - docs/game/AGENTS.md: 24603 bytes', out)
+        self.assertNotIn('  - docs/AGENTS.md:', out)
+        (self.project / 'docs/game/AGENTS.md').unlink()
+        self.assert_green()
+
     def test_a_missing_boundary_checks_file_fails(self):
         (self.project / 'scripts/boundary_checks.sh').unlink()
         self.assert_red('FAIL [boundary]: scripts/boundary_checks.sh is missing')
