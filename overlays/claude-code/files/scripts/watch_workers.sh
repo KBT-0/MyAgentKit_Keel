@@ -28,7 +28,10 @@
 # background command; an unattended one (`-p`, the Agent SDK, CI) stops it after 30 minutes
 # unless started with a `timeout` (at most two hours): pass one there (Claude Code tools
 # reference, "Time limit for background commands"). --once checks once and prints nothing
-# when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error. Exit 3: a pane of
+# when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error, a name with no record
+# in this checkout's .myagentkit/workers too where tmux cannot say GONE (run it from the checkout
+# the worker was spawned in: the line spawn_worker.sh prints cds there), unless its --result
+# file holds a ready result, which is then reported as any result. Exit 3: a pane of
 # a session that exists could not be read, or tmux could not say whether it exists
 # (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 # read (`... could not read the committed result ...`), or a report could not be written
@@ -92,6 +95,23 @@
 # There is no pane context figure there, and no tmux is needed. An invalid state file is an
 # observation failure (exit 3); an absent or zero-byte one means no signal yet. A session name is letters, digits, - and _, not starting with -
 # (spawn_worker.sh's rule): anything else is a usage error (exit 2).
+#
+# A Claude Code background session (NAME.host bg, on every host) has no pane and needs no tmux:
+# its row in `claude agents --json --all` (list_workers.sh --row: by NAME.id) is read instead.
+# A file wins over any state: first QUESTION-NAME.md in the worker's folder (.claude/worktrees/NAME,
+# else this checkout: where the supervisor reads it), published (its ready marker) and newer than
+# NAME.result-path (`QUESTION: NAME, a decision waits in PATH`, once per content), then the result
+# as above. Then blocked is WAITING with its waitingFor (`no reason given` when the row names
+# none: docs/research/worker-orchestration-spike-posix.md); done with a process still idling is
+# IDLE, a turn end the lead re-arms after, as the tab path's; stopped, failed, done with no
+# process and absent (no row, as after `claude rm`) are GONE; working says nothing. A published
+# question, completed or handoff result of this run ended the session by design (the supervisor
+# stops it on those alone, 10 s later): no IDLE or GONE then. Nor within a minute of the spawn or resume
+# (NAME.id or NAME.result-path that new): the spike saw no row at first, and a resumed row reads
+# done until it wakes. Each state (with what it waits for) is said once, in the file
+# NAME.watch-bg, cleared when the session works again. A worker spawned on the other host (native
+# Windows or WSL: their lists are disjoint) is ELSEWHERE, once. A list that cannot be read, or two
+# rows of the name and no NAME.id, is exit 3 (`watch_workers: NAME: could not list ...`).
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -163,7 +183,19 @@ for n in "$@"; do case $seen in *"$nl$n$nl"*) ;; *) seen=$seen$n$nl ;; esac; don
 # tab, and the hooks spawn_worker.sh gives it keep its state line in $wdir/NAME.state.
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
-[ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
+# isbg NAME: whether NAME runs as a Claude Code background session (NAME.host bg); no tmux then.
+isbg() { [ "$(cat -- "$wdir/$1.host" 2>/dev/null)" = bg ]; }
+# norec NAME: this checkout holds no record of NAME (spawn_worker.sh writes NAME.result-path and
+# NAME.host at every spawn, in the checkout it ran from).
+norec() { for x in state pid result-path host id live exit; do [ ! -e "$wdir/$1.$x" ] || return 1; done; }
+# lone NAME: NAME has no record here, no tmux session and a ready --result (in $lonely, below).
+lonely=$nl
+lone() { case $lonely in *"$nl$1$nl"*) return 0 ;; esac; return 1; }
+tmuxok=""
+if [ -n "$windows" ]; then :
+elif command -v tmux >/dev/null; then tmuxok=1
+else for n in "$@"; do isbg "$n" || norec "$n" || die "tmux is not installed"; done
+fi
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
 body=$(mktemp) || { rm -f "$win" "$qs"; die "cannot make a temporary file"; }
@@ -185,7 +217,7 @@ cutb() {
 # that exits 3. mark reads only the stored marker: a name is watched once per run, so its
 # queue is never read.
 mark() {
-  if [ -z "$windows" ]; then
+  if [ -z "$windows" ] && ! isbg "$1"; then
     v=$(tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null) || v=""
     [ -z "$v" ] || { printf '%s\n' "$v"; return 0; }
   fi
@@ -288,6 +320,10 @@ report() {
 # bytes and trailing blanks removed.
 bom=$(printf '\357\273\277')
 hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C sed "s/^$bom//" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
+# published FILE: its last non-blank line is the supervisor's ready marker (else still being written).
+published() {
+  [ "$(LC_ALL=C tr -d '\r' <"$1" | LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)" = '<!-- codex-worker: ready -->' ]
+}
 
 # Report NAME's result file and return 0 when it is committed and its tree is clean, or it is
 # not in HEAD and this run published it (the header says how), and this version was not
@@ -299,7 +335,8 @@ result() {
   setmark "$1" result "$blob"
 }
 
-report_result() {
+# rfile NAME: its --result path in $f, or nothing.
+rfile() {
   # No `case` inside $( ): bash 3.2, macOS's sh, cannot parse its pattern's `)` there.
   f=""
   while IFS= read -r r; do
@@ -307,6 +344,10 @@ report_result() {
   done <<EOF
 $results
 EOF
+}
+
+report_result() {
+  rfile "$1"
   [ -n "$f" ] || return 1
   case $f in */*) d=${f%/*} ;; *) d=. ;; esac
   # The commit is what is trusted: the head is read from the committed blob, never the working
@@ -323,11 +364,12 @@ EOF
     # Not in HEAD: the kit's default result, never committed (#167). Its bytes are copied once
     # and only the copy is read; the copy's blob id is the marker. NAME.result-path is the
     # run's start: an older file is an earlier run's. No ready marker: still being written.
+    # A lone name has no run start to compare with: its explicit result path wins.
     rp=$wdir/$1.result-path
-    [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1
+    if lone "$1"; then [ -f "$f" ] && [ ! -L "$f" ] || return 1
+    else [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1; fi
     cat -- "$f" >"$body" 2>/dev/null || return 1
-    ready=$(LC_ALL=C tr -d '\r' <"$body" | LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)
-    [ "$ready" = '<!-- codex-worker: ready -->' ] || return 1
+    published "$body" || return 1
     # Hashed as git would store it (eol and attribute filters of its path): a later commit of
     # the same content under core.autocrlf=true has this id and is not reported again.
     blob=$(git -C "$d" hash-object --path="${f##*/}" --stdin <"$body" 2>/dev/null) || return 1
@@ -425,6 +467,76 @@ tab() {
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
   setmark "$1" state "$line"
+}
+
+# A background session NAME (NAME.host bg), by its row in `claude agents --json --all`
+# (list_workers.sh --row). Return 0 when something was said, 1 when nothing, 2 when the report
+# could not be written, 3 when the sessions cannot be listed.
+bg() {
+  if ! row=$(sh "$here/list_workers.sh" --row "$1" 2>"$err"); then
+    say "watch_workers: $1: could not list the background sessions: $(tr '\n' ' ' <"$err")" >&2
+    failed=1; return 3
+  fi
+  IFS='	' read -r bstate bwait bpid _ bid _ <<EOF
+$row
+EOF
+  key="$bstate ${bwait-}"
+  if [ "$bstate" = ambiguous ]; then
+    say "watch_workers: $1: no $wdir/$1.id, and several background sessions named $1 run in its folder ($bwait): stop the wrong one by its id (claude stop ID)" >&2
+    failed=1; return 3
+  fi
+  if [ "$bstate" = elsewhere ]; then
+    [ "$(mark "$1" bg)" != "$key" ] || return 1
+    say "watch_workers: ELSEWHERE: $1, its background session was started on $bwait, whose session list this host cannot see: watch it there" || return 2
+    setmark "$1" bg "$key"; return 0
+  fi
+  # The question first, then the result. A published question, or a published completed or
+  # handoff result, of this run (newer than NAME.result-path) ends the session by design (the
+  # supervisor stops it on those alone): no IDLE or GONE for it.
+  rp=$wdir/$1.result-path; settled=""
+  # The question is where the supervisor and the worker's instruction put it: the worker's folder.
+  q=${wdir%/.myagentkit/workers}; [ ! -d "$q/.claude/worktrees/$1" ] || q=$q/.claude/worktrees/$1
+  q=$q/QUESTION-$1.md
+  if [ -f "$q" ] && [ ! "$q" -ot "$rp" ] && published "$q"; then
+    settled=1
+    sum=$(cksum <"$q" 2>/dev/null) || sum=""
+    if [ -n "$sum" ] && [ "$(mark "$1" question)" != "$sum" ]; then
+      say "watch_workers: QUESTION: $1, a decision waits in $q: read it and answer it" || return 2
+      setmark "$1" question "$sum"; return 0
+    fi
+  fi
+  rfile "$1"
+  if [ -n "$f" ] && [ -f "$f" ] && [ ! "$f" -ot "$rp" ] && published "$f"; then
+    case $(hl 1 "$f") in "Kind: completed"|"Kind: handoff") settled=1 ;; esac
+  fi
+  # Not the main loop's w: a report here returns 0, and the caller keeps w as bg() left it.
+  rw=0; result "$1" || rw=$?
+  [ "$rw" -eq 1 ] || return "$rw"
+  case $bstate in
+    working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""; return 1 ;;
+    blocked)
+      [ "$(mark "$1" bg)" != "$key" ] || return 1
+      [ "$bwait" != - ] || bwait="no reason given"  # POSIX spike: blocked may name nothing
+      say "watch_workers: WAITING: $1, waiting for: $bwait (background session $bid, state blocked)" || return 2
+      say "  look at it: claude attach $bid   (claude agents lists every session)" || return 2
+      setmark "$1" bg "$key"; return 0 ;;
+    done|stopped|failed|absent) ;;
+    *) return 1 ;;  # a state this kit does not know says nothing
+  esac
+  [ -z "$settled" ] && [ "$(mark "$1" bg)" != "$key" ] || return 1
+  # The spike saw no row for the first seconds after a launch, and a resumed row reads done
+  # until it wakes: a spawn or resume less than a minute old is not GONE yet.
+  [ -z "$(find "$wdir/$1.id" "$rp" -mmin -1 2>/dev/null)" ] || return 1
+  if [ "$bstate" = absent ]; then
+    bid=$(cat -- "$wdir/$1.id" 2>/dev/null) || bid=""
+    say "watch_workers: GONE: $1, its background session ${bid:-named $1} is no longer listed (claude agents --all): read its result file" || return 2
+  elif [ "$bstate" = done ] && [ "$bpid" != - ]; then
+    # A turn end, as the tab path's IDLE: the session lives on, and the lead re-arms the watch.
+    say "watch_workers: IDLE: $1, its background session $bid is done with no new result report and its process still idles: a question in its view, a usage limit or an error, or a park on its own background job (it goes on by itself when the job ends): claude attach $bid" || return 2
+  else
+    say "watch_workers: GONE: $1, its background session $bid is $bstate with no new result report: read its result file" || return 2
+  fi
+  setmark "$1" bg "$key"
 }
 
 # ended LIVE: whether the supervisor that locked LIVE has ended, by codex_worker.py's own gone().
@@ -544,13 +656,34 @@ context() {
   return 4
 }
 
+# A name with no record here and no session tmux knows was spawned from another checkout (its
+# records are in that one's .myagentkit/workers). A ready --result file of it is read and
+# reported all the same. Else, where tmux cannot say GONE (native Windows, no tmux), it said
+# nothing, forever (2026-10-21): that is a usage error.
+for n in "$@"; do
+  norec "$n" || continue
+  s=1; [ -z "$tmuxok" ] || { s=0; has "$n" || s=$?; }
+  [ "$s" -eq 1 ] || continue
+  rfile "$n"
+  if [ -n "$f" ] && [ -f "$f" ] && published "$f"; then lonely=$lonely$n$nl; continue; fi
+  [ -z "$tmuxok" ] || continue  # tmux says GONE
+  at=""
+  while IFS= read -r t; do
+    [ -n "$t" ] && { [ -e "$t/.myagentkit/workers/$n.result-path" ] || [ -e "$t/.myagentkit/workers/$n.host" ]; } &&
+      at=$t && break
+  done <<EOF
+$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+EOF
+  die "$n: no record of it in $wdir and no session of that name: run the watch from the checkout it was spawned in (${at:-the one whose .myagentkit/workers holds $n.result-path}), or pass --result $n=PATH of its ready result"
+done
+
 end=$(( $(date +%s) + max * 60 ))
 while :; do
   found="" failed="" pending=""
   : >"$out"
   for n in "$@"; do
     tab_read=""; line=""
-    st=$(classify "$n")
+    st=""; isbg "$n" || { [ -z "$tmuxok" ] && lone "$n"; } || st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
@@ -572,11 +705,12 @@ while :; do
       w=x
       # On Windows: the state line's WAITING first, then the result, then GONE, then its IDLE;
       # the optional API context count is part of either state report.
-      { w=1; [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
+      { w=1; if isbg "$n"; then w=0; bg "$n" || w=$?; elif lone "$n"; then w=0; result "$n" || w=$?; else
+        [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
         [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; gone_tab "$n" || w=$?; }
         [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }
-      } >>"$out" || :
+      fi; } >>"$out" || :
       case $w in
         0) found=1 ;;
         1) ;;
@@ -591,10 +725,10 @@ while :; do
   [ -z "$failed" ] || exit 3
   cat "$out" || { say "watch_workers: could not write its report to stdout" >&2; exit 3; }
   printf '%s' "$pending" | while IFS='	' read -r n k v; do
-    if [ -n "$windows" ] || { [ "$k" = result ] && [ -d "$wdir" ]; }; then
+    if [ -d "$wdir" ] && { [ -n "$windows" ] || isbg "$n" || [ "$k" = result ]; }; then
       printf '%s\n' "$v" >"$wdir/$n.watch-$k" 2>/dev/null || true
     fi
-    [ -n "$windows" ] || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
+    [ -n "$windows" ] || isbg "$n" || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
   done
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0

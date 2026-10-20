@@ -1,6 +1,9 @@
 {
   "promptCacheTtl": "1h",
   "autoCompactWindow": 450000,
+  "worktree": {
+    "bgIsolation": "none"
+  },
   "attribution": {
     "commit": "",
     "pr": ""

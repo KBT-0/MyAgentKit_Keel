@@ -1105,7 +1105,21 @@ tasks, or the lead's own cost. Measure in passing: wall-clock from brief to merg
 tokens including the lead's, review rounds, and waits on an exclusive resource. The sample
 will be thin.
 
-`scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
+`scripts/spawn_worker.sh` (Claude Code overlay) opens the session with a brief file. By default
+it is a Claude Code background session (`claude --bg`, on native Windows and POSIX alike, where
+`claude --help` lists `--bg` within 10 s); a Windows Terminal tab (native Windows) or tmux is
+the fallback, `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one, and the spawn prints the host it
+took. A name a running tab, tmux or background worker holds is refused on every host. The
+worker's variables (`MYAGENTKIT_ROLE`) travel in its merged settings, never on the launch line:
+the background service a launch starts gives that launch's environment to every later session,
+the owner's own too. A background session is keyed on the id
+the launch prints (`.myagentkit/workers/NAME.id`), seen in `claude agents` or with
+`claude attach ID`, and ended by its detached `codex_worker.py` with `claude stop ID` once its
+result is published. Three traps (`docs/research/worker-orchestration-spike.md`): its folder
+must sit under a repo root the owner trusted in Claude Code, or the spawn stops with the fix;
+a resume passes no flag (a flag starts a copy under the same name); and nothing runs
+`claude daemon stop`, which ends every background session on the host. The rest of this
+paragraph is the tmux fallback.
 Both spawn scripts hand tmux a quote-free `sh PATH` command, with an absolute temporary script path.
 They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
 The script is created and checked before any worktree is added, so a refused path leaves no
@@ -1114,7 +1128,11 @@ characters and retry; spaces are refused too. This remedy works on macOS and Lin
 **The disk is the done signal, on every platform.** Right after every spawn the lead starts
 ONE background command: the `sh scripts/watch_workers.sh --result NAME=PATH NAME` line the
 spawn prints. It exits when the worker reports (its result file, GONE or WAITING), and the
-lead starts it again after every report but DONE and GONE. On native Windows it reads the
+lead starts it again after every report but DONE and GONE. The printed line starts with a `cd`
+to the checkout that holds the worker's records (`.myagentkit/workers`), so it works pasted in
+any folder; run elsewhere with no record and no session it can see, the watcher exits 2 naming
+the checkout to run from, unless `--result` names a ready result, which it then reports. On
+native Windows it reads the
 worker's state file, result file and exit record in place of a pane (below). The lead may
 also subscribe with SendMessage `notify_when_idle` when the spawn prints "is a peer session"
 (a tmux worker always registers), but never relies on it alone: a supervised close often
@@ -1235,7 +1253,8 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
   or finished result atomically: write a temporary file beside it, end with
   `<!-- codex-worker: ready -->`, then rename it into place with `codex_worker.py --publish
-  TEMPORARY_FILE DESTINATION` (spawn's instruction names it), which retries for about two
+  TEMPORARY_FILE DESTINATION` (spawn's instruction names it; it refuses a file without the
+  marker, which the supervisor would never see), which retries for about two
   seconds a rename Windows refuses while a poll reads the file, and end the turn immediately.
   `codex_worker.py` allows ten seconds for the turn to flush (`KIT_WORKER_GRACE` overrides
   the grace period), then closes only that worker's process tree, using a Windows job or

@@ -45,10 +45,11 @@ repository.
 | `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off; when none runs, a guard blocks (exit 2) and every hook prints `no Python found; install it or run doctor` |
 | `.claude/agents/diff-reviewer.md` | Review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md`. Its tool list has no Edit or Write; that it leaves the checkout unchanged is asked by its prompt and enforced only by the throwaway copy and the sandbox. Like the bridges' reviewer it runs only the narrow test that proves a finding, and reports only gaps that affect correctness or the stated requirements (code.claude.com/docs/en/best-practices). Its first question for a gate, "was it seen red?", is TDD's red step; it skips `docs/REVIEW_RUNNING.md`, which is for the caller, to keep its context small (code.claude.com/docs/en/sub-agents) |
 | `.claude/agents/worker.md` | Implementation worker that pins model, effort and a 150-turn cap; as a sub-agent it runs on the five-minute prompt cache, so a job whose waits pass five minutes goes to a `scripts/spawn_worker.sh` session (`docs/WORKFLOW.md`, "Worker cost") |
-| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then arms the disk watch it prints (`watch_workers.sh`) as one background command, its done signal; an idle-notice subscription is optional. The worker starts with `--disallowedTools AskUserQuestion` (its questions go to `QUESTION-NAME.md`), and a `--worktree` worker's worktree is locked (`kit worker NAME`) until `close_worker.sh` unlocks it before its audit. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
+| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session, by default a Claude Code background session (`claude --bg`; a Windows Terminal tab or tmux is the fallback, `MYAGENTKIT_WORKER_HOST=bg\|tab\|tmux` forces one), and hands it a brief file; the lead then arms the disk watch it prints (`watch_workers.sh`) as one background command, its done signal; an idle-notice subscription is optional. The worker starts with `--disallowedTools AskUserQuestion` (its questions go to `QUESTION-NAME.md`), and a `--worktree` worker's worktree is locked (`kit worker NAME`) until `close_worker.sh` unlocks it before its audit. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
 | `scripts/spawn_codex.sh` | Opens an interactive Codex worker in the lead's Windows Terminal window (`-w 0`) or tmux elsewhere, with workspace-write and approval never; reserves the spawning checkout through session recording in `.myagentkit/workers/spawn.lock`, records the session id in `.myagentkit/workers/NAME.session`, outside the worker, and resumes the same session with `--resume`. The worker leaves exact files uncommitted for the lead's cross-review and gated commit |
 | `scripts/codex_worker.py` | Keeps Codex interactive and closes its process tree only when it publishes a decision (`QUESTION-NAME.md`) or a new `Kind: completed` result; a progress, handoff or blocked result leaves it working. A resume removes the answered question once the resumed session publishes a new result or exits cleanly, never on elapsed time, so the close of a session that took its answer is not refused; a failed launch, or a CLI that fails without a new result, keeps it, and a new question stays. POSIX SIGTERM and SIGHUP clean up the worker group. On every way out it controls, a decision without a blocked result included, a startup that fails before it runs the worker too, it writes `.myagentkit/workers/NAME.exit`, and it holds `NAME.live` locked while it runs. The record is published with its PID inside and its lock held, so `--wait` reports a dropped lock as EXITED, also when the wrapper itself is killed or its tab closed, and an empty or malformed record never reads as EXITED; spawn_codex.sh passes its launch-time result identity to the printed `--wait` command with `--stale FILE_ID`, and on POSIX the supervisor and the waiter hold that result open, so a new result cannot be given its inode number. After PROGRESS or HANDOFF, `--wait` prints its exact follow-up command, with the reported result's content hash as `--stale`: other contents count as new, by rename or by in-place rewrite, and a byte-identical republication does not. A poll opens a result or a new question only after its id, size or time changed, yet on Windows even its stat holds the file for a moment, which refuses a rename over it (measured: 392 of 3000 renames under two stat loops); the worker therefore publishes with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, which retries a refused rename for about two seconds (0 of 3000 failed). A poller waits through 50 consecutive Windows refusals of one file, about five seconds, then fails instead of waiting forever. `--wait` requires `--since` (the launch time) and ends with NOT STARTED when no supervisor record appears within 300 s of it; running the same wait again is safe |
-| `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch. On native Windows it refuses while a Codex session runs in the worker's folder. It refuses while a Codex worker's decision file waits for its answer, and moves an uncommitted `RESULT-NAME.md` to `.myagentkit/workers/NAME.result.md` (`NAME.result-2.md` and on beside an earlier report) before the audit, and back when the audit keeps the worktree; after a removal it deletes `NAME.session`, `NAME.exit`, `NAME.live` and `NAME.question`, and a kept worktree keeps them. An unfinished move leaves `.myagentkit/workers/NAME.report-move`, which blocks later closes; recover the original report to the recorded source or archive, then remove that marker and close again |
+| `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch. On native Windows it refuses while a Codex session runs in the worker's folder. It refuses while a Codex worker's decision file waits for its answer, and moves an uncommitted `RESULT-NAME.md` to `.myagentkit/workers/NAME.result.md` (`NAME.result-2.md` and on beside an earlier report) before the audit, and back when the audit keeps the worktree; after a removal it deletes `NAME.session`, `NAME.exit`, `NAME.live` and `NAME.question`, and a kept worktree keeps them. An unfinished move leaves `.myagentkit/workers/NAME.report-move`, which blocks later closes; recover the original report to the recorded source or archive, then remove that marker and close again. A Claude Code background session (`NAME.host` bg) is ended by its id, `NAME.id`: `claude stop ID`, then `claude rm ID`, which keeps the worktree for the audit; never `claude daemon stop`, which ends every background session, the owner's too |
+| `scripts/list_workers.sh` | Read-only: one line per kit worker of this checkout (NAME, HOST, ID, STATE, WAITING-FOR, RESULT), a background session's state read from `claude agents --json --all`. `--row NAME` is the one parser of that list the other worker scripts call |
 | `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
 | `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
 
@@ -90,7 +91,32 @@ A spawned session can stop on a permission prompt, the folder-trust dialog or a 
 and the idle notice does not fire for a session that waits inside a dialog: it hangs where
 nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
 
-**Native Windows** (Git for Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
+**Background sessions, the default host** on every platform where `claude --help` lists `--bg`
+(`docs/research/worker-orchestration-spike.md`). `spawn_worker.sh` runs `claude PROMPT --bg -n NAME`
+in the worker's folder with the model, effort, merged `--settings` (it carries
+`worktree.bgIsolation: "none"`: no isolation, push or draft PR of the session's own; without it
+a background session made its own worktree, committed and PUSHED in the POSIX spike), behaviour
+appendix and `--disallowedTools AskUserQuestion`, records the printed id in
+`.myagentkit/workers/NAME.id` and the host in `NAME.host`, and starts `codex_worker.py` detached
+to end the session with `claude stop ID` once its result is published. A launch that prints no
+id fails; it never falls back to a tab. The owner's one view is `claude agents`, or
+`claude attach ID` in a real terminal; no tab opens. Three traps, each met in the spike:
+- **Trust**: the worker's folder must sit under a repo root the owner trusted in Claude Code
+  (trust is not inherited from a parent folder; a trusted root covers its worktrees). An
+  untrusted one stops the spawn with the line to run `claude` once in that root.
+- **Resume**: `spawn_worker.sh NAME ANSWER --resume ID` runs `claude PROMPT --resume SESSIONID --bg`
+  from the worker's folder with no flag: any flag starts a copy under the same name, and the
+  short id starts a new session in the resume picker, so the full sessionId is kept in
+  `NAME.session` and a short id is turned into it. The session keeps its saved options, so a
+  changed model or effort is a new spawn. No variable of the launch reaches the session: the
+  worker's own (`MYAGENTKIT_ROLE=worker`, the sub-agent cache TTL) and `attribution` off travel
+  in the merged `--settings`.
+- **Never `claude daemon stop`**: it ends every background session on the host, the owner's
+  too. A session ends by id, never by name (names repeat).
+`claude --bg --help` is no probe: it starts an idle session. `--backend` keeps the fallback.
+
+**Native Windows fallback** (`MYAGENTKIT_WORKER_HOST=tab`, or a CLI without `--bg`; Git for
+Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
 says about tmux sessions, `--batch` and `show_workers.sh` does not apply there;
 `watch_workers.sh` does, through its Windows path (below). `spawn_worker.sh` opens the worker
 as a tab of the window the lead runs in (`wt.exe -w 0`, or the launcher `KIT_WT` names) with
@@ -139,6 +165,10 @@ What opens where:
   accessibility permission, which a script must not ask for; the output says so.
 - **Native Windows**: no tmux session to show; `spawn_worker.sh` opens the tab itself
   (above).
+- **A Claude Code background session** (`.myagentkit/workers/NAME.host` bg), on every host:
+  nothing opens. The script prints `NAME runs in the background: claude attach ID` for the
+  owner to run in a terminal of their own (attach needs one; Ctrl+Z leaves the session
+  running), and `claude agents` lists every session. The other names go on as above.
 - **Anything else**: nothing opens; the script prints `attach by hand: tmux attach -t NAME`
   for each session and exits 0.
 
@@ -159,8 +189,22 @@ the owner. Otherwise it ends after `--max-minutes` (55) with one line saying not
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
 which costs the worker nothing. On native Windows, where no pane can be read, it reads the
 worker's `.myagentkit/workers/NAME.state` line, its result file and its supervisor's exit
-record instead (WAITING, then the result, then GONE, then IDLE; the script's header). Exit 3, never "nothing waiting", means the watcher could not
-observe: a pane of a session that exists could not be read, or tmux could not say whether it exists
+record instead (WAITING, then the result, then GONE, then IDLE; the script's header). A
+Claude Code background session (`NAME.host` bg), on every host, has no pane either: the
+watcher reads its row in `claude agents --json --all` by `NAME.id`. A file wins over any
+state: a published `QUESTION-NAME.md` in the worker's folder (QUESTION, once), then the
+result. Then `blocked` is WAITING with what it waits for and the `claude attach ID` line;
+`done` with its process still idling is IDLE (a turn end: the lead re-arms the watch);
+`stopped`, `failed`, `done` with no process and a row no longer listed are GONE. Neither
+comes within a minute of the spawn or resume, nor after a published question, completed or
+handoff result of this run (the supervisor stops the session on those alone). A worker spawned on the other host is ELSEWHERE: the native-Windows and the WSL
+lists are disjoint, so it is watched, listed and closed only where it was spawned.
+`scripts/list_workers.sh` prints the same state for every worker at once and changes nothing.
+The records live in the checkout the spawn ran from, so the printed watch line `cd`s there; a
+name with no record and no session it can see is exit 2 naming that checkout, unless its
+`--result` file holds a ready result, which is reported as any result.
+Exit 3, never "nothing waiting", means the watcher could not
+observe: a list of background sessions that could not be read, a pane of a session that exists could not be read, or tmux could not say whether it exists
 (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 read (`... could not read the committed result ...`), or a report could not be written
 (`... could not write its report ...`). The lead reads that stderr line, fixes what it names (or looks at
@@ -345,6 +389,13 @@ step and per name:
    is reported, not an error. It then waits up to
    15 seconds, and says what for, until tmux no longer finds the session and, where `/proc`
    exists (Linux), no process works inside the worktree: the tool takes a moment to exit.
+   A Claude Code background session (`NAME.host` bg) is found by its id, `NAME.id`, in
+   `claude agents --json --all`, never by its name (a resume with flags starts a copy under
+   the same name); its row must have started in the worker's folder. A live one gets
+   `claude stop ID` and the same 15-second wait, then `claude rm ID` drops its row and keeps
+   the worktree for step 3. A list that cannot be read, a session its stop leaves running, or
+   a worker spawned on the other host (native Windows or WSL) fails the close with the
+   worktree untouched. `claude daemon stop` is never run: it ends every background session.
 3. `scripts/clean_worktrees.sh --apply --only=NAME --no-quiet` removes `.claude/worktrees/NAME`
    through the audit below, every proof included and no `--assume-idle`, except the quiet
    period. That period is a margin for "no worker is still in it", which no listing proves;
@@ -371,10 +422,11 @@ worktree or branch. If refused, set `TMPDIR` to an existing absolute directory u
 characters and retry; spaces are refused too. This remedy works on macOS and Linux alike.
 
 The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
-`waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them
-where they exist. A copy from before the header is a sync conflict, and the sync copies
-nothing until it is resolved. The sync never installs an overlay file that is absent, so
-moving the copy aside is not enough: keep the old copy aside, copy the kit's current
+`waiting_patterns.txt`, `close_worker.sh`, `list_workers.sh`) carry the KIT-OWNED header, so a sync updates them
+where they exist, and install a new one where the project has another of them. A copy from
+before the header is a sync conflict, and the sync copies nothing until it is resolved.
+Moving the copy aside is not enough (with no other script of the overlay left, the sync
+installs nothing): keep the old copy aside, copy the kit's current
 `overlays/claude-code/files/scripts/<name>` into place, then sync. The new copy is kit-owned
 and the next sync overwrites it, so an edit is never carried into it: a project that must
 keep one records it in `docs/GOTCHAS.md` or puts it in a wrapper script of its own.

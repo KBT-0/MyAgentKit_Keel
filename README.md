@@ -99,7 +99,7 @@ That adds the `$myagentkit-init`, `$myagentkit-sync`, `$myagentkit-review`,
 | `.githooks/` | `pre-commit`, `commit-msg`, `pre-merge-commit`, `post-merge`: the gate, the trailer grammar, the full gate before a merge, the worktree clean-up after one. |
 
 The `claude-code` overlay adds `scripts/spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`,
-`watch_workers.sh`, `close_worker.sh` and `clean_worktrees.sh`, the `diff-reviewer` and
+`watch_workers.sh`, `list_workers.sh`, `close_worker.sh` and `clean_worktrees.sh`, the `diff-reviewer` and
 `worker` sub-agents, and three editor-side hooks (a boundary guard as you type, a refusal
 of destructive git over uncommitted work, the gate at every turn end). The hooks shorten
 the loop; the gate does not depend on them.

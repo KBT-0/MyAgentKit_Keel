@@ -17,6 +17,7 @@ import shutil
 from contextlib import contextmanager
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -37,7 +38,8 @@ INSTRUCTION = ("Read {brief} and follow it. Your result file is {result}: its fi
                "DESTINATION: without them the supervisor never sees it. A published completed or handoff result "
                "ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this "
                "pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the "
-               "same way, to {question}, which ends this session for the lead's answer; until then go on with "
+               "same way and with the same last line, to {question}, which ends this session for the lead's "
+               "answer; until then go on with "
                "what does not depend on it.")
 
 TMUX = r'''#!/usr/bin/env python3
@@ -117,6 +119,8 @@ elif cmd == 'send-keys':
 
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:] == ['--help']:
+    sys.exit(0)  # no --bg listed: the tab and tmux cases keep their host
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
     json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env_names': sorted(os.environ),
                'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_') or
@@ -972,7 +976,7 @@ exit 0
             run_state_hook(state, {'hook_event_name': 'Stop'})
         self.assertTrue(state.read_text().startswith('idle '))
         self.assertEqual(sorted(p.name for p in workers.iterdir()),
-                         sorted([name + '.state', name + '.settings.json', name + '.result-path']))
+                         sorted([name + '.state', name + '.settings.json', name + '.result-path', name + '.host']))
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
@@ -1016,17 +1020,27 @@ exit 0
         # #167: it named PATH, "the result file its brief names", for the lead to fill in.
         # 2026-10-20: 4 of 5 supervised closes sent no idle notice, so the disk watch is the done
         # signal on both paths: printed right after the start, before any optional subscription.
+        # 2026-10-21: run from another checkout the watch saw no records and said nothing, forever:
+        # the line cds to the checkout that holds them and names the script by its absolute path.
         for tab in self.backend_paths():
             with self.subTest(windows=bool(tab)):
                 result = self.spawn('w1', str(self.brief), '--batch', **tab)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 lines = result.stdout.splitlines()
                 started = next(i for i, line in enumerate(lines) if "'w1' started with" in line)
+                report = shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab)))
+                top = self.spelled(self.cwd, bool(tab))
                 self.assertEqual(lines[started + 1],
                                  'spawn_worker: watch it now, as ONE background command whose exit is the done '
                                  'signal (start it again after every report but DONE and GONE): '
-                                 'sh scripts/watch_workers.sh --result w1=%s w1'
-                                 % shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab))))
+                                 'cd %s && sh %s --result w1=%s w1'
+                                 % (shq(top), shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))),
+                                    report))
+                self.assertEqual(lines[started + 2],
+                                 'spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: '
+                                 "completed is done): until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' "
+                                 '%s; do sleep 30; done; head -n 4 %s'
+                                 % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, report))
                 for line in lines:
                     if 'notify_when_idle' in line:
                         self.assertIn('never rely on it alone', line)
@@ -1108,7 +1122,7 @@ exit 0
         self.assertIn("'w3' is a peer session (process 9)", result.stdout)
         self.assertNotIn('WARNING', result.stdout)
         # The subscription is optional and comes after the disk watch, never in its place.
-        self.assertLess(result.stdout.index('sh scripts/watch_workers.sh --result w3='),
+        self.assertLess(result.stdout.index("/watch_workers.sh' --result w3="),
                         result.stdout.index("'w3' is a peer session"))
         self.assertIn('notify_when_idle, but a supervised close often sends no notice: never rely on it alone',
                       result.stdout)
@@ -1904,7 +1918,7 @@ exit 0
         self.assertIn('show_workers: shown: w1', result.stdout)
         # The two hints name the scripts that watch and close this worker, by its name.
         self.assertIn('close it: scripts/close_worker.sh w1\n', result.stdout)
-        self.assertIn('sh scripts/watch_workers.sh --result w1=', result.stdout)
+        self.assertIn("/watch_workers.sh' --result w1=", result.stdout)
         (self.state / 'wt.log').unlink()
         result = self.spawn('w2', str(self.brief), '--batch')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2207,6 +2221,283 @@ class TmuxStubTests(unittest.TestCase):
                     self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
             self.assertTrue((state / 'INJECTED').exists(), 'the stub did not run command substitution')
             self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
+
+
+# A claude whose help lists --bg, with Claude Code's background commands on a rows.json list as
+# `claude agents --json --all` prints it (the spike's fields). `--bg` adds a working row and prints
+# the spike's `backgrounded · ID · NAME`; SPAWN_UNTRUSTED prints the trust refusal, SPAWN_NO_ID no id,
+# SPAWN_COPY a new id for a resume (a copy); SPAWN_HELP_HANGS keeps --help running after its text;
+# SPAWN_PUBLISH writes that result to SPAWN_PUBLISH_TO, as a worker that finished at once.
+BG_CLAUDE = r'''import json, os, sys, time
+state = os.environ['SPAWN_STATE']
+args = sys.argv[1:]
+with open(os.path.join(state, 'claude.log'), 'a') as log:
+    log.write(json.dumps(args) + '\n')
+with open(os.path.join(state, 'cwd.log'), 'a') as log:
+    log.write(json.dumps([args[:1], os.getcwd()]) + '\n')
+path = os.path.join(state, 'rows.json')
+rows = json.load(open(path)) if os.path.exists(path) else []
+def save():
+    with open(path, 'w') as f:
+        json.dump(rows, f)
+if args == ['--help']:
+    print('  --bg, --background                    Start the session in the background and', flush=True)
+    if os.environ.get('SPAWN_HELP_HANGS'):
+        time.sleep(90)
+elif args[:1] == ['agents']:
+    print(json.dumps(rows))
+elif args[:1] in (['stop'], ['rm']):
+    rows = [dict(r, pid=None, state='done') if r['id'] == args[1] else r for r in rows
+            if args[0] == 'stop' or r['id'] != args[1]]
+    save()
+elif '--bg' in args:
+    if os.environ.get('SPAWN_UNTRUSTED'):
+        print('Workspace not trusted. Run `claude` in %s once and accept the trust prompt, then retry.' % os.getcwd())
+        sys.exit(1)
+    with open(os.path.join(state, 'launch.json'), 'w') as f:
+        json.dump({'argv': args, 'cwd': os.getcwd(), 'markers': sorted(k for k in os.environ if k.startswith('CLAUDE_CODE_CHILD')),
+                   'env': sorted(k for k in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL') if k in os.environ)}, f)
+    print('Starting background service…')
+    if os.environ.get('SPAWN_NO_ID'):
+        sys.exit(0)
+    short = args[args.index('--resume') + 1][:8] if '--resume' in args else '1a2b3c4d'
+    short = 'feedbeef' if os.environ.get('SPAWN_COPY') else short
+    rows = [r for r in rows if r['id'] != short] + [{'id': short, 'sessionId': short + '-5137-4293-88d5-c4339d1ce56c',
+            'pid': 4242, 'state': 'working', 'kind': 'background', 'cwd': os.getcwd()}]
+    save()
+    if os.environ.get('SPAWN_PUBLISH'):
+        with open(os.environ['SPAWN_PUBLISH_TO'], 'w') as f:
+            f.write(os.environ['SPAWN_PUBLISH'])
+    print('backgrounded · %s · w1' % short)
+'''
+DONE = 'Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n<!-- codex-worker: ready -->\n'
+
+
+class BackgroundHostTests(unittest.TestCase):
+    """The bg host: spawn_worker.sh starts `claude --bg` and its detached supervisor ends it by id."""
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.state, self.bin, self.cwd = self.tmp / 'state', self.tmp / 'bin', self.tmp / 'lead'
+        for folder in (self.state, self.bin, self.cwd):
+            folder.mkdir()
+        (self.bin / 'claude.py').write_text(BG_CLAUDE, encoding='utf-8')
+        # Another host's worker of the name: SPAWN_TMUX_HAS makes tmux have it, KIT_PS lists it.
+        (self.bin / 'tmux').write_text('#!/bin/sh\n[ "$1" = has-session ] && [ -n "${SPAWN_TMUX_HAS:-}" ]\n', newline='\n')
+        (self.bin / 'ps-empty').write_text('#!/bin/sh\nexit 0\n', newline='\n')
+        for stub in ('tmux', 'ps-empty'):
+            (self.bin / stub).chmod(0o755)
+        python = sys.executable.replace('\\', '/')
+        (self.bin / 'claude').write_text('#!/bin/sh\nexec %s -X utf8 %s "$@"\n' % (shq(python), shq(str(self.bin / 'claude.py').replace('\\', '/'))), newline='\n')
+        (self.bin / 'claude').chmod(0o755)
+        if WINDOWS:
+            # The supervisor is a Windows python: it starts claude.cmd, not a shebang script.
+            (self.bin / 'claude.cmd').write_text('@"%s" -X utf8 "%s" %%*\r\n' % (sys.executable, self.bin / 'claude.py'))
+            (self.bin / 'python3').write_text('#!/bin/sh\nexec %s -X utf8 "$@"\n' % shq(python), newline='\n')
+            (self.bin / 'python3').chmod(0o755)
+        git = ['git', '-C', str(self.cwd)]
+        subprocess.run(git + ['init', '-q'], check=True)
+        (self.cwd / 'README.md').write_text('lead\n')
+        subprocess.run(git + ['add', 'README.md'], check=True)
+        subprocess.run(git + ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'init'], check=True)
+        self.brief = self.cwd / 'brief.md'
+        self.brief.write_text('Do the task.\n')
+        self.workers = self.cwd / '.myagentkit/workers'
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def spawn(self, *args, **extra):
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))
+               and k not in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')}
+        env.update(PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
+                   KIT_WORKER_GRACE='0.2', KIT_PS=str(self.bin / 'ps-empty'), **LEAD_ENV)
+        env.update(extra)
+        return subprocess.run(['sh', str(SCRIPT), 'w1', str(self.brief), '--model', 'm', '--effort', 'high', *args],
+                              cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
+
+    def calls(self):
+        log = self.state / 'claude.log'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def launch(self):
+        return json.loads((self.state / 'launch.json').read_text())
+
+    def ended(self):
+        # The detached supervisor writes its exit record last, then lets go of its .live record.
+        record = self.workers / 'w1.exit'
+        for _ in range(int(200 * SCALE)):
+            if record.exists():
+                time.sleep(1)
+                return record.read_text(encoding='utf-8')
+            time.sleep(.1)
+        self.fail('the supervisor wrote no exit record: ' + str(self.calls()))
+
+    def test_a_bg_worker_starts_in_its_worktree_and_is_stopped_by_id_after_its_result(self):
+        worktree = self.cwd / '.claude/worktrees/w1'
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.supervisor.log').write_text('an earlier run\n')
+        # A worker spawning a sub-worker carries the worker variables: they never reach the launch line.
+        result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'),
+                            MYAGENTKIT_ROLE='worker', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL='1h')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launch()['argv']
+        self.assertTrue(argv[0].startswith('Read '), argv)  # the prompt first
+        self.assertIn('--bg', argv)
+        self.assertEqual(argv[argv.index('-n') + 1], 'w1')
+        self.assertEqual(argv[-2:], ['--disallowedTools', 'AskUserQuestion'])
+        self.assertEqual(Path(self.launch()['cwd']).resolve(), worktree.resolve())
+        self.assertEqual(self.launch()['markers'], [], 'the lead\'s child-session marker reached the launch')
+        settings = json.loads(Path(argv[argv.index('--settings') + 1]).read_text(encoding='utf-8'))
+        self.assertEqual(settings['worktree'], {'bgIsolation': 'none'})
+        self.assertEqual(settings['env']['MYAGENTKIT_ROLE'], 'worker')
+        self.assertEqual(settings['attribution'], {'commit': '', 'pr': ''})
+        full = '1a2b3c4d-5137-4293-88d5-c4339d1ce56c'
+        self.assertEqual((self.workers / 'w1.session').read_text(), full + '\n')
+        self.assertIn('--resume ' + full, result.stdout)
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+        self.assertEqual((self.workers / 'w1.host').read_text(), 'bg\n')
+        out = result.stdout
+        self.assertIn('background session 1a2b3c4d', out)
+        self.assertLess(out.index("watch_workers.sh' --result"), out.index('claude attach 1a2b3c4d'))
+        self.assertIn('claude agents', out)
+        self.assertTrue(self.ended().startswith('DONE published'))
+        self.assertIn(['stop', '1a2b3c4d'], self.calls())
+        self.assertFalse([c for c in self.calls() if 'daemon' in c], 'a daemon command ends every session')
+        # The daemon a launch starts keeps that launch's environment for every later session: the
+        # worker's variables travel in its settings only (POSIX spike, contract change 2).
+        self.assertEqual(self.launch()['env'], [], 'a worker variable is on the launch line')
+        # The detached supervisor holds no worktree as its folder: Windows refuses to remove it.
+        cwds = [json.loads(line) for line in (self.state / 'cwd.log').read_text().splitlines()]
+        stops = [Path(cwd).resolve() for first, cwd in cwds if first == ['stop']]
+        self.assertTrue(stops)
+        self.assertFalse([cwd for cwd in stops if cwd == worktree.resolve() or worktree.resolve() in cwd.parents])
+        self.assertNotIn('an earlier run', (self.workers / 'w1.supervisor.log').read_text())
+
+    def test_a_resume_passes_no_flag_and_takes_the_full_session_id(self):
+        # Any flag on `claude --resume ID --bg` starts a copy under the same name (spike, 6).
+        self.workers.mkdir(parents=True)
+        # The short id resumes nothing (POSIX spike): the full one comes from NAME.session.
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launch()['argv']
+        self.assertEqual(argv[1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.assertTrue(argv[0].startswith('Read '), argv)
+        self.assertTrue(self.ended().startswith('DONE published'))
+
+    def test_an_untrusted_folder_stops_the_spawn_with_the_plain_fix_and_leaves_no_worktree(self):
+        result = self.spawn('--worktree', SPAWN_UNTRUSTED='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('run `claude` once in', result.stderr)
+        self.assertIn('accept the trust prompt', result.stderr)
+        self.assertFalse((self.cwd / '.claude/worktrees/w1').exists())
+        self.assertFalse((self.workers / 'w1.id').exists())
+
+    def test_a_launch_without_an_id_fails_and_records_no_worker(self):
+        result = self.spawn(SPAWN_NO_ID='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('printed no session id', result.stderr)
+        self.assertFalse((self.workers / 'w1.id').exists())
+
+    def test_a_running_earlier_session_of_the_name_is_refused(self):
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': 99, 'state': 'working'}]))
+        result = self.spawn()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_forced_host_must_exist_here(self):
+        for host in ('screen', 'tmux' if WINDOWS else 'tab'):
+            with self.subTest(host=host):
+                result = self.spawn(MYAGENTKIT_WORKER_HOST=host)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('MYAGENTKIT_WORKER_HOST', result.stderr)
+                self.assertFalse((self.state / 'launch.json').exists())
+
+    def resumable(self, session=True, row=None):
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        if session:
+            (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+        (self.state / 'rows.json').write_text(json.dumps([dict({'id': '1a2b3c4d', 'pid': None, 'state': 'done'}, **(row or {}))]))
+
+    def test_a_resume_that_starts_a_copy_stops_and_removes_it_and_fails(self):
+        # Spike trap 1: a copy under the same name answers nothing; the original is kept.
+        self.resumable()
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_COPY='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('started a copy', result.stderr)
+        self.assertIn(['stop', 'feedbeef'], self.calls())
+        self.assertIn(['rm', 'feedbeef'], self.calls())
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+
+    def test_a_resume_whose_launch_fails_keeps_the_session_ids(self):
+        self.resumable()
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_NO_ID='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+        self.assertEqual((self.workers / 'w1.session').read_text(), '1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+
+    def test_a_short_id_resume_takes_the_full_id_from_its_row_or_is_refused(self):
+        # A short id resumes nothing (POSIX spike): with no NAME.session the row names the full one.
+        self.resumable(session=False, row={'sessionId': '1a2b3c4d-5137-4293-88d5-c4339d1ce56c'})
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.ended()
+        (self.state / 'launch.json').unlink()
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+        (self.workers / 'w1.session').unlink()
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('no full session id', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_session_still_starting_counts_as_running(self):
+        # The first seconds of a session list it working with no pid (spike, check 4).
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'working'}]))
+        result = self.spawn()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_worker_of_the_name_on_the_fallback_host_is_refused(self):
+        # A tmux or tab worker has no NAME.id: its record must not be replaced by a second session.
+        self.workers.mkdir(parents=True)
+        old = 'tab' if WINDOWS else 'tmux'
+        (self.workers / 'w1.host').write_text(old + '\n')
+        (self.bin / 'ps-w1').write_text('#!/bin/sh\nprintf "7 claude.exe -n w1\\r\\n"\n', newline='\n')
+        (self.bin / 'ps-w1').chmod(0o755)
+        result = self.spawn(SPAWN_TMUX_HAS='1', KIT_PS=str(self.bin / 'ps-w1'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('already', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+        self.assertEqual((self.workers / 'w1.host').read_text(), old + '\n')
+
+    def test_a_help_that_never_ends_is_bounded(self):
+        # A --help that leaves a child holding its output hung every spawn (doctor.sh bounds it too).
+        started = time.monotonic()
+        result = self.spawn(SPAWN_HELP_HANGS='1', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertLess(time.monotonic() - started, 45 * SCALE)
+        self.assertIn('host: bg', result.stdout)
+        self.ended()
+
+    @unittest.skipIf(WINDOWS, 'POSIX: the tmux script lives under TMPDIR')
+    def test_the_bg_host_needs_no_tmux_script(self):
+        spaced = self.tmp / 'a b'
+        spaced.mkdir()
+        result = self.spawn(TMPDIR=str(spaced), SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(list(spaced.iterdir()), [])
+        self.ended()
 
 
 class DoneSignalGuidanceTests(unittest.TestCase):

@@ -6,6 +6,7 @@ never a file named *.exe: under WSL such a file is handed to Windows), osascript
 are stubs on PATH. The panes are real captures (tests/fixtures/panes/, see the README there).
 """
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -17,9 +18,12 @@ import time
 import unittest
 import unittest.mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_close_worker import CLAUDE, agent  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
-SHOW, WATCH = SCRIPTS / 'show_workers.sh', SCRIPTS / 'watch_workers.sh'
+SHOW, WATCH, LIST = SCRIPTS / 'show_workers.sh', SCRIPTS / 'watch_workers.sh', SCRIPTS / 'list_workers.sh'
 PANES = ROOT / 'tests/fixtures/panes'
 DIALOGS = {'trust.txt': 'the folder-trust dialog', 'permission.txt': 'a permission prompt',
            'question.txt': 'a question'}
@@ -598,6 +602,10 @@ class WatchTests(Base):
 
 
 HEAD = 'Kind: %s\nTask: T-7\nAttempt: 2\nRemaining: %s\n'
+READY = '\n<!-- codex-worker: ready -->\n'
+IDLE = ('watch_workers: IDLE: w1, its background session aaaa0001 is done with no new result report and its '
+        'process still idles: a question in its view, a usage limit or an error, or a park on its own background '
+        'job (it goes on by itself when the job ends): claude attach aaaa0001\n')
 STATUS = '58k/1.0M'  # in the real status line of working-auto.txt
 
 
@@ -853,6 +861,38 @@ class ResultTests(Base):
                 self.assertEqual((result.returncode, result.stdout), (0, done), result.stderr)
                 if not platform:
                     self.assertEqual(watch().stdout, '', 'the same result was reported twice')
+
+    def elsewhere(self):
+        # 2026-10-21: a worker spawned inside its worktree keeps its records there; watched from
+        # the main checkout it found none and said nothing, forever, while its result was ready.
+        other = self.tmp / 'wt-w1'
+        self.git('worktree', 'add', '-q', str(other))
+        (other / '.myagentkit/workers').mkdir(parents=True)
+        (other / '.myagentkit/workers/w1.result-path').write_text('RESULT-w1.md\n')
+        return other
+
+    def test_a_name_with_no_record_here_and_no_session_is_a_usage_error(self):
+        self.elsewhere()
+        for args in (('--once',), ('--interval', '10', '--max-minutes', '0')):
+            with self.subTest(args=args):
+                result = self.run_script(WATCH, *args, 'w1', VIS_UNAME='MINGW64_NT-10.0')
+                self.assertEqual((result.returncode, result.stdout), (2, ''), result.stderr)
+                self.assertIn('w1: no record of it in ', result.stderr)
+                self.assertIn('/.myagentkit/workers and no session of that name: run the watch from the '
+                              'checkout it was spawned in (', result.stderr)
+                self.assertIn('/wt-w1)', result.stderr)
+
+    def test_an_explicit_ready_result_wins_with_no_record_here(self):
+        report = self.elsewhere() / 'RESULT-w1.md'
+        report.write_text(HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n')
+        path = posix(report)
+        done = 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none (result file %s)\n' % path
+        for platform, out in (({'VIS_UNAME': 'MINGW64_NT-10.0'}, done),
+                              ({'VIS_SESSIONS': ''}, 'watch_workers: GONE: w1 (the tmux session no longer '
+                               'exists: read its result file)\n' + done)):
+            with self.subTest(platform=platform):
+                result = self.run_script(WATCH, '--once', '--result', 'w1=' + path, 'w1', **platform)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, out, ''))
 
     def published(self, data):
         # An uncommitted docs/w1.md this run published: newer than NAME.result-path.
@@ -1271,6 +1311,228 @@ class ContextTests(Base):
                 self.assertTrue(result.stdout.startswith('watch_workers: nothing was waiting'), result.stdout)
                 # A figure that appears later past the line is still reported.
                 self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once').stdout)
+
+
+class BackgroundTests(Base):
+    """A Claude Code background session (NAME.host bg) is watched, shown and listed through
+    `claude agents --json --all`, a stub on PATH (tests/test_close_worker.py, CLAUDE); no tmux."""
+
+    def setUp(self):
+        super().setUp()
+        (self.bin / 'claude').write_text(CLAUDE)
+        (self.bin / 'claude').chmod(0o755)
+        self.workers = self.cwd / '.myagentkit/workers'
+        self.workers.mkdir(parents=True)
+        # A checkout: the watcher reads a result only in one (HEAD tells committed from not).
+        for args in (('init', '-q'), ('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')):
+            subprocess.run(['git', *args], cwd=self.cwd, check=True, capture_output=True)
+
+    def spawned(self, name, id='aaaa0001', host='bg', age=120):
+        """A worker as spawn_worker.sh records it, AGE seconds ago."""
+        (self.workers / (name + '.host')).write_text(host + '\n')
+        for record, text in (('.id', id), ('.result-path', 'RESULT-%s.md' % name)):
+            if text:
+                (self.workers / (name + record)).write_text(text + '\n')
+                then = time.time() - age
+                os.utime(self.workers / (name + record), (then, then))
+
+    def rows(self, *rows):
+        (self.state / 'agents.json').write_text(json.dumps(list(rows)))
+
+    def run_bg(self, script, *args, **extra):
+        extra.setdefault('VIS_SESSIONS', '')
+        return self.run_script(script, *args, AGENTS_FILE=str(self.state / 'agents.json'), **extra)
+
+    def watch(self, *args, **extra):
+        return self.run_bg(WATCH, '--once', '--result', 'w1=RESULT-w1.md', *args, 'w1', **extra)
+
+    def test_a_blocked_session_is_waiting_with_what_it_waits_for_once_per_wait(self):
+        self.spawned('w1')
+        blocked = agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='waiting',
+                        waitingFor='permission prompt')
+        self.rows(blocked)
+        waiting = ('watch_workers: WAITING: w1, waiting for: permission prompt (background session aaaa0001, '
+                   'state blocked)\n  look at it: claude attach aaaa0001   (claude agents lists every session)\n')
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, waiting, ''))
+        self.assertEqual(self.watch().stdout, '', 'the same wait was reported twice')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=28288, status='busy'))
+        self.assertEqual(self.watch().stdout, '')
+        self.rows(blocked)
+        self.assertEqual(self.watch().stdout, waiting, 'a new wait after work was not reported')
+        self.assertEqual(self.log('tmux'), '', 'tmux was asked about a background session')
+
+    def test_an_ended_or_removed_session_is_gone_unless_its_result_says_more(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=28256, status='idle'))
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        # done with a live process is a turn end, as the tab path's IDLE: the lead re-arms after it.
+        self.assertEqual(result.stdout, IDLE)
+        self.assertEqual(self.watch().stdout, '')
+        for state in ('stopped', 'failed'):
+            self.rows(agent('aaaa0001', 'w1', self.cwd, state))
+            self.assertEqual(self.watch().stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is %s '
+                             'with no new result report: read its result file\n' % state)
+        self.rows()
+        self.assertEqual(self.watch().stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is no longer '
+                         'listed (claude agents --all): read its result file\n')
+        # A result wins over any state: DONE alone, no GONE.
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        (self.workers / 'w1.watch-bg').unlink()
+        self.assertEqual(self.watch().stdout, 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none '
+                         '(result file RESULT-w1.md)\n')
+
+    def test_a_session_just_spawned_and_not_yet_listed_is_not_gone(self):
+        # The spike saw no row for the first seconds after the launch.
+        self.spawned('w1', age=0)
+        self.rows()
+        self.assertEqual(self.watch().stdout, '')
+
+    def test_a_question_file_wins_over_the_state(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done'))
+        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
+        result = self.watch()
+        self.assertTrue(result.stdout.startswith('watch_workers: QUESTION: w1, a decision waits in '), result.stdout)
+        self.assertTrue(result.stdout.endswith('/QUESTION-w1.md: read it and answer it\n'), result.stdout)
+        self.assertEqual(self.watch().stdout, '')
+
+    def test_the_question_is_read_in_the_workers_folder_and_only_once_published(self):
+        # The supervisor, the worker's instruction and close_worker.sh put QUESTION-NAME.md in the
+        # worker's folder (.claude/worktrees/NAME, else the checkout), never beside a --result
+        # elsewhere; a draft without the end marker is no question yet, and ends no session.
+        self.spawned('w1')
+        tree = self.cwd / '.claude/worktrees/w1'
+        tree.mkdir(parents=True)
+        self.rows(agent('aaaa0001', 'w1', tree, 'stopped'))
+        (tree / 'QUESTION-w1.md').write_text('A or B?\n')
+        watch = lambda: self.run_bg(WATCH, '--once', '--result', 'w1=sub/R.md', 'w1')
+        self.assertIn('GONE: w1', watch().stdout, 'a draft question hid a session that ended')
+        (self.workers / 'w1.watch-bg').unlink()
+        (tree / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
+        result = watch()
+        self.assertTrue(result.stdout.startswith('watch_workers: QUESTION: w1, a decision waits in '), result.stdout)
+        self.assertTrue(result.stdout.endswith('/.claude/worktrees/w1/QUESTION-w1.md: read it and answer it\n'),
+                        result.stdout)
+        self.assertEqual(watch().stdout, '', 'a published question ended the session by design: no GONE')
+
+    def test_a_report_ends_the_background_watch_loop(self):
+        # bg() left the loop's own w at 1 after a WAITING or GONE, so found was never set and the
+        # background watch ran to --max-minutes after its report.
+        self.spawned('w1')
+        for row, said in ((agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=1), 'WAITING: w1'),
+                          (agent('aaaa0001', 'w1', self.cwd, 'stopped'), 'GONE: w1'),
+                          (agent('aaaa0001', 'w1', self.cwd, 'done', pid=1), 'IDLE: w1')):
+            with self.subTest(said=said):
+                self.rows(row)
+                result = self.run_bg(WATCH, '--max-minutes', '0', '--result', 'w1=RESULT-w1.md', 'w1')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(said, result.stdout)
+                self.assertNotIn('nothing was waiting', result.stdout)
+
+    def test_only_a_published_final_result_hides_the_sessions_end(self):
+        # The supervisor stops a session only on a decision, DONE or HANDOFF (codex_worker.py):
+        # a draft or a blocked result leaves it running, so its idle or end is still said.
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=1))
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none'))
+        self.assertEqual(self.watch().stdout, IDLE, 'a draft result hid an idle session')
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('blocked', 'a decision') + READY)
+        self.assertIn('BLOCKED: w1', self.watch().stdout)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'failed'))
+        self.assertIn('GONE: w1, its background session aaaa0001 is failed', self.watch().stdout,
+                      'a blocked result hid a session that ended')
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('handoff', 'the lead') + READY)
+        self.assertIn('HANDOFF: w1', self.watch().stdout)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        self.assertEqual(self.watch().stdout, '')
+
+    def test_a_list_that_cannot_be_read_is_an_observation_failure(self):
+        self.spawned('w1')
+        self.rows()
+        result = self.watch(AGENTS_ERROR='connect ECONNREFUSED')
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertIn('watch_workers: w1: could not list the background sessions: ', result.stderr)
+        self.assertIn('connect ECONNREFUSED', result.stderr)
+
+    def test_a_blocked_session_that_names_nothing_is_waiting_all_the_same(self):
+        # POSIX spike: blocked may come with no waitingFor.
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288))
+        self.assertEqual(self.watch().stdout, 'watch_workers: WAITING: w1, waiting for: no reason given (background '
+                         'session aaaa0001, state blocked)\n  look at it: claude attach aaaa0001   (claude agents lists '
+                         'every session)\n')
+
+    def test_a_question_or_a_final_result_ends_the_session_without_a_gone(self):
+        # The supervisor stops a session 10 s after its question or final result: no GONE then.
+        self.spawned('w1')
+        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=1))
+        self.assertIn('QUESTION: w1', self.watch().stdout)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        self.assertEqual(self.watch().stdout, '')
+        (self.cwd / 'QUESTION-w1.md').unlink()
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('progress', 'more') + '\n<!-- codex-worker: ready -->\n')
+        self.assertIn('PROGRESS: w1', self.watch().stdout)
+        self.assertIn('GONE: w1, its background session aaaa0001 is stopped', self.watch().stdout,
+                      'a progress result hid a session that ended')
+
+    def test_a_session_started_on_the_other_host_is_reported_once_and_listed_as_elsewhere(self):
+        # The native-Windows and the WSL lists are disjoint (POSIX spike, 9): no row is no proof.
+        self.spawned('w1')
+        other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if os.name == 'nt' else ('D:/p/RESULT-w1.md', 'windows')
+        (self.workers / 'w1.result-path').write_text(other + '\n')
+        self.rows()
+        result = self.watch(AGENTS_ERROR='not this host')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'watch_workers: ELSEWHERE: w1, its background session was started on %s, '
+                         'whose session list this host cannot see: watch it there\n' % word)
+        self.assertEqual(self.watch().stdout, '')
+        self.assertIn('w1\tbg\taaaa0001\telsewhere:%s\t-\tn' % word, self.run_bg(LIST).stdout)
+
+    def test_show_prints_the_attach_line_and_opens_nothing(self):
+        self.spawned('w1')
+        result = self.run_bg(SHOW, 'w1', WSL_DISTRO_NAME='Test-1')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'show_workers: w1 runs in the background: claude attach aaaa0001   '
+                         '(claude agents lists every session; nothing opened)\n')
+        self.assertEqual(self.log('wt-stub') + self.log('tmux'), '')
+        # Spawned on the other host: its attach fails here ('No job matching'), so none is printed.
+        other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if os.name == 'nt' else ('D:/p/RESULT-w1.md', 'windows')
+        (self.workers / 'w1.result-path').write_text(other + '\n')
+        result = self.run_bg(SHOW, 'w1', WSL_DISTRO_NAME='Test-1')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'show_workers: w1 runs in the background on %s, whose sessions this host '
+                         'cannot see: claude attach aaaa0001 there   (nothing opened)\n' % word)
+
+    def test_a_notice_on_the_listers_stderr_is_not_part_of_the_list(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=1, waitingFor='permission prompt'))
+        result = self.watch(AGENTS_NOTICE='Update available: run claude update')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('WAITING: w1, waiting for: permission prompt', result.stdout)
+        self.assertIn('w1\tbg\taaaa0001\tblocked\tpermission prompt\tn',
+                      self.run_bg(LIST, AGENTS_NOTICE='Update available').stdout)
+
+    def test_the_list_has_one_line_per_worker_of_this_checkout(self):
+        self.spawned('w1')
+        self.spawned('w2', id='bbbb0002')
+        self.spawned('t1', id=None, host='tmux')
+        (self.workers / 'c1.session').write_text('sid\n')
+        (self.cwd / 'RESULT-w2.md').write_text('x\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=1, waitingFor='permission prompt'),
+                  agent('cccc0003', 'w2', self.cwd, 'working', pid=2))
+        result = self.run_bg(LIST, VIS_SESSIONS='t1')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout.splitlines(), [
+            'NAME\tHOST\tID\tSTATE\tWAITING-FOR\tRESULT', 'c1\t-\t-\t-\t-\tn', 't1\ttmux\t-\trunning\t-\tn',
+            'w1\tbg\taaaa0001\tblocked\tpermission prompt\tn', 'w2\tbg\tbbbb0002\tabsent\t-\ty'])
+        result = self.run_bg(LIST, AGENTS_ERROR='boom')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('list_workers: claude agents --json --all failed: boom', result.stderr)
+        self.assertIn('w1\tbg\taaaa0001\t?\t-\tn', result.stdout)
 
 
 if __name__ == '__main__':
