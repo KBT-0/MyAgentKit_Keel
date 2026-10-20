@@ -1462,6 +1462,22 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertNotIn('PROGRESS', output.getvalue(), 'the reported result was reported again')
 
 
+def fake_claude(tmp, rows, log):
+    """A claude that logs each call's arguments and prints ROWS for `agents`."""
+    (tmp / 'claude.py').write_text(
+        'import sys\nopen(%r, "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
+        'print(open(%r).read())\n' % (str(log), str(rows)), encoding='utf-8')
+    if os.name == 'nt':
+        (tmp / 'claude.cmd').write_text('@"%s" "%s" %%*\r\n' % (sys.executable, tmp / 'claude.py'))
+    else:
+        (tmp / 'claude').write_text('#!/bin/sh\nexec %s %s "$@"\n' % (
+            shlex.quote(sys.executable), shlex.quote(str(tmp / 'claude.py'))))
+        (tmp / 'claude').chmod(0o755)
+
+
+DONE = 'Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n<!-- codex-worker: ready -->\n'
+
+
 class BackgroundSupervisorTests(unittest.TestCase):
     def test_a_background_session_that_ends_by_itself_ends_its_supervisor_without_a_stop(self):
         # `--bg ID`: no child; the row of ID in `claude agents --json --all` says when it ended
@@ -1469,15 +1485,7 @@ class BackgroundSupervisorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             rows, log = tmp / 'rows.json', tmp / 'claude.log'
-            (tmp / 'claude.py').write_text(
-                'import sys\nopen(%r, "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
-                'print(open(%r).read())\n' % (str(log), str(rows)), encoding='utf-8')
-            if os.name == 'nt':
-                (tmp / 'claude.cmd').write_text('@"%s" "%s" %%*\r\n' % (sys.executable, tmp / 'claude.py'))
-            else:
-                (tmp / 'claude').write_text('#!/bin/sh\nexec %s %s "$@"\n' % (
-                    shlex.quote(sys.executable), shlex.quote(str(tmp / 'claude.py'))))
-                (tmp / 'claude').chmod(0o755)
+            fake_claude(tmp, rows, log)
             rows.write_text(json.dumps([{'id': '1a2b3c4d', 'pid': 4242, 'state': 'working'},
                                         {'id': '99999999', 'pid': 7, 'state': 'working'}]))
             stopper = threading.Timer(1, lambda: rows.write_text(json.dumps(
@@ -1493,6 +1501,70 @@ class BackgroundSupervisorTests(unittest.TestCase):
             self.assertTrue(record.read_text(encoding='utf-8').startswith('exit 0'))
             calls = log.read_text().splitlines()
             self.assertEqual(set(calls), {'agents --json --all'}, 'only the list is read: nothing is stopped')
+
+    def test_a_resumed_row_that_reads_done_before_its_wake_is_not_an_end(self):
+        # A resumed session's row reads done with no process until it wakes: without a process seen
+        # once (or START seconds), that is no end, and the supervisor waits for the result.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            rows, log, record = tmp / 'rows.json', tmp / 'claude.log', tmp / 'w.exit'
+            fake_claude(tmp, rows, log)
+            rows.write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+            supervisor = subprocess.Popen(
+                [sys.executable, str(SCRIPT), str(tmp / 'QUESTION-w.md'), str(tmp / 'RESULT-w.md'), '--bg', '1a2b3c4d'],
+                cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                env=dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ['PATH'], KIT_WORKER_GRACE='0.2',
+                         KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=str(time.time() - 1)))
+            try:
+                for _ in range(50):
+                    if log.exists():
+                        break
+                    time.sleep(.1)
+                time.sleep(1)
+                self.assertIsNone(supervisor.poll(), 'the row read before the wake ended the supervisor')
+                (tmp / 'RESULT-w.md').write_text(DONE)
+                out, _ = supervisor.communicate(timeout=30)
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.kill()
+                    supervisor.communicate()
+            self.assertTrue(record.read_text(encoding='utf-8').startswith('DONE published'), out)
+            self.assertIn('stop 1a2b3c4d', log.read_text().splitlines())
+
+    def test_a_detached_supervisor_leaves_the_checkout_and_still_waits_on_its_commit(self):
+        # Its folder is not the worktree (Windows refuses to remove a folder a process is in), and
+        # the checkout's index.lock still holds the stop until the commit ends.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            checkout = tmp / 'checkout'
+            checkout.mkdir()
+            subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+            rows, log, record = tmp / 'rows.json', tmp / 'claude.log', tmp / 'w.exit'
+            fake_claude(tmp, rows, log)
+            (tmp / 'claude.py').write_text('import os\nopen(%r, "a").write(os.getcwd() + "\\n")\n' % str(tmp / 'cwd.log')
+                                           + (tmp / 'claude.py').read_text(encoding='utf-8'), encoding='utf-8')
+            rows.write_text(json.dumps([{'id': '1a2b3c4d', 'pid': 4242, 'state': 'working'}]))
+            lock = checkout / '.git/index.lock'
+            lock.write_text('')
+            result = checkout / 'RESULT-w.md'
+            started = time.time() - 1
+            subprocess.run([sys.executable, str(SCRIPT), '--detach', str(tmp / 'w.log'), str(checkout / 'QUESTION-w.md'),
+                            str(result), '--bg', '1a2b3c4d'], cwd=checkout, check=True, timeout=30,
+                           env=dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ['PATH'], KIT_WORKER_GRACE='0.2',
+                                    KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=str(started)))
+            result.write_text(DONE)
+            time.sleep(3)
+            self.assertFalse(record.exists(), 'stopped while a commit ran in its checkout')
+            lock.unlink()
+            for _ in range(300):
+                if record.exists():
+                    break
+                time.sleep(.1)
+            time.sleep(1)
+            self.assertTrue(record.read_text(encoding='utf-8').startswith('DONE published'), (tmp / 'w.log').read_text())
+            cwds = {Path(line).resolve() for line in (tmp / 'cwd.log').read_text().splitlines()}
+            self.assertTrue(cwds)
+            self.assertFalse([cwd for cwd in cwds if cwd == checkout.resolve() or checkout.resolve() in cwd.parents])
 
 
 if __name__ == '__main__':

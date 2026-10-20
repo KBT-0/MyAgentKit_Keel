@@ -202,9 +202,23 @@ ctl "result path" "$result"
 # it is never the probe), else the fallback: a Windows Terminal tab on native Windows, tmux
 # elsewhere. --backend keeps the fallback: whether a background session takes the launch's
 # environment, which carries the endpoint, is untried (docs/research/worker-orchestration-spike.md).
+# The probe is bounded at 10 s, as doctor.sh's (its measurements): its output goes to a file, never
+# a pipe, since a child that holds a pipe open hung every spawn; past the bound it is killed.
+lists_bg() {
+  help=$(mktemp) || return 1
+  claude --help </dev/null >"$help" 2>/dev/null &
+  p=$! i=0
+  while kill -0 "$p" 2>/dev/null; do
+    [ "$i" -lt 100 ] || { kill "$p" 2>/dev/null || :; break; }
+    i=$((i + 1)); sleep 0.1
+  done
+  rc=0; grep -q -e '--bg,' "$help" || rc=1
+  rm -f -- "$help"
+  return "$rc"
+}
 host=${MYAGENTKIT_WORKER_HOST:-}
 case $host in
-  "") if [ -z "$backend" ] && claude --help </dev/null 2>/dev/null | grep -q -e '--bg,'; then host=bg
+  "") if [ -z "$backend" ] && lists_bg; then host=bg
       elif [ -n "$windows" ]; then host=tab; else host=tmux; fi ;;
   bg) [ -z "$backend" ] || die "--backend runs on the tab or tmux host, not with MYAGENTKIT_WORKER_HOST=bg" ;;
   tab) [ -n "$windows" ] || die "MYAGENTKIT_WORKER_HOST=tab is the native Windows host; use bg or tmux here" ;;
@@ -214,7 +228,10 @@ esac
 bg=""; [ "$host" != bg ] || bg=1
 [ "$host" != tmux ] || command -v tmux >/dev/null || die "tmux is not installed"
 
-[ "$host" != tmux ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
+# A name in use is refused on every host: a tmux worker (one from before the bg host, or forced)
+# has no NAME.id, and a bg spawn of its name replaced its records. Native Windows checks below.
+[ -n "$windows" ] || ! command -v tmux >/dev/null || ! tmux has-session -t "=$name" 2>/dev/null ||
+  die "tmux session '$name' already exists"
 
 run=""; launch_pending=""; cleaned=""; made=""; launched=""; base=""
 cleanup() {
@@ -252,7 +269,7 @@ trap 'trap - 0; cleanup; exit 130' INT
 trap 'trap - 0; cleanup; exit 143' TERM
 # Reserve and validate the script before creating a worktree. An explicit template
 # honours TMPDIR on BSD and GNU; resolve relative paths before tmux changes directory.
-if [ -z "$windows" ]; then
+if [ "$host" = tmux ]; then
   run=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || die "cannot write the session's script"
   case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
   run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x)
@@ -545,7 +562,11 @@ if s:
 reset_state() {
   # All launches, including plain tmux sessions, begin without the previous run's snapshot.
   rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* "$wdir/$name.pid" "$wdir/$name.exit" "$wdir/$name.live" \
-    "$wdir/$name.id" "$wdir/$name.session" "$wdir/$name.host" ||
+    "$wdir/$name.host" "$wdir/$name.supervisor.log" ||
+    die "cannot clear the previous state in $wdir"
+  # A resume keeps the session's ids until its launch prints the id: a failed one (a trust
+  # refusal, no id, a copy) leaves the session it names on record for close and watch.
+  [ -n "$resume" ] || rm -f -- "$wdir/$name.id" "$wdir/$name.session" ||
     die "cannot clear the previous state in $wdir"
 }
 # A worker is a session of its own, never the lead's child. The lead's shell carries Claude
@@ -553,7 +574,8 @@ reset_state() {
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
 # CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay.
-unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h MYAGENTKIT_ROLE=worker"
+bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
+unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h MYAGENTKIT_ROLE=worker"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")${resume:+ --resume $(q "$resume")}"
@@ -566,6 +588,8 @@ if [ -n "$behaviour" ]; then
 fi
 printf '%s' "spawn_worker: behaviour appendix: ${behaviour:-off}" | LC_ALL=C tr '\001-\037\177' '?'
 printf '\n'
+# Said, since a CLI whose help does not list --bg (or does not answer) falls back without a word.
+printf '%s\n' "spawn_worker: host: $host"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
 # No question dialog in a pane nobody may watch: QUESTION-NAME.md is the question channel (the
 # instruction says so; this enforces it). Permission prompts are not tools and
@@ -672,14 +696,26 @@ watch_line() {
 # or effort change is a new spawn. codex_worker.py --detach supervises it and ends it with
 # `claude stop ID`; nothing calls `claude daemon stop`, which ends every background session on
 # the host (docs/research/worker-orchestration-spike.md, T1-T3, 6, T4).
-# bg_row ID prints the pid ("-" when no process runs) and the sessionId of that row, or nothing.
+# bg_row ID prints "live" (a process, or working/blocked: a starting session lists no pid, spike
+# check 4, as codex_worker.py counts it) or "-", and the sessionId of that row, or nothing.
 bg_row() {
   claude agents --json --all </dev/null 2>/dev/null | $kit_python -I -c 'import json, sys
 for row in json.loads(sys.stdin.buffer.read()):
     if row.get("id") == sys.argv[1]:
-        print(row.get("pid") or "-", row.get("sessionId") or "-")' "$1"
+        live = row.get("pid") or row.get("state") in ("working", "blocked")
+        print("live" if live else "-", row.get("sessionId") or "-")' "$1"
 }
+# The name is refused while a Claude Code session of it runs, on the bg host too: a tab worker
+# has no NAME.id, and a bg spawn of its name replaced its records (the bg check below is by id).
+if [ -n "$windows" ]; then
+  running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
+  [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
+fi
 if [ -n "$bg" ]; then
+  # The daemon a launch starts keeps that launch's environment and hands it to every background
+  # session while it lives, the owner's own too (POSIX spike, contract change 2): the worker's
+  # variables travel in the merged settings' env only, and a spawning worker's own never leave here.
+  unset MYAGENTKIT_ROLE CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
   if [ -n "$old" ]; then
     row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
@@ -708,7 +744,7 @@ if [ -n "$bg" ]; then
   fi
   # From here a session may run in the worktree: a failure leaves it there (stranded above).
   launched=1
-  rc=0; out=$(cd "$dir" && eval "exec $unmark $bg_cmd" </dev/null 2>&1) || rc=$?
+  rc=0; out=$(cd "$dir" && eval "exec $bare $bg_cmd" </dev/null 2>&1) || rc=$?
   printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
   case $out in *"Workspace not trusted"*)
     launched=""  # refused before any session (spike T1): the unused worktree goes
@@ -731,6 +767,8 @@ if [ -n "$bg" ]; then
     case ${row#* } in "$id"-*) full=${row#* } ;; *) i=$((i + 1)); sleep 1 ;; esac
   done
   [ -z "${full:-}" ] || printf '%s\n' "$full" > "$wdir/$name.session" || die "cannot record the session id $full in $wdir"
+  # Started in the worker's folder, which names its checkout's locks; the supervisor itself then
+  # runs from the temporary folder, so it never holds the worktree a close removes.
   (cd "$dir" && eval "KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") --detach $(q "$(native "$wdir/$name.supervisor.log")") $(q "$cquestion") $(q "$cresult") --bg $(q "$id")") ||
     die "the session $id runs without its supervisor, so nothing ends it on its result: close it with scripts/close_worker.sh $name once it is finished"
   printf '%s\n' "spawn_worker: '$name' started with $brief as background session $id"
@@ -741,8 +779,6 @@ if [ -n "$bg" ]; then
   exit 0
 fi
 if [ -n "$windows" ]; then
-  running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
-  [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
   prepare_settings
   prepare_worktree
   supervisor

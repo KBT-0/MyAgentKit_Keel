@@ -2214,20 +2214,25 @@ class TmuxStubTests(unittest.TestCase):
 
 # A claude whose help lists --bg, with Claude Code's background commands on a rows.json list as
 # `claude agents --json --all` prints it (the spike's fields). `--bg` adds a working row and prints
-# the spike's `backgrounded · ID · NAME`; SPAWN_UNTRUSTED prints the trust refusal, SPAWN_NO_ID no id;
+# the spike's `backgrounded · ID · NAME`; SPAWN_UNTRUSTED prints the trust refusal, SPAWN_NO_ID no id,
+# SPAWN_COPY a new id for a resume (a copy); SPAWN_HELP_HANGS keeps --help running after its text;
 # SPAWN_PUBLISH writes that result to SPAWN_PUBLISH_TO, as a worker that finished at once.
-BG_CLAUDE = r'''import json, os, sys
+BG_CLAUDE = r'''import json, os, sys, time
 state = os.environ['SPAWN_STATE']
 args = sys.argv[1:]
 with open(os.path.join(state, 'claude.log'), 'a') as log:
     log.write(json.dumps(args) + '\n')
+with open(os.path.join(state, 'cwd.log'), 'a') as log:
+    log.write(json.dumps([args[:1], os.getcwd()]) + '\n')
 path = os.path.join(state, 'rows.json')
 rows = json.load(open(path)) if os.path.exists(path) else []
 def save():
     with open(path, 'w') as f:
         json.dump(rows, f)
 if args == ['--help']:
-    print('  --bg, --background                    Start the session in the background and')
+    print('  --bg, --background                    Start the session in the background and', flush=True)
+    if os.environ.get('SPAWN_HELP_HANGS'):
+        time.sleep(90)
 elif args[:1] == ['agents']:
     print(json.dumps(rows))
 elif args[:1] in (['stop'], ['rm']):
@@ -2239,11 +2244,13 @@ elif '--bg' in args:
         print('Workspace not trusted. Run `claude` in %s once and accept the trust prompt, then retry.' % os.getcwd())
         sys.exit(1)
     with open(os.path.join(state, 'launch.json'), 'w') as f:
-        json.dump({'argv': args, 'cwd': os.getcwd(), 'markers': sorted(k for k in os.environ if k.startswith('CLAUDE_CODE_CHILD'))}, f)
+        json.dump({'argv': args, 'cwd': os.getcwd(), 'markers': sorted(k for k in os.environ if k.startswith('CLAUDE_CODE_CHILD')),
+                   'env': sorted(k for k in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL') if k in os.environ)}, f)
     print('Starting background service…')
     if os.environ.get('SPAWN_NO_ID'):
         sys.exit(0)
     short = args[args.index('--resume') + 1][:8] if '--resume' in args else '1a2b3c4d'
+    short = 'feedbeef' if os.environ.get('SPAWN_COPY') else short
     rows = [r for r in rows if r['id'] != short] + [{'id': short, 'sessionId': short + '-5137-4293-88d5-c4339d1ce56c',
             'pid': 4242, 'state': 'working', 'kind': 'background', 'cwd': os.getcwd()}]
     save()
@@ -2264,6 +2271,11 @@ class BackgroundHostTests(unittest.TestCase):
         for folder in (self.state, self.bin, self.cwd):
             folder.mkdir()
         (self.bin / 'claude.py').write_text(BG_CLAUDE, encoding='utf-8')
+        # Another host's worker of the name: SPAWN_TMUX_HAS makes tmux have it, KIT_PS lists it.
+        (self.bin / 'tmux').write_text('#!/bin/sh\n[ "$1" = has-session ] && [ -n "${SPAWN_TMUX_HAS:-}" ]\n', newline='\n')
+        (self.bin / 'ps-empty').write_text('#!/bin/sh\nexit 0\n', newline='\n')
+        for stub in ('tmux', 'ps-empty'):
+            (self.bin / stub).chmod(0o755)
         python = sys.executable.replace('\\', '/')
         (self.bin / 'claude').write_text('#!/bin/sh\nexec %s -X utf8 %s "$@"\n' % (shq(python), shq(str(self.bin / 'claude.py').replace('\\', '/'))), newline='\n')
         (self.bin / 'claude').chmod(0o755)
@@ -2285,9 +2297,10 @@ class BackgroundHostTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def spawn(self, *args, **extra):
-        env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))
+               and k not in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')}
         env.update(PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                   KIT_WORKER_GRACE='0.2', **LEAD_ENV)
+                   KIT_WORKER_GRACE='0.2', KIT_PS=str(self.bin / 'ps-empty'), **LEAD_ENV)
         env.update(extra)
         return subprocess.run(['sh', str(SCRIPT), 'w1', str(self.brief), '--model', 'm', '--effort', 'high', *args],
                               cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
@@ -2311,7 +2324,11 @@ class BackgroundHostTests(unittest.TestCase):
 
     def test_a_bg_worker_starts_in_its_worktree_and_is_stopped_by_id_after_its_result(self):
         worktree = self.cwd / '.claude/worktrees/w1'
-        result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.supervisor.log').write_text('an earlier run\n')
+        # A worker spawning a sub-worker carries the worker variables: they never reach the launch line.
+        result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'),
+                            MYAGENTKIT_ROLE='worker', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL='1h')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         argv = self.launch()['argv']
         self.assertTrue(argv[0].startswith('Read '), argv)  # the prompt first
@@ -2336,6 +2353,15 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertTrue(self.ended().startswith('DONE published'))
         self.assertIn(['stop', '1a2b3c4d'], self.calls())
         self.assertFalse([c for c in self.calls() if 'daemon' in c], 'a daemon command ends every session')
+        # The daemon a launch starts keeps that launch's environment for every later session: the
+        # worker's variables travel in its settings only (POSIX spike, contract change 2).
+        self.assertEqual(self.launch()['env'], [], 'a worker variable is on the launch line')
+        # The detached supervisor holds no worktree as its folder: Windows refuses to remove it.
+        cwds = [json.loads(line) for line in (self.state / 'cwd.log').read_text().splitlines()]
+        stops = [Path(cwd).resolve() for first, cwd in cwds if first == ['stop']]
+        self.assertTrue(stops)
+        self.assertFalse([cwd for cwd in stops if cwd == worktree.resolve() or worktree.resolve() in cwd.parents])
+        self.assertNotIn('an earlier run', (self.workers / 'w1.supervisor.log').read_text())
 
     def test_a_resume_passes_no_flag_and_takes_the_full_session_id(self):
         # Any flag on `claude --resume ID --bg` starts a copy under the same name (spike, 6).
@@ -2381,6 +2407,86 @@ class BackgroundHostTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('MYAGENTKIT_WORKER_HOST', result.stderr)
                 self.assertFalse((self.state / 'launch.json').exists())
+
+    def resumable(self, session=True, row=None):
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        if session:
+            (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+        (self.state / 'rows.json').write_text(json.dumps([dict({'id': '1a2b3c4d', 'pid': None, 'state': 'done'}, **(row or {}))]))
+
+    def test_a_resume_that_starts_a_copy_stops_and_removes_it_and_fails(self):
+        # Spike trap 1: a copy under the same name answers nothing; the original is kept.
+        self.resumable()
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_COPY='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('started a copy', result.stderr)
+        self.assertIn(['stop', 'feedbeef'], self.calls())
+        self.assertIn(['rm', 'feedbeef'], self.calls())
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+
+    def test_a_resume_whose_launch_fails_keeps_the_session_ids(self):
+        self.resumable()
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_NO_ID='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+        self.assertEqual((self.workers / 'w1.session').read_text(), '1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+
+    def test_a_short_id_resume_takes_the_full_id_from_its_row_or_is_refused(self):
+        # A short id resumes nothing (POSIX spike): with no NAME.session the row names the full one.
+        self.resumable(session=False, row={'sessionId': '1a2b3c4d-5137-4293-88d5-c4339d1ce56c'})
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.ended()
+        (self.state / 'launch.json').unlink()
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+        (self.workers / 'w1.session').unlink()
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('no full session id', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_session_still_starting_counts_as_running(self):
+        # The first seconds of a session list it working with no pid (spike, check 4).
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'working'}]))
+        result = self.spawn()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_worker_of_the_name_on_the_fallback_host_is_refused(self):
+        # A tmux or tab worker has no NAME.id: its record must not be replaced by a second session.
+        self.workers.mkdir(parents=True)
+        old = 'tab' if WINDOWS else 'tmux'
+        (self.workers / 'w1.host').write_text(old + '\n')
+        (self.bin / 'ps-w1').write_text('#!/bin/sh\nprintf "7 claude.exe -n w1\\r\\n"\n', newline='\n')
+        (self.bin / 'ps-w1').chmod(0o755)
+        result = self.spawn(SPAWN_TMUX_HAS='1', KIT_PS=str(self.bin / 'ps-w1'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('already', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+        self.assertEqual((self.workers / 'w1.host').read_text(), old + '\n')
+
+    def test_a_help_that_never_ends_is_bounded(self):
+        # A --help that leaves a child holding its output hung every spawn (doctor.sh bounds it too).
+        started = time.monotonic()
+        result = self.spawn(SPAWN_HELP_HANGS='1', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertLess(time.monotonic() - started, 45 * SCALE)
+        self.assertIn('host: bg', result.stdout)
+        self.ended()
+
+    @unittest.skipIf(WINDOWS, 'POSIX: the tmux script lives under TMPDIR')
+    def test_the_bg_host_needs_no_tmux_script(self):
+        spaced = self.tmp / 'a b'
+        spaced.mkdir()
+        result = self.spawn(TMPDIR=str(spaced), SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(list(spaced.iterdir()), [])
+        self.ended()
 
 
 class DoneSignalGuidanceTests(unittest.TestCase):

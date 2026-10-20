@@ -499,7 +499,10 @@ def main():
             raise ValueError('usage: codex_worker.py --detach LOG ARGUMENTS...')
         command = [sys.executable, str(Path(__file__).resolve()), *sys.argv[3:]]
         with open(sys.argv[2], 'ab') as log:
-            options = dict(stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            # Its folder is not the checkout, which Windows refuses to remove while a process is in
+            # it (close_worker.sh's audit kept the worktree); KIT_WORKER_CHECKOUT names it for locks().
+            options = dict(stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=tempfile.gettempdir(),
+                           env=dict(os.environ, KIT_WORKER_CHECKOUT=os.getcwd()))
             if os.name != 'nt':
                 subprocess.Popen(command, start_new_session=True, **options)
                 return 0
@@ -646,13 +649,14 @@ def record_exit(ended):
 
 
 def locks():
-    """index.lock and check.lock of the checkout this supervisor runs in; none outside git.
-    Git prints UTF-8 paths: read as the locale (cp1252 without UTF-8 mode), a Unicode checkout's
-    lock path is wrong and its lock never seen."""
+    """index.lock and check.lock of the checkout this supervisor runs in (KIT_WORKER_CHECKOUT for a
+    detached one); none outside git. Git prints UTF-8 paths: read as the locale (cp1252 without
+    UTF-8 mode), a Unicode checkout's lock path is wrong and its lock never seen."""
     paths = []
+    checkout = os.environ.get('KIT_WORKER_CHECKOUT', '.')
     for name in ('index.lock', 'check.lock'):
         try:
-            paths.append(Path(subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-path', name],
+            paths.append(Path(subprocess.run(['git', '-C', checkout, 'rev-parse', '--path-format=absolute', '--git-path', name],
                                              capture_output=True, encoding='utf-8', check=True).stdout.strip()))
         except (OSError, subprocess.CalledProcessError):
             return []
