@@ -1966,7 +1966,8 @@ class CleanWorktreesTests(unittest.TestCase):
         (path / 'notes.md').write_text('mine\n')  # same name and size, other bytes
         (path / 'mine.md').write_text('only here\n')
         self.assertKept(path, self.run_script('--apply'),
-                        'files with no identical copy in main, outside a disposable folder: mine.md, notes.md')
+                        'files with no identical copy in main, outside a disposable folder: mine.md, notes.md; copy each '
+                        'to the same path in the main checkout or delete it in the worktree, then close again')
 
     def test_an_ignored_unique_file_outside_a_disposable_folder_is_kept(self):
         path = self.worktree('done')
@@ -2001,7 +2002,7 @@ class CleanWorktreesTests(unittest.TestCase):
         (path / 'linked/f').write_text('same\n')
         (self.main / 'g').symlink_to(self.tmp / 'outside/f')
         (path / 'g').write_text('same\n')
-        self.assertKept(path, self.run_script('--apply'), 'no identical copy in main, outside a disposable folder: g, linked/f\n')
+        self.assertKept(path, self.run_script('--apply'), 'no identical copy in main, outside a disposable folder: g, linked/f;')
 
     def test_each_log_line_is_on_disk_before_it_is_reported(self):
         log, synced = self.tmp / 'removals.log', []
@@ -2024,14 +2025,14 @@ class CleanWorktreesTests(unittest.TestCase):
         (path / 'notes/x').write_text('precious\n')
         (self.main / 'notes').mkdir()
         os.link(path / 'notes/x', self.main / 'notes/x')
-        self.assertKept(path, self.run_script('--apply'), 'no identical copy in main, outside a disposable folder: notes/x\n')
+        self.assertKept(path, self.run_script('--apply'), 'no identical copy in main, outside a disposable folder: notes/x;')
         self.assertEqual((path / 'notes/x').read_text(), 'precious\n')
         os.unlink(self.main / 'notes/x')
         # On real mounts, where this host lets a user make them; the cases after this one inject
         # the device and the mount table on every host.
         below = 'its copy in main is below a mount point: a mount inside main is not main: notes/x\n'
         for mount, reason in (
-                ('mount --bind "$1/notes" "$2/notes"', 'no identical copy in main, outside a disposable folder: notes/x\n'),
+                ('mount --bind "$1/notes" "$2/notes"', 'no identical copy in main, outside a disposable folder: notes/x;'),
                 ('mount -t tmpfs none "$2/notes" && echo precious > "$2/notes/x"', below),
                 ('mkdir "$2/t" && mount -t tmpfs none "$2/t" && echo precious > "$2/t/x" && : > "$2/notes/x" && '
                  'mount --bind "$2/t/x" "$2/notes/x"', below),
@@ -2295,7 +2296,7 @@ class CleanWorktreesTests(unittest.TestCase):
                         'refused .claude/worktree-disposable line DOCS (empty',
                         'inside .claude/worktrees of it, which this script does not judge: .Claude/Worktrees/x/f\n',
                         'files with no identical copy in main, outside a disposable folder: CACHE/f, '
-                        'Docs/build/report.md, x/Build/o\n')
+                        'Docs/build/report.md, x/Build/o;')
         self.assertNotIn('untracked and not ignored inside a disposable folder', out)
         self.assertEqual((path / 'Docs/build/report.md').read_text(), 'unique\n')
 

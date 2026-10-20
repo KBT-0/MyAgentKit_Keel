@@ -55,7 +55,8 @@ the rules below exist).
   a command it cannot prove keeps git inside your worktree: `$(...)` or a variable around a
   program, a loop, `sh -c` or `source` of a string, `flock <lock> <cmd>` when the command
   runs git (`check.sh` does), `cd` to the main checkout before git. Put anything compound in
-  a small script file and run `sh that-file`; merging is the lead's job, in the main tree.
+  a small script file and run `sh that-file`, and delete it before your last commit (an
+  untracked file keeps your worktree at the close); merging is the lead's job, in the main tree.
 - No personal data in any web request: a generic project User-Agent with no contact details,
   or stop and ask. A third party's logs cannot be recalled.
 <!-- BEGIN attribution rule: setup interview question 9 deletes this block when the owner allows AI credit -->
