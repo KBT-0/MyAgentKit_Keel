@@ -785,13 +785,16 @@ class UsageTests(unittest.TestCase):
     def test_timeout_stops_the_process_group_and_keeps_partial_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            descendant = "import time,pathlib; time.sleep(2); pathlib.Path('escaped').write_text('bad')"
+            # The timeout must outlast a loaded host's interpreter start-up, or it fires before the
+            # child prints; the descendant writes only after the timeout plus the kill, so a
+            # surviving one is still caught.
+            descendant = "import time,pathlib; time.sleep(6); pathlib.Path('escaped').write_text('bad')"
             parent = ("import subprocess,sys,time; subprocess.Popen([sys.executable,'-c'," +
                       repr(descendant) + "]); print('partial',flush=True); time.sleep(10)")
-            result = agent_process.run([sys.executable, "-c", parent], "", repo, 1)
+            result = agent_process.run([sys.executable, "-c", parent], "", repo, 4)
             self.assertEqual(result["termination"], "timeout")
             self.assertIn("partial", result["stdout"])
-            time.sleep(1.2)
+            time.sleep(3)
             self.assertFalse((repo / "escaped").exists())
 
     def test_a_descendant_holding_the_pipe_does_not_turn_a_finished_run_into_a_timeout(self):
