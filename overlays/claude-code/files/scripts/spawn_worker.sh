@@ -684,8 +684,14 @@ sessions() {
 }
 # The disk is the done signal on every platform: a supervised close often sends no idle notice
 # (4 of 5 on 2026-10-20), so the watch comes first, before the optional subscription.
+# The watch reads the records in the checkout that holds them (this one): run from another, it
+# saw none and said nothing, forever (2026-10-21). So the line cds there and names the script by
+# its absolute path: it works pasted in any folder. The until-loop needs no records at all.
 watch_line() {
-  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): sh scripts/watch_workers.sh --result $name=$(q "$cresult") $name"
+  ctop=${wdir%/.myagentkit/workers}
+  [ -z "$windows" ] || ctop=$(cygpath -m "$ctop") || ctop=${wdir%/.myagentkit/workers}
+  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): cd $(q "$ctop") && sh $(q "${cworker%/*}/watch_workers.sh") --result $name=$(q "$cresult") $name"
+  printf '%s\n' "spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: completed is done): until [ $(q "$cresult") -nt $(q "$ctop/.myagentkit/workers/$name.result-path") ] && grep -qF '<!-- codex-worker: ready -->' $(q "$cresult"); do sleep 30; done; head -n 4 $(q "$cresult")"
 }
 # The bg host: a Claude Code background session, on every platform. It starts in the worker's
 # folder, which must sit under a repo root the owner trusted in Claude Code (a trusted root

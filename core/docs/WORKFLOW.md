@@ -1128,7 +1128,11 @@ characters and retry; spaces are refused too. This remedy works on macOS and Lin
 **The disk is the done signal, on every platform.** Right after every spawn the lead starts
 ONE background command: the `sh scripts/watch_workers.sh --result NAME=PATH NAME` line the
 spawn prints. It exits when the worker reports (its result file, GONE or WAITING), and the
-lead starts it again after every report but DONE and GONE. On native Windows it reads the
+lead starts it again after every report but DONE and GONE. The printed line starts with a `cd`
+to the checkout that holds the worker's records (`.myagentkit/workers`), so it works pasted in
+any folder; run elsewhere with no record and no session it can see, the watcher exits 2 naming
+the checkout to run from, unless `--result` names a ready result, which it then reports. On
+native Windows it reads the
 worker's state file, result file and exit record in place of a pane (below). The lead may
 also subscribe with SendMessage `notify_when_idle` when the spawn prints "is a peer session"
 (a tmux worker always registers), but never relies on it alone: a supervised close often

@@ -1019,17 +1019,27 @@ exit 0
         # #167: it named PATH, "the result file its brief names", for the lead to fill in.
         # 2026-10-20: 4 of 5 supervised closes sent no idle notice, so the disk watch is the done
         # signal on both paths: printed right after the start, before any optional subscription.
+        # 2026-10-21: run from another checkout the watch saw no records and said nothing, forever:
+        # the line cds to the checkout that holds them and names the script by its absolute path.
         for tab in self.backend_paths():
             with self.subTest(windows=bool(tab)):
                 result = self.spawn('w1', str(self.brief), '--batch', **tab)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 lines = result.stdout.splitlines()
                 started = next(i for i, line in enumerate(lines) if "'w1' started with" in line)
+                report = shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab)))
+                top = self.spelled(self.cwd, bool(tab))
                 self.assertEqual(lines[started + 1],
                                  'spawn_worker: watch it now, as ONE background command whose exit is the done '
                                  'signal (start it again after every report but DONE and GONE): '
-                                 'sh scripts/watch_workers.sh --result w1=%s w1'
-                                 % shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab))))
+                                 'cd %s && sh %s --result w1=%s w1'
+                                 % (shq(top), shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))),
+                                    report))
+                self.assertEqual(lines[started + 2],
+                                 'spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: '
+                                 "completed is done): until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' "
+                                 '%s; do sleep 30; done; head -n 4 %s'
+                                 % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, report))
                 for line in lines:
                     if 'notify_when_idle' in line:
                         self.assertIn('never rely on it alone', line)
@@ -1111,7 +1121,7 @@ exit 0
         self.assertIn("'w3' is a peer session (process 9)", result.stdout)
         self.assertNotIn('WARNING', result.stdout)
         # The subscription is optional and comes after the disk watch, never in its place.
-        self.assertLess(result.stdout.index('sh scripts/watch_workers.sh --result w3='),
+        self.assertLess(result.stdout.index("/watch_workers.sh' --result w3="),
                         result.stdout.index("'w3' is a peer session"))
         self.assertIn('notify_when_idle, but a supervised close often sends no notice: never rely on it alone',
                       result.stdout)
@@ -1907,7 +1917,7 @@ exit 0
         self.assertIn('show_workers: shown: w1', result.stdout)
         # The two hints name the scripts that watch and close this worker, by its name.
         self.assertIn('close it: scripts/close_worker.sh w1\n', result.stdout)
-        self.assertIn('sh scripts/watch_workers.sh --result w1=', result.stdout)
+        self.assertIn("/watch_workers.sh' --result w1=", result.stdout)
         (self.state / 'wt.log').unlink()
         result = self.spawn('w2', str(self.brief), '--batch')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2348,7 +2358,7 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertEqual((self.workers / 'w1.host').read_text(), 'bg\n')
         out = result.stdout
         self.assertIn('background session 1a2b3c4d', out)
-        self.assertLess(out.index('watch_workers.sh --result'), out.index('claude attach 1a2b3c4d'))
+        self.assertLess(out.index("watch_workers.sh' --result"), out.index('claude attach 1a2b3c4d'))
         self.assertIn('claude agents', out)
         self.assertTrue(self.ended().startswith('DONE published'))
         self.assertIn(['stop', '1a2b3c4d'], self.calls())

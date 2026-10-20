@@ -200,6 +200,9 @@ comes within a minute of the spawn or resume, nor after a published question, co
 handoff result of this run (the supervisor stops the session on those alone). A worker spawned on the other host is ELSEWHERE: the native-Windows and the WSL
 lists are disjoint, so it is watched, listed and closed only where it was spawned.
 `scripts/list_workers.sh` prints the same state for every worker at once and changes nothing.
+The records live in the checkout the spawn ran from, so the printed watch line `cd`s there; a
+name with no record and no session it can see is exit 2 naming that checkout, unless its
+`--result` file holds a ready result, which is reported as any result.
 Exit 3, never "nothing waiting", means the watcher could not
 observe: a list of background sessions that could not be read, a pane of a session that exists could not be read, or tmux could not say whether it exists
 (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be

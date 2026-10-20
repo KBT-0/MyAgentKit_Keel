@@ -28,7 +28,10 @@
 # background command; an unattended one (`-p`, the Agent SDK, CI) stops it after 30 minutes
 # unless started with a `timeout` (at most two hours): pass one there (Claude Code tools
 # reference, "Time limit for background commands"). --once checks once and prints nothing
-# when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error. Exit 3: a pane of
+# when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error, a name with no record
+# in this checkout's .myagentkit/workers too where tmux cannot say GONE (run it from the checkout
+# the worker was spawned in: the line spawn_worker.sh prints cds there), unless its --result
+# file holds a ready result, which is then reported as any result. Exit 3: a pane of
 # a session that exists could not be read, or tmux could not say whether it exists
 # (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 # read (`... could not read the committed result ...`), or a report could not be written
@@ -182,8 +185,16 @@ case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows=""
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
 # isbg NAME: whether NAME runs as a Claude Code background session (NAME.host bg); no tmux then.
 isbg() { [ "$(cat -- "$wdir/$1.host" 2>/dev/null)" = bg ]; }
-if [ -z "$windows" ] && ! command -v tmux >/dev/null; then
-  for n in "$@"; do isbg "$n" || die "tmux is not installed"; done
+# norec NAME: this checkout holds no record of NAME (spawn_worker.sh writes NAME.result-path and
+# NAME.host at every spawn, in the checkout it ran from).
+norec() { for x in state pid result-path host id live exit; do [ ! -e "$wdir/$1.$x" ] || return 1; done; }
+# lone NAME: NAME has no record here, no tmux session and a ready --result (in $lonely, below).
+lonely=$nl
+lone() { case $lonely in *"$nl$1$nl"*) return 0 ;; esac; return 1; }
+tmuxok=""
+if [ -n "$windows" ]; then :
+elif command -v tmux >/dev/null; then tmuxok=1
+else for n in "$@"; do isbg "$n" || norec "$n" || die "tmux is not installed"; done
 fi
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
@@ -353,8 +364,10 @@ report_result() {
     # Not in HEAD: the kit's default result, never committed (#167). Its bytes are copied once
     # and only the copy is read; the copy's blob id is the marker. NAME.result-path is the
     # run's start: an older file is an earlier run's. No ready marker: still being written.
+    # A lone name has no run start to compare with: its explicit result path wins.
     rp=$wdir/$1.result-path
-    [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1
+    if lone "$1"; then [ -f "$f" ] && [ ! -L "$f" ] || return 1
+    else [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1; fi
     cat -- "$f" >"$body" 2>/dev/null || return 1
     published "$body" || return 1
     # Hashed as git would store it (eol and attribute filters of its path): a later commit of
@@ -643,13 +656,34 @@ context() {
   return 4
 }
 
+# A name with no record here and no session tmux knows was spawned from another checkout (its
+# records are in that one's .myagentkit/workers). A ready --result file of it is read and
+# reported all the same. Else, where tmux cannot say GONE (native Windows, no tmux), it said
+# nothing, forever (2026-10-21): that is a usage error.
+for n in "$@"; do
+  norec "$n" || continue
+  s=1; [ -z "$tmuxok" ] || { s=0; has "$n" || s=$?; }
+  [ "$s" -eq 1 ] || continue
+  rfile "$n"
+  if [ -n "$f" ] && [ -f "$f" ] && published "$f"; then lonely=$lonely$n$nl; continue; fi
+  [ -z "$tmuxok" ] || continue  # tmux says GONE
+  at=""
+  while IFS= read -r t; do
+    [ -n "$t" ] && { [ -e "$t/.myagentkit/workers/$n.result-path" ] || [ -e "$t/.myagentkit/workers/$n.host" ]; } &&
+      at=$t && break
+  done <<EOF
+$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+EOF
+  die "$n: no record of it in $wdir and no session of that name: run the watch from the checkout it was spawned in (${at:-the one whose .myagentkit/workers holds $n.result-path}), or pass --result $n=PATH of its ready result"
+done
+
 end=$(( $(date +%s) + max * 60 ))
 while :; do
   found="" failed="" pending=""
   : >"$out"
   for n in "$@"; do
     tab_read=""; line=""
-    st=""; isbg "$n" || st=$(classify "$n")
+    st=""; isbg "$n" || { [ -z "$tmuxok" ] && lone "$n"; } || st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
@@ -671,7 +705,7 @@ while :; do
       w=x
       # On Windows: the state line's WAITING first, then the result, then GONE, then its IDLE;
       # the optional API context count is part of either state report.
-      { w=1; if isbg "$n"; then w=0; bg "$n" || w=$?; else
+      { w=1; if isbg "$n"; then w=0; bg "$n" || w=$?; elif lone "$n"; then w=0; result "$n" || w=$?; else
         [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
         [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; gone_tab "$n" || w=$?; }
@@ -691,7 +725,7 @@ while :; do
   [ -z "$failed" ] || exit 3
   cat "$out" || { say "watch_workers: could not write its report to stdout" >&2; exit 3; }
   printf '%s' "$pending" | while IFS='	' read -r n k v; do
-    if [ -n "$windows" ] || isbg "$n" || { [ "$k" = result ] && [ -d "$wdir" ]; }; then
+    if [ -d "$wdir" ] && { [ -n "$windows" ] || isbg "$n" || [ "$k" = result ]; }; then
       printf '%s\n' "$v" >"$wdir/$n.watch-$k" 2>/dev/null || true
     fi
     [ -n "$windows" ] || isbg "$n" || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true

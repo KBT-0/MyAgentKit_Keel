@@ -862,6 +862,38 @@ class ResultTests(Base):
                 if not platform:
                     self.assertEqual(watch().stdout, '', 'the same result was reported twice')
 
+    def elsewhere(self):
+        # 2026-10-21: a worker spawned inside its worktree keeps its records there; watched from
+        # the main checkout it found none and said nothing, forever, while its result was ready.
+        other = self.tmp / 'wt-w1'
+        self.git('worktree', 'add', '-q', str(other))
+        (other / '.myagentkit/workers').mkdir(parents=True)
+        (other / '.myagentkit/workers/w1.result-path').write_text('RESULT-w1.md\n')
+        return other
+
+    def test_a_name_with_no_record_here_and_no_session_is_a_usage_error(self):
+        self.elsewhere()
+        for args in (('--once',), ('--interval', '10', '--max-minutes', '0')):
+            with self.subTest(args=args):
+                result = self.run_script(WATCH, *args, 'w1', VIS_UNAME='MINGW64_NT-10.0')
+                self.assertEqual((result.returncode, result.stdout), (2, ''), result.stderr)
+                self.assertIn('w1: no record of it in ', result.stderr)
+                self.assertIn('/.myagentkit/workers and no session of that name: run the watch from the '
+                              'checkout it was spawned in (', result.stderr)
+                self.assertIn('/wt-w1)', result.stderr)
+
+    def test_an_explicit_ready_result_wins_with_no_record_here(self):
+        report = self.elsewhere() / 'RESULT-w1.md'
+        report.write_text(HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n')
+        path = posix(report)
+        done = 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none (result file %s)\n' % path
+        for platform, out in (({'VIS_UNAME': 'MINGW64_NT-10.0'}, done),
+                              ({'VIS_SESSIONS': ''}, 'watch_workers: GONE: w1 (the tmux session no longer '
+                               'exists: read its result file)\n' + done)):
+            with self.subTest(platform=platform):
+                result = self.run_script(WATCH, '--once', '--result', 'w1=' + path, 'w1', **platform)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, out, ''))
+
     def published(self, data):
         # An uncommitted docs/w1.md this run published: newer than NAME.result-path.
         start = self.cwd / '.myagentkit/workers/w1.result-path'
