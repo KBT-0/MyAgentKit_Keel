@@ -80,6 +80,13 @@ Automation never authorizes a commit or push.
   cost", rule 6), each as its own background job. Source: KARARLAR D06 inv2#38; LLVM CMake
   job pools and RAM-per-job settings (https://llvm.org/docs/CMake.html); review ordering
   follows decision 9.
+- A `review.sh` round a worker runs inside its own worktree is recorded in that worktree's
+  `.myagentkit/usage/`, never the main checkout's, and counts as an inner round: the worker's
+  report lists it (`docs/WORKFLOW.md`, "Review inside the worker"), and it does not count toward
+  the lead's two rounds. The lead's review of the merged change starts its own label in the main
+  checkout and carries the worker's review archive as dispositions. Do not copy the worktree's
+  records into the main checkout to continue its label: a `--commit` round after an
+  `--uncommitted` one is refused, and the copied evidence path points into the worktree (#293).
 - Nobody edits a tree under review; one run per reviewer per tree. Source: KARARLAR D06
   inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
   sessions.
