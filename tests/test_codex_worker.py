@@ -31,6 +31,9 @@ def module():
     return loaded
 
 
+# check_kit raises this while units run in parallel; a fixed 30 s bound timed out under load.
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
+
 class CodexWorkerTests(unittest.TestCase):
     def test_cached_successes_reset_isolated_windows_refusals(self):
         worker = module()
@@ -431,7 +434,7 @@ class CodexWorkerTests(unittest.TestCase):
                         nested, str(record), str(seen))
             since = str(time.time() - 1)
             run = subprocess.run([sys.executable, str(SCRIPT), str(Path(tmp) / 'q.md'), '--', sys.executable, '-c', code],
-                                 capture_output=True, text=True, timeout=30,
+                                 capture_output=True, text=True, timeout=30 * SCALE,
                                  env=dict(os.environ, KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=since,
                                           KIT_WORKER_STALE='0', KIT_WORKER_RESUME='', KIT_WORKER_GRACE='0.5'))
             self.assertEqual(run.returncode, 0, run.stderr)
@@ -1502,7 +1505,7 @@ class BackgroundSupervisorTests(unittest.TestCase):
             stopper.start()
             record = tmp / 'w.exit'
             done = subprocess.run([sys.executable, str(SCRIPT), str(tmp / 'QUESTION-w.md'), str(tmp / 'RESULT-w.md'),
-                                   '--bg', '1a2b3c4d'], capture_output=True, text=True, timeout=30, cwd=tmp,
+                                   '--bg', '1a2b3c4d'], capture_output=True, text=True, timeout=30 * SCALE, cwd=tmp,
                                   env=dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ['PATH'],
                                            KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=str(time.time())))
             stopper.join()
@@ -1532,7 +1535,7 @@ class BackgroundSupervisorTests(unittest.TestCase):
                 time.sleep(1)
                 self.assertIsNone(supervisor.poll(), 'the row read before the wake ended the supervisor')
                 (tmp / 'RESULT-w.md').write_text(DONE)
-                out, _ = supervisor.communicate(timeout=30)
+                out, _ = supervisor.communicate(timeout=30 * SCALE)
             finally:
                 if supervisor.poll() is None:
                     supervisor.kill()
@@ -1558,7 +1561,7 @@ class BackgroundSupervisorTests(unittest.TestCase):
             result = checkout / 'RESULT-w.md'
             started = time.time() - 1
             subprocess.run([sys.executable, str(SCRIPT), '--detach', str(tmp / 'w.log'), str(checkout / 'QUESTION-w.md'),
-                            str(result), '--bg', '1a2b3c4d'], cwd=checkout, check=True, timeout=30,
+                            str(result), '--bg', '1a2b3c4d'], cwd=checkout, check=True, timeout=30 * SCALE,
                            env=dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ['PATH'], KIT_WORKER_GRACE='0.2',
                                     KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=str(started)))
             result.write_text(DONE)

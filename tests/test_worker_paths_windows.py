@@ -110,6 +110,9 @@ class WorkerPathsOnWindows(unittest.TestCase):
         workers = self.tmp / '.myagentkit/workers'
         workers.mkdir(parents=True)
         state = workers / 'w1.state'
+        # Spawned workers on a tab host: a name with no record at all is a usage error (exit 2).
+        for name in ('w1', 'w2'):
+            (workers / (name + '.host')).write_text('tab\n')
         absent = self.run_script(paths[0], '--once', 'w1')
         self.assertEqual(absent.returncode, 0, absent.stderr)
         self.assertEqual(absent.stdout, '')
