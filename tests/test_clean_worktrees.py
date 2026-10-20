@@ -2296,7 +2296,7 @@ class CleanWorktreesTests(unittest.TestCase):
                         'refused .claude/worktree-disposable line DOCS (empty',
                         'inside .claude/worktrees of it, which this script does not judge: .Claude/Worktrees/x/f\n',
                         'files with no identical copy in main, outside a disposable folder: CACHE/f, '
-                        'Docs/build/report.md, x/Build/o\n')
+                        'Docs/build/report.md, x/Build/o;')
         self.assertNotIn('untracked and not ignored inside a disposable folder', out)
         self.assertEqual((path / 'Docs/build/report.md').read_text(), 'unique\n')
 
