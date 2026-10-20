@@ -257,6 +257,13 @@ def main(argv=None, result_sink=None, claims=None):
             # --fallback launch the other paid reviewer after the owner had stopped the review.
             if (cancelled or guard.noted) and reason:
                 reason = "cancelled"
+            # #292: a refused model or any other turn.failed/error event left its reason only in
+            # the usage record's raw stdout; the evidence said "No final message".
+            reported = [str(v["error"].get("message", "")) if isinstance(v.get("error"), dict)
+                        else str(v.get("message", "")) for v in values
+                        if v.get("type") in ("error", "turn.failed")]
+            if reason and not failure and any(reported):
+                failure = "\n\n## Failure\n\nCodex reported: " + "\n".join(filter(None, reported))[-4000:]
         status = "failed" if reason else "completed"
         # The exec JSONL interface does not attest actual model identity; App Server's
         # `model/rerouted` is a different interface (KARARLAR B03 inv2#119;

@@ -661,6 +661,25 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[-1]['failure_kind'], None)
                 self.assertEqual(verdicts_of(received[-1]['evidence']) == ['VERDICT: Accept'], clean)
 
+    def test_codex_failed_turn_message_reaches_the_evidence(self):
+        # #292: a refused model's turn.failed message lived only in the usage record's raw stdout.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+        message = "The 'x' model is not supported when using Codex with a ChatGPT account."
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            return dict(exit_code=1, stdout=json.dumps({'type': 'turn.failed', 'error': {'message': message}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        received = []
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=execution), \
+                redirect_stdout(io.StringIO()):
+            codex_bridge.main(['--repo', str(self.repo), '--model', 'x', '--uncommitted'], received.append)
+        self.assertEqual((received[-1]['status'], received[-1]['failure_kind']), ('failed', 'cli_error'))
+        self.assertIn('## Failure\n\nCodex reported: ' + message,
+                      Path(received[-1]['evidence']).read_text(encoding='utf-8'))
+
     def test_codex_does_not_load_the_copys_agents_md_as_instructions(self):
         # #117: Codex loads the root AGENTS.md as instructions; the prompt already names it as
         # evidence to read, so the lead's constitution reached the reviewer twice, once as orders.
