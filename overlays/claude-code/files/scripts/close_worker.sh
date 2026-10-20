@@ -97,7 +97,8 @@
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
 # NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid and
-# NAME.hooks-ignore-spawned, and NAME.merged-running (also gone once the worktree is unlocked);
+# NAME.hooks-ignore-spawned, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
+# NAME.merged-running (also gone once the worktree is unlocked);
 # a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
@@ -456,7 +457,10 @@ background() { [ "$(cat -- "$top/.myagentkit/workers/$1.host" 2>/dev/null)" = bg
 # agent NAME: reads its row (list_workers.sh --row) into bstate bwait bpid bhere bid bcwd; fails
 # with the lister's words in $row when the sessions cannot be listed.
 agent() {
-  row=$(sh "$kit/list_workers.sh" --row "$1" 2>&1) || return 1
+  # The row is the lister's stdout; its words go to stderr, and only a failure keeps them.
+  rowf=$(mktemp) || { row="cannot make a temporary file"; return 1; }
+  if row=$(sh "$kit/list_workers.sh" --row "$1" 2>"$rowf"); then rm -f -- "$rowf"
+  else row=$(cat -- "$rowf"); rm -f -- "$rowf"; return 1; fi
   IFS='	' read -r bstate bwait bpid bhere bid bcwd <<EOF
 $row
 EOF
@@ -560,7 +564,8 @@ for name; do
     fail "$name: a decision waits for its answer in $ask; answer it (spawn_codex.sh --resume), or delete it to abandon the worker, then close again; nothing is done for $name"
     continue
   fi
-  if [ -n "$windows" ] && { [ -e "$record.session" ] || [ "$wt_dir" != "$top" ]; }; then
+  # A bg worker keeps its full sessionId in NAME.session too, and is no Codex worker.
+  if [ -n "$windows" ] && ! background "$name" && { [ -e "$record.session" ] || [ "$wt_dir" != "$top" ]; }; then
     if ! pids=$(codex "$wt_dir"); then
       fail "$name: could not list the Codex processes, so its Codex session may still run: $pids; nothing is done for $name"
       continue
@@ -839,7 +844,8 @@ for name; do
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
-      "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" || fail "$name: could not remove its Codex session records"
+      "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" \
+      "$record.supervisor.log" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

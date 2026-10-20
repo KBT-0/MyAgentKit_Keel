@@ -127,6 +127,7 @@ open(path, 'w').write(''.join(line + '\n' for line in lines if line.split(' ')[0
 # JSON list shaped as the spike saw them, docs/research/worker-orchestration-spike.md, 4); `stop`
 # and `rm` take an id and answer with the CLI's words; every call is logged beside the file.
 # AGENTS_ERROR: a list that cannot be read. AGENTS_STOP_IGNORED: a stop the session survives.
+# AGENTS_NOTICE: a line on stderr before any answer (an update notice).
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 path = os.environ['AGENTS_FILE']
@@ -134,6 +135,8 @@ args = sys.argv[1:]
 with open(path + '.log', 'a') as log:
     log.write(repr(args) + '\n')
 rows = json.load(open(path)) if os.path.exists(path) else []
+if os.environ.get('AGENTS_NOTICE'):
+    sys.stderr.write(os.environ['AGENTS_NOTICE'] + '\n')
 if args[:1] == ['agents']:
     if os.environ.get('AGENTS_ERROR'):
         sys.exit(os.environ['AGENTS_ERROR'])
@@ -498,6 +501,7 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: dry run: would stop its background session aaaa0001 (claude stop) and '
                       'remove its row (claude rm)', out)
         self.assertEqual(self.claude_calls(), [], out)
+        (self.main / '.myagentkit/workers/w1.supervisor.log').write_text('codex_worker: DONE\n')
         out = self.close('w1', **env)
         self.assertEqual(self.claude_calls(), ["['stop', 'aaaa0001']", "['rm', 'aaaa0001']"], out)
         self.assertEqual([r['id'] for r in self.rows()], ['bbbb0002', 'cccc0003'])
@@ -506,7 +510,7 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: worktree removed through the audit', out)
         # Only the audit lists tmux sessions; none is ended in it.
         self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
-        for record in ('w1.host', 'w1.id'):
+        for record in ('w1.host', 'w1.id', 'w1.supervisor.log'):
             self.assertFalse((self.main / '.myagentkit/workers' / record).exists(), record)
         self.assertNotIn('daemon', (self.tmp / 'agents.json.log').read_text())
 
@@ -568,11 +572,24 @@ class CloseWorkerTests(unittest.TestCase):
         env = self.background('w1')
         other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if NT else ('D:/p/RESULT-w1.md', 'windows')
         (self.main / '.myagentkit/workers/w1.result-path').write_text(other + '\n')
-        out = self.close('w1', code=1, **env)
-        self.assertIn('close_worker: FAILED: w1: its background session was started on %s, whose session list '
-                      'this host cannot see: close it there; nothing is done for w1' % word, out)
+        # The lister's stderr (a list this host cannot read) is never read as its row.
+        for extra in ({}, {'AGENTS_ERROR': 'connect ECONNREFUSED'}):
+            out = self.close('w1', code=1, **env, **extra)
+            self.assertIn('close_worker: FAILED: w1: its background session was started on %s, whose session list '
+                          'this host cannot see: close it there; nothing is done for w1' % word, out)
         self.assertEqual(self.claude_calls(), [], out)
         self.assertTrue(path.is_dir(), out)
+
+    def test_a_notice_on_the_listers_stderr_and_a_codex_session_in_the_checkout_leave_a_background_close_alone(self):
+        # `claude agents` may write a notice on stderr: the row is its stdout alone. And a bg worker
+        # (it keeps its full sessionId in NAME.session) is no Codex worker: a Codex session running
+        # in the checkout is not its session.
+        env = self.background('w1', agent('aaaa0001', 'w1', self.main, 'stopped'))
+        (self.main / '.myagentkit/workers/w1.session').write_text('aaaa0001-5137-4293-88d5-c4339d1ce56c\n')
+        env.update(self.windows('5151 "C:\\codex\\codex.exe" -C "%s" exec' % os.path.realpath(self.main)))
+        out = self.close('w1', AGENTS_NOTICE='Update available', **env)
+        self.assertEqual(self.claude_calls(), ["['rm', 'aaaa0001']"], out)
+        self.assertNotIn('Codex', out)
 
     def test_a_merge_leaves_a_running_background_worker_without_a_completed_result(self):
         path = self.worker('w1', session=False)

@@ -16,8 +16,10 @@
 #     subcommand and a quote ends a string. tmux itself accepts more.
 #   - A Claude Code background session (.myagentkit/workers/NAME.host bg) opens nothing: it
 #     prints `claude attach ID` (NAME.id) for the owner to run, because attach needs a terminal
-#     (docs/research/worker-orchestration-spike-posix.md, 7); `claude agents` lists them all. The
-#     steps below are for the rest; with none left it exits 0 there.
+#     (docs/research/worker-orchestration-spike-posix.md, 7); `claude agents` lists them all. One
+#     spawned on the other host (native Windows or WSL, as list_workers.sh --row tells) is attached
+#     there: this host's list cannot see it. The steps below are for the rest; with none left it
+#     exits 0 there.
 #   - Refuses, by name, a session that does not exist (exact match, `-t =NAME`).
 #   - Skips a session that already has a client attached, with a line: running it twice never
 #     opens a second tab.
@@ -68,7 +70,11 @@ tabs=""
 for n in "$@"; do
   if [ "$(cat -- "$wdir/$n.host" 2>/dev/null)" = bg ]; then
     id=$(cat -- "$wdir/$n.id" 2>/dev/null) || id=""
-    say "$n runs in the background: claude attach ${id:-ID}   (claude agents lists every session; nothing opened)"
+    row=$(sh "$(dirname -- "$0")/list_workers.sh" --row "$n" 2>/dev/null) || row=""
+    case $row in
+      "elsewhere	"*) say "$n runs in the background on ${row#*	}, whose sessions this host cannot see: claude attach ${id:-ID} there   (nothing opened)" ;;
+      *) say "$n runs in the background: claude attach ${id:-ID}   (claude agents lists every session; nothing opened)" ;;
+    esac
   else
     tabs="$tabs $n"
   fi

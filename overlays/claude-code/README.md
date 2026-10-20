@@ -192,11 +192,12 @@ worker's `.myagentkit/workers/NAME.state` line, its result file and its supervis
 record instead (WAITING, then the result, then GONE, then IDLE; the script's header). A
 Claude Code background session (`NAME.host` bg), on every host, has no pane either: the
 watcher reads its row in `claude agents --json --all` by `NAME.id`. A file wins over any
-state: a `QUESTION-NAME.md` beside the result path (QUESTION, once), then the result. Then
-`blocked` is WAITING with what it waits for and the `claude attach ID` line; `done`,
-`stopped`, `failed` and a row no longer listed are GONE, except within a minute of the spawn
-or resume and after a question or a final result of this run (the supervisor stops the
-session then). A worker spawned on the other host is ELSEWHERE: the native-Windows and the WSL
+state: a published `QUESTION-NAME.md` in the worker's folder (QUESTION, once), then the
+result. Then `blocked` is WAITING with what it waits for and the `claude attach ID` line;
+`done` with its process still idling is IDLE (a turn end: the lead re-arms the watch);
+`stopped`, `failed`, `done` with no process and a row no longer listed are GONE. Neither
+comes within a minute of the spawn or resume, nor after a published question, completed or
+handoff result of this run (the supervisor stops the session on those alone). A worker spawned on the other host is ELSEWHERE: the native-Windows and the WSL
 lists are disjoint, so it is watched, listed and closed only where it was spawned.
 `scripts/list_workers.sh` prints the same state for every worker at once and changes nothing.
 Exit 3, never "nothing waiting", means the watcher could not
@@ -419,9 +420,10 @@ characters and retry; spaces are refused too. This remedy works on macOS and Lin
 
 The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`, `list_workers.sh`) carry the KIT-OWNED header, so a sync updates them
-where they exist. A copy from before the header is a sync conflict, and the sync copies
-nothing until it is resolved. The sync never installs an overlay file that is absent, so
-moving the copy aside is not enough: keep the old copy aside, copy the kit's current
+where they exist, and install a new one where the project has another of them. A copy from
+before the header is a sync conflict, and the sync copies nothing until it is resolved.
+Moving the copy aside is not enough (with no other script of the overlay left, the sync
+installs nothing): keep the old copy aside, copy the kit's current
 `overlays/claude-code/files/scripts/<name>` into place, then sync. The new copy is kit-owned
 and the next sync overwrites it, so an edit is never carried into it: a project that must
 keep one records it in `docs/GOTCHAS.md` or puts it in a wrapper script of its own.

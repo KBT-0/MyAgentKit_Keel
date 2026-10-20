@@ -95,13 +95,15 @@
 #
 # A Claude Code background session (NAME.host bg, on every host) has no pane and needs no tmux:
 # its row in `claude agents --json --all` (list_workers.sh --row: by NAME.id) is read instead.
-# A file wins over any state: first QUESTION-NAME.md beside the --result path, newer than
+# A file wins over any state: first QUESTION-NAME.md in the worker's folder (.claude/worktrees/NAME,
+# else this checkout: where the supervisor reads it), published (its ready marker) and newer than
 # NAME.result-path (`QUESTION: NAME, a decision waits in PATH`, once per content), then the result
 # as above. Then blocked is WAITING with its waitingFor (`no reason given` when the row names
-# none: docs/research/worker-orchestration-spike-posix.md); done, stopped, failed and absent (no
-# row, as after `claude rm`) are GONE, done with a process still idling says so; working says
-# nothing. A question, or a result other than progress, of this run ended the session by design
-# (the supervisor stops it 10 s later): no GONE then. Nor within a minute of the spawn or resume
+# none: docs/research/worker-orchestration-spike-posix.md); done with a process still idling is
+# IDLE, a turn end the lead re-arms after, as the tab path's; stopped, failed, done with no
+# process and absent (no row, as after `claude rm`) are GONE; working says nothing. A published
+# question, completed or handoff result of this run ended the session by design (the supervisor
+# stops it on those alone, 10 s later): no IDLE or GONE then. Nor within a minute of the spawn or resume
 # (NAME.id or NAME.result-path that new): the spike saw no row at first, and a resumed row reads
 # done until it wakes. Each state (with what it waits for) is said once, in the file
 # NAME.watch-bg, cleared when the session works again. A worker spawned on the other host (native
@@ -307,6 +309,10 @@ report() {
 # bytes and trailing blanks removed.
 bom=$(printf '\357\273\277')
 hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C sed "s/^$bom//" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
+# published FILE: its last non-blank line is the supervisor's ready marker (else still being written).
+published() {
+  [ "$(LC_ALL=C tr -d '\r' <"$1" | LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)" = '<!-- codex-worker: ready -->' ]
+}
 
 # Report NAME's result file and return 0 when it is committed and its tree is clean, or it is
 # not in HEAD and this run published it (the header says how), and this version was not
@@ -350,8 +356,7 @@ report_result() {
     rp=$wdir/$1.result-path
     [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1
     cat -- "$f" >"$body" 2>/dev/null || return 1
-    ready=$(LC_ALL=C tr -d '\r' <"$body" | LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)
-    [ "$ready" = '<!-- codex-worker: ready -->' ] || return 1
+    published "$body" || return 1
     # Hashed as git would store it (eol and attribute filters of its path): a later commit of
     # the same content under core.autocrlf=true has this id and is not reported again.
     blob=$(git -C "$d" hash-object --path="${f##*/}" --stdin <"$body" 2>/dev/null) || return 1
@@ -472,24 +477,28 @@ EOF
     say "watch_workers: ELSEWHERE: $1, its background session was started on $bwait, whose session list this host cannot see: watch it there" || return 2
     setmark "$1" bg "$key"; return 0
   fi
-  # The question first, then the result. A question or a result other than progress, of this
-  # run (newer than NAME.result-path), ended the session by design: no GONE for it.
+  # The question first, then the result. A published question, or a published completed or
+  # handoff result, of this run (newer than NAME.result-path) ends the session by design (the
+  # supervisor stops it on those alone): no IDLE or GONE for it.
   rp=$wdir/$1.result-path; settled=""
-  rfile "$1"
-  if [ -n "$f" ]; then
-    case $f in */*) q=${f%/*}/QUESTION-$1.md ;; *) q=QUESTION-$1.md ;; esac
-    if [ -f "$q" ] && [ ! "$q" -ot "$rp" ]; then
-      settled=1
-      sum=$(cksum <"$q" 2>/dev/null) || sum=""
-      if [ -n "$sum" ] && [ "$(mark "$1" question)" != "$sum" ]; then
-        say "watch_workers: QUESTION: $1, a decision waits in $q: read it and answer it" || return 2
-        setmark "$1" question "$sum"; return 0
-      fi
+  # The question is where the supervisor and the worker's instruction put it: the worker's folder.
+  q=${wdir%/.myagentkit/workers}; [ ! -d "$q/.claude/worktrees/$1" ] || q=$q/.claude/worktrees/$1
+  q=$q/QUESTION-$1.md
+  if [ -f "$q" ] && [ ! "$q" -ot "$rp" ] && published "$q"; then
+    settled=1
+    sum=$(cksum <"$q" 2>/dev/null) || sum=""
+    if [ -n "$sum" ] && [ "$(mark "$1" question)" != "$sum" ]; then
+      say "watch_workers: QUESTION: $1, a decision waits in $q: read it and answer it" || return 2
+      setmark "$1" question "$sum"; return 0
     fi
-    [ ! -f "$f" ] || [ "$f" -ot "$rp" ] || [ "$(hl 1 "$f")" = "Kind: progress" ] || settled=1
   fi
-  w=0; result "$1" || w=$?
-  [ "$w" -eq 1 ] || return "$w"
+  rfile "$1"
+  if [ -n "$f" ] && [ -f "$f" ] && [ ! "$f" -ot "$rp" ] && published "$f"; then
+    case $(hl 1 "$f") in "Kind: completed"|"Kind: handoff") settled=1 ;; esac
+  fi
+  # Not the main loop's w: a report here returns 0, and the caller keeps w as bg() left it.
+  rw=0; result "$1" || rw=$?
+  [ "$rw" -eq 1 ] || return "$rw"
   case $bstate in
     working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""; return 1 ;;
     blocked)
@@ -509,7 +518,8 @@ EOF
     bid=$(cat -- "$wdir/$1.id" 2>/dev/null) || bid=""
     say "watch_workers: GONE: $1, its background session ${bid:-named $1} is no longer listed (claude agents --all): read its result file" || return 2
   elif [ "$bstate" = done ] && [ "$bpid" != - ]; then
-    say "watch_workers: GONE: $1, its background session $bid is done with no new result report; its process still idles (a question in its view, a usage limit or an error, or a park on its own background job): claude attach $bid" || return 2
+    # A turn end, as the tab path's IDLE: the session lives on, and the lead re-arms the watch.
+    say "watch_workers: IDLE: $1, its background session $bid is done with no new result report and its process still idles: a question in its view, a usage limit or an error, or a park on its own background job (it goes on by itself when the job ends): claude attach $bid" || return 2
   else
     say "watch_workers: GONE: $1, its background session $bid is $bstate with no new result report: read its result file" || return 2
   fi
