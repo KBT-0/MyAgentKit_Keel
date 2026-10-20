@@ -1287,6 +1287,9 @@ class BackgroundTests(Base):
         (self.bin / 'claude').chmod(0o755)
         self.workers = self.cwd / '.myagentkit/workers'
         self.workers.mkdir(parents=True)
+        # A checkout: the watcher reads a result only in one (HEAD tells committed from not).
+        for args in (('init', '-q'), ('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')):
+            subprocess.run(['git', *args], cwd=self.cwd, check=True, capture_output=True)
 
     def spawned(self, name, id='aaaa0001', host='bg', age=120):
         """A worker as spawn_worker.sh records it, AGE seconds ago."""
@@ -1307,7 +1310,6 @@ class BackgroundTests(Base):
     def watch(self, *args, **extra):
         return self.run_bg(WATCH, '--once', '--result', 'w1=RESULT-w1.md', *args, 'w1', **extra)
 
-    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
     def test_a_blocked_session_is_waiting_with_what_it_waits_for_once_per_wait(self):
         self.spawned('w1')
         blocked = agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='waiting',
@@ -1324,7 +1326,6 @@ class BackgroundTests(Base):
         self.assertEqual(self.watch().stdout, waiting, 'a new wait after work was not reported')
         self.assertEqual(self.log('tmux'), '', 'tmux was asked about a background session')
 
-    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
     def test_an_ended_or_removed_session_is_gone_unless_its_result_says_more(self):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=28256, status='idle'))
@@ -1348,14 +1349,12 @@ class BackgroundTests(Base):
         self.assertEqual(self.watch().stdout, 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none '
                          '(result file RESULT-w1.md)\n')
 
-    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
     def test_a_session_just_spawned_and_not_yet_listed_is_not_gone(self):
         # The spike saw no row for the first seconds after the launch.
         self.spawned('w1', age=0)
         self.rows()
         self.assertEqual(self.watch().stdout, '')
 
-    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
     def test_a_question_file_wins_over_the_state(self):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'done'))
@@ -1364,7 +1363,6 @@ class BackgroundTests(Base):
                          'read it and answer it\n')
         self.assertEqual(self.watch().stdout, '')
 
-    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
     def test_a_list_that_cannot_be_read_is_an_observation_failure(self):
         self.spawned('w1')
         self.rows()
@@ -1373,7 +1371,41 @@ class BackgroundTests(Base):
         self.assertIn('watch_workers: w1: could not list the background sessions: ', result.stderr)
         self.assertIn('connect ECONNREFUSED', result.stderr)
 
-    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_a_blocked_session_that_names_nothing_is_waiting_all_the_same(self):
+        # POSIX spike: blocked may come with no waitingFor.
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288))
+        self.assertEqual(self.watch().stdout, 'watch_workers: WAITING: w1, waiting for: no reason given (background '
+                         'session aaaa0001, state blocked)\n  look at it: claude attach aaaa0001   (claude agents lists '
+                         'every session)\n')
+
+    def test_a_question_or_a_final_result_ends_the_session_without_a_gone(self):
+        # The supervisor stops a session 10 s after its question or final result: no GONE then.
+        self.spawned('w1')
+        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=1))
+        self.assertIn('QUESTION: w1', self.watch().stdout)
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        self.assertEqual(self.watch().stdout, '')
+        (self.cwd / 'QUESTION-w1.md').unlink()
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('progress', 'more') + '\n<!-- codex-worker: ready -->\n')
+        self.assertIn('PROGRESS: w1', self.watch().stdout)
+        self.assertIn('GONE: w1, its background session aaaa0001 is stopped', self.watch().stdout,
+                      'a progress result hid a session that ended')
+
+    def test_a_session_started_on_the_other_host_is_reported_once_and_listed_as_elsewhere(self):
+        # The native-Windows and the WSL lists are disjoint (POSIX spike, 9): no row is no proof.
+        self.spawned('w1')
+        other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if os.name == 'nt' else ('D:/p/RESULT-w1.md', 'windows')
+        (self.workers / 'w1.result-path').write_text(other + '\n')
+        self.rows()
+        result = self.watch(AGENTS_ERROR='not this host')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'watch_workers: ELSEWHERE: w1, its background session was started on %s, '
+                         'whose session list this host cannot see: watch it there\n' % word)
+        self.assertEqual(self.watch().stdout, '')
+        self.assertIn('w1\tbg\taaaa0001\telsewhere:%s\t-\tn' % word, self.run_bg(LIST).stdout)
+
     def test_show_prints_the_attach_line_and_opens_nothing(self):
         self.spawned('w1')
         result = self.run_bg(SHOW, 'w1', WSL_DISTRO_NAME='Test-1')

@@ -18,7 +18,11 @@
 # with flags starts a copy under the same name (docs/research/worker-orchestration-spike.md, 6).
 # The worker's folder is .claude/worktrees/NAME when it exists, else this checkout. --row prints
 # STATE WAITING-FOR PID HERE ID CWD with a tab between them, HERE y when the row's cwd is the
-# worker's folder, else n (another checkout's session); or `absent`; or `ambiguous` and the ids.
+# worker's folder, else n (another checkout's session); or `absent`; or `ambiguous` and the ids;
+# or `elsewhere` and windows or posix: the native-Windows and the WSL lists are disjoint (two
+# daemons: docs/research/worker-orchestration-spike-posix.md, 9), so a worker whose
+# NAME.result-path has the other host's form (D:/x on native Windows, /x on POSIX) is never
+# looked up here (the list shows STATE elsewhere:HOST).
 # Exit 2 on a usage error, and with --row when `claude agents` cannot answer (its words on stderr).
 set -u
 
@@ -39,16 +43,15 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
 # Git for Windows: the Windows Python reads D:/x, never /d/x.
 ! command -v cygpath >/dev/null 2>&1 || top=$(cygpath -m "$top")
 wdir=$top/.myagentkit/workers
-json=""
+json="" listed=y
 if [ "$mode" = row ] || grep -qsx bg "$wdir"/*.host; then
   if ! json=$(claude agents --json --all 2>&1); then
     say "claude agents --json --all failed: $json" >&2
-    [ "$mode" = list ] || exit 2
-    json=""
+    json="" listed=n
   fi
 fi
-printf '%s' "$json" | $kit_python -I -c 'import json, os, subprocess, sys
-mode, wdir, top, name = sys.argv[1:]
+printf '%s' "$json" | $kit_python -I -c 'import json, os, re, subprocess, sys
+mode, wdir, top, name, listed = sys.argv[1:]
 raw = sys.stdin.buffer.read().decode("utf-8", "replace")
 rows = None
 if raw.strip():
@@ -77,7 +80,19 @@ def same(a, b):
 def field(v):
     return "-" if v in (None, "") else " ".join(str(v).split())
 
+# The native-Windows and the WSL `claude agents` lists are disjoint (two daemons: POSIX spike, 9).
+# NAME.result-path, which spawn_worker.sh writes in its host form (D:/x on native Windows), names it.
+def host_of(path):
+    if re.match(r"[A-Za-z]:[/\\]", path):
+        return "windows"
+    return "posix" if path.startswith("/") else ""
+
 def row(n):
+    spawned = host_of(read(n, "result-path"))
+    if spawned and spawned != ("windows" if sys.platform in ("win32", "cygwin", "msys") else "posix"):
+        return ["elsewhere", spawned]
+    if rows is None:
+        return ["?"]
     i, here = read(n, "id"), folder(n)
     if i:
         found = [r for r in rows if i in (r.get("id"), r.get("sessionId"))]
@@ -95,10 +110,11 @@ def out(fields):
     sys.stdout.buffer.write(("\t".join(fields) + "\n").encode("utf-8"))
 
 if mode == "row":
-    if rows is None:
-        raw.strip() or sys.stderr.write("list_workers: claude agents --json --all printed nothing\n")
+    r = row(name)
+    if r == ["?"]:
+        raw.strip() or listed == "n" or sys.stderr.write("list_workers: claude agents --json --all printed nothing\n")
         sys.exit(2)
-    out(row(name))
+    out(r)
     sys.exit(0)
 names = set()
 for entry in (os.listdir(wdir) if os.path.isdir(wdir) else []):
@@ -109,8 +125,10 @@ out(["NAME", "HOST", "ID", "STATE", "WAITING-FOR", "RESULT"])
 for n in sorted(names):
     host, waiting = read(n, "host"), "-"
     if host == "bg":
-        r = row(n) if rows is not None else ["?"]
+        r = row(n)
         state, waiting = r[0], (r[1] if len(r) > 1 else "-")
+        if state == "elsewhere":
+            state, waiting = "elsewhere:" + waiting, "-"
     elif host == "tmux":
         alive = subprocess.run(["sh", "-c", "tmux has-session -t \"=$1\"", "sh", n],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -119,4 +137,4 @@ for n in sorted(names):
         state = "-"
     result = os.path.join(top, read(n, "result-path") or os.path.join(folder(n), "RESULT-%s.md" % n))
     out([n, field(host), field(read(n, "id")), state, waiting, "y" if os.path.isfile(result) else "n"])
-' "$mode" "$wdir" "$top" "$name"
+' "$mode" "$wdir" "$top" "$name" "$listed"

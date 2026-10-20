@@ -561,6 +561,19 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertTrue(path.is_dir(), out)
         self.assertTrue((self.main / '.myagentkit/workers/w1.id').exists())
 
+    def test_a_background_worker_started_on_the_other_host_is_never_closed_here(self):
+        # The native-Windows and the WSL `claude agents` lists are disjoint (POSIX spike, 9): a row
+        # missing here is no proof the session ended. NAME.result-path's form names the spawn's host.
+        path = self.worker('w1', session=False)
+        env = self.background('w1')
+        other, word = ('/mnt/d/p/RESULT-w1.md', 'posix') if NT else ('D:/p/RESULT-w1.md', 'windows')
+        (self.main / '.myagentkit/workers/w1.result-path').write_text(other + '\n')
+        out = self.close('w1', code=1, **env)
+        self.assertIn('close_worker: FAILED: w1: its background session was started on %s, whose session list '
+                      'this host cannot see: close it there; nothing is done for w1' % word, out)
+        self.assertEqual(self.claude_calls(), [], out)
+        self.assertTrue(path.is_dir(), out)
+
     def test_a_merge_leaves_a_running_background_worker_without_a_completed_result(self):
         path = self.worker('w1', session=False)
         env = self.background('w1', agent('aaaa0001', 'w1', path, 'working', pid=5))

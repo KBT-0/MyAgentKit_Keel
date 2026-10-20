@@ -61,6 +61,8 @@
 # already gone is nothing to end; a list that cannot be read, or a session its stop leaves
 # running, fails the close with the worktree untouched. `claude daemon stop` is never run: it
 # ends every background session, the owner's too. After a removal NAME.id and NAME.host go too.
+# A worker spawned on the other host (native Windows or WSL, whose session lists are disjoint;
+# list_workers.sh tells by NAME.result-path) is refused: a row missing here proves nothing.
 # Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
 # claude.exe whose command line holds `-n NAME` and whose process id spawn_worker.sh recorded in
 # .myagentkit/workers/NAME.pid (names are machine-wide there: another checkout's session of the
@@ -469,6 +471,7 @@ agent_live() {
 live() {
   if background "$1"; then
     agent "$1" || { printf '%s' "its background sessions cannot be listed ($row)"; return 0; }
+    [ "$bstate" != elsewhere ] || { printf '%s' "its background session was started on $bwait, whose session list this host cannot see"; return 0; }
     [ "$bhere" = y ] && agent_live || return 1
     printf '%s' "its background session $bid still runs ($bstate)"; return 0
   fi
@@ -594,6 +597,9 @@ for name; do
   if background "$name"; then
     if ! agent "$name"; then
       fail "$name: could not list the background sessions, so $name may still run: $row; its worktree is not touched"
+      continue
+    elif [ "$bstate" = elsewhere ]; then
+      fail "$name: its background session was started on $bwait, whose session list this host cannot see: close it there; nothing is done for $name"
       continue
     elif [ "$bstate" = absent ]; then
       id=$(cat -- "$record.id" 2>/dev/null) || id=""

@@ -14,6 +14,10 @@
 #   - Refuses a session name outside [A-Za-z0-9_-], by name: the name crosses into a Windows
 #     command line or an AppleScript string, where `;` starts another Windows Terminal
 #     subcommand and a quote ends a string. tmux itself accepts more.
+#   - A Claude Code background session (.myagentkit/workers/NAME.host bg) opens nothing: it
+#     prints `claude attach ID` (NAME.id) for the owner to run, because attach needs a terminal
+#     (docs/research/worker-orchestration-spike-posix.md, 7); `claude agents` lists them all. The
+#     steps below are for the rest; with none left it exits 0 there.
 #   - Refuses, by name, a session that does not exist (exact match, `-t =NAME`).
 #   - Skips a session that already has a client attached, with a line: running it twice never
 #     opens a second tab.
@@ -57,6 +61,21 @@ for n in "$@"; do
     ""|*[!A-Za-z0-9_-]*) die "refused session name '$n': only letters, digits, - and _ are opened here (it would cross into a Windows command line or an AppleScript string); attach by hand" ;;
   esac
 done
+# A Claude Code background session (.myagentkit/workers/NAME.host bg) has no tab to open: its
+# attach line is printed for the owner, never run (`claude attach` needs a terminal).
+wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
+tabs=""
+for n in "$@"; do
+  if [ "$(cat -- "$wdir/$n.host" 2>/dev/null)" = bg ]; then
+    id=$(cat -- "$wdir/$n.id" 2>/dev/null) || id=""
+    say "$n runs in the background: claude attach ${id:-ID}   (claude agents lists every session; nothing opened)"
+  else
+    tabs="$tabs $n"
+  fi
+done
+[ -n "$tabs" ] || exit 0
+# shellcheck disable=SC2086 # names are [A-Za-z0-9_-]: split on purpose
+set -- $tabs
 command -v tmux >/dev/null || die "tmux is not installed"
 missing=""
 for n in "$@"; do tmux has-session -t "=$n" 2>/dev/null || missing="$missing $n"; done
