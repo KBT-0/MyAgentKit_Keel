@@ -710,15 +710,17 @@ class WorkingModeTests(unittest.TestCase):
         finally:
             link.rmdir()
 
-    def test_solo_reviews_with_another_tier_of_the_same_family_and_no_second_vendor(self):
+    def test_solo_reviews_with_at_least_the_authors_tier_in_a_fresh_session_and_no_second_vendor(self):
         result = self.run_mode('solo')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Current mode: solo', result.stdout)
-        self.assertIn('the author and the reviewer are different tiers', result.stdout)
-        self.assertIn('fresh\n  bridged session with no shared context', result.stdout)
-        self.assertIn('REVIEW_CLAUDE_MODEL', result.stdout)
-        self.assertIn("A second session of the author's own tier\n  is never the review", result.stdout)
-        self.assertIn('no second vendor runs', result.stdout)
+        out = ' '.join(result.stdout.split())
+        self.assertIn("the reviewer is at least the author's tier", out)
+        self.assertIn('Fable, the top tier, authors and Fable reviews it in a fresh session', out)
+        self.assertIn('each run in a fresh bridged session with no shared context', out)
+        self.assertIn('REVIEW_CLAUDE_MODEL', out)
+        self.assertIn("A second session of the author's own tier below the top is never the review", out)
+        self.assertIn('no second vendor runs', out)
         self.assertNotIn('#### saver', result.stdout)
         self.assertNotIn('#### cross', result.stdout)
 
