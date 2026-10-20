@@ -14,7 +14,7 @@ because it spends budget beyond the gate. Agents do not start it on their own.
 **The author never reviews its own patch; who reviews is the working mode's table**
 (`docs/REVIEW_GATE.md`, "Invariant"). `scripts/review.sh` ships adapters for `--reviewer claude` and
 `--reviewer codex`; the project's configured default is at the top of that script, and in
-the solo mode `REVIEW_CLAUDE_MODEL` is pinned to the tier that did not write the change. A
+the solo mode `REVIEW_CLAUDE_MODEL` pins the Claude tier that reviews. A
 second vendor is pluggable, never required. **You may be the author here.** If this session
 wrote the diff, the reviewer is at least your tier, whatever the default says: a stronger
 tier, or your own top tier in a fresh session (`docs/REVIEW_GATE.md`, "Invariant"); set the

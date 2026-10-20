@@ -24,7 +24,7 @@ self-review was in the same session, not a fresh one (`docs/research/ai-review-w
 [1] and [25]); the tier order is the owner's choice (2026-10-19). This is the one place the
 rule is written; other documents point here. One family is enough; a second vendor
 (`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. No published
-measurement says how much another tier of the same family adds. The lead names the author's
+measurement says how much a second tier of the same family adds. The lead names the author's
 model in `MYAGENTKIT_AUTHOR` and its effort in `MYAGENTKIT_AUTHOR_EFFORT` (high when unset);
 `scripts/review.sh` then refuses a reviewer pin of the author's tier (the top tier excepted) or
 of a weaker tier, and a review named below the author's effort (with none named, the review runs

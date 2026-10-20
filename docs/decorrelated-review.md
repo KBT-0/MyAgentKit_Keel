@@ -5,16 +5,16 @@ is careless — because it is inside the assumption. The reasoning that produced
 still in its context, still looking correct, and asking it to check its own work mostly
 produces a confident restatement of the same reasoning.
 
-So: **review happens in a FRESH session, never on the author's own model.** Who takes it is
-the working mode's call (`core/docs/REVIEW_GATE.md`, "Invariant"): another tier of the same
-family in solo, the other family in cross.
+So: **review happens in a FRESH session.** Who takes it is the working mode's call
+(`core/docs/REVIEW_GATE.md`, "Invariant"): in solo a tier of the same family at least the
+author's, the top tier reviewing its own work; in cross, the other family.
 
 Fresh matters because a new session reads the diff as evidence rather than as a memory.
 Another model matters too: two agents of the same model share their blind spots, so running
 three of them gives one opinion with error bars, not three opinions. A second family is
 welcome, never required: it reduces correlated blind spots but does not remove them, and the
 one controlled measurement found the direction asymmetric (`docs/research/claude-lead-codex.md`,
-finding 4). No published measurement says how much another tier of the same family adds. Every
+finding 4). No published measurement says how much a second tier of the same family adds. Every
 review record names the reviewer's model, and the author's model when the lead sets
 `MYAGENTKIT_AUTHOR`; with it, `scripts/review.sh` refuses a reviewer of a weaker tier, or of
 the author's tier below the family's top.

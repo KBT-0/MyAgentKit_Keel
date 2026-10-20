@@ -517,8 +517,13 @@ class SectionPointerTests(unittest.TestCase):
         # rsel3: the top tier reviews itself in a fresh session (Invariant), so WORKFLOW never sends
         # a review to "another tier" or "the tier that did not write the change"; the effort rule
         # holds for every required review and is written once, in REVIEW_GATE.
-        self.assertNotIn('another tier of the same family', workflow)
-        self.assertNotIn('the tier that did not write the change', workflow)
+        # rsel4: nor any other doc the kit ships or keeps (reviews are archived evidence).
+        for path in [*ROOT.glob('*.md'), *[p for d in ('core', 'plugin', 'plugins', 'overlays', 'setup', 'docs')
+                                           for p in (ROOT / d).glob('**/*.md')]]:
+            if 'reviews' not in path.relative_to(ROOT).parts:
+                text = ' '.join(path.read_text(encoding='utf-8').split())
+                self.assertEqual([p for p in ('another tier of the same family', 'the tier that did not write',
+                                              "another Claude tier than the author's") if p in text], [], path)
         self.assertNotIn("effort or above, high at most", workflow)
         self.assertIn("Every required review runs at an effort equal to or above the author's, high at most",
                       ' '.join((ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8').split()))

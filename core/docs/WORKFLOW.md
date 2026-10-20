@@ -785,7 +785,8 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   (owner decision, 2026-10-15). Claude reviews what Codex wrote. Codex reviews what Claude
   wrote, a low-tier change's light pass included, one pass, report only, at medium effort, and
   the lead checks each Codex finding before it enters a fix round. When Codex's allowance is
-  exhausted, another Claude tier than the author's takes the review, and the lead records the
+  exhausted, a Claude tier at least the author's takes the review (`docs/REVIEW_GATE.md`,
+  "Invariant"), and the lead records the
   switch in the task's STATE line and reports it. A high-tier change has two focus reviewers
   under one label (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the
   strongest Claude tier takes one focus and Codex the other. Findings go to the author's side

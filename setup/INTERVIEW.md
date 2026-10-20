@@ -169,7 +169,8 @@ One topic per turn. Suggested order, because each answer informs the next:
 
    - **Which model family is the AUTHOR?** The one that writes most of the code. The kit's
      default is one family alone (`solo`, `docs/WORKFLOW.md`, "Working modes, by name"):
-     one tier writes and another tier of the same family reviews, each in a fresh session.
+     one tier writes and a tier of the same family at least the author's reviews in a fresh
+     session (`docs/REVIEW_GATE.md`, "Invariant").
      The family is Claude unless the owner names another (`solo "family: codex"`).
    - **Is there a SECOND vendor?** Only then do both families write, each task by fit,
      and each reviews the other (`cross`), with Claude as the lead.
@@ -193,9 +194,9 @@ One topic per turn. Suggested order, because each answer informs the next:
    `--reviewer codex`. So:
 
    - Check which are installed: `command -v claude`, `command -v codex`. Do not assume
-     either way — report what you found. One is enough: in `solo` a second tier of the same
-     family reviews through `--reviewer claude` with `REVIEW_CLAUDE_MODEL` pinned to the
-     tier that did not write. A second vendor is pluggable, never required.
+     either way — report what you found. One is enough: in `solo` the same family reviews
+     through `--reviewer claude` with `REVIEW_CLAUDE_MODEL` pinned to a tier at least the
+     author's (`docs/REVIEW_GATE.md`, "Invariant"). A second vendor is pluggable, never required.
    - If neither is installed, explain the trade: without a review CLI, the review protocol
      becomes the paste-the-template-by-hand version in `docs/REVIEW_RUNNING.md`. That is a
      genuine fallback, and the kit works without it. With it, `/myagentkit:cross-review`
