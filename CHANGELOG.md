@@ -18,6 +18,14 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, 
 prints none of these entries to a project. Tag v0.11 only together with that rename: while
 this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
+- **A changed worktree-disposable list shows what it would remove before it removes it**
+  (#288 point 2; `scripts/clean_worktrees.py`, Claude Code overlay). A removal that takes files
+  only the changed committed list makes disposable waits one `--apply` (the post-merge hook's
+  run): that run prints it as `would remove ...` with the reason, and the next one removes it.
+  The list a full `--apply` ran with is kept in the git directory
+  (`kit-worktree-disposable-applied`); a project with none recorded adopts the list in force.
+  Nothing to do: the next sync brings the script.
+
 - **The project gate keeps every AGENTS.md chain Codex loads under 24 KiB** (#143;
   `scripts/check.sh`, `[agents-size]`). Codex joins the AGENTS.md of each folder from the root
   down to the one it works in and drops, without a word, what passes 32 KiB

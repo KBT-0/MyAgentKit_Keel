@@ -894,7 +894,7 @@ def audit(record, ctx):
         return reasons + ['its path or branch name is not printable UTF-8: the command that brings it back '
                           'could not be printed'], None
     facts = {'real': real, 'name': os.path.basename(real), 'head': record.get('HEAD', b''),
-             'branch': branch, 'delete': [], 'identical': 0, 'disposable': 0, 'bytes': 0,
+             'branch': branch, 'delete': [], 'identical': 0, 'disposable': 0, 'fresh': False, 'bytes': 0,
              'pin': [], 'saved': None, 'holders': {}}
     gitdir = facts['gitdir'] = git(real, 'rev-parse', '--absolute-git-dir').stdout.rstrip(b'\n')
     tracked = facts['tracked'] = set()
@@ -1086,6 +1086,8 @@ def audit(record, ctx):
                 if not is_dir:
                     facts['bytes'] += info.st_size
                     facts['disposable'] += info.st_size
+                if not disposable(rel + b'/x' if is_dir else rel, ctx['before']):
+                    facts['fresh'] = True
                 continue
             # A .git below the root, folder or gitfile, is a nested repository: named as one,
             # never as a list of its git internals (#244).
@@ -1383,10 +1385,23 @@ def main():
         say('clean_worktrees: %s differs from its committed version; only the entries in both apply, with the '
             'higher quiet-minutes: a narrowing protects at once, a widening applies once committed'
             % show(DISPOSABLE_FILE))
+    # A removal that takes files only a changed list makes disposable waits one --apply: that run
+    # prints it as `would remove` instead, so the owner sees what the new list takes (#288). The
+    # list a full --apply ran with is recorded in the git directory; none recorded (a project from
+    # before this) adopts the list in force.
+    # ponytail: one record per run, not per worktree: a worktree kept for another reason when the
+    # list changed is later removed under it without a preview.
+    applied = os.path.join(common, b'kit-worktree-disposable-applied')
+    try:
+        with open(applied, 'rb') as handle:
+            recorded = [line for line in handle.read().split(b'\n') if line]
+    except FileNotFoundError:
+        recorded = None
+    before = entries if recorded is None else recorded
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),
-           'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None,
+           'disposable': entries, 'before': before, 'quiet': quiet, 'unseen': None, 'source': None,
            'mountinfo': os.fsencode(os.environ.get('CLEAN_WORKTREES_MOUNTINFO', '/proc/self/mountinfo')),
            'stamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ').encode(),
            'unlogged': False,
@@ -1441,7 +1456,12 @@ def main():
         announce = ['remove %s (branch %s, %d identical files, %d disposable bytes, %d bytes)'
                     % (show(shown), show(short(facts['branch'])), facts['identical'], facts['disposable'],
                        facts['bytes'])] + ([saves(facts)] if facts['pin'] else [])
-        if args.apply:
+        if args.apply and facts['fresh']:
+            outcome = 'kept'
+            say('would remove %s' % announce[0][len('remove '):])
+            say('         - not yet: files only the changed %s makes disposable go with it; the next '
+                '--apply removes it' % show(DISPOSABLE_FILE))
+        elif args.apply:
             outcome = remove(record, facts, ctx, shown, announce)
         else:
             outcome = 'removed'
@@ -1471,6 +1491,10 @@ def main():
     elif ctx['source'] and removed:
         say('clean_worktrees: %d processes could not be inspected; the quiet period covers a worker this '
             'scan cannot see' % ctx['unseen'])
+    in_force = sorted(set(ctx['disposable']))
+    if args.apply and args.only is None and not (STOP or ctx['unlogged']) and recorded != in_force:
+        with open(applied, 'wb') as handle:
+            handle.write(b''.join(entry + b'\n' for entry in in_force))
     if args.apply:
         say('clean_worktrees: removed %d, kept %d, %s%sfreed %d bytes; log: %s%s'
             % (removed, kept, 'PARTLY MODIFIED %d (above: what may be gone, and how it comes back), '

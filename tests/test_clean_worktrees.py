@@ -2344,10 +2344,34 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertIn('clean_worktrees: .claude/worktree-disposable differs from its committed version; only '
                       'the entries in both apply', out)
         self.assertKept(path, out, 'outside a disposable folder: build/scratch.py')
-        # The dry run reports what a removal would do; once committed, the entry applies.
+        # The dry run reports what a removal would do; once committed, the entry applies after the
+        # one --apply that previews it.
         self.assertKept(path, self.run_script(), 'outside a disposable folder: build/scratch.py')
         self.git('commit', '-q', '-am', 'build is disposable')
+        self.assertIn('would remove .claude/worktrees/done', self.run_script('--apply'))
         self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_changed_disposable_list_previews_its_removals_before_the_next_apply_makes_them(self):
+        # #288 point 2: a new entry took uncopied scratch at the next merge, unseen by the owner.
+        self.disposable('build\n')
+        self.git('add', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        old = self.worktree('old')
+        (old / 'build').mkdir()
+        (old / 'build/out.o').write_text('o\n')
+        new = self.worktree('new')
+        (new / 'out').mkdir()
+        (new / 'out/scratch.log').write_text('only here\n')
+        out = self.run_script('--apply')
+        self.assertRemoved(old, out)  # no list recorded yet: the one in force is adopted
+        self.assertKept(new, out, 'outside a disposable folder: out/scratch.log')
+        self.disposable('build\nout\n')
+        self.git('commit', '-q', '-am', 'out is disposable')
+        out = self.run_script('--apply', '--quiet')  # what the post-merge hook runs
+        self.assertIn('would remove .claude/worktrees/new (branch worktree-new, 0 identical files, ', out)
+        self.assertIn('not yet: files only the changed .claude/worktree-disposable makes disposable', out)
+        self.assertTrue((new / 'out/scratch.log').is_file())
+        self.assertRemoved(new, self.run_script('--apply'))
 
     def test_an_uncommitted_narrowing_of_the_disposable_list_protects_at_once(self):
         # Round-1 review of #288: following the committed list alone, a removal took uncopied
