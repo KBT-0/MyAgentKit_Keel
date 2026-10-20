@@ -11,14 +11,14 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins/myagentkit"
 MANIFEST = PLUGIN / ".codex-plugin/plugin.json"
-STAMP = re.compile(rb"This plugin is kit v\d+\.\d+\.")
+STAMP = re.compile(rb"This plugin is kit v\d+(?:\.\d+)+\.")
 
 
 def stamped():
     """Each Claude command and Codex skill names the plugin's kit version, which it compares with
     the project's docs/kit/.kit-version (#156): (path, its bytes, its bytes stamped) per file."""
     kit = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
-    line = b"This plugin is kit v%s." % ".".join(kit.split(".")[:2]).encode()
+    line = b"This plugin is kit v%s." % kit.encode()
     for path in sorted((ROOT / "plugin/commands").glob("*.md")) + sorted(PLUGIN.glob("skills/*/SKILL.md")):
         data = path.read_bytes()
         yield path, data, STAMP.sub(line, data)

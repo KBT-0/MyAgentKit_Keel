@@ -121,18 +121,18 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=8, test_context_buckets=8, test_owns_check=9),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 2, 'test_bootstrap': 39 if case_folds() else 38, 'test_acceptance': 20,
+    'tests': {'test_packaging': 3, 'test_bootstrap': 39 if case_folds() else 38, 'test_acceptance': 20,
               'test_review_upgrade': 5 if os.name == 'nt' else 6,
-              'test_scan_gate': 1, 'test_gate_checks': 12 if symlinks_work() else 11, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
+              'test_scan_gate': 1, 'test_gate_checks': 14 if symlinks_work() else 13, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 20, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
-              'test_sync_kit': 56 if case_folds() else 55, 'test_doctor': 11, 'test_git_hooks': 37, 'test_stop_hook': 11, 'test_context_hook': 14, 'test_communication_hooks': 37, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 66 if os.name == 'nt' else 65, 'test_guard_boundaries': 3, 'test_guard_private_email': 11,
+              'test_sync_kit': 57 if case_folds() else 56, 'test_doctor': 11, 'test_git_hooks': 37, 'test_stop_hook': 11, 'test_context_hook': 14, 'test_communication_hooks': 37, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 66 if os.name == 'nt' else 65, 'test_guard_boundaries': 3, 'test_guard_private_email': 11,
               'test_spawn_worker': 59 if os.name == 'nt' else 79, 'test_spawn_codex': 52 if os.name == 'nt' else 59 if shutil.which('dash') else 58,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 62 if os.name == 'nt' else 64 if Path('/proc/self/fd').is_dir() else 63, 'test_working_mode': 52,
               'test_worker_visibility': 77 if os.name == 'nt' or os.path.exists('/dev/full') else 76, 'test_doc_pointers': 28,
               'test_usage_summary': 29, 'test_done_audits': 2,
-              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 141, 'test_clean_worktrees_windows': 18 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 20 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 40 if os.name == 'nt' else 39, 'test_python_fallback': 3,
               'test_install': 12 if os.name == 'nt' else 8},

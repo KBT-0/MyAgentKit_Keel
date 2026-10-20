@@ -303,6 +303,9 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.git('commit', '-q', '-am', 'the root build is disposable')
         self.assertKept(path, self.run_script('--apply'), 'outside a disposable folder: src/build/scratch.py')
         (path / 'src/build/scratch.py').unlink()
+        # Kept for another reason when /build came in, it keeps the list before it: build/out.o
+        # is previewed once.
+        self.assertIn('would remove .claude/worktrees/done', self.run_script('--apply'))
         out = self.run_script('--apply')
         self.assertFalse(path.exists(), out)
 
@@ -333,6 +336,42 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertTrue((new / 'out/scratch.py').is_file())
         out = self.run_script('--apply')
         self.assertFalse(new.exists(), out)
+
+    @windows_only
+    def test_an_only_run_previews_then_removes_and_a_kept_worktree_keeps_the_list_it_was_covered_by(self):
+        # Round-1 review of #288 point 2 (tests/test_clean_worktrees.py proves it on POSIX):
+        # close_worker.sh's --apply --only=NAME previewed forever, as only a full --apply recorded
+        # the list; a dry run called the preview a removal; and a worktree kept when the list
+        # changed was later removed under the new list unseen.
+        disposable = self.main / '.claude/worktree-disposable'
+        disposable.parent.mkdir()
+        disposable.write_text('build\n')
+        (self.main / '.gitignore').write_text('build/\nout/\n/.claude/worktrees/\n')
+        self.git('add', '.gitignore', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        new, held = self.worktree('new'), self.worktree('held')
+        for path in (new, held):
+            (path / 'out').mkdir()
+            (path / 'out/scratch.py').write_text('only here\n')
+        self.git('worktree', 'lock', str(held))
+        self.run_script('--apply')
+        disposable.write_text('build\nout\n')
+        self.git('commit', '-q', '-am', 'out is disposable')
+        out = self.run_script('--only=new')
+        self.assertIn('would preview .claude/worktrees/new (branch worktree-new, ', out)
+        self.assertIn('dry run: would remove 0, keep 1,', out)
+        out = self.run_script('--apply', '--only=new', '--no-quiet')
+        self.assertIn('would remove .claude/worktrees/new (branch worktree-new, ', out)
+        self.assertTrue((new / 'out/scratch.py').is_file(), out)
+        out = self.run_script('--apply', '--only=new', '--no-quiet')
+        self.assertFalse(new.exists(), out)
+        self.assertKept(held, self.run_script('--apply'), 'locked (git worktree lock)')
+        self.git('worktree', 'unlock', str(held))
+        out = self.run_script('--apply')
+        self.assertIn('would remove .claude/worktrees/held (branch worktree-held, ', out)
+        self.assertTrue((held / 'out/scratch.py').is_file(), out)
+        out = self.run_script('--apply')
+        self.assertFalse(held.exists(), out)
 
     @windows_only
     def test_an_uncommitted_narrowing_of_the_disposable_list_protects_at_once(self):

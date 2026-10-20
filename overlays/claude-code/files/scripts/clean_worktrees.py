@@ -347,6 +347,40 @@ def disposable(rel, entries):
     return False
 
 
+def read_list(path, damaged):
+    """The disposable entries recorded at PATH: None when there is no record, DAMAGED when it
+    cannot be read."""
+    try:
+        with open(path, 'rb') as handle:
+            return [line for line in handle.read().split(b'\n') if line]
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return damaged
+
+
+def write_list(path, entries):
+    """Records ENTRIES at PATH whole or not at all (a file beside it, renamed over it); whether
+    it did."""
+    part = path + b'.%d' % os.getpid()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(part, 'wb') as handle:
+            handle.write(b''.join(entry + b'\n' for entry in sorted(set(entries))))
+        os.replace(part, path)
+        return True
+    except OSError:
+        drop(part)
+        return False
+
+
+def drop(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def mount_points(path):
     """The mount points the mount table PATH lists (Linux: /proc/self/mountinfo, its fifth field
     with its octal escapes read back); none where there is no such file outside Linux, where a
@@ -1388,16 +1422,15 @@ def main():
     # A removal that takes files only a changed list makes disposable waits one --apply: that run
     # prints it as `would remove` instead, so the owner sees what the new list takes (#288). The
     # list a full --apply ran with is recorded in the git directory; none recorded (a project from
-    # before this) adopts the list in force.
-    # ponytail: one record per run, not per worktree: a worktree kept for another reason when the
-    # list changed is later removed under it without a preview.
+    # before this) adopts the list in force. Each worktree has its own record beside it, the list
+    # its preview ran under: an --only run (close_worker.sh) previews and then removes its own
+    # worktree, and a worktree an --apply kept for any reason keeps the list it was covered by, so
+    # a full run's newer list never removes it unseen. A record that cannot be read covers nothing.
     applied = os.path.join(common, b'kit-worktree-disposable-applied')
-    try:
-        with open(applied, 'rb') as handle:
-            recorded = [line for line in handle.read().split(b'\n') if line]
-    except FileNotFoundError:
-        recorded = None
+    previewed = os.path.join(common, b'kit-worktree-disposable-previewed')
+    recorded = read_list(applied, [])
     before = entries if recorded is None else recorded
+    in_force = sorted(set(entries))
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),
@@ -1437,15 +1470,23 @@ def main():
         elif args.no_quiet:
             say('clean_worktrees: --no-quiet: the quiet period is not applied to %s' % shown)
     removed = kept = partly = moved = freed = 0
-    gone = []
+    gone, mine, unrecorded = [], set(), False
     for record in records:
         shown = os.path.realpath(record['worktree'])
+        own = os.path.join(previewed, hashlib.sha256(shown).hexdigest().encode())
+        mine.add(os.path.basename(own))
+        pinned = read_list(own, [])
+        ctx['before'] = before if pinned is None else pinned
         if shown.startswith(main_root + os.sep.encode()):
             shown = shown[len(main_root) + 1:]
         try:
             reasons, facts = audit(record, ctx)
         except Exception as error:  # any error is a keep, never a crash halfway through a run
             reasons, facts = ['not proven: %s' % (error or type(error).__name__)], None
+        # Kept under the list it was covered by, while the full run's record moves on.
+        if args.apply and pinned is None and sorted(set(before)) != in_force and (
+                reasons or not facts['fresh']) and not write_list(own, before):
+            unrecorded = True
         if reasons:
             kept += 1
             if not args.quiet:
@@ -1459,8 +1500,18 @@ def main():
         if args.apply and facts['fresh']:
             outcome = 'kept'
             say('would remove %s' % announce[0][len('remove '):])
+            if write_list(own, in_force):
+                say('         - not yet: files only the changed %s makes disposable go with it; the next '
+                    '--apply removes it' % show(DISPOSABLE_FILE))
+            else:
+                unrecorded = True
+                say('         - not yet: files only the changed %s makes disposable go with it, and this '
+                    'preview could not be recorded: the next --apply previews it again' % show(DISPOSABLE_FILE))
+        elif facts['fresh']:
+            outcome = 'kept'
+            say('would preview %s' % announce[0][len('remove '):])
             say('         - not yet: files only the changed %s makes disposable go with it; the next '
-                '--apply removes it' % show(DISPOSABLE_FILE))
+                '--apply previews it as `would remove`, the one after removes it' % show(DISPOSABLE_FILE))
         elif args.apply:
             outcome = remove(record, facts, ctx, shown, announce)
         else:
@@ -1468,6 +1519,8 @@ def main():
             for text in announce:
                 say(text)
         if outcome == 'removed':
+            if args.apply:
+                drop(own)
             removed += 1
             freed += facts['bytes']
             gone.append(short(facts['branch']))
@@ -1491,10 +1544,21 @@ def main():
     elif ctx['source'] and removed:
         say('clean_worktrees: %d processes could not be inspected; the quiet period covers a worker this '
             'scan cannot see' % ctx['unseen'])
-    in_force = sorted(set(ctx['disposable']))
-    if args.apply and args.only is None and not (STOP or ctx['unlogged']) and recorded != in_force:
-        with open(applied, 'wb') as handle:
-            handle.write(b''.join(entry + b'\n' for entry in in_force))
+    if args.apply and args.only is None and not (STOP or ctx['unlogged'] or unrecorded):
+        if recorded != in_force and not write_list(applied, in_force):
+            say('clean_worktrees: the list in force could not be recorded in %s; the next --apply '
+                'compares with the one before' % show(applied))
+        # The records of worktrees that are gone.
+        try:
+            with os.scandir(previewed) as found:
+                stale = [item.path for item in found if item.name not in mine]
+        except FileNotFoundError:
+            stale = []
+        for path in stale:
+            drop(path)
+    elif unrecorded:
+        say('clean_worktrees: a worktree\'s list could not be recorded in %s; the list a full --apply ran '
+            'with stays as it was' % show(previewed))
     if args.apply:
         say('clean_worktrees: removed %d, kept %d, %s%sfreed %d bytes; log: %s%s'
             % (removed, kept, 'PARTLY MODIFIED %d (above: what may be gone, and how it comes back), '
