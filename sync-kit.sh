@@ -450,15 +450,21 @@ fi
 # open. The full entries stay in the kit's changelog: printed whole on every run, they made a
 # v0.8 upgrade print 209 KB, seven times what an agent's shell tool shows (#99).
 list=docs/kit/UPGRADE.md
+# The upgrade commit is too big for one review (#114): the kit-owned files equal to the kit's
+# are verified by hash and only the rest is reviewed. A kit that records no commit verifies none.
+review=""
+own_repo && review="./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'"
 render() {
-  awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" '
+  awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" -v review="$review" '
     FILENAME == ck { sub(/\r$/, ""); if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }
     !head { head = 1
       print "# Upgrade checklist, v" from " to v" to; print ""
       print "Written by sync-kit.sh, one box per ACTION item, the oldest version first. Apply each item"
       print "and tick its box (- [x]) when it is done; each one'\''s whole entry is in " src "."
       print "Then rerun sync-kit.sh with --actions-applied: it records v" to " only when every box is"
-      print "ticked, and deletes this file."; print "" }
+      print "ticked, and deletes this file."
+      if (review != "") print "Commit the upgrade, then review that commit: " review " (see docs/REVIEW_RUNNING.md)."
+      print "" }
     { i = index($0, "\t"); t = substr($0, 1, i - 1) ": " substr($0, i + 1); print "- [" (t in done ? "x" : " ") "] " t }
   ' "$1" "$pending"
 }
@@ -570,7 +576,7 @@ fi
 # no git clone of its own; that --merge is given --base). A merge leaves conflict markers for
 # the owner: a stamp over them recorded the version and moved the base while a project-owned
 # file still held both sides (round 1), so it waits until none is left.
-commit=""
+commit="" recorded=0
 if own_repo && commit=$(git -C "$kit" rev-parse -q --verify HEAD); then
   owned_list
   marked=""
@@ -587,6 +593,7 @@ if own_repo && commit=$(git -C "$kit" rev-parse -q --verify HEAD); then
     put "$target/docs/kit/.kit-commit" <<EOF || die "could not write docs/kit/.kit-commit; version left at v$have"
 $commit
 EOF
+    recorded=1
   fi
 fi
 put "$stamp" <<EOF || die "could not write $stamp; version left at v$have"
@@ -594,6 +601,8 @@ $latest
 EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
+[ "$recorded" -eq 0 ] || printf '%s\n' "sync-kit: commit the upgrade, then review that commit:" "          $review" \
+  "          (kit-owned files equal to the kit's are verified by hash, the rest is reviewed; docs/REVIEW_RUNNING.md)"
 [ -n "$(blocked "$list")" ] || [ ! -f "$target/$list" ] || rm -f "$target/$list" ||
   printf '%s\n' "sync-kit: NOTE: $list is done; remove it"
 if [ -s "$copies.stage" ]; then

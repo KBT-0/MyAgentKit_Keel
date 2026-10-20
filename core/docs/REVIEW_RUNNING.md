@@ -84,6 +84,28 @@ Automation never authorizes a commit or push.
   inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
   sessions.
 
+## Kit upgrade commits
+
+A sync's upgrade commit is usually too big for one review (#114). After committing it, run the
+line `sync-kit.sh` prints: `./scripts/review.sh --reviewer claude --commit <upgrade commit>
+--kit-verified --kit '<kit>'` (`--kit` defaults to `~/.myagentkit/kit`; Claude reviewer only).
+**Verified by hash, not reviewed:** a changed file with the `KIT-OWNED` header, with the kit's
+mode and no mode change, that is equal to the kit's file after git's line-ending normalisation
+(`hash-object --path` in the kit clone) at the kit commit `docs/kit/.kit-commit` records in that
+commit. That kit commit must be on a release tag `v*` of the kit clone and, when the commit
+changes `.kit-commit`, descend from the one the parent records (no downgrade). **Reviewed:**
+everything else, the project-owned files and merges and every kit-owned file the project
+edited. A missing `.kit-commit`, a kit clone without that commit, an untagged kit commit, a
+downgrade, a differing file or mode, or a changed path below a kit file's path verifies nothing
+for it, and it stays in the diff. Line-ending churn is checked over every changed file, the
+verified ones too. The verified list (path, blob, kit commit) is in the review evidence and the
+chain record. A commit that is not HEAD is reviewed from an archive of it ("past mode"); a
+`--commit HEAD` still needs a clean checkout. Limits: `BEHAVIOUR.md` is read from the working
+tree, so an appendix edited since the commit fails the review (`unsafe_behaviour_appendix` or
+`stale_checkout`); review the upgrade before editing it. Accepted: a past commit's review
+fingerprints that commit only, decided once when the review starts, so an edit to the working
+tree or a checkout during it does not fail it.
+
 ## Unavailable reviewer
 
 When Codex cannot review critical or high-tier work (its content classifier stopped it,

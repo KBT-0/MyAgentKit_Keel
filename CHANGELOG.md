@@ -189,6 +189,17 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   (gate self-test, acceptance suites, test-time norms and tiers); every proposal about check_kit,
   the gate self-test, test tiers or time budgets cites a numbered finding of it (decision 22).
 
+- **A kit upgrade commit is reviewable** (#114, decision 59). `review.sh --reviewer claude
+  --commit <sha> --kit-verified [--kit DIR]` verifies by hash each changed `KIT-OWNED` file that
+  equals the kit's after git's line-ending normalisation, with the kit's mode and no mode change,
+  at the recorded `docs/kit/.kit-commit` (on a release tag `v*`, never older than the parent's),
+  and reviews only the rest; line-ending churn is checked over every changed file. The verified
+  list is in the evidence and the chain record. The Claude adapter reviews a `--commit` that is
+  not HEAD from an archive of that commit; a `--commit HEAD` still needs a clean checkout. The DIFF_LIMIT refusal names its size and the
+  largest files. `sync-kit.sh` and `docs/kit/UPGRADE.md` print the review line once the kit
+  commit is recorded. **ACTION:** add the "Kit upgrade commits" section to your copy of
+  `docs/REVIEW_RUNNING.md` and its pointer line (end of "Invariant") to `docs/REVIEW_GATE.md`.
+
 ## v0.11 — 2026-10-09
 
 - **Python minimum raised to 3.11:** doctor, gate launchers, syntax checks and CI require Python 3.11+.
