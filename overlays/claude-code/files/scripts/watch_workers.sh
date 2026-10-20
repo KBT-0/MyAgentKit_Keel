@@ -18,7 +18,7 @@
 # `tmux capture-pane`, which costs the worker nothing, and matches its bottom against
 # waiting_patterns.txt beside this script (the rules and why they look at the last line only
 # are explained there). It prints one block per session that is GONE or WAITING, with the
-# last pane lines for a WAITING one, and exits 0. Nothing waiting after --max-minutes
+# last pane lines for a WAITING one and the result report of a GONE one, and exits 0. Nothing waiting after --max-minutes
 # (default 55; 0 checks once, then prints the line) prints one line saying so and exits 0.
 # The 55 minutes stay under the one-hour prompt cache the kit pins (promptCacheTtl "1h" in
 # .claude/settings.json), so a quiet window's wake reads the lead's cache instead of rewriting
@@ -38,7 +38,8 @@
 # and WAITING lines print first, then the result and context lines. Run once per spawn, the
 # watcher stopped watching at the first PROGRESS, QUESTIONS or CONTEXT report (see above).
 #
-# A session that is neither gone nor waiting is checked for two more things:
+# A session that is not waiting is checked for two more things (a GONE one for its result
+# only):
 # - --result NAME=PATH names its result file (docs/HANDOFF.md). Once the file is committed
 #   (it is in HEAD of the tree that holds it) and that tree is clean, its head is read from
 #   the committed blob, never the working file, and the blob must be a regular file:
@@ -67,7 +68,8 @@
 #   runs it before the status line is drawn.
 #   Worktree hook snapshots use the same override; a percentage needs a pane window figure.
 #   Without an override their bands come from context_size.py, once per band per session.
-# The once-markers are user options of the tmux session, so they end with it. Every report
+# The once-markers are user options of the tmux session, so they end with it, but for the
+# result's, kept in .myagentkit/workers/NAME.watch-result too. Every report
 # exits 0; its first line is `watch_workers: KIND: NAME, ...`.
 #
 # Native Windows: a worker is a Windows Terminal tab whose pane nothing can read. The
@@ -177,12 +179,17 @@ cutb() {
     -e "s/[$(printf '\340-\357')][$c]\{0,1\}\$//" -e "s/[$(printf '\360-\367')][$c]\{0,2\}\$//"
 }
 # A once-marker: a user option of the tmux session (on Windows the file $wdir/NAME.watch-KEY).
-# setmark only queues it: the queue is stored after the run's reports are printed, and dropped
-# with them by a run that exits 3. mark reads only the stored option: a name is watched once
-# per run, so its queue is never read.
+# The result marker is that file too, when $wdir exists: it outlives the session, so a result
+# reported while it lived is not reported again once it is GONE (#294). setmark only queues
+# it: the queue is stored after the run's reports are printed, and dropped with them by a run
+# that exits 3. mark reads only the stored marker: a name is watched once per run, so its
+# queue is never read.
 mark() {
-  if [ -n "$windows" ]; then cat -- "$wdir/$1.watch-$2" 2>/dev/null || true
-  else tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; fi
+  if [ -z "$windows" ]; then
+    v=$(tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null) || v=""
+    [ -z "$v" ] || { printf '%s\n' "$v"; return 0; }
+  fi
+  cat -- "$wdir/$1.watch-$2" 2>/dev/null || true
 }
 setmark() { pending="$pending$1	$2	$3$nl"; }
 
@@ -547,6 +554,16 @@ while :; do
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
+      # A finished worker's session ends ten seconds after its result, mostly before the next
+      # poll: a GONE session's result is read too (#294).
+      if [ "$st" = GONE ]; then
+        w=x
+        { w=0; result "$n" || w=$?; } >>"$out" || :
+        case $w in
+          0|1) ;;
+          *) say "watch_workers: $n: could not write its report: the report buffer failed" >&2; failed=1 ;;
+        esac
+      fi
       # shellcheck disable=SC2086 # the state's fields: split on purpose
       report "$n" $st || { say "watch_workers: $n: could not write its report to stdout" >&2; failed=1; }
     else
@@ -574,8 +591,10 @@ while :; do
   [ -z "$failed" ] || exit 3
   cat "$out" || { say "watch_workers: could not write its report to stdout" >&2; exit 3; }
   printf '%s' "$pending" | while IFS='	' read -r n k v; do
-    if [ -n "$windows" ]; then printf '%s\n' "$v" >"$wdir/$n.watch-$k" 2>/dev/null || true
-    else tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true; fi
+    if [ -n "$windows" ] || { [ "$k" = result ] && [ -d "$wdir" ]; }; then
+      printf '%s\n' "$v" >"$wdir/$n.watch-$k" 2>/dev/null || true
+    fi
+    [ -n "$windows" ] || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
   done
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0
