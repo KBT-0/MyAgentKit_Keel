@@ -865,6 +865,29 @@ class SyncKitTests(unittest.TestCase):
     test_a_kit_path_spelled_in_another_case_still_records_the_kit_commit._kit_platform_skip = \
         not CASE_FOLDS
 
+    def test_a_recorded_kit_commit_prints_the_kit_verified_review_of_the_upgrade(self):
+        # #114: the upgrade commit is too big for one review; the sync names the review that
+        # verifies the kit-owned files by hash. A kit that records no commit names none.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        command = "./scripts/review.sh --commit <upgrade commit> --kit-verified --kit '"
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / 'project/docs/kit/UPGRADE.md'
+            result, _ = self.sync(tmp, ACTION, env=env)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn('--kit-verified', listing.read_text(encoding='utf-8'))
+            kit = Path(tmp) / 'kit'
+            for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                         'commit', '-q', '--allow-empty', '-m', 'k']):
+                subprocess.run(['git', '-C', str(kit), *args], check=True, env=env, capture_output=True)
+            result, _ = self.sync(tmp, ACTION, env=env)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn(command, listing.read_text(encoding='utf-8'))
+            self.tick(Path(tmp) / 'project')
+            result, stamp = self.sync(tmp, ACTION, '--actions-applied', env=env)
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertIn(command, result.stdout)
+            self.assertTrue((Path(tmp) / 'project/docs/kit/.kit-commit').exists())
+
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
         # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync

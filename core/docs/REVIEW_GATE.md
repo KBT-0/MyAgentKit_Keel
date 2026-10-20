@@ -37,6 +37,8 @@ family counts as the second model; its record says the model was requested, unat
 necessary, not sufficient. The reviewer works in a throwaway copy without network or paid
 model calls and marks each finding REPRODUCED or REASONED; its runs are evidence for
 findings, not for acceptance, which is the gate run (`./scripts/check.sh`) on the reviewed head.
+A kit-verified file of a kit upgrade commit counts as reviewed by the kit's own gate
+(`docs/REVIEW_RUNNING.md`, "Kit upgrade commits").
 
 ## Risk tiers
 

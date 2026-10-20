@@ -136,7 +136,7 @@ def review_context(task_file=None) -> str:
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise); run anything inside this copy. The copy holds no files "
+    "work, an archive of the reviewed commit, of HEAD for a range); run anything inside this copy. The copy holds no files "
     "Git ignores (build tree, installed dependencies, virtual environment) and has no network: a "
     "check that needs them is NOT RUN; do not build or download them. Run the reproductions "
     "here, and mark findings REPRODUCED with the command that shows each; if a "
@@ -145,7 +145,7 @@ REVIEW_RUNS = (
 # Native Windows: Claude Code has no Bash sandbox there, so the Claude reviewer gets no shell.
 REVIEW_READS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise). You have no shell on this host: Claude Code has no "
+    "work, an archive of the reviewed commit, of HEAD for a range). You have no shell on this host: Claude Code has no "
     "sandbox for one on native Windows. Read the code, mark each finding REASONED and name "
     "the command that would reproduce it, and list as NOT RUN every check you "
     "could not run. Never use the network and never call a paid model.")
@@ -179,11 +179,9 @@ SAME_TIER_ENV = "MYAGENTKIT_REVIEW_SAME_TIER"
 AUTHOR_EFFORT_ENV = "MYAGENTKIT_AUTHOR_EFFORT"
 
 
-def budgeted(diff: bytes) -> tuple[int, int]:
-    """Bytes and changed lines of `diff` outside lock, vendored and minified files. A header
-    that names no path is counted: an unreadable name never leaves the budget."""
-    size = lines = 0
-    for part in re.split(rb"(?m)^(?=diff --git )", diff):
+def diff_parts(diff: bytes):
+    """Yield (path, part) for each file's part of `diff`; b"" when the header names no path."""
+    for part in filter(None, re.split(rb"(?m)^(?=diff --git )", diff)):
         # The diff --git header is ambiguous when the old name contains " b/". Only
         # the destination marker before the hunk names this part unambiguously.
         header = part.partition(b"\n@@")[0]
@@ -191,7 +189,14 @@ def budgeted(diff: bytes) -> tuple[int, int]:
         if not named and re.search(rb"(?m)^\+\+\+ /dev/null$", header):
             # A deletion has no destination: its old name on the --- line names it.
             named = re.search(rb'(?m)^--- (?:a/([^\n]*?)\t?|"a/([^"\\\n]*)")$', header)
-        path = next((name for name in named.groups() if name is not None), b"") if named else b""
+        yield next((name for name in named.groups() if name is not None), b"") if named else b"", part
+
+
+def budgeted(diff: bytes) -> tuple[int, int]:
+    """Bytes and changed lines of `diff` outside lock, vendored and minified files. A header
+    that names no path is counted: an unreadable name never leaves the budget."""
+    size = lines = 0
+    for path, part in diff_parts(diff):
         parts = os.fsdecode(path).split("/")
         if parts[-1] in NOISE_NAMES or parts[-1].endswith(NOISE_SUFFIXES) or NOISE_DIRS & set(parts[:-1]):
             continue
@@ -412,6 +417,9 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       not ignore.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
       it (neither sandbox blocks reads).
+    - Accepted limit: a --commit review of a commit that is not the clean HEAD (Claude only,
+      snapshot's past_ok) fingerprints the commit alone, so a write that reaches the repository
+      is not detected there; the sandbox, or no Bash on native Windows, still prevents it.
     - Accepted limit: a repository inside Claude Code's per-user temporary directory is
       writable to the sandboxed Bash; and admin-managed Claude Code settings outrank SANDBOX.
     - Accepted limit: a SIGKILL leaves the copy in the temporary directory until a later run
@@ -730,11 +738,79 @@ def allow_secret_files(paths) -> None:
         os.environ[ALLOW_SECRETS_ENV] = "\n".join(Path(p).as_posix() for p in paths)
 
 
-def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None]:
+# sync-kit.sh's own marker, anchored as a header comment; the installer's kit clone.
+KIT_MARKER = re.compile(rb"(?m)^(# |<!-- )KIT-OWNED:")
+DEFAULT_KIT = Path.home() / ".myagentkit" / "kit"
+
+
+def kit_verified(repo: Path, commit: str, kit: Path) -> list:
+    """The changed paths of `commit` that are the kit's own files (#114, lead decision 1), as
+    {"path", "blob", "kit_commit"}: added or modified regular files with the KIT-OWNED header
+    whose bytes hash, by sync-kit.sh's `hash-object --path` rule in the kit clone (so its
+    line-ending settings apply), to the kit's blob for their source at the kit commit that
+    `commit` records in docs/kit/.kit-commit. On any doubt nothing is verified: all is reviewed."""
+    def nothing(why):
+        print("NOTE [review]: --kit-verified verified no file: %s; every changed file is reviewed" % why,
+              file=sys.stderr)
+        return []
+    recorded = git(repo, "cat-file", "-p", commit + ":docs/kit/.kit-commit", allowed=(0, 128)).decode(
+        errors="replace").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", recorded):
+        return nothing("commit %s records no kit commit in docs/kit/.kit-commit" % commit[:12])
+    try:
+        if git(kit, "rev-parse", "--show-prefix").strip():
+            return nothing("%s is no git clone of its own" % kit)
+        if git(kit, "rev-parse", "-q", "--verify", recorded + "^{commit}", allowed=(0, 1)).decode().strip() != recorded:
+            return nothing("the kit clone %s lacks kit commit %s (fetch it)" % (kit, recorded))
+        # Each kit file under the project path sync-kit.sh's relpath() copies it to.
+        sources = {}
+        for entry in git(kit, "ls-tree", "-r", "-z", recorded, "--", "core", "setup", "overlays").split(b"\0"):
+            meta, _, raw = entry.partition(b"\t")
+            if not entry or meta.split()[1] != b"blob":
+                continue
+            source = os.fsdecode(raw)
+            parts = source.split("/", 3)
+            rel = (source[len("core/"):] if parts[0] == "core" else source if parts[0] == "setup"
+                   else parts[3] if len(parts) == 4 and parts[2] == "files" else None)
+            if rel:
+                sources.setdefault(rel, []).append((source, meta.split()[2].decode()))
+        parents = git(repo, "rev-list", "--parents", "-n", "1", commit).decode().split()[1:]
+        fields = git(repo, "diff-tree", "-r", "-z", "--no-renames", "--no-commit-id",
+                     *(parents[:1] or ["--root"]), commit).split(b"\0")
+        verified = []
+        for meta, raw in zip(fields[0::2], fields[1::2]):
+            _, mode, _, blob, status = meta.decode().split()
+            name = os.fsdecode(raw)
+            if status not in ("A", "M") or mode not in ("100644", "100755") or "\n" in name or name not in sources:
+                continue
+            data = git(repo, "cat-file", "blob", blob)
+            if not KIT_MARKER.search(data):
+                continue
+            # ponytail: one hash-object per kit-owned changed file; a few hundred at most per upgrade.
+            if any(git(kit, "hash-object", "--path=" + source, "--stdin", stdin=data).decode().strip() == kit_blob
+                   for source, kit_blob in sources[name]):
+                verified.append({"path": name, "blob": blob, "kit_commit": recorded})
+    except (BridgeError, ValueError, IndexError) as error:
+        return nothing("the kit clone %s or commit %s could not be read (%s)" % (kit, commit[:12], str(error).strip()))
+    if verified:
+        print("NOTE [review]: --kit-verified: %d changed files are the kit's own at kit commit %s, "
+              "verified by hash, not reviewed" % (len(verified), recorded), file=sys.stderr)
+    return verified
+
+
+def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = False,
+             verified: list | None = None) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
 
     Also returns the commit the reference resolved to, for every later use in the review: a
     reference resolved again could have moved, giving a record keyed to another commit.
+
+    `past_ok` (the Claude adapter, #114): a --commit that is not the clean HEAD is reviewed from
+    an archive of that commit, and the fingerprint is the commit's, not the checkout's. Without
+    it such a commit is refused, as codex_bridge, which archives HEAD, needs.
+
+    `verified` (--kit-verified, kit_verified()): those paths of the commit are left out of its
+    diff, after a check that they are still its blobs; every refusal still covers them.
     """
     # A new repository (a first setup) or an orphan branch has no HEAD commit to diff against:
     # a bare rev-parse died with "ambiguous argument 'HEAD'" and named no way on (#176).
@@ -744,6 +820,16 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                           "review diffs against one; for a first setup follow setup/INTERVIEW.md, "
                           "Phase 4 step 6 (a reviewer subagent reads the staged files directly)")
     resolved = resolve(repo, scope, reference)
+    kit_proof = []
+    if verified:
+        if scope != "commit":
+            raise BridgeError("--kit-verified needs --commit")
+        # Bound to the commit: a reference moved since the list was made names other blobs.
+        found = git(repo, "cat-file", "--batch-check=%(objectname)", stdin=b"".join(
+            (resolved + ":" + entry["path"] + "\n").encode() for entry in verified)).decode().split("\n")
+        if found[:len(verified)] != [entry["blob"] for entry in verified]:
+            raise BridgeError("the kit-verified files are not the blobs of commit %s; run the review again" % resolved)
+        kit_proof = [":(exclude,literal)" + entry["path"] for entry in verified]
     # Old reports used <timestamp>-<branch>.md. Also inspect the reference tree so
     # removing an old tracked archive cannot send its entire transcript to a reviewer.
     archives = set(ARCHIVES)
@@ -884,46 +970,55 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                 continue
             working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))
+    past = past_ok and scope == "commit" and (resolved != head or bool(working.strip()))
     if scope == "uncommitted":
         diff = working
     else:
-        if working.strip():
+        if working.strip() and not past:
             raise BridgeError("reference reviews require a clean checkout; use --uncommitted")
-        if scope == "commit" and resolved != head:
+        if scope == "commit" and resolved != head and not past:
             raise BridgeError("--commit must be the checked-out HEAD so readable files match")
         if scope == "base":
             diff = git(repo, "diff", *raw_diff, resolved + "...HEAD", "--", ".", *exclusions)
         else:
             # Commit review is the delta against its first parent, including merges.
-            diff = (git(repo, 'diff', *raw_diff, parents[0], resolved, '--', '.', *exclusions)
-                    if parents else git(repo, 'show', '--format=', *raw_diff, resolved, '--', '.', *exclusions))
-    checksum = hashlib.sha256(head.encode() + b'\0' + (resolved or '').encode() + b'\0' + diff + b'\0' + working)
-    # Git can suppress working changes via index flags. Hash actual readable source too,
-    # independently of diff rendering; read symlink targets as links, never outside files.
-    for raw in sorted(set(in_scope.split(b'\0')) - {b''}):
-        name = os.fsdecode(raw)
-        if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
-            continue
-        path = repo / name
-        checksum.update(raw + b'\0')
-        try:
-            mode = path.lstat().st_mode
-            if path.is_symlink():
-                contents = hashlib.sha256(os.fsencode(os.readlink(path))).digest()
-            elif path.is_file():
-                content_hash = hashlib.sha256()
-                with path.open('rb') as stream:
-                    for chunk in iter(lambda: stream.read(65536), b''):
-                        content_hash.update(chunk)
-                contents = content_hash.digest()
-            else:
-                contents = b'directory'
-            checksum.update(str(mode).encode() + b'\0' + contents)
-        except FileNotFoundError:
-            checksum.update(b'missing')
-    # The index too: a `git reset --mixed` or `git add` run by a reviewer changes what is
-    # staged and nothing in the working tree or HEAD.
-    checksum.update(b'\0index\0' + git(repo, 'ls-files', '-s', '-z'))
+            diff = (git(repo, 'diff', *raw_diff, parents[0], resolved, '--', '.', *exclusions, *kit_proof)
+                    if parents else git(repo, 'show', '--format=', *raw_diff, resolved, '--', '.', *exclusions,
+                                        *kit_proof))
+    if past:
+        # The copy is the commit's archive, so the commit is what was reviewed: HEAD, the index
+        # and the working tree may change during the review (throwaway_copy, Accepted limit).
+        checksum = hashlib.sha256(b'commit\0' + resolved.encode() + b'\0' + diff)
+    else:
+        checksum = hashlib.sha256(head.encode() + b'\0' + (resolved or '').encode() + b'\0' + diff + b'\0' + working)
+        # Git can suppress working changes via index flags. Hash actual readable source too,
+        # independently of diff rendering; read symlink targets as links, never outside files.
+        for raw in sorted(set(in_scope.split(b'\0')) - {b''}):
+            name = os.fsdecode(raw)
+            if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
+                continue
+            path = repo / name
+            checksum.update(raw + b'\0')
+            try:
+                mode = path.lstat().st_mode
+                if path.is_symlink():
+                    contents = hashlib.sha256(os.fsencode(os.readlink(path))).digest()
+                elif path.is_file():
+                    content_hash = hashlib.sha256()
+                    with path.open('rb') as stream:
+                        for chunk in iter(lambda: stream.read(65536), b''):
+                            content_hash.update(chunk)
+                    contents = content_hash.digest()
+                else:
+                    contents = b'directory'
+                checksum.update(str(mode).encode() + b'\0' + contents)
+            except FileNotFoundError:
+                checksum.update(b'missing')
+        # The index too: a `git reset --mixed` or `git add` run by a reviewer changes what is
+        # staged and nothing in the working tree or HEAD.
+        checksum.update(b'\0index\0' + git(repo, 'ls-files', '-s', '-z'))
+    if verified:
+        checksum.update(b'\0kit-verified\0' + json.dumps(verified, sort_keys=True).encode())
     fingerprint = checksum.hexdigest()
     # The filtered paths let through above were proven before the diff and the fingerprint read
     # them, and an editor's save or a build could replace one in between: the diff then showed
@@ -939,18 +1034,22 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                               'while the review was being prepared; run the review again'
                               % os.fsdecode(min(moved)))
     if len(diff) > DIFF_LIMIT:
-        raise BridgeError("diff exceeds %d bytes including lock, vendored and minified files; split "
-                          "the task" % DIFF_LIMIT)
+        largest = sorted(((len(part), os.fsdecode(path) or "(unnamed)") for path, part in diff_parts(diff)),
+                         reverse=True)[:5]
+        raise BridgeError("diff is %d bytes, over the limit of %d bytes, including lock, vendored and minified "
+                          "files; the largest: %s; split the task"
+                          % (len(diff), DIFF_LIMIT, ", ".join("%s (%d bytes)" % (name, size) for size, name in largest)))
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
 
-def recheck(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None] | None:
+def recheck(repo: Path, scope: str, reference: str | None, past_ok: bool = False,
+            verified: list | None = None) -> tuple[str, str, str, str | None] | None:
     """snapshot() of a checkout read once before the review, or None when it now refuses (a
     dirty tree for a reference review, a moved HEAD, a new secret file): that checkout passed
     before, so it changed. A failed git command, OSError or ValueError is raised: a checkout
     that could not be read proves no change."""
     try:
-        return snapshot(repo, scope, reference)
+        return snapshot(repo, scope, reference, past_ok, verified)
     except GitFailed:
         raise
     except BridgeError:
@@ -1485,6 +1584,10 @@ def render(stamp: str, evidence: dict, args) -> str:
         body = ("## Findings\n\nNone recorded: the run failed before a verdict.\n\n"
                 "## Failure\n\n" + (evidence.get("error") or "unknown")
                 + "\n\nInspect the local usage record for the raw CLI output.\n")
+    if "kit_verified" in evidence:
+        body += section("Kit-verified files (verified by hash, not reviewed)",
+                        ["%s, blob %s, kit commit %s" % (entry["path"], entry["blob"], entry["kit_commit"])
+                         for entry in evidence["kit_verified"]])
     return agent_usage.report(stamp, header, result.get("verdict") if completed else None, body)
 
 
@@ -1658,8 +1761,9 @@ def behaviour_appendix(root: Path) -> tuple[str | None, bytes]:
     return None, b""
 
 
-def main(argv=None, result_sink=None, claims=None) -> int:
-    """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS."""
+def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
+    """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS.
+    `verified`: the dispatcher's kit_verified() list for --kit-verified; None computes it here."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["review", "propose"])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
@@ -1688,6 +1792,9 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                         help="Optional API-cost cap; review has no default, propose defaults to 3 USD")
     parser.add_argument("--allow-secret-file", action="append", default=[],
                         help="Review this secret-looking path knowingly (repository-relative)")
+    parser.add_argument("--kit-verified", type=Path, metavar="KIT",
+                        help="Leave out the commit's files that are byte for byte the kit's own in the "
+                        "kit clone KIT (#114; docs/REVIEW_RUNNING.md, \"Kit upgrade commits\")")
     args = parser.parse_args(argv)
     allow_secret_files(args.allow_secret_file)
     if args.effort is None:
@@ -1721,9 +1828,13 @@ def main(argv=None, result_sink=None, claims=None) -> int:
         if repo != top:
             raise BridgeError("--repo must name the repository root")
         scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
+        if args.kit_verified is not None and (scope != "commit" or args.mode != "review"):
+            raise BridgeError("--kit-verified reviews a --commit only")
+        if args.kit_verified is not None and verified is None:
+            verified = kit_verified(repo, resolve(repo, scope, ref), args.kit_verified)
         # resolved is captured with the snapshot: the usage record names what was reviewed even
         # when the reference is deleted or moved before the review ends.
-        head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
+        head, fingerprint, diff, resolved = snapshot(repo, scope, ref, True, verified)
         if args.mode == "review" and not diff.strip():
             raise BridgeError("empty diff: nothing was reviewed")
         task = args.task_file.read_text(encoding="utf-8") if args.task_file else ""
@@ -1752,6 +1863,11 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                 (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n"
                 + carried
                 + review_context(args.task_file)
+                + ("Verified by hash, not reviewed: these changed paths are byte for byte the kit's own "
+                   "files at kit commit %s, which the kit's own review gate reviewed; they are left out "
+                   "of the diff below:\n" % verified[0]["kit_commit"]
+                   + "".join("  %s (blob %s)\n" % (entry["path"], entry["blob"]) for entry in verified)
+                   if verified else "")
                 + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}")
         else:
             prompt_prefix = (
@@ -1780,6 +1896,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                     "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
                     "limits": {"seconds": args.timeout, "turns": args.max_turns, "api_usd": args.max_budget_usd},
                     "tools": tools, "status": "failed"}
+        if args.kit_verified is not None:
+            evidence["kit_verified"] = verified
         # From the review to the usage record a cancel is noted, not acted on: with the default
         # handlers back after the review, a SIGTERM during the final snapshot ended the adapter
         # before the paid review's evidence and usage were written. run() stops the reviewer
@@ -1803,7 +1921,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                     review_tmpdir(repo)
                     copy = copies.enter_context(scratch("myagentkit-review-"))
                     workdir = Path(copy)
-                    throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
+                    throwaway_copy(repo, resolved if scope == "commit" else head,
+                                   diff if scope == "uncommitted" else None, workdir,
                                    cancelled=cancelled, deadline=deadline)
                 preparation_failure = "unsafe_behaviour_appendix"
                 source_name, source_bytes = behaviour_appendix(repo)
@@ -1851,7 +1970,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                     # A look during the review (#118). One that cannot read the checkout proves
                     # no change: the check after the review decides.
                     try:
-                        now = recheck(repo, scope, ref)
+                        now = recheck(repo, scope, ref, True, verified)
                         return (now is None or now[1] != checkout_fingerprint
                                 or behaviour_appendix(repo) != (source_name, source_bytes))
                     except (BridgeError, OSError, ValueError):
@@ -1887,7 +2006,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
             # A checkout that cannot be read proves no change: the review stays completed in its
             # record, so its round counts (fail closed), and the result fails as checkout_unverified.
             try:
-                now = recheck(repo, scope, ref)
+                now = recheck(repo, scope, ref, True, verified)
                 stale = now is None or now[1] != checkout_fingerprint
             except (BridgeError, OSError, ValueError) as error:
                 stale, unverified = False, "the checkout could not be read after the review: %s" % error

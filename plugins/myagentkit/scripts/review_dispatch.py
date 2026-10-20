@@ -373,7 +373,16 @@ def main(argv=None):
     scope_args.add_argument("--commit")
     # A secret-looking file the owner reviews knowingly (KARARLAR B12 inv2#106), by its path.
     parser.add_argument("--allow-secret-file", action="append", default=[])
+    # A kit upgrade commit (#114): its files that are the kit's own by hash are left out of the diff.
+    parser.add_argument("--kit-verified", action="store_true")
+    parser.add_argument("--kit", type=Path)
     args = parser.parse_args(argv)
+    if args.kit_verified and not args.commit:
+        raise ValueError("--kit-verified reviews a --commit only")
+    if args.kit is not None and not args.kit_verified:
+        raise ValueError("--kit names the kit clone for --kit-verified only")
+    if args.kit_verified and args.reviewer != "claude":
+        raise ValueError("--kit-verified needs --reviewer claude: the Codex adapter has no kit-verified diff")
     os.environ.pop(claude_bridge.ALLOW_SECRETS_ENV, None)  # only this run's flags count
     claude_bridge.allow_secret_files(args.allow_secret_file)
     repo = args.repo.resolve(strict=True)
@@ -433,7 +442,13 @@ def main(argv=None):
 
     mark(args.reviewer)
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
-    original = claude_bridge.snapshot(repo, scope, ref)
+    # Claude reviews a --commit that is not the clean HEAD from its archive (#114); Codex cannot.
+    past_ok = args.reviewer == "claude"
+    kit = args.kit or claude_bridge.DEFAULT_KIT
+    # Made once: every attempt and every look at the checkout use the same list.
+    verified = (claude_bridge.kit_verified(repo, claude_bridge.resolve(repo, scope, ref), kit)
+                if args.kit_verified else None)
+    original = claude_bridge.snapshot(repo, scope, ref, past_ok, verified)
     if not original[2].strip():
         raise ValueError("empty diff: nothing was reviewed")
     reject_line_ending_churn(repo, scope, original[3], original[2])
@@ -470,6 +485,8 @@ def main(argv=None):
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
     if author:
         chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
+    if args.kit_verified:
+        chain["kit_verified"] = verified
 
     def top_tier(provider):
         # The top tier's own review (owner decision 63): recorded and printed, for whichever runs.
@@ -540,8 +557,10 @@ def main(argv=None):
                 os.environ.update(backend_env)
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command]
-                                               + (["--backend", args.backend] if backend else []), received.append,
-                                               claims=claims)
+                                               + (["--backend", args.backend] if backend else [])
+                                               + (["--kit-verified", str(kit)] if args.kit_verified else []),
+                                               received.append, claims=claims,
+                                               **({"verified": verified} if args.kit_verified else {}))
             else:
                 exit_code = codex_bridge.main(command, received.append, claims=claims)
         except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as caught:
@@ -577,7 +596,8 @@ def main(argv=None):
             chain["checkout_unverified"] = result.get("error")  # the adapter's own look
         try:
             # A refusal now (a dirty tree for a reference review, a moved HEAD) is a change.
-            changed, unread = claude_bridge.recheck(repo, scope, ref) != original, None
+            now = claude_bridge.recheck(repo, scope, ref, past_ok, verified)
+            changed, unread = now is None or now[1] != original[1], None
         except (OSError, ValueError, claude_bridge.BridgeError) as caught:
             changed, unread = False, caught
         if changed or unread:
@@ -622,6 +642,9 @@ def main(argv=None):
             except ValueError as error:
                 chain["fallback_blocked"] = str(error)
                 switch = eligible = False
+        if eligible and args.kit_verified:
+            chain["fallback_blocked"] = "--kit-verified is reviewed by Claude only: the Codex adapter has no kit-verified diff"
+            eligible = False
         if eligible and not args.allow_fallback and not switch:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
             eligible = False

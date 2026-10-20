@@ -84,6 +84,22 @@ Automation never authorizes a commit or push.
   inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
   sessions.
 
+## Kit upgrade commits
+
+A sync's upgrade commit is usually too big for one review (#114). After committing it, run the
+line `sync-kit.sh` prints: `./scripts/review.sh --commit <upgrade commit> --kit-verified --kit
+'<kit>'` (`--kit` defaults to `~/.myagentkit/kit`; Claude reviewer only). **Verified by hash, not
+reviewed:** a changed file with the `KIT-OWNED` header whose blob in the commit equals the kit's
+blob for that path at the kit commit `docs/kit/.kit-commit` records in that commit. **Reviewed:**
+everything else, the project-owned files and merges and every kit-owned file the project
+edited. A missing `.kit-commit`, a kit clone without that commit or a differing blob verifies
+nothing and the file stays in the diff. The verified list (path, blob, kit commit) is in the
+review evidence and the chain record. The commit need not be the clean HEAD: a past commit is
+reviewed from an archive of it. Limits: `BEHAVIOUR.md` is read from the working tree, so an
+appendix edited since the commit fails the review (`unsafe_behaviour_appendix` or
+`stale_checkout`); review the upgrade before editing it. Accepted: a past commit's review
+fingerprints that commit only, so an edit to the working tree during it does not fail it.
+
 ## Unavailable reviewer
 
 When Codex cannot review critical or high-tier work (its content classifier stopped it,
