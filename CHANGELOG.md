@@ -381,7 +381,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   past about 400 changed lines gets a split hint (KARARLAR B01, B02 inv2#10/#34, D03 inv1#104,
   D04, D06 inv1#37/#163; BACKLOG B14, B15).
   **ACTION:** merge the kit's changes into `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`,
-  `docs/WORKFLOW.md` (`sync-kit.sh --merge`, or by hand; they are project-owned).
+  `docs/WORKFLOW.md` (`sync-kit.sh --merge`, from v0.10 with the `--base` the upgrade
+  checklist below names, or by hand; they are project-owned).
 - **Reminder hooks, labels, context counters, commit-msg** (`.claude/hooks/plain_report.py`,
   `.claude/hooks/progress_reminder.py`, `scripts/context_buckets.py`, `.githooks/commit-msg`).
   Progress reminders stop after three nudges per silent interval and reset on visible text or
@@ -401,8 +402,10 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   `.claude/hooks/plain_report.py`, merge `core/docs/COMMUNICATION.md`, and keep project
   patterns in `.claude/plain_report_labels.json` instead of the synced commit hook.
   **ACTION:** copy the overlay hooks whole from the kit; the sync writes
-  `scripts/context_buckets.py` and `.githooks/commit-msg` (a conflict line: copy the kit's file
-  whole).
+  `scripts/context_buckets.py` and `.githooks/commit-msg` (a `conflict:` line that calls the
+  file the project's, such as a `commit-msg` of your own: move yours aside first, a hook to
+  `.githooks/<same name>.project`, as the sync says; only an earlier kit copy without the
+  KIT-OWNED header is replaced by the kit's file whole).
 - **Usage and cost measurement** (`scripts/agent_cost.py`, `scripts/usage_summary.py`,
   `docs/USAGE.md`, `docs/CODEX.md`, `docs/worker-cost-setups.md`). The worker cost analysis reads
   each cache write's recorded lifetime (one hour or five minutes) instead of treating every write
@@ -412,8 +415,11 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   95% interval with the sample floor (30 decided findings, ten rated rounds; the owner's choice).
   A later answer file replaces an earlier one per label and focus instead of counting the same
   answers again (KARARLAR B03, D06 inv2#45/#55/#107/#108/#54/#12, inv1#161/#172, D01 inv1#191;
-  BACKLOG B9, B17). **ACTION:** the sync writes the two scripts (a conflict line: copy the kit's
-  file whole); merge `docs/USAGE.md` (`sync-kit.sh --merge`, or by hand).
+  BACKLOG B9, B17). **ACTION:** the sync writes the two scripts (a `conflict:` line that calls
+  the file the project's: move yours aside first, as the sync says; only an earlier kit copy
+  without the KIT-OWNED header is replaced by the kit's file whole); merge `docs/USAGE.md`
+  (`sync-kit.sh --merge`, from v0.10 with the `--base` the upgrade checklist below names, or
+  by hand).
 - **Review tooling: bridge, dispatcher, usage** (`scripts/review.sh`, `scripts/claude_bridge.py`,
   `scripts/codex_bridge.py`, `scripts/review_dispatch.py`, `scripts/agent_usage.py`,
   `scripts/agent_process.py`, `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`,
@@ -432,9 +438,11 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   Codex review defaults to a 3600-second limit; doctor reads `claude --version` (2.1.248 or
   newer) before `--help` (KARARLAR D04 inv2#44/#126/#85, B01 (1)/(6), B12 inv2#106/#81, D07
   inv3#103, D09 inv2#80/#99/#100, B03 inv2#31, B10 inv2#113, B02 inv2#158, inv2#104/#115/#144).
-  **ACTION:** copy `scripts/review.sh` and the review and usage scripts above whole from the kit;
+  **ACTION:** copy `scripts/review.sh` (keeping your project configuration, its PROJECT-OWNED
+  CONFIGURATION block) and the review and usage scripts above whole from the kit;
   merge `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`, `docs/GOTCHAS.md`
-  (`sync-kit.sh --merge`, or by hand); move `.myagentkit/backends/*.env`
+  (`sync-kit.sh --merge`, from v0.10 with the `--base` the upgrade checklist below names, or
+  by hand); move `.myagentkit/backends/*.env`
   to the user's config folder (or set `MYAGENTKIT_BACKENDS_DIR`).
 - **Gate, doctor, boundary example** (`scripts/check.sh`, `scripts/doctor.sh`,
   `.claude/hooks/gate_on_stop.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`, `.gitattributes`).
@@ -449,7 +457,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   of `core/scripts/check.sh` into existing project-owned gates.
   **ACTION:** the sync writes `scripts/doctor.sh`; copy the overlay Stop hook whole from the
   kit; merge `scripts/check.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`
-  (`sync-kit.sh --merge`, or by hand); add `* text=auto` to the project's `.gitattributes`
+  (`sync-kit.sh --merge`, from v0.10 with the `--base` the upgrade checklist below names, or
+  by hand); add `* text=auto` to the project's `.gitattributes`
   by hand (project-owned) and fill `module_roots` in `scripts/check.sh` if the project has modules.
 - **Working modes and model routing** (`scripts/working_mode.py`, `docs/WORKFLOW.md`,
   `/myagentkit:mode`, `/myagentkit:cross-review`, `setup/INTERVIEW.md`, `docs/CODEX.md`).
@@ -1290,7 +1299,14 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 the end of the item, so an item holds no blank line and no line that starts a list. -->
 
 Work from the project's root, top to bottom. `KIT` is a fresh, full clone of the kit at v0.11
-or later (`sync-kit.sh . --merge` needs v0.12 or later; without it merge by hand). The bullets
+or later (`sync-kit.sh . --merge` needs v0.12 or later; without it merge by hand). A v0.10
+project has no `docs/kit/.kit-commit`, so `--merge` stops until `--base <commit>` names the
+kit commit its v0.10 came from. v0.10 has no release tag: take the kit's last commit before
+the project recorded its version, `git -C "$KIT" rev-list -1 --first-parent
+--before="$(git log -1 --format=%cI -- docs/kit/.kit-version)" HEAD`, and run
+`"$KIT/sync-kit.sh" . --merge --base <that commit>`. The sync checks the base against the
+project's kit-owned files and stops, writing nothing, when they differ: then merge by hand.
+Each `--merge` below needs that `--base` until item 13 records the version and the commit. The bullets
 above hold the reasons and each its own ACTION item, several of them the same instruction for
 the next batch of one file; this list names each file once, in its final state, and covers
 every one of them: tick a bullet's box in `docs/kit/UPGRADE.md` when an item here did what it
@@ -1316,10 +1332,14 @@ or definition is copied whole (items 3 and 5), a project-owned file is merged (i
    `watch_workers.sh`, `clean_worktrees.py`). It installs no overlay file the project lacks:
    copy a missing one from `$KIT/overlays/claude-code/files/scripts/` by hand (a Codex project's
    `spawn_codex.sh` and `codex_worker.py`, and `close_worker.sh`; `chmod +x` and
-   `git add --chmod=+x`), and the sync keeps it from then on. A `conflict:` line is a copy
-   without the KIT-OWNED header: copy the kit's file whole over it, run the sync again, and a
-   project's own git hook (a Git LFS `post-merge`) is renamed `.githooks/<same name>.project`. A
-   project's own checks in `scripts/doctor.sh` move to `scripts/doctor.project.sh`. It also
+   `git add --chmod=+x`), and the sync keeps it from then on. A `conflict:` line that calls the
+   file the project's (`so it is the project's`: a Git LFS `post-merge`, a `commit-msg` of
+   your own) is never overwritten: move yours aside first, as the sync says, a hook of yours to
+   `.githooks/<same name>.project` (executable, with a `#!` line; the kit's hook runs it first),
+   any other file out of the way to carry what it did into the project's own files by hand
+   (`$KIT/docs/RETROFIT.md`). Only a line that calls it the kit's own file from an earlier
+   version is a copy without the KIT-OWNED header: copy the kit's file whole over that one.
+   Then run the sync again. A project's own checks in `scripts/doctor.sh` move to `scripts/doctor.project.sh`. It also
    writes `docs/kit/UPGRADE.md` with this release's items, and records no version (item 13
    does).
 3. **ACTION:** Copy these scripts whole from `$KIT/core/scripts/` into `scripts/`, replacing
@@ -1338,7 +1358,8 @@ or definition is copied whole (items 3 and 5), a project-owned file is merged (i
    from the chain record's timestamps (if 3600 s cut it off, ask the owner whether
    `MAX_REVIEW_TIMEOUT` rises).
 4. **ACTION:** Merge the kit's changes into `scripts/check.sh`, keeping your filled-in values
-   (`sync-kit.sh . --merge`, or by hand from `$KIT/core/scripts/check.sh`): the Done-history
+   (`sync-kit.sh . --merge --base <commit>`, the base named above, or by hand from
+   `$KIT/core/scripts/check.sh`): the Done-history
    section, the ShellCheck hook selector, the module-map section (then fill `module_roots` if
    the project has modules), the Git 2.42 requirement, the self-test lines that keep it from
    changing the worktree, and, from the marker-publication change, the marker removal in
@@ -1376,8 +1397,8 @@ or definition is copied whole (items 3 and 5), a project-owned file is merged (i
    `git log` allowance by the overlay's `--no-textconv --no-ext-diff` forms: a plain one runs a
    repository-configured textconv driver). Replace `python3 ` at the start of each Python hook
    command with `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" `.
-7. **ACTION:** Merge the kit's changes into `docs/WORKFLOW.md` (`sync-kit.sh . --merge`, or by
-   hand from `$KIT/core/docs/WORKFLOW.md`): "Model routing" and "Working modes, by name" over
+7. **ACTION:** Merge the kit's changes into `docs/WORKFLOW.md` (`sync-kit.sh . --merge --base
+   <commit>`, the base named above, or by hand from `$KIT/core/docs/WORKFLOW.md`): "Model routing" and "Working modes, by name" over
    your own routing text, keeping your model names, with rule 7 and its low-allowance ending,
    the audit paragraph of the closed-findings gate, the review launch and recovery rules, the
    STATE protocol lines, the self-test lines (the lead's step 1, "Writing a gate") and the two
@@ -1388,7 +1409,8 @@ or definition is copied whole (items 3 and 5), a project-owned file is merged (i
    cross-saving, claude-saver and codex-saver become saver with a `(low: ...)` note; and the
    mode table of `WORKFLOW.md` has those three rows. The script refuses the old names.
 8. **ACTION:** Merge the kit's changes into the review and worker documents, each from
-   `$KIT/core/docs/` (`sync-kit.sh . --merge`, or by hand): `docs/REVIEW_GATE.md` and
+   `$KIT/core/docs/` (`sync-kit.sh . --merge --base <commit>`, the base named above, or by
+   hand): `docs/REVIEW_GATE.md` and
    `docs/REVIEW_RUNNING.md` (the self-test lines, the launch and recovery rules, the two
    sentences of the accidents rule, `REVIEW_ROUND_EXCEPTION`, written before a third completed
    review under a label), `docs/HANDOFF.md` (the worker-lifecycle sections, the `Owns:`
