@@ -784,6 +784,23 @@ class CloseWorkerTests(unittest.TestCase):
                 self.assertNotEqual(subprocess.run(['kill', '-0', pid], capture_output=True).returncode, 0, out)
         self.assertIsNone(other.poll(), 'a process outside the session was ended')
 
+    def test_a_listed_pid_that_now_belongs_to_another_process_is_never_signalled(self):
+        # orph round 1 (lead decision D3): the pid of a process the session started is given to
+        # another one before the signal. ps is a stub: when listed, the pid is below the pane and
+        # started at 10:00:00; when asked again, it started at 10:00:01, so it is another process.
+        self.worker('w1')
+        other = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        stub(self.tmp / 'bin/ps', '#!/bin/sh\ncase "$*" in\n'
+             '  *ppid=*) echo "%d 999999 Tue Oct 20 10:00:00 2026" ;;\n'
+             '  *) echo "%d Tue Oct 20 10:00:01 2026" ;;\nesac\n' % (other.pid, other.pid))
+        (self.tmp / 'panes').write_text('999999\n')
+        out = self.close('w1')
+        self.assertIn('close_worker: w1: ended the processes its session started (process %d)\n' % other.pid, out)
+        self.assertNotIn('SIGKILL', out)
+        self.assertIsNone(other.poll(), 'a pid another process holds now was signalled')
+
     def test_a_worktree_committed_a_moment_ago_is_removed_the_quiet_period_lifted(self):
         # The real clock: the worker's last commit is seconds old. The hook would keep it.
         path = self.worker('w1')

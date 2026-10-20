@@ -1270,7 +1270,9 @@ class StrayProcessTests(unittest.TestCase):
             '101 999 10000 9000 rg',           # no such parent: listed
             '102 50 10000 9000 /usr/bin/grep',  # adopted by a subreaper: listed
             r'107 0 10000 9000 C:\Git\usr\bin\FIND.EXE',  # Windows: parent gone, ppid 0
-            '108 1 10000 9000 python3.11',     # a versioned interpreter is python
+            '108 1 10000 9000 python3.11',     # a versioned interpreter is python: Windows only
+            '109 1 10000 9000 node',           # Windows only: on POSIX a service of the owner looks the same
+            '60 1 99999 5 init', '110 60 10000 9000 sh',  # adopted by WSL's init: listed
             '103 200 10000 9000 find',         # its parent runs
             '104 1 100 90 find',               # young
             '105 1 10000 100 find',            # idle: 1% of a CPU
@@ -1279,21 +1281,23 @@ class StrayProcessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             table = Path(tmp) / 'procs'
             table.write_text(listing)
-            for windows, fix in ((False, 'kill %s'), (True, 'taskkill /PID %s /T /F')):
+            for windows, fix, expected in ((False, 'kill %s', ['100', '101', '102', '107', '110']),
+                                           (True, 'taskkill /PID %s /T /F', ['100', '101', '102', '107', '108', '109', '110'])):
                 with self.subTest(windows=windows):
                     result = stray_section(windows, DOCTOR_PROCESSES=str(table))
                     self.assertEqual(result.returncode, 0, result.stderr)
                     listed = [line.split()[3] for line in result.stdout.splitlines()]
-                    self.assertEqual(listed, ['100', '101', '102', '107', '108'], result.stdout)
+                    self.assertEqual(listed, expected, result.stdout)
                     for pid in listed:
                         self.assertIn('end it: ' + fix % pid + '\n', result.stdout)
                     self.assertIn('NOTE: stray process 100 (find, running 2.8 h, 90% of a CPU, its parent is gone)',
                                   result.stdout)
 
     def test_the_host_process_list_finds_a_real_orphan_and_ends_nothing(self):
-        # The real lister (Win32_Process or ps), age bound off: a busy Python whose parent exited
-        # is listed; a busy one whose parent runs is not; neither is ended.
-        busy = [sys.executable, '-c', 'while True: pass']
+        # The real lister (Win32_Process or ps), age bound off: a busy tool command whose parent
+        # exited is listed; a busy one whose parent runs is not; neither is ended. On POSIX a shell
+        # (python is not listed there); on Windows Python, as Git's sh.exe may be a launcher.
+        busy = [sys.executable, '-c', 'while True: pass'] if WINDOWS else ['sh', '-c', 'while :; do :; done']
         launcher = subprocess.run([sys.executable, '-c', 'import subprocess, sys; print(subprocess.Popen(sys.argv[1:], '
                                    'stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)',
                                    *busy], capture_output=True, text=True, timeout=60)
@@ -1302,12 +1306,17 @@ class StrayProcessTests(unittest.TestCase):
         child = subprocess.Popen(busy)
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
-        time.sleep(1.5)
-        result = stray_section(WINDOWS, DOCTOR_STRAY_AGE='0')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        listed = [line.split()[3] for line in result.stdout.splitlines() if line.startswith('NOTE: stray process ')]
+        # ps counts CPU time in whole seconds: asked again until the orphan has 5% of a CPU there.
+        deadline = time.monotonic() + 30 * SCALE
+        while True:
+            time.sleep(0.5)
+            result = stray_section(WINDOWS, DOCTOR_STRAY_AGE='0')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            listed = [line.split()[3] for line in result.stdout.splitlines() if line.startswith('NOTE: stray process ')]
+            self.assertNotIn(str(child.pid), listed, result.stdout)
+            if str(orphan) in listed or time.monotonic() > deadline:
+                break
         self.assertIn(str(orphan), listed, result.stdout)
-        self.assertNotIn(str(child.pid), listed, result.stdout)
         self.assertIsNone(child.poll())
         # Still running: doctor only lists. Windows has no signal 0.
         if WINDOWS:

@@ -1,52 +1,57 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash|PowerShell|Monitor|Glob|Grep): refuse a search or walk rooted at a filesystem or drive root.
+"""PreToolUse(Bash|PowerShell|Monitor): refuse a search or walk rooted at a filesystem or drive root.
 
 An agent ran `find / -name x.h` in Git Bash on Windows: it passed the Bash tool's timeout, moved
 to the background, outlived its session and kept a CPU core busy for seven hours, which skewed
 every benchmark in that window (#298). A walk from a root is refused before it starts: `find`,
-`fd`, `grep -r`, `rg`, `ag`, `ack`, `ls -R`, `du`, `tree`, `where /r`, PowerShell's
-`Get-ChildItem -Recurse` (`gci`, `ls`, `dir`), and a Glob or Grep tool call whose path (or
-Glob's absolute pattern) is a root. A root is `/`, `/*`, a drive (`C:`, `C:/`, `C:\\`, `\\`),
-Git Bash's `/c`, WSL's `/mnt/c` and Cygwin's `/cygdrive/c`. A walk bounded to a small depth
-(`find / -maxdepth 3`, `rg --max-depth 3`, `tree -L 3`, `gci -Depth 3`) passes; `du` sums the
-whole tree whatever its depth, so it never does. After a `cd` to a root, `.` and a find with no
-path count as that root. Any other path passes, the project or a folder below a root included.
+`fd`, `grep -r`, `rg`, `ag`, `ack`, `ls -R`, `du`, `tree`, `where /r`, cmd's `dir /s` and
+PowerShell's `Get-ChildItem -Recurse` or `-Depth` (`gci`, `ls`, `dir`). A root is `/`, `/*`, a
+drive (`C:`, `C:/`, `C:\\`, `\\`), Git Bash's `/c`, WSL's `/mnt/c` and Cygwin's `/cygdrive/c`. A
+walk bounded to a small depth (`find / -maxdepth 3`, `rg --max-depth 3`, `tree -L 3`,
+`gci -Depth 3`) passes; `du` sums the whole tree whatever its depth, so it never does. After a
+`cd`, `pushd` or `Set-Location` to a root (until `popd`), `.` and a walk with no path count as
+that root. Any other path passes, the project or a folder below a root included. Glob and Grep
+are not guarded: they run inside the tool and never outlive the session.
 
-Threat model: an agent's ACCIDENT; the hook reads the words it can split (shell text inside
-`sh -c`, `bash -c` and `powershell -Command` too) and lets anything else through, a path a
-variable holds included. No process is listed here: the hook must stay cheap.
+The command is read as its shell reads it: a heredoc's body is data, an escaped newline joins two
+lines, `#` starts a comment only at the start of a word, quotes and escapes are taken off (bash
+`\\`, PowerShell `` ` ``, cmd `^`), and the text of `sh -c`, `bash -lc`, `powershell -Command`
+and `cmd /c` is read too. Threat model: an agent's ACCIDENT; a path a variable holds passes.
 
-Exit 2 blocks the call and returns the message to the agent (Claude Code hook protocol).
+This guard fails open: its settings entry has no `onFailure: block`, so a timeout or a crash lets
+the call through (a stalled guard must not refuse every call), and unreadable input passes with
+a note. No process is listed here: the hook must stay cheap. Exit 2 blocks the call and returns
+the message to the agent (Claude Code hook protocol).
 """
 import json
-import os
 import re
-import shlex
 import sys
 
 MAX_DEPTH = 3  # ponytail: a fixed bound; the depth of C:/*/*/* stays in the seconds
 ROOT = re.compile(r"|[A-Za-z]:|/[A-Za-z]|/mnt/[A-Za-z]|/cygdrive/[A-Za-z]")
-WRAPPERS = {"sudo", "nohup", "time", "nice", "command", "exec", "builtin", "env", "stdbuf", "ionice"}
+ESCAPE = {"bash": "\\", "ps": "`", "cmd": "^"}
+SEPARATORS = {"bash": ";&|()<>`\n", "ps": ";&|()<>\n", "cmd": "&|()<>\n"}
+# A command that runs the rest of its words, with those of its options that take a value.
+WRAPPERS = {"sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"}, "doas": {"-u", "-C"},
+            "nice": {"-n", "--adjustment"}, "ionice": {"-c", "-n", "--class", "--classdata"},
+            "env": {"-u", "--unset", "-C", "--chdir"}, "stdbuf": {"-i", "-o", "-e"},
+            "time": {"-f", "-o", "--format", "--output"}, "timeout": {"-s", "-k", "--signal", "--kill-after"},
+            "nohup": set(), "command": set(), "exec": {"-a"}, "builtin": set()}
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 GCI = {"get-childitem", "gci", "dir", "ls"}
 ADVICE = ("Search inside the project instead (`find . -name x`, `rg PATTERN src/`, a Glob or Grep "
-          "path in the project), or bound the walk: `find / -maxdepth %d`, `rg --max-depth %d`, "
+          "call in the project), or bound the walk: `find / -maxdepth %d`, `rg --max-depth %d`, "
           "`tree -L %d`, `Get-ChildItem -Depth %d`." % ((MAX_DEPTH,) * 4))
 
 
-def block(message):
-    print("BLOCKED: " + message, file=sys.stderr)
-    sys.exit(2)
-
-
-def root(word, powershell=False):
-    """Whether WORD names a filesystem or drive root (a trailing / or /* included). PowerShell has
-    no /c drive form: there `/c` is a switch or a folder."""
-    w = word.strip("'\"").replace("\\", "/")
+def root(word, windows=False):
+    """Whether WORD names a filesystem or drive root (a trailing / or /* included). PowerShell and
+    cmd have no /c drive form: there `/c` is a switch or a folder."""
+    w = word.replace("\\", "/")
     if not w or "/" not in w and ":" not in w:
         return False
     w = re.sub(r"(?:/\**)+$", "", w)
-    return bool(ROOT.fullmatch(w)) and not (powershell and re.fullmatch(r"/[A-Za-z]", w))
+    return bool(ROOT.fullmatch(w)) and not (windows and re.fullmatch(r"/[A-Za-z]", w))
 
 
 def depth(args, names):
@@ -60,9 +65,10 @@ def depth(args, names):
     return None
 
 
-def operands(args, valued, pattern_first):
-    """The path operands of ARGS: options and the values of those in VALUED left out, and, for a
-    searcher (PATTERN_FIRST), its first operand unless -e or -f named the pattern."""
+def operands(args, takes_value, named=None):
+    """The path operands of ARGS: options, and the value of each option TAKES_VALUE accepts, left
+    out. For a searcher (NAMED given) the first operand is its pattern unless an option in NAMED
+    named it or needs none (`-e`, `rg --files`)."""
     found, skip, given = [], False, False
     for i, a in enumerate(args):
         if skip:
@@ -71,118 +77,211 @@ def operands(args, valued, pattern_first):
             found += args[i + 1:]
             break
         elif a.startswith("-") and len(a) > 1:
-            given = given or a in ("-e", "-f", "--regexp", "--file") or a.startswith(("--regexp=", "--file="))
-            skip = a in valued
+            given = given or named is not None and a.partition("=")[0] in named
+            skip = takes_value(a)
         else:
             found.append(a)
-    return found[1:] if pattern_first and not given else found
+    return found[1:] if named is not None and not given else found
 
 
 GREP_VALUED = {"-e", "-f", "-A", "-B", "-C", "-m", "-d", "-D", "--regexp", "--file", "--include", "--exclude",
                "--exclude-dir", "--max-count", "--context", "--after-context", "--before-context", "--label"}
-RG_VALUED = {"-e", "-f", "-g", "-t", "-T", "-A", "-B", "-C", "-m", "-d", "-j", "-M", "-E", "-r", "--glob", "--iglob",
-             "--type", "--type-not", "--max-depth", "--max-count", "--context", "--threads", "--replace",
-             "--encoding", "--sort", "--sortr", "--max-filesize", "--ignore-file", "--exclude", "--extension",
-             "--depth", "--exact-depth", "-x", "-X", "--exec", "--exec-batch", "-S", "--size", "--changed-within",
-             "--changed-before", "-o", "--owner", "--color", "--max-results", "--base-directory"}
+RG_VALUED = {"-e", "-f", "-g", "-t", "-T", "-A", "-B", "-C", "-m", "-d", "-j", "-M", "-E", "-r", "--regexp", "--file",
+             "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--max-depth", "--max-count",
+             "--context", "--after-context", "--before-context", "--threads", "--replace", "--encoding", "--sort",
+             "--sortr", "--max-filesize", "--ignore-file", "--color", "--colors", "--max-columns", "--pre",
+             "--pre-glob", "--path-separator", "--context-separator", "--field-match-separator", "--engine"}
+AG_VALUED = {"-A", "-B", "-C", "-m", "-g", "-G", "-p", "-W", "--after", "--before", "--context", "--max-count",
+             "--depth", "--ignore", "--ignore-dir", "--path-to-ignore", "--pager", "--width", "--file-search-regex",
+             "--type", "--match", "--ignore-file", "--type-add", "--type-set", "--output"}
+FD_VALUED = {"-d", "-t", "-e", "-x", "-X", "-E", "-S", "-o", "-c", "-j", "--max-depth", "--min-depth", "--exact-depth",
+             "--depth", "--type", "--extension", "--exec", "--exec-batch", "--exclude", "--size", "--changed-within",
+             "--changed-before", "--owner", "--color", "--threads", "--max-results", "--base-directory",
+             "--search-path", "--path-separator", "--ignore-file", "--batch-size", "--format"}
+FD = (FD_VALUED, set(), {"-d", "--max-depth", "--depth", "--exact-depth"})
+# name: (options that take a value, options after which no pattern operand comes, depth options)
+SEARCHERS = {"rg": (RG_VALUED, {"-e", "-f", "--regexp", "--file", "--files", "--type-list"}, {"-d", "--max-depth"}),
+             "ag": (AG_VALUED, {"-g"}, {"--depth"}), "ack": (AG_VALUED, {"-f", "-g", "--match"}, set()),
+             "fd": FD, "fdfind": FD}
+# Get-ChildItem's parameters that take a value (any unambiguous prefix works), its path left out.
+GCI_VALUED = ("-fi", "-in", "-ex", "-de", "-at", "-er", "-ea", "-ev", "-wa", "-wv", "-iv", "-ou", "-ov", "-pi")
 
 
-def walk(name, args, powershell):
-    """What NAME ARGS walks from a root, as `name root`, or None."""
-    def first(paths):
-        return next((p for p in paths if root(p, powershell)), None)
+def walk(name, args, shell, cwd):
+    """What NAME ARGS walks from a root, as `name root`, or None. A walk with no path walks the
+    current folder: CWD, when a cd named a root."""
+    windows, bound = shell != "bash", None
     if name == "find":
-        # Paths come before the first expression word; -H/-L/-P and -D/-O come before them.
+        # Paths come before the first expression word; -H, -L, -P, -D LIST and -O3 before them.
+        i = 0
+        while i < len(args) and (args[i] in ("-H", "-L", "-P", "-D") or re.fullmatch(r"-O\d*", args[i])):
+            i += 2 if args[i] == "-D" else 1
         paths = []
-        for a in args:
+        for a in args[i:]:
             if a.startswith(("-", "(", "!")):
-                if paths or a not in ("-H", "-L", "-P"):
-                    break
-                continue
+                break
             paths.append(a)
-        hit = first(paths)
-        return hit and (depth(args, {"-maxdepth"}) or 99) > MAX_DEPTH and "find " + hit
-    if name in ("fd", "fdfind", "rg", "ag", "ack"):
-        hit = first(operands(args, RG_VALUED, True))
-        return hit and (depth(args, {"-d", "--max-depth", "--depth", "--exact-depth"}) or 99) > MAX_DEPTH \
-            and name + " " + hit
-    if name in ("grep", "egrep", "fgrep"):
-        recursive = any(a in ("--recursive", "--dereference-recursive", "--directories=recurse")
-                        or re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*", a) for a in args)
-        hit = recursive and first(operands(args, GREP_VALUED, True))
-        return hit and name + " -r " + hit
-    if name == "tree":
-        hit = first(operands(args, {"-L", "-P", "-I", "-o", "--filelimit", "--charset"}, False))
-        return hit and (depth(args, {"-l"}) or 99) > MAX_DEPTH and "tree " + hit
-    if name == "du":
-        hit = first(operands(args, {"-d", "-B", "--exclude", "--max-depth", "--block-size", "--time-style"}, False))
-        return hit and "du " + hit
-    if name == "where":
-        hit = any(a.lower() == "/r" for a in args) and first(a for a in args if a.lower() != "/r")
-        return hit and "where /r " + hit
-    if name in GCI and (powershell or name != "ls"):
-        # PowerShell takes any unambiguous prefix of a parameter: -r, -rec, -Recurse.
-        recurse = any(re.fullmatch(r"-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?::\$true)?", a, re.I) for a in args)
-        hit = recurse and first(a for a in args if not a.startswith("-"))
-        return hit and (depth(args, {"-depth"}) or 99) > MAX_DEPTH and "Get-ChildItem -Recurse " + hit
-    if name == "ls":
-        recursive = any(a == "--recursive" or re.fullmatch(r"-[A-Za-z]*R[A-Za-z]*", a) for a in args)
-        hit = recursive and first(operands(args, set(), False))
-        return hit and "ls -R " + hit
-    return None
+        bound, label = depth(args, {"-maxdepth"}), "find"
+    elif name in SEARCHERS:
+        valued, named, depths = SEARCHERS[name]
+        paths, bound, label = operands(args, valued.__contains__, named), depth(args, depths), name
+    elif name in ("grep", "egrep", "fgrep"):
+        if not any(a in ("--recursive", "--dereference-recursive", "--directories=recurse")
+                   or re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*", a) for a in args):
+            return None
+        paths, label = operands(args, GREP_VALUED.__contains__, {"-e", "-f", "--regexp", "--file"}), name + " -r"
+    elif name == "tree":
+        paths = operands(args, {"-L", "-P", "-I", "-o", "--filelimit", "--charset"}.__contains__)
+        bound, label = depth(args, {"-l"}), "tree"
+    elif name == "du":
+        paths = operands(args, {"-d", "-B", "--exclude", "--max-depth", "--block-size", "--time-style"}.__contains__)
+        label = "du"
+    elif name == "where":
+        if not any(a.lower() == "/r" for a in args):
+            return None
+        paths, label = [a for a in args if a.lower() != "/r"], "where /r"
+    elif shell == "cmd" and name == "dir":
+        if not any(a.startswith("/") and "s" in a.lower().split("/") for a in args):  # /s, /s/b
+            return None
+        # `dir C:\x.h /s` looks for x.h in C:\ and every folder below it.
+        paths = [re.sub(r"(?<=[\\/:])[^\\/:]*[*?.][^\\/:]*$", "", a) for a in args if not a.startswith("/")]
+        label = "dir /s"
+    elif name in GCI and (windows or name in ("get-childitem", "gci")):
+        # PowerShell takes any unambiguous prefix of a parameter (-r, -Rec) and -s for -Recurse;
+        # -Depth recurses on its own.
+        bound = depth(args, {"-de", "-dep", "-dept", "-depth"})
+        if bound is None and not any(re.fullmatch(r"-(?:r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?|s)(?::\$true)?", a, re.I)
+                                     for a in args):
+            return None
+        paths = operands(args, lambda a: a.lower().startswith(GCI_VALUED))
+        label = "Get-ChildItem -Recurse"
+    elif name in ("ls", "dir"):
+        if not any(a == "--recursive" or re.fullmatch(r"-[A-Za-z]*R[A-Za-z]*", a) for a in args):
+            return None
+        paths, label = operands(args, set().__contains__), "ls -R"
+    else:
+        return None
+    paths = [cwd if cwd and p in (".", "./", ".\\") else p for p in paths] or [cwd or ""]
+    hit = next((p for p in paths if root(p, windows)), None)
+    return hit and (bound is None or bound > MAX_DEPTH) and label + " " + hit
 
 
-def words(text):
-    """Simple commands of TEXT as word lists; quotes taken off, backslashes kept (Windows paths)."""
-    lex = shlex.shlex(text.replace("\n", ";"), posix=True, punctuation_chars=True)
-    lex.whitespace_split, lex.escape = True, ""
-    try:
-        tokens = list(lex)
-    except ValueError:  # an unclosed quote: read the words as they stand
-        tokens = text.split()
-    command = []
-    for token in tokens:
-        if token and set(token) <= set("();<>|&"):
+def commands(text, shell):
+    """The simple commands of TEXT as word lists, read as SHELL reads them: quotes and escapes
+    taken off, an escaped newline joined, `#` at the start of a word a comment to the end of its
+    line (not in cmd), and a heredoc's body skipped (bash: it is data)."""
+    esc, seps, quotes = ESCAPE[shell], SEPARATORS[shell], '"' if shell == "cmd" else "'\""
+    text = text.replace("\r\n", "\n")
+    found, command, word, heredocs, delimiter = [], [], None, [], False
+    i = 0
+    while i <= len(text):
+        c = text[i] if i < len(text) else "\n"
+        if c == esc and i < len(text):  # a trailing escape is dropped
+            if text[i + 1:i + 2] not in ("", "\n"):
+                word = (word or "") + text[i + 1]
+            i += 2 if i + 1 < len(text) else 1
+            continue
+        if c in quotes:
+            j, part = i + 1, ""
+            while j < len(text) and text[j] != c:
+                if c == '"' and shell != "cmd" and text[j] == esc and j + 1 < len(text) \
+                        and (shell == "ps" or text[j + 1] in '"\\$`\n'):
+                    part += text[j + 1].strip("\n")
+                    j += 2
+                    continue
+                part += text[j]
+                j += 1
+            word, i = (word or "") + part, j + 1
+            continue
+        if c == "#" and word is None and shell != "cmd":
+            i = text.find("\n", i)
+            i = len(text) if i < 0 else i
+            continue
+        if word is None and (c in seps or c in "{}") or c in seps or c in " \t":
+            if word is not None:
+                if delimiter:
+                    heredocs.append(word)
+                else:
+                    command.append(word)
+                word, delimiter = None, False
+            if c in " \t":
+                i += 1
+                continue
             if command:
-                yield command
+                found.append(command)
             command = []
-        else:
-            command.append(token.lstrip("`$").rstrip("`"))
-    if command:
-        yield command
+            if shell == "bash" and text.startswith("<<", i):  # <<<: a here-string, no body
+                delimiter = not text.startswith("<<<", i)
+                i += 3 if text.startswith(("<<<", "<<-"), i) else 2
+                continue
+            i += 1
+            if c == "\n":
+                delimiter = False
+                for end in heredocs:  # skip the body, up to the line that is its delimiter
+                    while i < len(text):
+                        j = text.find("\n", i)
+                        j = len(text) if j < 0 else j
+                        line, i = text[i:j], j + 1
+                        if line.strip() == end:
+                            break
+                heredocs = []
+            continue
+        word = (word or "") + c
+        i += 1
+    return found
 
 
-def scan(text, powershell):
-    """The first rooted walk in TEXT, as a short description, or None. After a `cd` to a root, `.`
-    and a find with no path count as that root (ponytail: no other relative path is followed)."""
-    at_root = None
-    for argv in words(text):
-        while argv and (re.match(r"\w+=", argv[0]) or os.path.basename(argv[0]).lower() in WRAPPERS):
+def unwrap(argv):
+    """ARGV without the variable assignments and wrappers (`sudo -u x`, `nice -n 19`,
+    `timeout 60`) in front of the command they run."""
+    while argv:
+        name = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if re.match(r"\w+=", argv[0]):
             argv = argv[1:]
-        if argv and argv[0].lower() == "timeout":  # timeout [OPTION]... DURATION COMMAND
+            continue
+        if name not in WRAPPERS:
+            return argv
+        argv = argv[1:]
+        while argv and argv[0].startswith("-"):
+            argv = argv[2:] if argv[0] in WRAPPERS[name] else argv[1:]
+        if name == "timeout":  # timeout [OPTION]... DURATION COMMAND
             argv = argv[1:]
-            while argv and argv[0].startswith("-"):
-                argv = argv[2:] if argv[0] in ("-s", "-k", "--signal", "--kill-after") else argv[1:]
-            argv = argv[1:]
+    return argv
+
+
+def scan(text, shell, cwd=None):
+    """The first rooted walk in TEXT, as a short description, or None. CWD is the root a `cd`,
+    `pushd` or `Set-Location` named (ponytail: no other folder change is followed)."""
+    windows, stack = shell != "bash", []
+    for argv in commands(text, shell):
+        argv = unwrap(argv)
         if not argv:
             continue
-        name = re.sub(r"\.exe$", "", os.path.basename(argv[0].replace("\\", "/")).lower())
+        name = re.sub(r"\.exe$", "", argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower())
         args = argv[1:]
-        if name in ("cd", "pushd", "chdir", "set-location", "sl"):
-            target = next((a for a in args if not a.startswith("-")), "")
-            at_root = target if root(target, powershell) else None
+        if name in ("cd", "chdir", "pushd", "set-location", "sl", "push-location"):
+            if name in ("pushd", "push-location"):
+                stack.append(cwd)
+            options = ("-", "/") if shell == "cmd" else ("-",)  # cmd: cd /d C:\
+            target = next((a for a in args if not a.startswith(options)), "")
+            cwd = target if root(target, windows) else None
             continue
-        if at_root:
-            args = [at_root if a in (".", "./") else a for a in args]
-            if name == "find" and not any(a and not a.startswith(("-", "(", "!")) for a in args[:1]):
-                args = [at_root] + args
-        if name in SHELLS and "-c" in args[:-1]:
-            found = scan(args[args.index("-c") + 1], False)
-        elif name in ("powershell", "pwsh") and any(a.lower() in ("-c", "-command") for a in args[:-1]):
-            at = next(i for i, a in enumerate(args) if a.lower() in ("-c", "-command"))
-            found = scan(" ".join(args[at + 1:]), True)
+        if name in ("popd", "pop-location"):
+            cwd = stack.pop() if stack else None
+            continue
+        found = None
+        if name in SHELLS:
+            at = next((k for k, a in enumerate(args) if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", a)), None)
+            inner = None if at is None else next((a for a in args[at + 1:] if not a.startswith("-")), None)
+            found = inner and scan(inner, "bash", cwd)
+        elif name in ("powershell", "pwsh"):
+            at = next((k for k, a in enumerate(args) if a.lower() in ("-c", "-command")), None)
+            found = at is not None and scan(" ".join(args[at + 1:]), "ps", cwd)
+        elif name == "cmd":
+            at = next((k for k, a in enumerate(args) if a.lower() in ("/c", "/k", "//c", "//k")), None)
+            found = at is not None and scan(" ".join(args[at + 1:]), "cmd", cwd)
         else:
-            found = walk(name, args, powershell)
+            found = walk(name, args, shell, cwd)
         if found:
             return found
     return None
@@ -190,20 +289,15 @@ def scan(text, powershell):
 
 try:
     data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    tool = data.get("tool_name") or ""
     call = data.get("tool_input") or {}
-except Exception as exc:
-    block(f"guard_root_scan.py could not read the hook input ({exc}). Report this to the owner.")
-why = ("it walks a whole filesystem or drive: on a big disk it passes the tool's timeout, moves to "
-       "the background and can keep a CPU core busy for hours after the session ends (#298). ")
-if tool in ("Glob", "Grep"):
-    path = call.get("path") if isinstance(call.get("path"), str) else ""
-    pattern = call.get("pattern") if tool == "Glob" and isinstance(call.get("pattern"), str) else ""
-    start = re.split(r"[*?\[{]", pattern, 1)[0]  # an absolute Glob pattern walks from its fixed part
-    hit = path if root(path) else pattern if start != pattern and root(start) else None
-    if hit:
-        block("this %s call searches from a root (%s); %s%s" % (tool, hit, why, ADVICE))
-elif isinstance(call.get("command"), str):
-    found = scan(call["command"], tool == "PowerShell")
+except Exception as exc:  # fails open
+    print("guard_root_scan.py could not read the hook input (%s); the call goes on. Report this to the "
+          "owner." % exc, file=sys.stderr)
+    sys.exit(1)
+if isinstance(call, dict) and isinstance(call.get("command"), str):
+    found = scan(call["command"], "ps" if data.get("tool_name") == "PowerShell" else "bash")
     if found:
-        block("`%s` is refused: %s%s" % (found, why, ADVICE))
+        print("BLOCKED: `%s` is refused: it walks a whole filesystem or drive: on a big disk it passes the "
+              "tool's timeout, moves to the background and can keep a CPU core busy for hours after the "
+              "session ends (#298). %s" % (found, ADVICE), file=sys.stderr)
+        sys.exit(2)

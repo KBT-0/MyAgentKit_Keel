@@ -45,6 +45,42 @@ REFUSED = [
     ('PowerShell', r'where.exe /r C:\ cl.exe'),
     ('PowerShell', r'Set-Location C:\; Get-ChildItem . -Recurse'),
     ('Bash', 'powershell.exe -NoProfile -Command "Get-ChildItem C:\\ -Recurse"'),
+    # orph round 1. A `#` comment ends at its line; inside a word it is no comment.
+    ('Bash', '# look for the header\nfind / -name x.h'),
+    ('Bash', 'curl http://h/#a; find / -name x'),
+    ('Bash', 'n=${#files[@]}; find / -name x'),
+    ('Bash', "cat > n.md <<'EOF'\nfind / is data\nEOF\nfind / -name x"),  # the walk after the heredoc
+    ('Bash', 'cat <<< "x"\nfind / -name x'),
+    # rg's -S, -o, -x and ag's or ack's -r are switches; rg --files takes no pattern.
+    ('Bash', 'rg -S foo /'),
+    ('Bash', 'rg -o foo C:/'),
+    ('Bash', 'rg -x foo /'),
+    ('Bash', 'rg --files /'),
+    ('Bash', 'ag -r foo /'),
+    ('Bash', 'ag -S foo /'),
+    ('Bash', 'ack -r foo /'),
+    ('PowerShell', r'Get-ChildItem C:\ -Depth 50'),
+    ('PowerShell', r'dir C:\ -s'),
+    ('PowerShell', r'& { gci C:\ -r }'),
+    ('Bash', 'bash -lc "find / -name x"'),
+    ('Bash', 'sh -ec "find / -name x"'),
+    ('Bash', 'nice -n 19 find / -name x'),
+    ('Bash', 'env -i find /'),
+    ('Bash', 'sudo -u x find / -name y'),
+    ('Bash', 'find -O3 / -name x'),
+    ('Bash', 'find -D tree / -name x'),
+    # After a cd to a root, a walk with no path walks it; popd goes back.
+    ('Bash', 'cd / && rg foo'),
+    ('Bash', 'cd / && grep -r foo'),
+    ('Bash', 'cd / && du -sh'),
+    ('Bash', 'cd / && ls -R'),
+    ('Bash', 'cd / && tree'),
+    ('PowerShell', r'Set-Location C:\; gci -r'),
+    ('PowerShell', r'Set-Location C:\; Get-ChildItem -Recurse -Filter x.h'),
+    ('Bash', 'pushd /; pushd /tmp; popd; rg foo'),
+    ('Bash', 'cmd //c "dir C:\\x.h /s"'),
+    ('PowerShell', r'cmd /c "dir C:\ /s"'),
+    ('PowerShell', r'cmd /c dir \*.h /s/b'),
 ]
 ALLOWED = [
     ('Bash', 'find . -name x.h'),
@@ -77,23 +113,24 @@ ALLOWED = [
     ('PowerShell', r'gci . -r'),
     ('PowerShell', r'Get-ChildItem /c -Recurse'),
     ('PowerShell', r'Get-Content C:\notes.txt'),
-]
-TOOLS_REFUSED = [
-    ('Glob', {'pattern': '**/*.h', 'path': '/'}),
-    ('Glob', {'pattern': '**/*.h', 'path': 'C:\\'}),
-    ('Glob', {'pattern': '/**/x.h'}),
-    ('Glob', {'pattern': 'C:/**/x.h'}),
-    ('Grep', {'pattern': 'foo', 'path': '/'}),
-    ('Grep', {'pattern': 'foo', 'path': 'C:/'}),
-    ('Grep', {'pattern': 'foo', 'path': '/c/'}),
-]
-TOOLS_ALLOWED = [
-    ('Glob', {'pattern': '**/*.h'}),
-    ('Glob', {'pattern': 'src/**/*.h', 'path': 'D:/work/project'}),
-    ('Glob', {'pattern': '/usr/include/**/*.h'}),
-    ('Grep', {'pattern': '/', 'path': 'src'}),
-    ('Grep', {'pattern': 'foo'}),
-    ('Read', {'file_path': '/'}),
+    # orph round 1. An escape is the shell's: `\(` is find's paren, `\` + newline joins the lines.
+    ('Bash', 'find . \\( -name a -o -name b \\) -print'),
+    ('Bash', 'grep -rn "foo" \\\n  src/'),
+    ('Bash', "rg foo src/ \\\n  -g '*.py'"),
+    ('Bash', 'grep -r foo src \\'),
+    # A heredoc's body is data.
+    ('Bash', "cat > notes.md <<'EOF'\nfind / -name x.h ran for seven hours\nEOF"),
+    ('Bash', "git commit -F - <<-EOF\n\tfind / -name x is refused\n\tEOF\necho done"),
+    ('Bash', 'echo a # find / -name x'),
+    # Depth 0 is a bound.
+    ('Bash', 'find / -maxdepth 0'),
+    ('Bash', 'rg --max-depth 0 foo /'),
+    ('PowerShell', r'Get-ChildItem C:\ -Recurse -Depth 0'),
+    ('PowerShell', r'Get-ChildItem C:\work -Depth 50'),
+    ('Bash', 'pushd /; popd; find .'),
+    ('Bash', 'cd / && rg foo src'),
+    ('PowerShell', r'cmd /c "dir C:\work /s"'),
+    ('PowerShell', r'cmd /c "dir C:\ /b"'),
 ]
 
 
@@ -121,16 +158,13 @@ class GuardRootScanTests(unittest.TestCase):
     def test_a_bounded_walk_or_one_inside_a_folder_passes(self):
         self.check(ALLOWED, 0)
 
-    def test_a_glob_or_grep_call_from_a_root_is_refused(self):
-        self.check(TOOLS_REFUSED, 2)
-
-    def test_a_glob_or_grep_call_inside_a_folder_passes(self):
-        self.check(TOOLS_ALLOWED, 0)
-
-    def test_unreadable_input_is_refused(self):
+    def test_unreadable_input_lets_the_call_through(self):
+        # The guard fails open (lead decision D1): a stalled or broken guard must not refuse every call.
         result = subprocess.run([sys.executable, str(HOOK)], input=b'{not json', capture_output=True, timeout=60)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn('could not read the hook input', result.stderr.decode('utf-8', 'replace'))
+        err = result.stderr.decode('utf-8', 'replace')
+        self.assertEqual(result.returncode, 1, err)
+        self.assertIn('could not read the hook input', err)
+        self.assertIn('the call goes on', err)
 
 
 if __name__ == '__main__':

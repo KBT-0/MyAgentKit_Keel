@@ -510,9 +510,12 @@ fi
 # An agent's `find /` passed the Bash tool's timeout, moved to the background, lost its session
 # and kept a CPU core busy for seven hours; every benchmark in that window was wrong (#298).
 # Listed here, never ended: a process older than two hours whose parent is gone (Windows: no
-# such process, or one born after it; POSIX: pid 1 or a subreaper such as systemd or launchd)
-# that used more than 5% of a CPU over its life, and whose name is a typical tool command, never
-# another program. Each line is a NOTE with the command that ends it, for the owner to run.
+# such process, or one born after it; POSIX: pid 1 or a subreaper such as systemd, launchd or
+# WSL's init) that used more than 5% of a CPU over its life, and whose name is a typical tool
+# command, never another program: a search or walk tool or a shell, and on Windows also python,
+# node and npm. On POSIX those three are left out, as a service of the owner (systemd, launchd)
+# has a parent of that kind too. Each line is a NOTE with the command that ends it, for the owner
+# to run.
 # One process listing: Win32_Process (about a second) or ps. DOCTOR_PROCESSES (lines "pid ppid
 # age-seconds cpu-seconds name") and DOCTOR_STRAY_AGE exist for the test only.
 stray_age=${DOCTOR_STRAY_AGE:-7200}
@@ -546,7 +549,7 @@ else
       n = $5; for (i = 6; i <= NF; i++) n = n " " $i
       sub(/.*[\/\\]/, "", n); n = tolower(n); sub(/\.exe$/, "", n); sub(/[0-9.]+$/, "", n); name[NR] = n; by[$1] = n }
     END {
-      split("find fd fdfind rg grep egrep fgrep ag ack du tree ls bash sh dash zsh ksh python py node npm npx pwsh powershell", t, " ")
+      split("find fd fdfind rg grep egrep fgrep ag ack du tree ls bash sh dash zsh ksh pwsh powershell" (win ? " python py node npm npx" : ""), t, " ")
       for (i in t) tool[t[i]] = 1
       for (k = 1; k <= NR; k++) {
         p = dad[k]

@@ -19,9 +19,11 @@
 #      a gate (check.sh, by its lock) or a git operation (index.lock) is running in: the session
 #      is not ended, since that would orphan the run.
 #   2. `tmux kill-session -t =NAME`; the terminal tab attached to it closes by itself. The
-#      processes below the session's panes, listed just before (`ps -A -o pid= -o ppid=`), get
-#      SIGTERM, and SIGKILL once the wait below is over: a background tool command outlives the
-#      SIGHUP tmux sends, and one once kept a CPU core busy for hours (#298). Only that tree: an
+#      processes below the session's panes, listed just before (`ps -A -o pid= -o ppid= -o
+#      lstart=`), get SIGTERM, and SIGKILL once the wait below is over, each only while its pid
+#      still has the start time it was listed with (a reused pid is never signalled): a
+#      background tool command outlives the SIGHUP tmux sends, and one once kept a CPU core busy
+#      for hours (#298). Only that tree: an
 #      orphan whose parent was already gone cannot be told apart, and doctor.sh lists it. A
 #      session that does not exist is reported, not an error, when tmux says so (no such session,
 #      no server); any other failure of `tmux has-session` (a socket it cannot read) fails the
@@ -230,20 +232,31 @@ nl='
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 # The physical path of the worktree, or empty; /proc/PID/cwd names physical paths.
 top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
-# below PID...: every process under the given ones (their children, theirs, ...), from ps; empty
-# where ps cannot list them (Git for Windows' ps has no -o).
+# below PID...: every process under the given ones (their children, theirs, ...), from ps, each as
+# PID@START, START its start time with _ for blanks; empty where ps cannot list them (Git for
+# Windows' ps has no -o).
 below() {
   [ "$#" -gt 0 ] || return 0
-  ps -A -o pid= -o ppid= 2>/dev/null | awk -v roots=" $* " '{ kid[NR] = $1; dad[NR] = $2 }
+  ps -A -o pid= -o ppid= -o lstart= 2>/dev/null | awk -v roots=" $* " '{ kid[NR] = $1; dad[NR] = $2
+      $1 = $2 = ""; t = $0; gsub(/^ +| +$/, "", t); gsub(/ +/, "_", t); at[NR] = t }
     END { n = split(roots, r, " "); for (i = 1; i <= n; i++) seen[r[i]] = 1
           do { more = 0
-               for (k = 1; k <= NR; k++) if ((dad[k] in seen) && !(kid[k] in seen)) { seen[kid[k]] = 1; out = out " " kid[k]; more = 1 }
+               for (k = 1; k <= NR; k++) if ((dad[k] in seen) && !(kid[k] in seen)) { seen[kid[k]] = 1; out = out " " kid[k] "@" at[k]; more = 1 }
           } while (more)
           print substr(out, 2) }'
 }
-# alive PID...: the ones still running. ponytail: a pid is not checked for reuse; the list is
-# seconds old, and pid_max makes a reuse that soon unlikely.
-alive() { for p in "$@"; do kill -0 "$p" 2>/dev/null && printf '%s ' "$p"; done; }
+# same PID@START...: the ones still running as the same process: the pid with the start time it
+# had when listed. A pid the system has given to another process since is never signalled. Being
+# the same process, it is the one listed in the session's tree, though the session's end gave it
+# a new parent.
+same() {
+  [ "$#" -gt 0 ] || return 0
+  ps -A -o pid= -o lstart= 2>/dev/null | awk -v want=" $* " '{ p = $1; $1 = ""; t = $0
+      gsub(/^ +| +$/, "", t); gsub(/ +/, "_", t); now[p "@" t] = 1 }
+    END { n = split(want, w, " "); for (i = 1; i <= n; i++) if (w[i] in now) printf "%s ", w[i] }'
+}
+# pids PID@START...: the pids alone.
+pids() { for p in "$@"; do printf '%s ' "${p%%@*}"; done; }
 # inside DIR: prints one process working in DIR or below and succeeds; Linux /proc only.
 inside() {
   [ -n "$1" ] && [ -e /proc/self/cwd ] || return 1
@@ -592,8 +605,10 @@ for name; do
        # shellcheck disable=SC2086 # one pid per word
        tree=$(below $panes); tmux kill-session -t "=$name" 2>/dev/null; then
     say "$name: tmux session ended; the terminal tab attached to it closes by itself"; noquiet=--no-quiet
-    # shellcheck disable=SC2086
-    [ -z "$tree" ] || kill -TERM $tree 2>/dev/null
+    # shellcheck disable=SC2086 # one pid per word, here and below
+    left=$(same $tree)
+    # shellcheck disable=SC2046,SC2086
+    [ -z "$left" ] || kill -TERM $(pids $left) 2>/dev/null
     wt=""; [ -z "$top" ] || wt=$(CDPATH= cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
     i=0; on=""
     while :; do
@@ -612,13 +627,15 @@ for name; do
     done
     [ "$i" -eq 0 ] || [ "$i" -ge 15 ] || say "$name: waited $i s for ${on%; }"
     if [ -n "$tree" ]; then
-      # shellcheck disable=SC2086 # one pid per word, here and below
-      left=$(alive $tree)
       # shellcheck disable=SC2086
-      [ -z "$left" ] || { sleep 1; left=$(alive $left); }
+      left=$(same $tree)
       # shellcheck disable=SC2086
-      [ -z "$left" ] || kill -KILL $left 2>/dev/null
-      say "$name: ended the processes its session started (process $tree)${left:+; SIGKILL for ${left% }}"
+      [ -z "$left" ] || { sleep 1; left=$(same $left); }
+      # shellcheck disable=SC2046,SC2086
+      [ -z "$left" ] || kill -KILL $(pids $left) 2>/dev/null
+      # shellcheck disable=SC2086
+      listed=$(pids $tree) killed=$(pids $left)
+      say "$name: ended the processes its session started (process ${listed% })${killed:+; SIGKILL for ${killed% }}"
     fi
   else
     fail "$name: tmux kill-session -t =$name failed; the session may still run"

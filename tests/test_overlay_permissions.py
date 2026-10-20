@@ -168,7 +168,9 @@ class OverlaySettingsTests(unittest.TestCase):
                           'guard_worker_route.py'])
         for hook in guards:
             with self.subTest(hook=hook['command']):
-                self.assertEqual(hook.get('onFailure'), 'block')
+                # guard_root_scan fails open (#298, lead decision D1): it only saves a CPU core, and
+                # a stalled guard must not refuse every shell call.
+                self.assertEqual(hook.get('onFailure'), None if 'guard_root_scan' in hook['command'] else 'block')
         # A blocking guard that times out refuses an ordinary command: a loaded Windows host took
         # over 10 s for sh, the Python launcher and the interpreter (leeway, 2026-10-18; measured
         # 0.5-2.6 s per start idle-loaded), while the hook's own work is about 0.1 s.
@@ -178,7 +180,10 @@ class OverlaySettingsTests(unittest.TestCase):
                     self.assertGreaterEqual(entry['hooks'][0].get('timeout', 600), 30)
         matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
         self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
-        self.assertIn('|'.join(SHELL_TOOLS) + '|Glob|Grep', matchers)  # #298: a walk from a root
+        # #298: a walk from a root; Glob and Grep run inside the tool and never outlive the session.
+        root_scan = [e['matcher'] for e in self.settings['hooks']['PreToolUse']
+                     if 'guard_root_scan' in e['hooks'][0]['command']]
+        self.assertEqual(root_scan, ['|'.join(SHELL_TOOLS)])
 
     def test_every_command_guard_covers_every_shell_tool(self):
         # #93, #213: a guard wired to "Bash" alone let PowerShell and Monitor calls through. The
