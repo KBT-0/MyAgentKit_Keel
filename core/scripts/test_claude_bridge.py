@@ -3977,13 +3977,9 @@ class BridgeTests(unittest.TestCase):
             self.assertIn("questions", result["result"])
 
     def test_base_commit_and_untracked_scopes(self):
-        # #114: the Claude adapter reviews a --commit on a dirty tree from the commit's archive;
-        # the snapshot without past_ok (codex_bridge's) still refuses it.
         code, result = self.run_bridge(extra=["--commit", "HEAD"])
-        self.assertEqual(code, 0, result)
-        with self.assertRaises(bridge.BridgeError) as caught:
-            bridge.snapshot(self.repo, "commit", "HEAD")
-        self.assertIn("clean checkout", str(caught.exception))
+        self.assertEqual(code, 2)
+        self.assertIn("clean checkout", result["error"])
         (self.repo / "file.py").write_text("original\n")
         code, result = self.run_bridge(extra=["--base", "HEAD"])
         self.assertEqual(code, 2)
@@ -4018,28 +4014,48 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             bridge.snapshot(self.repo, 'commit', past)
 
-    def kit_upgrade(self, edit='', crlf=False, record=True):
-        """#114: a kit clone with core/x.sh (KIT-OWNED), and a project commit that copies it to
-        x.sh (plus `edit`), records the kit commit (or `record`) and changes file.py."""
+    KIT_SECTION = ("## Kit-verified files (equal to the kit's file after git's line-ending normalisation, "
+                   "hash-object --path; not reviewed)")
+
+    def kit_git(self, kit, *args, stdin=None):
+        return subprocess.run(['git', '-C', str(kit), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                               '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', *args],
+                              check=True, capture_output=True, input=stdin).stdout.decode().strip()
+
+    def kit_upgrade(self, edit='', crlf=False, record=True, tag=True, executable=False, nest=False):
+        """#114: a kit clone with core/x.sh (KIT-OWNED) and core/plain.txt (no marker), its commit
+        on tag v1 (`tag`), and a project commit that copies both (x.sh plus `edit`), records the
+        kit commit (or `record`) and changes file.py. `nest`: the kit is a folder of a repository."""
         kit = self.root / 'kit'
         kit.mkdir()
-
-        def run(*args):
-            return subprocess.run(['git', '-C', str(kit), *args], check=True, capture_output=True)
-        run('init', '-q')
-        run('config', 'core.autocrlf', 'true' if crlf else 'false')
-        (kit / 'core').mkdir()
+        self.kit_git(kit, 'init', '-q')
+        self.kit_git(kit, 'config', 'core.autocrlf', 'true' if crlf else 'false')
+        if nest:
+            kit = kit / 'sub'
+        (kit / 'core').mkdir(parents=True)
         source = '# KIT-OWNED: do not edit locally\necho kit\n'
         (kit / 'core/x.sh').write_bytes(source.encode())
-        run('add', '.')
-        run('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null',
-            '-c', 'commit.gpgsign=false', 'commit', '-qm', 'kit')
-        kit_commit = run('rev-parse', 'HEAD').stdout.decode().strip()
+        (kit / 'core/plain.txt').write_bytes(b'plain\n')
+        self.kit_git(kit, 'add', '.')
+        if executable:
+            self.kit_git(kit, 'update-index', '--chmod=+x', 'core/x.sh')
+        self.kit_git(kit, 'commit', '-qm', 'kit')
+        if tag:
+            self.kit_git(kit, 'tag', 'v1.0.0')
+        kit_commit = self.kit_git(kit, 'rev-parse', 'HEAD')
         data = source + edit
         (self.repo / 'x.sh').write_bytes((data.replace('\n', '\r\n') if crlf else data).encode())
+        (self.repo / 'plain.txt').write_bytes(b'plain\n')
         if record:
             (self.repo / 'docs/kit').mkdir(parents=True)
             (self.repo / 'docs/kit/.kit-commit').write_text((kit_commit if record is True else record) + '\n')
+        if executable:
+            os.chmod(self.repo / 'x.sh', 0o755)
+            self.git('add', 'x.sh')
+            self.git('update-index', '--chmod=+x', 'x.sh')
+        # A --commit HEAD review needs a clean tree: the wrapper run_wrapper installs is ignored.
+        with (self.repo / '.git/info/exclude').open('a') as exclude:
+            exclude.write('/scripts/\n')
         self.commit_fixture('Kit upgrade')
         return kit, kit_commit
 
@@ -4056,15 +4072,21 @@ class BridgeTests(unittest.TestCase):
         diff = prompt.partition('\nDiff:\n')[2]
         self.assertIn('+changed', diff)
         self.assertNotIn('x.sh', diff)
-        self.assertIn('Verified by hash, not reviewed: these changed paths are byte for byte the kit\'s own '
-                      'files at kit commit %s' % kit_commit, prompt)
+        # Equal to a kit file but without the KIT-OWNED header: reviewed.
+        self.assertIn('+plain', diff)
+        self.assertIn('Verified by hash, not reviewed: these changed paths are equal to the kit\'s file after '
+                      'git\'s line-ending normalisation (hash-object --path) at kit commit %s' % kit_commit, prompt)
         self.assertIn('\n  x.sh (blob %s)\n' % blob, prompt)
-        self.assertIn('## Kit-verified files (verified by hash, not reviewed)\n\n- x.sh, blob %s, kit commit %s\n'
+        self.assertIn(self.KIT_SECTION + '\n\n- x.sh, blob %s, kit commit %s\n'
                       % (blob, kit_commit), Path(result['evidence']).read_text(encoding='utf-8'))
         result, chain = self.dispatch_result(fallback=False, args=('--commit', 'HEAD', '--kit-verified', '--kit', str(kit)))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(chain['kit_verified'], [{'path': 'x.sh', 'blob': blob, 'kit_commit': kit_commit}])
         self.assertIn('- x.sh, blob %s' % blob, Path(chain['attempts'][0]['evidence']).read_text(encoding='utf-8'))
+        # The list is bound to the commit's blobs.
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.snapshot(self.repo, 'commit', 'HEAD', True, [dict(chain['kit_verified'][0], blob='0' * 40)])
+        self.assertIn('the kit-verified files are not the blobs of commit', str(caught.exception))
 
     def test_a_kit_owned_file_the_project_edited_stays_in_the_diff(self):
         kit, _ = self.kit_upgrade(edit='echo local\n')
@@ -4075,7 +4097,7 @@ class BridgeTests(unittest.TestCase):
         prompt = log.read_text(encoding='utf-8')
         self.assertIn('+echo local', prompt.partition('\nDiff:\n')[2])
         self.assertNotIn('Verified by hash', prompt)
-        self.assertIn('## Kit-verified files (verified by hash, not reviewed)\n\nNone.\n',
+        self.assertIn(self.KIT_SECTION + '\n\nNone.\n',
                       Path(result['evidence']).read_text(encoding='utf-8'))
 
     def test_an_unknown_or_missing_kit_commit_verifies_nothing(self):
@@ -4101,6 +4123,119 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit),
                          [{'path': 'x.sh', 'blob': blob, 'kit_commit': kit_commit}])
 
+    def test_line_ending_churn_of_a_kit_verified_file_is_still_refused(self):
+        # kitv4 item 4: x.sh verifies through the kit clone's normalisation, but the commit turns
+        # its LF into CRLF; the churn check reads every changed file, not the trimmed diff.
+        kit, _ = self.kit_upgrade(crlf=True)
+        for data, edit in ((b'# KIT-OWNED: do not edit locally\necho kit\n', 'lf\n'),
+                           (b'# KIT-OWNED: do not edit locally\r\necho kit\r\n', 'crlf\n')):
+            (self.repo / 'x.sh').write_bytes(data)
+            (self.repo / 'file.py').write_text(edit)
+            self.commit_fixture('Line endings')
+        self.assertEqual([entry['path'] for entry in bridge.kit_verified(self.repo, 'HEAD', kit)], ['x.sh'])
+        result, _ = self.dispatch_result(fallback=False, args=('--commit', 'HEAD', '--kit-verified', '--kit', str(kit)))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("line-ending-only churn in 'x.sh'", result.stdout + result.stderr)
+
+    def test_a_mode_change_of_a_kit_owned_file_stays_in_the_diff(self):
+        # kitv4 item 1: the mode must be the kit's and unchanged against the parent.
+        kit, _ = self.kit_upgrade(executable=True)
+        self.assertEqual([entry['path'] for entry in bridge.kit_verified(self.repo, 'HEAD', kit)], ['x.sh'])
+        self.git('update-index', '--chmod=-x', 'x.sh')
+        os.chmod(self.repo / 'x.sh', 0o644)
+        (self.repo / 'file.py').write_text('mode\n')
+        self.commit_fixture('Lose the exec bit')
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(extra=['--commit', 'HEAD', '--kit-verified', str(kit)],
+                                       env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        self.assertIn('old mode 100755', log.read_text(encoding='utf-8').partition('\nDiff:\n')[2])
+        # Added with a mode the kit does not have.
+        self.git('rm', '-q', '--cached', 'x.sh')
+        self.kit_git(self.repo, 'commit', '-qm', 'Remove x.sh')
+        self.git('add', 'x.sh')
+        self.commit_fixture('Add x.sh as 100644')
+        self.assertEqual(self.git('ls-tree', 'HEAD', 'x.sh').stdout.decode().split()[0], '100644')
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        # Back to the kit's 100755: the mode is the kit's, but the commit changes it.
+        self.git('update-index', '--chmod=+x', 'x.sh')
+        os.chmod(self.repo / 'x.sh', 0o755)
+        (self.repo / 'file.py').write_text('mode again\n')
+        self.commit_fixture('Gain the exec bit')
+        self.assertEqual(self.git('ls-tree', 'HEAD', 'x.sh').stdout.decode().split()[0], '100755')
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+
+    def test_kit_verified_refuses_a_kit_folder_of_another_repository(self):
+        # kitv4 item 2: sync-kit.sh's own_repo rule.
+        from contextlib import redirect_stderr
+        kit, _ = self.kit_upgrade(nest=True)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        self.assertIn('is no git clone of its own', err.getvalue())
+
+    def test_kit_verified_leaves_a_symlink_and_a_path_over_a_directory_in_the_diff(self):
+        # kitv4 items 2 and 3: a symlink equal to the kit's symlink; a kit file that replaces a
+        # directory, whose deletions its exclusion pathspec would hide.
+        kit, _ = self.kit_upgrade()
+        link = '# KIT-OWNED: do not edit locally\n'.encode()
+        blob = self.kit_git(kit, 'hash-object', '-w', '--stdin', stdin=link)
+        self.kit_git(kit, 'update-index', '--add', '--cacheinfo', '120000,%s,core/link' % blob)
+        self.kit_git(kit, 'commit', '-qm', 'link')
+        self.kit_git(kit, 'tag', 'v1.1.0')
+        self.kit_git(self.repo, 'hash-object', '-w', '--stdin', stdin=link)
+        self.git('update-index', '--add', '--cacheinfo', '120000,%s,link' % blob)
+        (self.repo / 'docs/kit/.kit-commit').write_text(self.kit_git(kit, 'rev-parse', 'HEAD') + '\n')
+        self.git('add', 'docs/kit/.kit-commit')
+        self.kit_git(self.repo, 'commit', '-qm', 'Symlink')
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        self.git('rm', '-q', '--cached', 'link')
+        self.git('rm', '-q', 'x.sh')
+        (self.repo / 'x.sh').mkdir()
+        (self.repo / 'x.sh/inner.txt').write_text('inner\n')
+        self.commit_fixture('A directory')
+        shutil.rmtree(self.repo / 'x.sh')
+        (self.repo / 'x.sh').write_bytes(b'# KIT-OWNED: do not edit locally\necho kit\n')
+        self.commit_fixture('The kit file over the directory')
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+
+    def test_kit_verified_needs_a_released_kit_commit_and_no_downgrade(self):
+        # kitv4 items 6 and 7 (lead decisions 6, 7).
+        from contextlib import redirect_stderr
+        kit, kit_commit = self.kit_upgrade(tag=False)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        self.assertIn('kit commit %s is on no release tag v*' % kit_commit, err.getvalue())
+        self.kit_git(kit, 'tag', 'v1.0.0', kit_commit)
+        (kit / 'core/x.sh').write_bytes(b'# KIT-OWNED: do not edit locally\necho kit 2\n')
+        self.kit_git(kit, 'commit', '-qam', 'kit 2')
+        self.kit_git(kit, 'tag', 'v2.0.0')
+        newer = self.kit_git(kit, 'rev-parse', 'HEAD')
+        for recorded, text, expected in ((newer, b'echo kit 2', ['x.sh']), (kit_commit, b'echo kit', [])):
+            (self.repo / 'x.sh').write_bytes(b'# KIT-OWNED: do not edit locally\n%s\n' % text)
+            (self.repo / 'docs/kit/.kit-commit').write_text(recorded + '\n')
+            self.commit_fixture('Kit at ' + recorded)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual([entry['path'] for entry in bridge.kit_verified(self.repo, 'HEAD', kit)], expected)
+        self.assertIn('kit commit %s does not descend from %s' % (kit_commit, newer), err.getvalue())
+
+    def test_a_past_commit_review_keeps_its_mode_when_the_checkout_moves_onto_it(self):
+        # kitv4 item 8: past mode is decided by the first snapshot; a recheck after the owner
+        # stashed the tree and checked the reviewed commit out keeps the commit's fingerprint.
+        self.commit_fixture('Commit A')
+        past = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'file.py').write_text('later\n')
+        self.commit_fixture('Commit B')
+        (self.repo / 'file.py').write_text('dirty\n')
+        first = bridge.snapshot(self.repo, 'commit', past, True)
+        self.git('stash', '-q')
+        self.git('checkout', '-q', past)
+        self.assertEqual(bridge.recheck(self.repo, 'commit', past, True, None, True)[1], first[1])
+        self.assertNotEqual(bridge.recheck(self.repo, 'commit', past, True)[1], first[1])
+
     def test_the_diff_limit_refusal_names_its_size_and_largest_files(self):
         (self.repo / 'big.txt').write_text('x' * 99 + '\n' * 1 + ('y' * 99 + '\n') * 4500)
         with self.assertRaises(bridge.BridgeError) as caught:
@@ -4117,7 +4252,18 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(ValueError) as caught:
                 review_dispatch.main(['--repo', str(self.repo), *argv])
             self.assertIn(why, str(caught.exception))
-        self.assertEqual(self.run_wrapper('--kit-verified').returncode, 2)
+        # The wrapper's own guards answer with its usage line, before the dispatcher.
+        for argv in (('--kit-verified',), ('--commit', 'HEAD', '--kit', str(self.root))):
+            with self.subTest(argv=argv):
+                result = self.run_wrapper(*argv)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('usage: review.sh', result.stdout)
+        # A Claude attempt that cannot run does not fall back to Codex, which has no kit-verified diff.
+        kit, _ = self.kit_upgrade()
+        result, chain = self.dispatch_result(args=('--commit', 'HEAD', '--kit-verified', '--kit', str(kit)),
+                                             FIXTURE_CASE='quota')
+        self.assertEqual(len(chain['attempts']), 1, result.stdout + result.stderr)
+        self.assertIn('--kit-verified is reviewed by Claude only', chain['fallback_blocked'])
 
     def test_archiving_does_not_recursively_expand_the_next_review(self):
         _, first = self.run_bridge()

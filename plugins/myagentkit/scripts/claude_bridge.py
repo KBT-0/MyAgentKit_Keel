@@ -417,7 +417,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       not ignore.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
       it (neither sandbox blocks reads).
-    - Accepted limit: a --commit review of a commit that is not the clean HEAD (Claude only,
+    - Accepted limit: a --commit review of a commit that is not HEAD (Claude only,
       snapshot's past_ok) fingerprints the commit alone, so a write that reaches the repository
       is not detected there; the sandbox, or no Bash on native Windows, still prevents it.
     - Accepted limit: a repository inside Claude Code's per-user temporary directory is
@@ -748,7 +748,11 @@ def kit_verified(repo: Path, commit: str, kit: Path) -> list:
     {"path", "blob", "kit_commit"}: added or modified regular files with the KIT-OWNED header
     whose bytes hash, by sync-kit.sh's `hash-object --path` rule in the kit clone (so its
     line-ending settings apply), to the kit's blob for their source at the kit commit that
-    `commit` records in docs/kit/.kit-commit. On any doubt nothing is verified: all is reviewed."""
+    `commit` records in docs/kit/.kit-commit, with the kit's mode and no mode change. That kit
+    commit must be on a release tag v* (lead decision 6) and, when `commit` changes it, descend
+    from the one its parent records (lead decision 7). A path with a changed path below it is
+    not verified: its exclusion pathspec would hide those too. On any doubt nothing is
+    verified: all is reviewed."""
     def nothing(why):
         print("NOTE [review]: --kit-verified verified no file: %s; every changed file is reviewed" % why,
               file=sys.stderr)
@@ -762,6 +766,17 @@ def kit_verified(repo: Path, commit: str, kit: Path) -> list:
             return nothing("%s is no git clone of its own" % kit)
         if git(kit, "rev-parse", "-q", "--verify", recorded + "^{commit}", allowed=(0, 1)).decode().strip() != recorded:
             return nothing("the kit clone %s lacks kit commit %s (fetch it)" % (kit, recorded))
+        # Only a released kit was reviewed by the kit's own gate: not a local or branch commit.
+        if not git(kit, "tag", "--contains", recorded, "--list", "v*").strip():
+            return nothing("kit commit %s is on no release tag v* of the kit clone %s" % (recorded, kit))
+        parents = git(repo, "rev-list", "--parents", "-n", "1", commit).decode().split()[1:]
+        before = (git(repo, "cat-file", "-p", parents[0] + ":docs/kit/.kit-commit", allowed=(0, 128)).decode(
+            errors="replace").strip() if parents else "")
+        # A downgrade puts older kit files back with nothing in the diff but this hash.
+        if before and before != recorded and (
+                not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", before)
+                or git(kit, "rev-list", "-n", "1", before, "^" + recorded, "--").strip()):
+            return nothing("kit commit %s does not descend from %s, the one the parent records" % (recorded, before))
         # Each kit file under the project path sync-kit.sh's relpath() copies it to.
         sources = {}
         for entry in git(kit, "ls-tree", "-r", "-z", recorded, "--", "core", "setup", "overlays").split(b"\0"):
@@ -773,22 +788,23 @@ def kit_verified(repo: Path, commit: str, kit: Path) -> list:
             rel = (source[len("core/"):] if parts[0] == "core" else source if parts[0] == "setup"
                    else parts[3] if len(parts) == 4 and parts[2] == "files" else None)
             if rel:
-                sources.setdefault(rel, []).append((source, meta.split()[2].decode()))
-        parents = git(repo, "rev-list", "--parents", "-n", "1", commit).decode().split()[1:]
+                sources.setdefault(rel, []).append((source, meta.split()[2].decode(), meta.split()[0].decode()))
         fields = git(repo, "diff-tree", "-r", "-z", "--no-renames", "--no-commit-id",
                      *(parents[:1] or ["--root"]), commit).split(b"\0")
         verified = []
-        for meta, raw in zip(fields[0::2], fields[1::2]):
-            _, mode, _, blob, status = meta.decode().split()
-            name = os.fsdecode(raw)
-            if status not in ("A", "M") or mode not in ("100644", "100755") or "\n" in name or name not in sources:
+        changed = [os.fsdecode(raw) for raw in fields[1::2]]
+        for meta, name in zip(fields[0::2], changed):
+            before_mode, mode, _, blob, status = meta.decode().lstrip(":").split()
+            if (status not in ("A", "M") or mode not in ("100644", "100755") or (status == "M" and before_mode != mode)
+                    or "\n" in name or name not in sources or any(c.startswith(name + "/") for c in changed)):
                 continue
             data = git(repo, "cat-file", "blob", blob)
             if not KIT_MARKER.search(data):
                 continue
             # ponytail: one hash-object per kit-owned changed file; a few hundred at most per upgrade.
-            if any(git(kit, "hash-object", "--path=" + source, "--stdin", stdin=data).decode().strip() == kit_blob
-                   for source, kit_blob in sources[name]):
+            if any(kit_mode == mode
+                   and git(kit, "hash-object", "--path=" + source, "--stdin", stdin=data).decode().strip() == kit_blob
+                   for source, kit_blob, kit_mode in sources[name]):
                 verified.append({"path": name, "blob": blob, "kit_commit": recorded})
     except (BridgeError, ValueError, IndexError) as error:
         return nothing("the kit clone %s or commit %s could not be read (%s)" % (kit, commit[:12], str(error).strip()))
@@ -799,15 +815,17 @@ def kit_verified(repo: Path, commit: str, kit: Path) -> list:
 
 
 def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = False,
-             verified: list | None = None) -> tuple[str, str, str, str | None]:
+             verified: list | None = None, past: bool | None = None) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
 
     Also returns the commit the reference resolved to, for every later use in the review: a
     reference resolved again could have moved, giving a record keyed to another commit.
 
-    `past_ok` (the Claude adapter, #114): a --commit that is not the clean HEAD is reviewed from
-    an archive of that commit, and the fingerprint is the commit's, not the checkout's. Without
-    it such a commit is refused, as codex_bridge, which archives HEAD, needs.
+    `past_ok` (the Claude adapter, #114): a --commit that is not HEAD is reviewed from an archive
+    of that commit ("past mode"), and the fingerprint is the commit's, not the checkout's. Without
+    it such a commit is refused, as codex_bridge, which archives HEAD, needs. A --commit HEAD
+    still needs a clean checkout. `past`: the first snapshot's decision, which every recheck
+    passes on, so a checkout moved onto the commit mid-review keeps the commit's fingerprint.
 
     `verified` (--kit-verified, kit_verified()): those paths of the commit are left out of its
     diff, after a check that they are still its blobs; every refusal still covers them.
@@ -970,7 +988,8 @@ def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = Fals
                 continue
             working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))
-    past = past_ok and scope == "commit" and (resolved != head or bool(working.strip()))
+    if past is None:
+        past = past_ok and scope == "commit" and resolved != head
     if scope == "uncommitted":
         diff = working
     else:
@@ -1043,13 +1062,13 @@ def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = Fals
 
 
 def recheck(repo: Path, scope: str, reference: str | None, past_ok: bool = False,
-            verified: list | None = None) -> tuple[str, str, str, str | None] | None:
+            verified: list | None = None, past: bool | None = None) -> tuple[str, str, str, str | None] | None:
     """snapshot() of a checkout read once before the review, or None when it now refuses (a
     dirty tree for a reference review, a moved HEAD, a new secret file): that checkout passed
     before, so it changed. A failed git command, OSError or ValueError is raised: a checkout
     that could not be read proves no change."""
     try:
-        return snapshot(repo, scope, reference, past_ok, verified)
+        return snapshot(repo, scope, reference, past_ok, verified, past)
     except GitFailed:
         raise
     except BridgeError:
@@ -1585,7 +1604,8 @@ def render(stamp: str, evidence: dict, args) -> str:
                 "## Failure\n\n" + (evidence.get("error") or "unknown")
                 + "\n\nInspect the local usage record for the raw CLI output.\n")
     if "kit_verified" in evidence:
-        body += section("Kit-verified files (verified by hash, not reviewed)",
+        body += section("Kit-verified files (equal to the kit's file after git's line-ending normalisation, "
+                        "hash-object --path; not reviewed)",
                         ["%s, blob %s, kit commit %s" % (entry["path"], entry["blob"], entry["kit_commit"])
                          for entry in evidence["kit_verified"]])
     return agent_usage.report(stamp, header, result.get("verdict") if completed else None, body)
@@ -1793,7 +1813,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
     parser.add_argument("--allow-secret-file", action="append", default=[],
                         help="Review this secret-looking path knowingly (repository-relative)")
     parser.add_argument("--kit-verified", type=Path, metavar="KIT",
-                        help="Leave out the commit's files that are byte for byte the kit's own in the "
+                        help="Leave out the commit's files that equal the kit's own in the "
                         "kit clone KIT (#114; docs/REVIEW_RUNNING.md, \"Kit upgrade commits\")")
     args = parser.parse_args(argv)
     allow_secret_files(args.allow_secret_file)
@@ -1835,6 +1855,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
         # resolved is captured with the snapshot: the usage record names what was reviewed even
         # when the reference is deleted or moved before the review ends.
         head, fingerprint, diff, resolved = snapshot(repo, scope, ref, True, verified)
+        past = scope == "commit" and resolved != head  # decided once: every recheck keeps it
         if args.mode == "review" and not diff.strip():
             raise BridgeError("empty diff: nothing was reviewed")
         task = args.task_file.read_text(encoding="utf-8") if args.task_file else ""
@@ -1863,9 +1884,9 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
                 (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n"
                 + carried
                 + review_context(args.task_file)
-                + ("Verified by hash, not reviewed: these changed paths are byte for byte the kit's own "
-                   "files at kit commit %s, which the kit's own review gate reviewed; they are left out "
-                   "of the diff below:\n" % verified[0]["kit_commit"]
+                + ("Verified by hash, not reviewed: these changed paths are equal to the kit's file after "
+                   "git's line-ending normalisation (hash-object --path) at kit commit %s, a release the "
+                   "kit's own review gate reviewed; they are left out of the diff below:\n" % verified[0]["kit_commit"]
                    + "".join("  %s (blob %s)\n" % (entry["path"], entry["blob"]) for entry in verified)
                    if verified else "")
                 + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}")
@@ -1970,7 +1991,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
                     # A look during the review (#118). One that cannot read the checkout proves
                     # no change: the check after the review decides.
                     try:
-                        now = recheck(repo, scope, ref, True, verified)
+                        now = recheck(repo, scope, ref, True, verified, past)
                         return (now is None or now[1] != checkout_fingerprint
                                 or behaviour_appendix(repo) != (source_name, source_bytes))
                     except (BridgeError, OSError, ValueError):
@@ -2006,7 +2027,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
             # A checkout that cannot be read proves no change: the review stays completed in its
             # record, so its round counts (fail closed), and the result fails as checkout_unverified.
             try:
-                now = recheck(repo, scope, ref, True, verified)
+                now = recheck(repo, scope, ref, True, verified, past)
                 stale = now is None or now[1] != checkout_fingerprint
             except (BridgeError, OSError, ValueError) as error:
                 stale, unverified = False, "the checkout could not be read after the review: %s" % error

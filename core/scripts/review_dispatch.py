@@ -312,16 +312,18 @@ def load_backend(repo, name):
     return env, model
 
 
-def reject_line_ending_churn(repo, scope, reference, diff):
+def reject_line_ending_churn(repo, scope, reference, diff, also=()):
     # Heuristic (KARARLAR B01 inv2#84): factor 2 is an owner choice, no published threshold;
     # `git diff --ignore-cr-at-eol` is the git-documented way to separate this noise.
     if os.environ.get("REVIEW_ALLOW_EOL_ONLY") == "1":
         return
     # Use the captured scope's paths, including its archive exclusions. `git apply --numstat
     # -z` prints one name per patch, a rename's new name; only `git diff` has a rename form.
+    # `also`: the kit-verified paths left out of the diff, whose line endings still count (#114).
     names = {entry.split(b"\t", 2)[2]
              for entry in claude_bridge.git(repo, "apply", "--numstat", "-z",
                                             stdin=diff.encode("utf-8")).split(b"\0") if entry}
+    names |= {os.fsencode(name) for name in also}
     refs = ["HEAD"]
     if scope == "base":
         refs = [reference + "...HEAD"]
@@ -442,16 +444,17 @@ def main(argv=None):
 
     mark(args.reviewer)
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
-    # Claude reviews a --commit that is not the clean HEAD from its archive (#114); Codex cannot.
+    # Claude reviews a --commit that is not HEAD from its archive (#114); Codex cannot.
     past_ok = args.reviewer == "claude"
     kit = args.kit or claude_bridge.DEFAULT_KIT
     # Made once: every attempt and every look at the checkout use the same list.
     verified = (claude_bridge.kit_verified(repo, claude_bridge.resolve(repo, scope, ref), kit)
                 if args.kit_verified else None)
     original = claude_bridge.snapshot(repo, scope, ref, past_ok, verified)
+    past = past_ok and scope == "commit" and original[3] != original[0]  # decided once, kept by each recheck
     if not original[2].strip():
         raise ValueError("empty diff: nothing was reviewed")
-    reject_line_ending_churn(repo, scope, original[3], original[2])
+    reject_line_ending_churn(repo, scope, original[3], original[2], [entry["path"] for entry in verified or []])
     # Once for either reviewer: a missing, foreign or oversized earlier round stops the review
     # here, exit 2 with one message, before a chain is recorded or any model is called.
     # The dispositions file is read here once and its text handed to every attempt: a
@@ -596,7 +599,7 @@ def main(argv=None):
             chain["checkout_unverified"] = result.get("error")  # the adapter's own look
         try:
             # A refusal now (a dirty tree for a reference review, a moved HEAD) is a change.
-            now = claude_bridge.recheck(repo, scope, ref, past_ok, verified)
+            now = claude_bridge.recheck(repo, scope, ref, past_ok, verified, past)
             changed, unread = now is None or now[1] != original[1], None
         except (OSError, ValueError, claude_bridge.BridgeError) as caught:
             changed, unread = False, caught

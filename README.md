@@ -147,8 +147,8 @@ kit-owned files, writes the **ACTION** items of the `CHANGELOG.md` entries since
 project's recorded version to `docs/kit/UPGRADE.md`, oldest first with a box each, and
 records the new version only after `--actions-applied` with every box ticked. A project file at a path the kit has since made kit-owned stops the
 sync as a `conflict:` before anything is copied. The upgrade commit is reviewed with the
-`review.sh --commit <sha> --kit-verified` line the sync prints: kit-owned files equal to the
-kit's are verified by hash, the rest is reviewed (`docs/REVIEW_RUNNING.md`).
+`review.sh --reviewer claude --commit <sha> --kit-verified` line the sync prints: kit-owned files
+equal to a released kit's are verified by hash, the rest is reviewed (`docs/REVIEW_RUNNING.md`).
 
 ## Requirements
 

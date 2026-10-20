@@ -26,8 +26,9 @@
 #                     .npmrc, .netrc, credentials*) knowingly; without it such a file in scope
 #                     stops the review (claude_bridge.secret_like). Repeat it per path.
 #   --kit-verified    with --commit and the Claude reviewer: a kit upgrade commit's files that are
-#                     byte for byte the kit's own (by hash, in the kit clone ~/.myagentkit/kit, or
-#                     --kit DIR) are left out of the diff and listed as verified, not reviewed
+#                     equal to the kit's own after git's line-ending normalisation (hash-object
+#                     --path, in the kit clone ~/.myagentkit/kit, or --kit DIR) at a released kit
+#                     commit are left out of the diff and listed as verified, not reviewed
 #                     (docs/REVIEW_RUNNING.md, "Kit upgrade commits").
 #
 # THE KIT TAKES NO POSITION ON WHICH MODEL WRITES AND WHICH REVIEWS. The rule is that the
@@ -54,7 +55,7 @@
 #     not ignore.
 #   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it.
 #   - ACCEPTED LIMIT: a reviewer's write that reaches a file Git ignores is not detected.
-#   - ACCEPTED LIMIT: a Claude --commit review of a commit that is not the clean HEAD
+#   - ACCEPTED LIMIT: a Claude --commit review of a commit that is not HEAD
 #     fingerprints the commit alone, so a write that reaches the repository is not detected.
 #   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
 #     between two of this script's reads to hide a change (a filter attribute removed and

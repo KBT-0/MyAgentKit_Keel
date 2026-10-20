@@ -453,7 +453,7 @@ list=docs/kit/UPGRADE.md
 # The upgrade commit is too big for one review (#114): the kit-owned files equal to the kit's
 # are verified by hash and only the rest is reviewed. A kit that records no commit verifies none.
 review=""
-own_repo && review="./scripts/review.sh --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'"
+own_repo && review="./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'"
 render() {
   awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" -v review="$review" '
     FILENAME == ck { sub(/\r$/, ""); if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }

@@ -869,7 +869,7 @@ class SyncKitTests(unittest.TestCase):
         # #114: the upgrade commit is too big for one review; the sync names the review that
         # verifies the kit-owned files by hash. A kit that records no commit names none.
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
-        command = "./scripts/review.sh --commit <upgrade commit> --kit-verified --kit '"
+        command = "./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '"
         with tempfile.TemporaryDirectory() as tmp:
             listing = Path(tmp) / 'project/docs/kit/UPGRADE.md'
             result, _ = self.sync(tmp, ACTION, env=env)
