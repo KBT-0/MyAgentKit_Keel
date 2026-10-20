@@ -5850,19 +5850,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual((review_dispatch.CAPACITY_RETRY_SECONDS, review_dispatch.CAPACITY_RETRIES), (600, 2))
         self.assertIn('`authentication`) is fixed, never failed over', running)
 
-    def test_changing_or_unsetting_focus_cannot_open_a_third_round(self):
-        # The sequential order today: logic r1, logic r2, then a new focus (portability) is
-        # refused, since a new focus takes the highest count. #102 disputes that rule; a fix
-        # changes this test's portability case, the `security` case of
-        # test_focus_reviewers_each_get_two_rounds_but_carry_only_their_own_reports and
-        # re-checks test_legacy_rounds_are_carried_and_counted_when_focus_is_added (#248).
+    def test_unsetting_focus_cannot_open_a_third_round(self):
+        # After logic r1 and r2, an unset focus takes the highest count, so leaving the focus out
+        # never opens a fresh budget; a new named focus starts its own count (#102, test below).
         from unittest.mock import patch
         task = {'MYAGENTKIT_TASK_ID': 'focus-limit', 'REVIEW_FOCUS': 'logic'}
         for _ in range(2):
             code, result = self.run_bridge('reject', env_extra=task)
             self.assertEqual(code, 0, result)
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
-        for focus in (None, 'portability', 'logic'):
+        for focus in (None, 'logic'):
             with self.subTest(focus=focus), patch.dict(os.environ):
                 os.environ.pop('REVIEW_FOCUS', None)
                 if focus:
@@ -5875,7 +5872,32 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual('### Round ' in carried, focus == 'logic')
                 self.assertEqual(measured['round_exception'], 'Owner requested another pass')
 
+    def test_a_new_focus_after_another_used_both_rounds_starts_its_own_count(self):
+        # #102/#248 (owner decision 67): the high tier's sequential order, logic r1, logic r2,
+        # then portability, gives portability its own round 1 and round 2; its third is refused.
+        log = self.root / 'prompt.txt'
+        base = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'sequential-focus'}
+        logic, portability = dict(base, REVIEW_FOCUS='logic'), dict(base, REVIEW_FOCUS='portability')
+        for _ in range(2):
+            code, result = self.run_bridge('reject', env_extra=logic)
+            self.assertEqual(code, 0, result)
+        code, first = self.run_bridge('reject', env_extra=portability)
+        self.assertEqual(code, 0, first)
+        self.assertNotIn('### Round', log.read_text())
+        code, second = self.run_bridge('accept', env_extra=portability)
+        self.assertEqual(code, 0, second)
+        self.assertIn('This is review round 2', log.read_text())
+        self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
+        code, refused = self.run_bridge(env_extra=portability)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
+        # A made-up focus name opens no fresh budget: only the named foci exist.
+        code, refused = self.run_bridge(env_extra=dict(base, REVIEW_FOCUS='logic-2'))
+        self.assertEqual(code, 2, refused)
+        self.assertIn('REVIEW_FOCUS must be one of', refused['error'])
+
     def test_legacy_rounds_are_carried_and_counted_when_focus_is_added(self):
+        # A round without a focus counts toward every focus, a new one included (#248 case 3).
         log = self.root / 'prompt.txt'
         task = {'MYAGENTKIT_TASK_ID': 'legacy-focus', 'PROMPT_LOG': str(log)}
         self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
@@ -5883,6 +5905,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 0, result)
         self.assertIn('### Round 1', log.read_text())
         self.assertIn('concrete defect', log.read_text())
+        code, result = self.run_bridge('accept', env_extra=dict(task, REVIEW_FOCUS='portability'))
+        self.assertEqual(code, 0, result)
+        self.assertIn('This is review round 2', log.read_text())
+        self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
         code, result = self.run_bridge(env_extra=dict(task, REVIEW_FOCUS='portability'))
         self.assertEqual(code, 2, result)
         self.assertIn('REVIEW_ROUND_EXCEPTION', result['error'])
@@ -5946,7 +5972,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def test_focus_reviewers_each_get_two_rounds_but_carry_only_their_own_reports(self):
         # KARARLAR B02 inv2#10: rounds count per REVIEW_FOCUS, so a high-tier change's logic and
         # portability reviewers each get round 1 and round 2; a third of either, or an unfocused
-        # or new-focus review after that, needs REVIEW_ROUND_EXCEPTION.
+        # review after that, needs REVIEW_ROUND_EXCEPTION.
         log = self.root / 'prompt.txt'
         base = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'focus-task'}
         logic, portability = dict(base, REVIEW_FOCUS='logic'), dict(base, REVIEW_FOCUS='portability')
@@ -5960,7 +5986,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(code, 0, second)
             self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
             self.assertIn('This is review round 2', log.read_text())
-        for env in (logic, portability, base, dict(base, REVIEW_FOCUS='security')):
+        for env in (logic, portability, base):
             code, refused = self.run_bridge(env_extra=env)
             self.assertEqual(code, 2, refused)
             self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
@@ -6110,6 +6136,41 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.assertNotIn('Lead with the answer', prompt)
                 usage = json.loads(Path(result['usage_record']).read_text())
                 self.assertEqual(usage['task']['behaviour'], side)
+
+    def test_a_reviewer_gets_the_appendix_without_author_only_lines_and_the_binding_names_it(self):
+        # #228: a reviewer cannot act on the author's rules, so a review gets the appendix
+        # without the bullets marked author-only (a wrapped one whole); the recorded hash and the
+        # fingerprint name those bytes. A proposal (an author run) still gets the whole file.
+        body = (b'- Lead with the answer.\n- Design before code. <!-- author-only -->\n'
+                b'- One test per change,\n  wrapped over two lines. <!-- author-only -->\n- Stay terse.\n')
+        variant = b'- Lead with the answer.\n- Stay terse.\n'
+        self.assertEqual(bridge.reviewer_appendix(body), variant)
+        self.assertEqual(bridge.reviewer_appendix(body.replace(b'\n', b'\r\n')), variant.replace(b'\n', b'\r\n'))
+        self.git('config', 'core.autocrlf', 'false')
+        (self.repo / 'BEHAVIOUR.md').write_bytes(body)
+        self.commit_fixture('marked appendix')
+        (self.repo / 'file.py').write_text('changed again\n')
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        prompt = log.read_text()
+        self.assertIn('- Lead with the answer.\n- Stay terse.\n', prompt)
+        self.assertNotIn('Design before code', prompt)
+        self.assertNotIn('wrapped over two lines', prompt)
+        digest = hashlib.sha256(variant).hexdigest()
+        self.assertEqual(header_of(result['evidence'])['behaviour_sha256'], digest)
+        self.assertEqual(json.loads(Path(result['usage_record']).read_text())['task']['behaviour_sha256'], digest)
+        checkout = bridge.snapshot(self.repo, 'uncommitted', None, True)[1]
+        self.assertEqual(result['fingerprint'], hashlib.sha256(
+            checkout.encode() + b'\0behaviour\0BEHAVIOUR.md\0' + variant).hexdigest())
+        handoff = self.root / 'handoff.md'
+        handoff.write_text('Fix the named function only.')
+        code, result = self.run_bridge('proposal', 'propose', ['--task-file', str(handoff)],
+                                       env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        self.assertIn(body.decode(), log.read_text())
+        self.assertEqual(json.loads(Path(result['usage_record']).read_text())['task']['behaviour_sha256'],
+                         hashlib.sha256(body).hexdigest())
 
     def test_an_escaping_behaviour_symlink_never_discloses_external_bytes(self):
         marker = 'PRIVATE_APPENDIX_MARKER_OUTSIDE_SNAPSHOT'

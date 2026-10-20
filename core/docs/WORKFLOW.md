@@ -23,11 +23,11 @@ brief and is the LEAD. A default falls to the
 narrowest role (a fail-safe default, Saltzer and Schroeder); the choice is the owner's, no
 study measured it.
 
-Three Claude sessions get the same short appendix, `BEHAVIOUR.md`: a lead started with the
+Three Claude sessions get the short appendix, `BEHAVIOUR.md`: a lead started with the
 command below, a worker session, and a bridged reviewer. It is a kit-owned
 file that a sync refreshes; the project changes it only through the kit. `scripts/spawn_worker.sh`
 passes it to every worker session with `--append-system-prompt-file`. `scripts/claude_bridge.py`
-appends the whole file to the reviewer's prompt, its author-only lines included. An Agent-tool
+appends it to the reviewer's prompt without the lines marked `<!-- author-only -->`. An Agent-tool
 sub-agent (the Claude Code overlay's `worker.md` and `diff-reviewer.md`, the inner review
 included) gets no appendix: its definition is its whole system prompt, so the A/B below
 covers spawned workers and bridged reviews only. The lead starts a fresh enabled session with:

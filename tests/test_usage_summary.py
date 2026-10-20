@@ -390,8 +390,8 @@ class UsageSummaryTests(unittest.TestCase):
         self.record('l2', 'U', b'VERDICT: Accept\n', focus='logic')
         self.record('p2', 'U', b'VERDICT: Accept\n', focus='portability')
         lines = [line.split(' kind=')[0] for line in self.summary().split('Task U:')[1].splitlines()[1:5]]
-        # A focus not seen yet takes the highest count so far, as the cap counts it.
-        self.assertEqual(lines, ['  round=1 focus=logic', '  round=2 focus=portability',
+        # A focus not seen yet starts its own count, as the cap counts it (#102).
+        self.assertEqual(lines, ['  round=1 focus=logic', '  round=1 focus=portability',
                                  '  round=2 focus=logic', '  round=2 focus=portability'])
 
     def test_a_chain_without_a_checkpoint_does_not_unmake_a_round(self):
