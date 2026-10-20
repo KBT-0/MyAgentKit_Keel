@@ -107,6 +107,30 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# The project's own reviewer agents beside the kit's diff-reviewer.md: two definitions for one
+# job leave the lead to pick either (#161). Listed for the owner, never moved or overwritten.
+# A reviewer is a .md under .claude/agents, subfolders too (Claude Code reads the folder
+# recursively and knows an agent by its front matter `name:` alone,
+# code.claude.com/docs/en/sub-agents), whose `name:` holds "review" as a word start (reviewer,
+# code-review, pr_reviewer; not ui-preview).
+# The description is not read: workers and planners name reviews in passing. A UTF-8 BOM before
+# the front matter is accepted. The kit's own file is matched in any letter case: on Windows and
+# macOS Diff-Reviewer.md is the same file.
+reviewers() {
+  [ -f "$target/.claude/agents/diff-reviewer.md" ] || return 0
+  find "$target/.claude/agents" -type f -name '*.md' 2>/dev/null | sort | while IFS= read -r _f; do
+    _r=.claude/agents/${_f#"$target/.claude/agents/"}
+    case $(printf '%s' "$_r" | tr 'A-Z' 'a-z') in .claude/agents/diff-reviewer.md) continue ;; esac
+    LC_ALL=C awk 'NR == 1 { sub(/^\357\273\277/, "") }
+         NR == 1 && !/^---[ \t\r]*$/ { exit }
+         NR > 1 && /^---/ { exit }
+         NR > 1 && /^name:/ { if (tolower(substr($0, 6)) ~ /(^|[^a-z])review/) found = 1; exit }
+         END { exit !found }' "$_f" &&
+      printf '%s\n' "  conflict: $_r (a second reviewer agent beside diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)"
+  done || :
+  return 0
+}
+
 # blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
 # the files it generates, the folders it makes): prints why REL may not be written, nothing
 # when it may. Every existing component below the target must be a real folder, and REL
@@ -440,6 +464,9 @@ EXECUTABLES
 $new
 NEW
 fi
+
+listed=$(reviewers)
+[ -z "$listed" ] || printf '\nbootstrap: reviewer agents (listed, not a stop):\n%s\n' "$listed"
 
 if [ -s "$skiplist" ]; then
   echo

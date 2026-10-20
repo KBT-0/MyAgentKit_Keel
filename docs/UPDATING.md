@@ -26,7 +26,8 @@ lands in the kit, and keep it as a marked patch with a `docs/STATE.md` line unti
 
 An upgrade that adds a Claude Code agent definition (`.claude/agents/*.md`) next to one the
 project already has for the same job, such as its own reviewer beside `diff-reviewer.md`,
-keeps one of the two (the overlay's README says how).
+keeps one of the two (the overlay's README says how). bootstrap.sh and sync-kit.sh list such
+a reviewer (front matter `name:` holding the word "review") as a conflict line; neither file is touched.
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and

@@ -18,6 +18,14 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, 
 prints none of these entries to a project. Tag v0.11 only together with that rename: while
 this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
+- **bootstrap.sh and sync-kit.sh list a project's own reviewer agent beside diff-reviewer.md**
+  (#161). When `.claude/agents/diff-reviewer.md` exists, every other `.md` under
+  `.claude/agents` (subfolders too, as Claude Code reads them) whose front matter `name:` holds
+  "review" at a word start (not `ui-preview`) is printed as `conflict: ... keep one of the two`;
+  it does not stop the run, and neither file is moved or changed. The description is not
+  read: workers and planners mention reviews in passing. Nothing to do: keep one definition
+  when the line appears (docs/UPDATING.md).
+
 - **Every plugin command and Codex skill says when the project's kit version is another**
   (#156). Each one names the plugin's kit version (`This plugin is kit v0.11.`, stamped by
   `scripts/package_codex_plugin.py`, whose `--check` refuses a stale one), reads the project's
