@@ -3977,9 +3977,13 @@ class BridgeTests(unittest.TestCase):
             self.assertIn("questions", result["result"])
 
     def test_base_commit_and_untracked_scopes(self):
+        # #114: the Claude adapter reviews a --commit on a dirty tree from the commit's archive;
+        # the snapshot without past_ok (codex_bridge's) still refuses it.
         code, result = self.run_bridge(extra=["--commit", "HEAD"])
-        self.assertEqual(code, 2)
-        self.assertIn("clean checkout", result["error"])
+        self.assertEqual(code, 0, result)
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.snapshot(self.repo, "commit", "HEAD")
+        self.assertIn("clean checkout", str(caught.exception))
         (self.repo / "file.py").write_text("original\n")
         code, result = self.run_bridge(extra=["--base", "HEAD"])
         self.assertEqual(code, 2)
@@ -3989,6 +3993,30 @@ class BridgeTests(unittest.TestCase):
         (self.repo / "new file.txt").write_text("a new file\n")
         diff = bridge.snapshot(self.repo, "uncommitted", None)[2]
         self.assertIn("new file.txt", diff)
+
+    def test_a_past_commit_on_a_dirty_tree_is_reviewed_from_its_archive(self):
+        # #114 (lead decision 3): --commit names a commit that is not HEAD, on a dirty tree; the
+        # reviewer gets that commit's archive and diff, and the fingerprint is the commit's.
+        self.commit_fixture('Commit A')
+        past = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'file.py').write_text('later\n')
+        self.commit_fixture('Commit B')
+        (self.repo / 'file.py').write_text('dirty\n')
+        cwd_log, prompt_log = self.root / 'cwd.json', self.root / 'prompt.txt'
+        code, result = self.run_bridge(extra=['--commit', past],
+                                       env_extra={'CWD_LOG': str(cwd_log), 'PROMPT_LOG': str(prompt_log)})
+        self.assertEqual(code, 0, result)
+        self.assertEqual(json.loads(cwd_log.read_text())['file'], 'changed\n')
+        diff = prompt_log.read_text(encoding='utf-8').partition('\nDiff:\n')[2]
+        self.assertIn('+changed', diff)
+        self.assertNotIn('later', diff)
+        self.assertNotIn('dirty', diff)
+        # The fingerprint is the commit's: a later edit of the tree does not change it.
+        first = bridge.snapshot(self.repo, 'commit', past, past_ok=True)
+        (self.repo / 'file.py').write_text('dirtier\n')
+        self.assertEqual(bridge.snapshot(self.repo, 'commit', past, past_ok=True)[1], first[1])
+        with self.assertRaises(bridge.BridgeError):
+            bridge.snapshot(self.repo, 'commit', past)
 
     def test_archiving_does_not_recursively_expand_the_next_review(self):
         _, first = self.run_bridge()

@@ -433,7 +433,9 @@ def main(argv=None):
 
     mark(args.reviewer)
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
-    original = claude_bridge.snapshot(repo, scope, ref)
+    # Claude reviews a --commit that is not the clean HEAD from its archive (#114); Codex cannot.
+    past_ok = args.reviewer == "claude"
+    original = claude_bridge.snapshot(repo, scope, ref, past_ok)
     if not original[2].strip():
         raise ValueError("empty diff: nothing was reviewed")
     reject_line_ending_churn(repo, scope, original[3], original[2])
@@ -577,7 +579,8 @@ def main(argv=None):
             chain["checkout_unverified"] = result.get("error")  # the adapter's own look
         try:
             # A refusal now (a dirty tree for a reference review, a moved HEAD) is a change.
-            changed, unread = claude_bridge.recheck(repo, scope, ref) != original, None
+            now = claude_bridge.recheck(repo, scope, ref, past_ok)
+            changed, unread = now is None or now[1] != original[1], None
         except (OSError, ValueError, claude_bridge.BridgeError) as caught:
             changed, unread = False, caught
         if changed or unread:

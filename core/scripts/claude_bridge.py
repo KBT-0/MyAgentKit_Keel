@@ -136,7 +136,7 @@ def review_context(task_file=None) -> str:
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise); run anything inside this copy. The copy holds no files "
+    "work, an archive of the reviewed commit, of HEAD for a range); run anything inside this copy. The copy holds no files "
     "Git ignores (build tree, installed dependencies, virtual environment) and has no network: a "
     "check that needs them is NOT RUN; do not build or download them. Run the reproductions "
     "here, and mark findings REPRODUCED with the command that shows each; if a "
@@ -145,7 +145,7 @@ REVIEW_RUNS = (
 # Native Windows: Claude Code has no Bash sandbox there, so the Claude reviewer gets no shell.
 REVIEW_READS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise). You have no shell on this host: Claude Code has no "
+    "work, an archive of the reviewed commit, of HEAD for a range). You have no shell on this host: Claude Code has no "
     "sandbox for one on native Windows. Read the code, mark each finding REASONED and name "
     "the command that would reproduce it, and list as NOT RUN every check you "
     "could not run. Never use the network and never call a paid model.")
@@ -412,6 +412,9 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       not ignore.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
       it (neither sandbox blocks reads).
+    - Accepted limit: a --commit review of a commit that is not the clean HEAD (Claude only,
+      snapshot's past_ok) fingerprints the commit alone, so a write that reaches the repository
+      is not detected there; the sandbox, or no Bash on native Windows, still prevents it.
     - Accepted limit: a repository inside Claude Code's per-user temporary directory is
       writable to the sandboxed Bash; and admin-managed Claude Code settings outrank SANDBOX.
     - Accepted limit: a SIGKILL leaves the copy in the temporary directory until a later run
@@ -730,11 +733,16 @@ def allow_secret_files(paths) -> None:
         os.environ[ALLOW_SECRETS_ENV] = "\n".join(Path(p).as_posix() for p in paths)
 
 
-def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None]:
+def snapshot(repo: Path, scope: str, reference: str | None,
+             past_ok: bool = False) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
 
     Also returns the commit the reference resolved to, for every later use in the review: a
     reference resolved again could have moved, giving a record keyed to another commit.
+
+    `past_ok` (the Claude adapter, #114): a --commit that is not the clean HEAD is reviewed from
+    an archive of that commit, and the fingerprint is the commit's, not the checkout's. Without
+    it such a commit is refused, as codex_bridge, which archives HEAD, needs.
     """
     # A new repository (a first setup) or an orphan branch has no HEAD commit to diff against:
     # a bare rev-parse died with "ambiguous argument 'HEAD'" and named no way on (#176).
@@ -884,12 +892,13 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                 continue
             working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))
+    past = past_ok and scope == "commit" and (resolved != head or bool(working.strip()))
     if scope == "uncommitted":
         diff = working
     else:
-        if working.strip():
+        if working.strip() and not past:
             raise BridgeError("reference reviews require a clean checkout; use --uncommitted")
-        if scope == "commit" and resolved != head:
+        if scope == "commit" and resolved != head and not past:
             raise BridgeError("--commit must be the checked-out HEAD so readable files match")
         if scope == "base":
             diff = git(repo, "diff", *raw_diff, resolved + "...HEAD", "--", ".", *exclusions)
@@ -897,33 +906,38 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             # Commit review is the delta against its first parent, including merges.
             diff = (git(repo, 'diff', *raw_diff, parents[0], resolved, '--', '.', *exclusions)
                     if parents else git(repo, 'show', '--format=', *raw_diff, resolved, '--', '.', *exclusions))
-    checksum = hashlib.sha256(head.encode() + b'\0' + (resolved or '').encode() + b'\0' + diff + b'\0' + working)
-    # Git can suppress working changes via index flags. Hash actual readable source too,
-    # independently of diff rendering; read symlink targets as links, never outside files.
-    for raw in sorted(set(in_scope.split(b'\0')) - {b''}):
-        name = os.fsdecode(raw)
-        if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
-            continue
-        path = repo / name
-        checksum.update(raw + b'\0')
-        try:
-            mode = path.lstat().st_mode
-            if path.is_symlink():
-                contents = hashlib.sha256(os.fsencode(os.readlink(path))).digest()
-            elif path.is_file():
-                content_hash = hashlib.sha256()
-                with path.open('rb') as stream:
-                    for chunk in iter(lambda: stream.read(65536), b''):
-                        content_hash.update(chunk)
-                contents = content_hash.digest()
-            else:
-                contents = b'directory'
-            checksum.update(str(mode).encode() + b'\0' + contents)
-        except FileNotFoundError:
-            checksum.update(b'missing')
-    # The index too: a `git reset --mixed` or `git add` run by a reviewer changes what is
-    # staged and nothing in the working tree or HEAD.
-    checksum.update(b'\0index\0' + git(repo, 'ls-files', '-s', '-z'))
+    if past:
+        # The copy is the commit's archive, so the commit is what was reviewed: HEAD, the index
+        # and the working tree may change during the review (throwaway_copy, Accepted limit).
+        checksum = hashlib.sha256(b'commit\0' + resolved.encode() + b'\0' + diff)
+    else:
+        checksum = hashlib.sha256(head.encode() + b'\0' + (resolved or '').encode() + b'\0' + diff + b'\0' + working)
+        # Git can suppress working changes via index flags. Hash actual readable source too,
+        # independently of diff rendering; read symlink targets as links, never outside files.
+        for raw in sorted(set(in_scope.split(b'\0')) - {b''}):
+            name = os.fsdecode(raw)
+            if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
+                continue
+            path = repo / name
+            checksum.update(raw + b'\0')
+            try:
+                mode = path.lstat().st_mode
+                if path.is_symlink():
+                    contents = hashlib.sha256(os.fsencode(os.readlink(path))).digest()
+                elif path.is_file():
+                    content_hash = hashlib.sha256()
+                    with path.open('rb') as stream:
+                        for chunk in iter(lambda: stream.read(65536), b''):
+                            content_hash.update(chunk)
+                    contents = content_hash.digest()
+                else:
+                    contents = b'directory'
+                checksum.update(str(mode).encode() + b'\0' + contents)
+            except FileNotFoundError:
+                checksum.update(b'missing')
+        # The index too: a `git reset --mixed` or `git add` run by a reviewer changes what is
+        # staged and nothing in the working tree or HEAD.
+        checksum.update(b'\0index\0' + git(repo, 'ls-files', '-s', '-z'))
     fingerprint = checksum.hexdigest()
     # The filtered paths let through above were proven before the diff and the fingerprint read
     # them, and an editor's save or a build could replace one in between: the diff then showed
@@ -944,13 +958,14 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
 
-def recheck(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None] | None:
+def recheck(repo: Path, scope: str, reference: str | None,
+            past_ok: bool = False) -> tuple[str, str, str, str | None] | None:
     """snapshot() of a checkout read once before the review, or None when it now refuses (a
     dirty tree for a reference review, a moved HEAD, a new secret file): that checkout passed
     before, so it changed. A failed git command, OSError or ValueError is raised: a checkout
     that could not be read proves no change."""
     try:
-        return snapshot(repo, scope, reference)
+        return snapshot(repo, scope, reference, past_ok)
     except GitFailed:
         raise
     except BridgeError:
@@ -1723,7 +1738,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
         scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
         # resolved is captured with the snapshot: the usage record names what was reviewed even
         # when the reference is deleted or moved before the review ends.
-        head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
+        head, fingerprint, diff, resolved = snapshot(repo, scope, ref, True)
         if args.mode == "review" and not diff.strip():
             raise BridgeError("empty diff: nothing was reviewed")
         task = args.task_file.read_text(encoding="utf-8") if args.task_file else ""
@@ -1803,7 +1818,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                     review_tmpdir(repo)
                     copy = copies.enter_context(scratch("myagentkit-review-"))
                     workdir = Path(copy)
-                    throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
+                    throwaway_copy(repo, resolved if scope == "commit" else head,
+                                   diff if scope == "uncommitted" else None, workdir,
                                    cancelled=cancelled, deadline=deadline)
                 preparation_failure = "unsafe_behaviour_appendix"
                 source_name, source_bytes = behaviour_appendix(repo)
@@ -1851,7 +1867,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                     # A look during the review (#118). One that cannot read the checkout proves
                     # no change: the check after the review decides.
                     try:
-                        now = recheck(repo, scope, ref)
+                        now = recheck(repo, scope, ref, True)
                         return (now is None or now[1] != checkout_fingerprint
                                 or behaviour_appendix(repo) != (source_name, source_bytes))
                     except (BridgeError, OSError, ValueError):
@@ -1887,7 +1903,7 @@ def main(argv=None, result_sink=None, claims=None) -> int:
             # A checkout that cannot be read proves no change: the review stays completed in its
             # record, so its round counts (fail closed), and the result fails as checkout_unverified.
             try:
-                now = recheck(repo, scope, ref)
+                now = recheck(repo, scope, ref, True)
                 stale = now is None or now[1] != checkout_fingerprint
             except (BridgeError, OSError, ValueError) as error:
                 stale, unverified = False, "the checkout could not be read after the review: %s" % error

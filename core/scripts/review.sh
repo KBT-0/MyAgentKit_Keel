@@ -33,9 +33,9 @@
 # this script runs every direction.)
 #
 # THE REVIEWER EXECUTES, NEVER IN THIS REPOSITORY. The adapter this script starts gives each
-# reviewer attempt its own throwaway copy (`git archive` of HEAD plus the uncommitted diff) as
-# its working directory, tells it to run anything there, and removes the copy when the attempt
-# ends, on a cancel too. The copy is made in the adapter, not here: this script `exec`s the
+# reviewer attempt its own throwaway copy (`git archive` of the reviewed commit, of HEAD for a
+# range, plus the uncommitted diff) as its working directory, tells it to run anything there,
+# and removes the copy when the attempt ends, on a cancel too. The copy is made in the adapter, not here: this script `exec`s the
 # adapter, whose signal handling owns a cancel, and the adapters are also called directly.
 # Threat model, in short (in full: claude_bridge.py, throwaway_copy):
 #   - Defended: what the reviewer runs in its working directory changes only the copy.
@@ -49,6 +49,8 @@
 #     not ignore.
 #   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it.
 #   - ACCEPTED LIMIT: a reviewer's write that reaches a file Git ignores is not detected.
+#   - ACCEPTED LIMIT: a Claude --commit review of a commit that is not the clean HEAD
+#     fingerprints the commit alone, so a write that reaches the repository is not detected.
 #   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
 #     between two of this script's reads to hide a change (a filter attribute removed and
 #     restored), and hostile files planted by anyone but the owner: either could edit this
