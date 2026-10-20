@@ -122,14 +122,21 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("plugin/commands/mode.md names another kit version", result.stderr)
             subprocess.run(script, check=True, capture_output=True, env=ENV)
-            self.assertEqual(command.read_bytes(), b"# mode\r\n\r\nThis plugin is kit v0.13. Read docs/kit/.kit-version.\r\n")
-            self.assertEqual(skill.read_bytes(), b"This plugin is kit v0.13.\n")
+            self.assertEqual(command.read_bytes(), b"# mode\r\n\r\nThis plugin is kit v0.13.0. Read docs/kit/.kit-version.\r\n")
+            self.assertEqual(skill.read_bytes(), b"This plugin is kit v0.13.0.\n")
+            self.assertEqual(check().returncode, 0, check().stderr)
+            # Round-1 review: a patch release's project records 0.13.1 (bootstrap.sh reads
+            # `## v0.13.1`), and a stamp cut to 0.13 called the same version another.
+            claude.write_text('{"name": "myagentkit", "version": "0.13.1"}\n')
+            self.assertIn("plugin/commands/mode.md names another kit version", check().stderr)
+            subprocess.run(script, check=True, capture_output=True, env=ENV)
+            self.assertEqual(skill.read_bytes(), b"This plugin is kit v0.13.1.\n")
             self.assertEqual(check().returncode, 0, check().stderr)
 
     def test_every_command_and_skill_compares_the_projects_kit_version_with_its_own(self):
         # #156: one user-level plugin serves projects synced at other kit versions, unsaid.
         kit = json.loads((ROOT / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
-        own = "This plugin is kit v%s." % ".".join(kit.split(".")[:2])
+        own = "This plugin is kit v%s." % kit
         files = sorted((ROOT / "plugin/commands").glob("*.md")) + sorted(ROOT.glob("plugins/myagentkit/skills/*/SKILL.md"))
         self.assertGreaterEqual(len(files), 11)
         for path in files:
@@ -139,6 +146,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn(own, text)
                 self.assertIn("`docs/kit/.kit-version`", text)
                 self.assertIn("never stop for it", text)
+                # The project's 0.12 and the stamp's 0.12.0 are one version, as are 0.12.1 and 0.12.1.
+                self.assertIn("(such as `0.10` or `0.12.1`)", text)
+                self.assertIn("compared part by part as numbers, a missing part counting as 0: 0.12 is 0.12.0", text)
                 self.assertIn("`/myagentkit:sync`" if path.parent.name == "commands" else "`myagentkit-sync` skill", text)
 
 

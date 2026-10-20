@@ -19,10 +19,10 @@ prints none of these entries to a project. Tag v0.11 only together with that ren
 this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
 - **Every plugin command and Codex skill says when the project's kit version is another**
-  (#156). Each one names the plugin's kit version (`This plugin is kit v0.11.`, stamped by
-  `scripts/package_codex_plugin.py`, whose `--check` refuses a stale one), reads the project's
-  `docs/kit/.kit-version` and, when the two differ, prints one line: both versions, which is
-  newer, and that `/myagentkit:sync` (Codex: the `myagentkit-sync` skill) brings the project to
+  (#156). Each one names the plugin's kit version (`This plugin is kit v0.11.0.`, the whole
+  version, stamped by `scripts/package_codex_plugin.py`, whose `--check` refuses a stale one),
+  reads the project's `docs/kit/.kit-version` and, when the two differ as numbers (a missing
+  part counts as 0: 0.12 is 0.12.0), prints one line: both versions, which is newer, and that `/myagentkit:sync` (Codex: the `myagentkit-sync` skill) brings the project to
   the newest release. It never stops and uses no network. Nothing to do: update the plugin.
 
 - **A changed worktree-disposable list shows what it would remove before it removes it**

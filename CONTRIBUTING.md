@@ -86,8 +86,10 @@ plugin is installed from this repository's marketplace, and an installed plugin 
 until its version string changes (code.claude.com/docs/en/plugins-reference, `version`;
 code.claude.com/docs/en/plugins/loading, "Versions and updates"). The Codex plugin's version
 is built from that version and a hash of its files, so after the bump run
-`python3 scripts/package_codex_plugin.py` (`python` on native Windows) and commit `plugins/myagentkit/.codex-plugin/plugin.json`;
-until then the kit check is red (#156).
+`python3 scripts/package_codex_plugin.py` (`python` on native Windows) and commit every file it
+rewrote: `plugins/myagentkit/.codex-plugin/plugin.json` and the version stamp in each
+`plugin/commands/*.md` and `plugins/myagentkit/skills/*/SKILL.md` (`git status` lists them);
+until then the kit check is red, and CI's `--check` too (#156).
 
 `install.sh` pins the kit it fetches to the release tag: raise its `version=` line with the
 other three (`tests/test_install.py` compares it with the changelog), and push the tag
