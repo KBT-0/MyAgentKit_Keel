@@ -60,10 +60,10 @@ class KitRunnerTests(unittest.TestCase):
                                text=True).stdout
         self.assertEqual([line for line in shown.splitlines() if line.split('\t')[0] in ('system', 'global')], [])
 
-    def test_the_kit_article_describes_the_author_tier_refusal(self):
+    def test_the_kit_article_describes_the_weaker_and_author_tier_refusal(self):
         # This article belongs to the kit, not to a bootstrapped project's docs.
         page = ' '.join((ROOT / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
-        self.assertIn("refuses a reviewer of the author's tier", page)
+        self.assertIn("refuses a reviewer of a weaker tier, or of the author's tier below the family's top", page)
         self.assertNotIn('planned work', page)
 
     def test_review_shards_require_complete_unique_successful_reports(self):
