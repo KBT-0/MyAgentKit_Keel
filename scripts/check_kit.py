@@ -132,7 +132,7 @@ REQUIRED_SUITES = {
               'test_codex_worker': 62 if os.name == 'nt' else 64 if Path('/proc/self/fd').is_dir() else 63, 'test_working_mode': 52,
               'test_worker_visibility': 79 if os.name == 'nt' or os.path.exists('/dev/full') else 78, 'test_doc_pointers': 28,
               'test_usage_summary': 33, 'test_done_audits': 2,
-              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 20 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 47, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 42 if os.name == 'nt' else 41, 'test_python_fallback': 3,
               'test_install': 12 if os.name == 'nt' else 8},

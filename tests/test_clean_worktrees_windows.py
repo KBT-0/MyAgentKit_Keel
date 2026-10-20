@@ -121,6 +121,19 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertIn('worktree-done', self.git('branch', '--list', 'worktree-done'))
 
     @windows_only
+    def test_the_stop_hooks_gate_state_does_not_keep_a_finished_worktree(self):
+        # bge2e: gate_on_stop.sh keeps "<result> <code> <tree>" in kit-stop-gate and the names'
+        # input in kit-stop-gate.tree, `git ls-files --stage` included: its blob ids kept every
+        # finished worker whose Stop hook had run.
+        path = self.worktree('done')
+        state = Path(self.git('rev-parse', '--path-format=absolute', '--git-path', 'kit-stop-gate', cwd=path))
+        state.with_name('kit-stop-gate.tree').write_text(
+            self.git('rev-parse', 'HEAD', cwd=path) + '\n' + self.git('ls-files', '--stage', cwd=path) + '\n')
+        state.write_text('pass %s %s\n' % ('1' * 40, '2' * 40))
+        out = self.run_script('--apply')
+        self.assertFalse(path.exists(), out)
+
+    @windows_only
     def test_a_finished_worktree_with_an_executable_script_is_removed(self):
         # Codex review: core.fileMode=true and the executable-bit comparison read a tracked
         # 100755 script as modified on Windows, which keeps no such bit: the kit's own layout

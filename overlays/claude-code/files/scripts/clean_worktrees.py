@@ -137,8 +137,10 @@ WORK = re.compile(rb'(commit( \([a-z-]+\))?|cherry-pick|revert|am|rebase \((pick
 # state g verifies by bytes (and binary); check-build.log, the gate's build output, which may
 # print any id; AUTO_MERGE, the tree git writes for a merge or rebase step and leaves behind
 # when it ends (d proves none is under way): a pseudo-ref, which gc does not keep either, and
-# a tree, not a commit. Every other file is scanned, the ones that hold no id at all included.
-NO_HISTORY = {b'index', b'check-build.log', b'AUTO_MERGE'}
+# a tree, not a commit; kit-stop-gate and kit-stop-gate.tree, the Stop hook's gate cache
+# (gate_on_stop.sh): HEAD, the index's blob ids and hashes of nothing stored. Every other file
+# is scanned, the ones that hold no id at all included.
+NO_HISTORY = {b'index', b'check-build.log', b'AUTO_MERGE', b'kit-stop-gate', b'kit-stop-gate.tree'}
 # The warnings lsof prints on stderr when one file system cannot be read; its listing of the
 # rest stands (lsof(8), "can't stat()"). Any other stderr line makes a non-zero exit a failure.
 LSOF_WARNINGS = re.compile(rb"lsof: WARNING: can't stat\(\) [^\n]*|\s*Output information may be incomplete\.")
