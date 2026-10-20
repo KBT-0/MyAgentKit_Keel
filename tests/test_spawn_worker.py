@@ -2219,12 +2219,14 @@ class DoneSignalGuidanceTests(unittest.TestCase):
                 text = ' '.join((ROOT / name).read_text(encoding='utf-8').replace('# ', ' ').split())
                 self.assertIn('watch_workers.sh --result NAME=PATH NAME', text)
                 self.assertIn('never relies on it alone', text)
-                self.assertNotIn('subscribes once', text)
-                self.assertNotIn('subscribe once', text)
+                for stale in ('subscribes once', 'subscribe once', 'subscribes for its idle notice'):
+                    self.assertNotIn(stale, text.lower())
         workflow = ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split())
         self.assertIn('On 2026-10-20, 4 of 5 subscriptions', workflow)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn("ONE background command that exits on the log's `review dispatch:` line", running)
+        self.assertIn('run `review.sh` itself as the background command', running)
+        self.assertIn("until grep -q -e '^review dispatch: ' -e '^FAIL \[review\]: '", running)
+        self.assertNotIn('kill -0', running)
 
 
 if __name__ == '__main__':

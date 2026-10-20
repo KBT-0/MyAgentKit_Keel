@@ -10,12 +10,12 @@ here is part of its prompt.
 ```
 
 It runs the reviewer over the change set in a throwaway copy, archives the report under
-`docs/reviews/` and prints it. A run the lead starts in the background with its output in a
-log gets the same done signal as a worker: ONE background command that exits on the log's
-`review dispatch:` line, which the dispatcher prints when the review ends, completed or not,
-or when the run's process is gone (a refused run exits before that line):
-`until grep -q '^review dispatch: ' LOG || ! kill -0 PID 2>/dev/null; do sleep 30; done`
-(`docs/WORKFLOW.md`, "Worker cost", rule 4). Mechanism and threat model: the header of `scripts/review.sh`
+`docs/reviews/` and prints it. In the background, run `review.sh` itself as the background command,
+so its exit is the done signal (`docs/WORKFLOW.md`, "Worker cost", rule 4). A run started
+detached (`nohup ... > LOG 2>&1 &`) is waited on through its log, never a pid, which a Windows
+host's Git Bash cannot check: `until grep -q -e '^review dispatch: ' -e '^FAIL \[review\]: '
+-e '^usage: ' -e '^Traceback ' LOG; do sleep 30; done` ends on the dispatcher's last line or a
+refused or crashed run's own line. Mechanism and threat model: the header of `scripts/review.sh`
 and `scripts/claude_bridge.py`, `throwaway_copy`; accounting: `docs/USAGE.md`; a second
 backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`. Its `NAME.env` lives
 outside the repository, in `MYAGENTKIT_BACKENDS_DIR`, else `%APPDATA%\myagentkit\backends`
