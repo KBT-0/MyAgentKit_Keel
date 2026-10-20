@@ -17,6 +17,7 @@ import shutil
 from contextlib import contextmanager
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -117,6 +118,8 @@ elif cmd == 'send-keys':
 
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:] == ['--help']:
+    sys.exit(0)  # no --bg listed: the tab and tmux cases keep their host
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
     json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env_names': sorted(os.environ),
                'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_') or
@@ -972,7 +975,7 @@ exit 0
             run_state_hook(state, {'hook_event_name': 'Stop'})
         self.assertTrue(state.read_text().startswith('idle '))
         self.assertEqual(sorted(p.name for p in workers.iterdir()),
-                         sorted([name + '.state', name + '.settings.json', name + '.result-path']))
+                         sorted([name + '.state', name + '.settings.json', name + '.result-path', name + '.host']))
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
@@ -2207,6 +2210,177 @@ class TmuxStubTests(unittest.TestCase):
                     self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
             self.assertTrue((state / 'INJECTED').exists(), 'the stub did not run command substitution')
             self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
+
+
+# A claude whose help lists --bg, with Claude Code's background commands on a rows.json list as
+# `claude agents --json --all` prints it (the spike's fields). `--bg` adds a working row and prints
+# the spike's `backgrounded · ID · NAME`; SPAWN_UNTRUSTED prints the trust refusal, SPAWN_NO_ID no id;
+# SPAWN_PUBLISH writes that result to SPAWN_PUBLISH_TO, as a worker that finished at once.
+BG_CLAUDE = r'''import json, os, sys
+state = os.environ['SPAWN_STATE']
+args = sys.argv[1:]
+with open(os.path.join(state, 'claude.log'), 'a') as log:
+    log.write(json.dumps(args) + '\n')
+path = os.path.join(state, 'rows.json')
+rows = json.load(open(path)) if os.path.exists(path) else []
+def save():
+    with open(path, 'w') as f:
+        json.dump(rows, f)
+if args == ['--help']:
+    print('  --bg, --background                    Start the session in the background and')
+elif args[:1] == ['agents']:
+    print(json.dumps(rows))
+elif args[:1] in (['stop'], ['rm']):
+    rows = [dict(r, pid=None, state='done') if r['id'] == args[1] else r for r in rows
+            if args[0] == 'stop' or r['id'] != args[1]]
+    save()
+elif '--bg' in args:
+    if os.environ.get('SPAWN_UNTRUSTED'):
+        print('Workspace not trusted. Run `claude` in %s once and accept the trust prompt, then retry.' % os.getcwd())
+        sys.exit(1)
+    with open(os.path.join(state, 'launch.json'), 'w') as f:
+        json.dump({'argv': args, 'cwd': os.getcwd(), 'markers': sorted(k for k in os.environ if k.startswith('CLAUDE_CODE_CHILD'))}, f)
+    print('Starting background service…')
+    if os.environ.get('SPAWN_NO_ID'):
+        sys.exit(0)
+    short = args[args.index('--resume') + 1][:8] if '--resume' in args else '1a2b3c4d'
+    rows = [r for r in rows if r['id'] != short] + [{'id': short, 'sessionId': short + '-5137-4293-88d5-c4339d1ce56c',
+            'pid': 4242, 'state': 'working', 'kind': 'background', 'cwd': os.getcwd()}]
+    save()
+    if os.environ.get('SPAWN_PUBLISH'):
+        with open(os.environ['SPAWN_PUBLISH_TO'], 'w') as f:
+            f.write(os.environ['SPAWN_PUBLISH'])
+    print('backgrounded · %s · w1' % short)
+'''
+DONE = 'Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n<!-- codex-worker: ready -->\n'
+
+
+class BackgroundHostTests(unittest.TestCase):
+    """The bg host: spawn_worker.sh starts `claude --bg` and its detached supervisor ends it by id."""
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.state, self.bin, self.cwd = self.tmp / 'state', self.tmp / 'bin', self.tmp / 'lead'
+        for folder in (self.state, self.bin, self.cwd):
+            folder.mkdir()
+        (self.bin / 'claude.py').write_text(BG_CLAUDE, encoding='utf-8')
+        python = sys.executable.replace('\\', '/')
+        (self.bin / 'claude').write_text('#!/bin/sh\nexec %s -X utf8 %s "$@"\n' % (shq(python), shq(str(self.bin / 'claude.py').replace('\\', '/'))), newline='\n')
+        (self.bin / 'claude').chmod(0o755)
+        if WINDOWS:
+            # The supervisor is a Windows python: it starts claude.cmd, not a shebang script.
+            (self.bin / 'claude.cmd').write_text('@"%s" -X utf8 "%s" %%*\r\n' % (sys.executable, self.bin / 'claude.py'))
+            (self.bin / 'python3').write_text('#!/bin/sh\nexec %s -X utf8 "$@"\n' % shq(python), newline='\n')
+            (self.bin / 'python3').chmod(0o755)
+        git = ['git', '-C', str(self.cwd)]
+        subprocess.run(git + ['init', '-q'], check=True)
+        (self.cwd / 'README.md').write_text('lead\n')
+        subprocess.run(git + ['add', 'README.md'], check=True)
+        subprocess.run(git + ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'init'], check=True)
+        self.brief = self.cwd / 'brief.md'
+        self.brief.write_text('Do the task.\n')
+        self.workers = self.cwd / '.myagentkit/workers'
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def spawn(self, *args, **extra):
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))}
+        env.update(PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
+                   KIT_WORKER_GRACE='0.2', **LEAD_ENV)
+        env.update(extra)
+        return subprocess.run(['sh', str(SCRIPT), 'w1', str(self.brief), '--model', 'm', '--effort', 'high', *args],
+                              cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
+
+    def calls(self):
+        log = self.state / 'claude.log'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def launch(self):
+        return json.loads((self.state / 'launch.json').read_text())
+
+    def ended(self):
+        # The detached supervisor writes its exit record last, then lets go of its .live record.
+        record = self.workers / 'w1.exit'
+        for _ in range(int(200 * SCALE)):
+            if record.exists():
+                time.sleep(1)
+                return record.read_text(encoding='utf-8')
+            time.sleep(.1)
+        self.fail('the supervisor wrote no exit record: ' + str(self.calls()))
+
+    def test_a_bg_worker_starts_in_its_worktree_and_is_stopped_by_id_after_its_result(self):
+        worktree = self.cwd / '.claude/worktrees/w1'
+        result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launch()['argv']
+        self.assertTrue(argv[0].startswith('Read '), argv)  # the prompt first
+        self.assertIn('--bg', argv)
+        self.assertEqual(argv[argv.index('-n') + 1], 'w1')
+        self.assertEqual(argv[-2:], ['--disallowedTools', 'AskUserQuestion'])
+        self.assertEqual(Path(self.launch()['cwd']).resolve(), worktree.resolve())
+        self.assertEqual(self.launch()['markers'], [], 'the lead\'s child-session marker reached the launch')
+        settings = json.loads(Path(argv[argv.index('--settings') + 1]).read_text(encoding='utf-8'))
+        self.assertEqual(settings['worktree'], {'bgIsolation': 'none'})
+        self.assertEqual(settings['env']['MYAGENTKIT_ROLE'], 'worker')
+        self.assertEqual(settings['attribution'], {'commit': '', 'pr': ''})
+        full = '1a2b3c4d-5137-4293-88d5-c4339d1ce56c'
+        self.assertEqual((self.workers / 'w1.session').read_text(), full + '\n')
+        self.assertIn('--resume ' + full, result.stdout)
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+        self.assertEqual((self.workers / 'w1.host').read_text(), 'bg\n')
+        out = result.stdout
+        self.assertIn('background session 1a2b3c4d', out)
+        self.assertLess(out.index('watch_workers.sh --result'), out.index('claude attach 1a2b3c4d'))
+        self.assertIn('claude agents', out)
+        self.assertTrue(self.ended().startswith('DONE published'))
+        self.assertIn(['stop', '1a2b3c4d'], self.calls())
+        self.assertFalse([c for c in self.calls() if 'daemon' in c], 'a daemon command ends every session')
+
+    def test_a_resume_passes_no_flag_and_takes_the_full_session_id(self):
+        # Any flag on `claude --resume ID --bg` starts a copy under the same name (spike, 6).
+        self.workers.mkdir(parents=True)
+        # The short id resumes nothing (POSIX spike): the full one comes from NAME.session.
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launch()['argv']
+        self.assertEqual(argv[1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.assertTrue(argv[0].startswith('Read '), argv)
+        self.assertTrue(self.ended().startswith('DONE published'))
+
+    def test_an_untrusted_folder_stops_the_spawn_with_the_plain_fix_and_leaves_no_worktree(self):
+        result = self.spawn('--worktree', SPAWN_UNTRUSTED='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('run `claude` once in', result.stderr)
+        self.assertIn('accept the trust prompt', result.stderr)
+        self.assertFalse((self.cwd / '.claude/worktrees/w1').exists())
+        self.assertFalse((self.workers / 'w1.id').exists())
+
+    def test_a_launch_without_an_id_fails_and_records_no_worker(self):
+        result = self.spawn(SPAWN_NO_ID='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('printed no session id', result.stderr)
+        self.assertFalse((self.workers / 'w1.id').exists())
+
+    def test_a_running_earlier_session_of_the_name_is_refused(self):
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': 99, 'state': 'working'}]))
+        result = self.spawn()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_forced_host_must_exist_here(self):
+        for host in ('screen', 'tmux' if WINDOWS else 'tab'):
+            with self.subTest(host=host):
+                result = self.spawn(MYAGENTKIT_WORKER_HOST=host)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('MYAGENTKIT_WORKER_HOST', result.stderr)
+                self.assertFalse((self.state / 'launch.json').exists())
 
 
 class DoneSignalGuidanceTests(unittest.TestCase):

@@ -1462,5 +1462,38 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertNotIn('PROGRESS', output.getvalue(), 'the reported result was reported again')
 
 
+class BackgroundSupervisorTests(unittest.TestCase):
+    def test_a_background_session_that_ends_by_itself_ends_its_supervisor_without_a_stop(self):
+        # `--bg ID`: no child; the row of ID in `claude agents --json --all` says when it ended
+        # (a stop by the lead, the idle stop): the exit record follows, and nothing is stopped.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            rows, log = tmp / 'rows.json', tmp / 'claude.log'
+            (tmp / 'claude.py').write_text(
+                'import sys\nopen(%r, "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
+                'print(open(%r).read())\n' % (str(log), str(rows)), encoding='utf-8')
+            if os.name == 'nt':
+                (tmp / 'claude.cmd').write_text('@"%s" "%s" %%*\r\n' % (sys.executable, tmp / 'claude.py'))
+            else:
+                (tmp / 'claude').write_text('#!/bin/sh\nexec %s %s "$@"\n' % (
+                    shlex.quote(sys.executable), shlex.quote(str(tmp / 'claude.py'))))
+                (tmp / 'claude').chmod(0o755)
+            rows.write_text(json.dumps([{'id': '1a2b3c4d', 'pid': 4242, 'state': 'working'},
+                                        {'id': '99999999', 'pid': 7, 'state': 'working'}]))
+            stopper = threading.Timer(1, lambda: rows.write_text(json.dumps(
+                [{'id': '1a2b3c4d', 'pid': None, 'state': 'stopped'}, {'id': '99999999', 'pid': 7, 'state': 'working'}])))
+            stopper.start()
+            record = tmp / 'w.exit'
+            done = subprocess.run([sys.executable, str(SCRIPT), str(tmp / 'QUESTION-w.md'), str(tmp / 'RESULT-w.md'),
+                                   '--bg', '1a2b3c4d'], capture_output=True, text=True, timeout=30, cwd=tmp,
+                                  env=dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ['PATH'],
+                                           KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=str(time.time())))
+            stopper.join()
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertTrue(record.read_text(encoding='utf-8').startswith('exit 0'))
+            calls = log.read_text().splitlines()
+            self.assertEqual(set(calls), {'agents --json --all'}, 'only the list is read: nothing is stopped')
+
+
 if __name__ == '__main__':
     unittest.main()
