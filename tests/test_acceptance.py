@@ -245,6 +245,11 @@ class AcceptanceTests(unittest.TestCase):
                 with unittest.mock.patch.dict(os.environ, SHELLCHECK_OPTS='-S error -e SC3010'), \
                         self.assertRaisesRegex(RuntimeError, r'SC3010'):
                     gate.shell_portability(Path(tmp))
+                # A project's gate refuses SC2086 in every shell file, the kit's installed ones too.
+                script.write_text('#!/bin/sh\nx=$1\nprintf %s $x\n', encoding='utf-8')
+                with self.assertRaisesRegex(RuntimeError, r'a\.sh:3:.*SC2086'):
+                    gate.shell_portability(Path(tmp))
+                script.write_text('#!/bin/sh\nx=1\nif [[ $x = 1 ]]; then :; fi\n', encoding='utf-8')
             with unittest.mock.patch.object(gate.shutil, 'which', return_value=None):
                 gate.shell_portability(Path(tmp))
                 self.assertIn('NOT RUN: shellcheck -s sh', out.getvalue())
