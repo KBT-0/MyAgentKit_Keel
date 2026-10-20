@@ -220,6 +220,9 @@ def main(argv=None, result_sink=None, claims=None):
             if (reason and execution["exit_code"] == 0 and not execution["termination"]
                     and "turn.completed" in types and "turn.failed" not in types):
                 reason = None
+            # Only a run that failed on Codex's side names its events: a recovered reconnect
+            # must not be blamed for a check below that fails.
+            codex_failed = bool(reason)
             final = ""
             try:
                 if last is not None and last.is_file():
@@ -262,7 +265,7 @@ def main(argv=None, result_sink=None, claims=None):
             reported = [str(v["error"].get("message", "")) if isinstance(v.get("error"), dict)
                         else str(v.get("message", "")) for v in values
                         if v.get("type") in ("error", "turn.failed")]
-            if reason and not failure and any(reported):
+            if codex_failed and reason and not failure and any(reported):
                 failure = "\n\n## Failure\n\nCodex reported: " + "\n".join(filter(None, reported))[-4000:]
         status = "failed" if reason else "completed"
         # The exec JSONL interface does not attest actual model identity; App Server's
