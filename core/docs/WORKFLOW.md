@@ -874,7 +874,9 @@ compaction; the full rule below, with its measurements and sources, when one is 
 2. A gate finding goes back to the author's side while its context is under the band and the
    fix is no redesign; otherwise a fresh worker takes it.
 3. One small task per worker, sized to end under the context band.
-4. The lead does not poll either; it waits for notifications.
+4. The lead does not poll either; it waits for notifications. After every spawn it starts the
+   printed `sh scripts/watch_workers.sh` line as ONE background command: the disk is the done
+   signal, and an idle notice is optional, never relied on alone.
 5. Mechanical work: the cheaper model at medium effort; design-bearing code: the strongest at
    high. Model and effort are always passed, never inherited.
 6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
@@ -961,9 +963,12 @@ Rules, binding for whoever routes workers:
    requests `maxTurns` counts; a worker stopped there returns partial output and can be
    resumed) and `autoCompactWindow` at the band (code.claude.com/docs/en/sub-agents). 150 is a
    backstop, not a measured optimum. Split before starting: a mechanism first, then its uses.
-4. **The lead does not poll either.** It waits for task notifications or an idle notice from
-   a separate session; it does not check on workers or CI in a loop (a background sub-agent
-   notifies on completion, code.claude.com/docs/en/sub-agents).
+4. **The lead does not poll either.** It waits for task notifications or the exit of a
+   background command that watches the disk: `scripts/watch_workers.sh` for a separate session
+   (an idle notice is optional and never relied on alone: "The disk is the done signal", below), a log
+   watch for a review started in the background (`docs/REVIEW_RUNNING.md`, "Running it"). It
+   does not check on workers or CI in a loop (a background sub-agent notifies on completion,
+   code.claude.com/docs/en/sub-agents).
 5. **Mechanical work goes to the cheaper model at medium effort**: doc fixes, running a
    documented proof, folding notes. Design-bearing code gets the strongest model at high
    effort; reviews follow the "Model routing" effort table. Model and effort are never left
@@ -1106,16 +1111,22 @@ They refuse paths containing anything except letters, digits, underscore, dot, s
 The script is created and checked before any worktree is added, so a refused path leaves no
 worktree or branch. If refused, set `TMPDIR` to an existing absolute directory using those
 characters and retry; spaces are refused too. This remedy works on macOS and Linux alike.
-The lead subscribes once with SendMessage `notify_when_idle`; on native Windows (a Windows
-Terminal tab) only when the spawn prints "is a peer session", and after a WARNING it watches the
-tab and the result file instead. A tmux worker always registers. The subscription costs no
-tokens. It lapses after 12 hours without a notice (the lead is told): resubscribe, or fall
-back to the result file. A worker with `crossSessionInbound` set to `refuse` sends no notice.
+**The disk is the done signal, on every platform.** Right after every spawn the lead starts
+ONE background command: the `sh scripts/watch_workers.sh --result NAME=PATH NAME` line the
+spawn prints. It exits when the worker reports (its result file, GONE or WAITING), and the
+lead starts it again after every report but DONE and GONE. On native Windows it reads the
+worker's state file, result file and exit record in place of a pane (below). The lead may
+also subscribe with SendMessage `notify_when_idle` when the spawn prints "is a peer session"
+(a tmux worker always registers), but never relies on it alone: a supervised close often
+sends no notice. The subscription costs no tokens. It lapses after 12 hours without a
+notice (the lead is told). A worker with `crossSessionInbound` set to `refuse` sends no notice.
 The docs define idle as "finished a turn with nothing queued"
 (code.claude.com/docs/en/cross-session-messaging). In the lead's 2026-10-17 observation, one
 subscription on a `spawn_worker` worker that published its result and was then closed
-delivered no idle notice. This observation does not establish how many notices
-a subscription gives.
+delivered no idle notice. On 2026-10-20, 4 of 5 subscriptions on native Windows workers that
+`codex_worker.py` closed about 10 seconds after their `Kind: completed` result delivered no
+notice, and the lead sat idle with all work done until {{OWNER_NAME}} asked. These
+observations do not establish how many notices a subscription gives.
 The lead does not message an idle session: every message to an
 idle session is a full-context turn. A worker session does not end with its task.
 A committed result file of

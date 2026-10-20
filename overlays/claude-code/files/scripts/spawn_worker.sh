@@ -71,7 +71,7 @@
 # background command, on every platform: its exit is the done signal (the result file, GONE or
 # WAITING), and the lead starts it again after every report but DONE and GONE. It may also
 # subscribe with SendMessage `notify_when_idle` (a peer session; a tmux worker registers), but
-# never relies on that alone: the supervisor's close of a finished worker often sends no idle
+# never relies on it alone: the supervisor's close of a finished worker often sends no idle
 # notice (4 of 5 closes on 2026-10-20). It reads the result FILE the brief asks the worker to
 # write. It does not poll and it does not chat with the worker: every message to an idle
 # session is a full-context turn. After reading the file

@@ -2209,5 +2209,23 @@ class TmuxStubTests(unittest.TestCase):
             self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
 
 
+class DoneSignalGuidanceTests(unittest.TestCase):
+    def test_the_lead_guidance_makes_the_disk_watch_the_done_signal(self):
+        # 2026-10-20: the guidance made notify_when_idle the signal, and 4 of 5 supervised
+        # closes sent no notice. Every place that steers a lead names the watch, the
+        # subscription only as optional.
+        for name in ('core/docs/WORKFLOW.md', 'overlays/claude-code/README.md', str(SCRIPT.relative_to(ROOT))):
+            with self.subTest(name=name):
+                text = ' '.join((ROOT / name).read_text(encoding='utf-8').replace('# ', ' ').split())
+                self.assertIn('watch_workers.sh --result NAME=PATH NAME', text)
+                self.assertIn('never relies on it alone', text)
+                self.assertNotIn('subscribes once', text)
+                self.assertNotIn('subscribe once', text)
+        workflow = ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split())
+        self.assertIn('On 2026-10-20, 4 of 5 subscriptions', workflow)
+        running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
+        self.assertIn("ONE background command that exits on the log's `review dispatch:` line", running)
+
+
 if __name__ == '__main__':
     unittest.main()

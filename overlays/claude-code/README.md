@@ -90,14 +90,19 @@ and the idle notice does not fire for a session that waits inside a dialog: it h
 nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
 
 **Native Windows** (Git for Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
-says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` does not apply
-there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
-0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
-refuses a name a running Claude Code session already has. The tab is the only view of it.
-The lead does not poll it: when the spawn prints "is a peer session", the lead subscribes
-with `notify_when_idle` (a subscription costs no tokens; in the vendor's docs one subscription
-is one notice, and it lapses after 12 hours, code.claude.com/docs/en/cross-session-messaging).
-If it prints WARNING, watch the tab and result file; no idle notice arrives.
+says about tmux sessions, `--batch` and `show_workers.sh` does not apply there;
+`watch_workers.sh` does, through its Windows path (below). `spawn_worker.sh` opens the worker
+as a tab of the window the lead runs in (`wt.exe -w 0`, or the launcher `KIT_WT` names) with
+the brief's instruction as its first prompt, and refuses a name a running Claude Code session
+already has. The tab is the only view of it. The lead does not poll it: right after the spawn
+it starts the printed `sh scripts/watch_workers.sh --result NAME=PATH NAME` as ONE background
+command, the done signal, and starts it again after every report but DONE and GONE. When the
+spawn prints "is a peer session", the lead may also subscribe with `notify_when_idle` (a
+subscription costs no tokens; in the vendor's docs one subscription is one notice, and it
+lapses after 12 hours, code.claude.com/docs/en/cross-session-messaging), but never relies on
+it alone: a supervised close often sends no notice (one of one on 2026-10-17, 4 of 5 on
+2026-10-20, `docs/WORKFLOW.md`). If it prints WARNING, no idle notice arrives; the watcher
+still reports.
 `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
 command line holds `-n NAME` and whose process id the spawn recorded in
 `.myagentkit/workers/NAME.pid` (another project's session of the name is never ended; one with
@@ -151,7 +156,9 @@ returns, and so re-invokes the lead, as soon as a named session is GONE or WAITI
 person; for WAITING it prints what waits and the last lines of the pane, so the lead can tell
 the owner. Otherwise it ends after `--max-minutes` (55) with one line saying nothing waited.
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
-which costs the worker nothing. Exit 3, never "nothing waiting", means the watcher could not
+which costs the worker nothing. On native Windows, where no pane can be read, it reads the
+worker's `.myagentkit/workers/NAME.state` line, its result file and its supervisor's exit
+record instead (WAITING, then the result, then GONE, then IDLE; the script's header). Exit 3, never "nothing waiting", means the watcher could not
 observe: a pane of a session that exists could not be read, or tmux could not say whether it exists
 (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 read (`... could not read the committed result ...`), or a report could not be written
@@ -189,7 +196,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   **PROGRESS**, none of them done; a missing or malformed head is **MALFORMED**, not done. A
   file with questions under `## Open questions for ...` is **QUESTIONS** first: "N questions
   for OWNER" and their text with the options, each line cut at 200 bytes. Each committed
-  version of the file is reported once.
+  version of the file is reported once. A file not in HEAD (the kit's default
+  `RESULT-NAME.md`, never committed) is read from the working file instead, once per
+  content, when this run published it with the supervisor's ready marker as its last line.
 - **The context figure** in the pane's status line, `<used>/<window>` with k or M (`Opus 5.5
   58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). The
   status line is the line right under the input box's bottom rule, second or third from
@@ -316,7 +325,9 @@ the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn
   short final message and lets it write only logs, tables and captures to files
   (`docs/WORKFLOW.md`, "Worker cost", rule 7).
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
-  FILE, subscribe once with `notify_when_idle`, and read the file.
+  FILE, start the printed `sh scripts/watch_workers.sh` line as one background command (the
+  done signal; a `notify_when_idle` subscription is optional, never relied on alone), and read
+  the file.
 
 ## Closing a finished worker
 
