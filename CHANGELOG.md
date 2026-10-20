@@ -179,6 +179,20 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   `{{placeholder}}` is no pin. The refusal states the worker rule and the reviewer rule
   separately. **ACTION:** re-copy `.claude/hooks/guard_worker_route.py`.
 
+- **Stray background tool commands** (#298): a `find /` that outlived its session kept a CPU
+  core busy for seven hours and skewed every timing. The new `guard_root_scan.py` (PreToolUse:
+  Bash, PowerShell, Monitor) refuses a search or walk from a filesystem or drive root
+  (`find /`, `grep -r /`, `rg`, `du`, `tree`, `ls -R`, `dir /s`, `Get-ChildItem -Recurse C:\`)
+  unless bounded to depth 3; it reads the command as the shell does (heredoc bodies are data)
+  and fails open, so a stalled guard never refuses a call. `close_worker.sh` ends the process
+  tree below a tmux session's panes with the session, never a pid that has since gone to another
+  process (Windows: `taskkill /T` already does). `doctor.sh` lists, never ends, search or walk
+  tools and shells (on Windows also python, node, npm) older than two hours whose parent is gone
+  and that used more than 5% of a CPU, each with the command that ends it. GOTCHAS: "A timing
+  taken on a busy machine is not a result". **ACTION:** re-copy `.claude/hooks/guard_root_scan.py` and merge its
+  PreToolUse entry into your `.claude/settings.json`; `scripts/close_worker.sh`,
+  `scripts/doctor.sh` and `docs/GOTCHAS.md` come with sync.
+
 - **`guard_boundaries.py`** (#151): its docstring and the overlay README say that writes through
   the shell get no early warning; `scripts/check.sh` stays the gate. **ACTION:** re-copy
   `.claude/hooks/guard_boundaries.py` (docstring only).

@@ -1246,3 +1246,81 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('scripts/working_mode.py does not exist (the /myagentkit:mode command needs it)', result.stdout)
             self.assertNotIn('working_mode.py does not exist (the gate needs it)', result.stdout)
+
+
+def stray_section(windows, **env):
+    """doctor.sh's stray-process section alone, run as doctor runs it (#298)."""
+    doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+    section = doctor.split('# --- stray tool commands', 1)[1].split('\n', 1)[1]
+    section = section.split("# --- the project's own machine checks", 1)[0]
+    # A file, not `sh -c`: the MSYS runtime re-parses a command line, backslashes included.
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / 'stray.sh'
+        script.write_text('windows_sh=%s\n%s' % ('1' if windows else '""', section), newline='\n')
+        return subprocess.run(['sh', str(script)], capture_output=True, text=True, timeout=60 * SCALE,
+                              env=dict(os.environ, **env))
+
+
+class StrayProcessTests(unittest.TestCase):
+    def test_an_old_busy_orphaned_tool_command_is_listed_with_its_end_command_and_nothing_else(self):
+        # pid ppid age-seconds cpu-seconds name
+        listing = '\n'.join([
+            '1 0 99999 5 systemd', '50 1 99999 5 systemd', '200 1 99999 5 code',
+            '100 1 10000 9000 find',           # its parent gone (pid 1): listed
+            '101 999 10000 9000 rg',           # no such parent: listed
+            '102 50 10000 9000 /usr/bin/grep',  # adopted by a subreaper: listed
+            r'107 0 10000 9000 C:\Git\usr\bin\FIND.EXE',  # Windows: parent gone, ppid 0
+            '108 1 10000 9000 python3.11',     # a versioned interpreter is python: Windows only
+            '109 1 10000 9000 node',           # Windows only: on POSIX a service of the owner looks the same
+            '60 1 99999 5 init', '110 60 10000 9000 sh',  # adopted by WSL's init: listed
+            '103 200 10000 9000 find',         # its parent runs
+            '104 1 100 90 find',               # young
+            '105 1 10000 100 find',            # idle: 1% of a CPU
+            '106 1 10000 9000 chrome',         # not a tool command
+        ]) + '\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            table = Path(tmp) / 'procs'
+            table.write_text(listing)
+            for windows, fix, expected in ((False, 'kill %s', ['100', '101', '102', '107', '110']),
+                                           (True, 'taskkill /PID %s /T /F', ['100', '101', '102', '107', '108', '109', '110'])):
+                with self.subTest(windows=windows):
+                    result = stray_section(windows, DOCTOR_PROCESSES=str(table))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    listed = [line.split()[3] for line in result.stdout.splitlines()]
+                    self.assertEqual(listed, expected, result.stdout)
+                    for pid in listed:
+                        self.assertIn('end it: ' + fix % pid + '\n', result.stdout)
+                    self.assertIn('NOTE: stray process 100 (find, running 2.8 h, 90% of a CPU, its parent is gone)',
+                                  result.stdout)
+
+    def test_the_host_process_list_finds_a_real_orphan_and_ends_nothing(self):
+        # The real lister (Win32_Process or ps), age bound off: a busy tool command whose parent
+        # exited is listed; a busy one whose parent runs is not; neither is ended. On POSIX a shell
+        # (python is not listed there); on Windows Python, as Git's sh.exe may be a launcher.
+        busy = [sys.executable, '-c', 'while True: pass'] if WINDOWS else ['sh', '-c', 'while :; do :; done']
+        launcher = subprocess.run([sys.executable, '-c', 'import subprocess, sys; print(subprocess.Popen(sys.argv[1:], '
+                                   'stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)',
+                                   *busy], capture_output=True, text=True, timeout=60)
+        orphan = int(launcher.stdout)
+        self.addCleanup(lambda: os.kill(orphan, signal.SIGTERM))
+        child = subprocess.Popen(busy)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        # ps counts CPU time in whole seconds: asked again until the orphan has 5% of a CPU there.
+        deadline = time.monotonic() + 30 * SCALE
+        while True:
+            time.sleep(0.5)
+            result = stray_section(WINDOWS, DOCTOR_STRAY_AGE='0')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            listed = [line.split()[3] for line in result.stdout.splitlines() if line.startswith('NOTE: stray process ')]
+            self.assertNotIn(str(child.pid), listed, result.stdout)
+            if str(orphan) in listed or time.monotonic() > deadline:
+                break
+        self.assertIn(str(orphan), listed, result.stdout)
+        self.assertIsNone(child.poll())
+        # Still running: doctor only lists. Windows has no signal 0.
+        if WINDOWS:
+            self.assertIn(' %d ' % orphan, subprocess.run(['tasklist', '/FI', 'PID eq %d' % orphan, '/NH'],
+                                                          capture_output=True, text=True).stdout)
+        else:
+            os.kill(orphan, 0)

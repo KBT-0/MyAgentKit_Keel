@@ -29,6 +29,7 @@ A new entry adds its heading to this list.
 - A worker spawned from a lead's shell inherits its child-session markers
 - Background jobs die with the session and in a low-memory reap
 - An incremental build misses its always-run inputs
+- A timing taken on a busy machine is not a result
 
 ---
 
@@ -282,3 +283,19 @@ incremental-build brief names both shared dependencies"). Include the inputs rea
 always-run steps in every stage's dependency set, and make the driver script invalidate
 every stage when it changes. A build tool has no reason to invalidate a cached result when
 an undeclared input changes (Bazel, hermeticity: https://bazel.build/basics/hermeticity).
+
+
+## A timing taken on a busy machine is not a result
+
+A stray `find /` an agent had left running kept one CPU core busy for seven hours; a view that
+gave about 950 FPS on a quiet machine gave 520-720 FPS under that load and a test job, and a
+worker spent an attempt chasing a frame-rate regression that was machine load (#298). Before
+any timing or benchmark run, record what else is running: the heaviest processes by CPU
+(Windows `Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 Id,Name,CPU`, POSIX
+`ps -A -o pid,pcpu,etime,args | sort -k2 -nr | head`), the CPU load, the GPU load where the
+number depends on it (`nvidia-smi`, Task Manager), and the free memory. Start only on a quiet
+machine: no gate, test suite, build or review running, and no process you cannot account for
+using a noticeable share of a core (`scripts/doctor.sh` lists stray tool commands and how to end
+them; ending one that is not yours is the owner's call). Write that record beside the number. A
+number without it is not a result, and a slower number is a regression only once a quiet rerun
+confirms it.

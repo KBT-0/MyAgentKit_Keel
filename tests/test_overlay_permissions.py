@@ -164,10 +164,13 @@ class OverlaySettingsTests(unittest.TestCase):
         # says `onFailure: block` (Claude Code v2.1.295+, https://code.claude.com/docs/en/hooks).
         guards = [h for e in self.settings['hooks']['PreToolUse'] for h in e['hooks']]
         self.assertEqual(sorted(h['command'].split('/')[-1].rstrip('"') for h in guards),
-                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_worker_route.py'])
+                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_root_scan.py',
+                          'guard_worker_route.py'])
         for hook in guards:
             with self.subTest(hook=hook['command']):
-                self.assertEqual(hook.get('onFailure'), 'block')
+                # guard_root_scan fails open (#298, lead decision D1): it only saves a CPU core, and
+                # a stalled guard must not refuse every shell call.
+                self.assertEqual(hook.get('onFailure'), None if 'guard_root_scan' in hook['command'] else 'block')
         # A blocking guard that times out refuses an ordinary command: a loaded Windows host took
         # over 10 s for sh, the Python launcher and the interpreter (leeway, 2026-10-18; measured
         # 0.5-2.6 s per start idle-loaded), while the hook's own work is about 0.1 s.
@@ -177,6 +180,10 @@ class OverlaySettingsTests(unittest.TestCase):
                     self.assertGreaterEqual(entry['hooks'][0].get('timeout', 600), 30)
         matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
         self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
+        # #298: a walk from a root; Glob and Grep run inside the tool and never outlive the session.
+        root_scan = [e['matcher'] for e in self.settings['hooks']['PreToolUse']
+                     if 'guard_root_scan' in e['hooks'][0]['command']]
+        self.assertEqual(root_scan, ['|'.join(SHELL_TOOLS)])
 
     def test_every_command_guard_covers_every_shell_tool(self):
         # #93, #213: a guard wired to "Bash" alone let PowerShell and Monitor calls through. The
@@ -184,7 +191,7 @@ class OverlaySettingsTests(unittest.TestCase):
         for path in (SETTINGS, SETTINGS.parents[4] / '.claude/settings.json'):  # overlay, kit's own
             for entry in json.loads(path.read_text(encoding='utf-8'))['hooks']['PreToolUse']:
                 command = entry['hooks'][0]['command']
-                if 'guard_destructive_git' in command or 'guard_private_email' in command:
+                if any(g in command for g in ('guard_destructive_git', 'guard_private_email', 'guard_root_scan')):
                     with self.subTest(path=str(path), hook=command):
                         self.assertLessEqual(set(SHELL_TOOLS), set(entry['matcher'].split('|')))
 

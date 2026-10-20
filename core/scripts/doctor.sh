@@ -506,6 +506,60 @@ elif [ -n "${SHELL:-}" ]; then
   fi
 fi
 
+# --- stray tool commands --------------------------------------------------------------
+# An agent's `find /` passed the Bash tool's timeout, moved to the background, lost its session
+# and kept a CPU core busy for seven hours; every benchmark in that window was wrong (#298).
+# Listed here, never ended: a process older than two hours whose parent is gone (Windows: no
+# such process, or one born after it; POSIX: pid 1 or a subreaper such as systemd, launchd or
+# WSL's init) that used more than 5% of a CPU over its life, and whose name is a typical tool
+# command, never another program: a search or walk tool or a shell, and on Windows also python,
+# node and npm. On POSIX those three are left out, as a service of the owner (systemd, launchd)
+# has a parent of that kind too. Each line is a NOTE with the command that ends it, for the owner
+# to run.
+# One process listing: Win32_Process (about a second) or ps. DOCTOR_PROCESSES (lines "pid ppid
+# age-seconds cpu-seconds name") and DOCTOR_STRAY_AGE exist for the test only.
+stray_age=${DOCTOR_STRAY_AGE:-7200}
+if [ -n "${DOCTOR_PROCESSES:-}" ]; then
+  procs=$(cat -- "$DOCTOR_PROCESSES") || procs=""
+elif [ -n "$windows_sh" ]; then
+  procs=$(powershell.exe -NoProfile -NonInteractive -Command '$now = Get-Date
+    $all = Get-CimInstance Win32_Process; $born = @{}
+    foreach ($p in $all) { $born[[int]$p.ProcessId] = $p.CreationDate }
+    foreach ($p in $all) {
+      if (-not $p.CreationDate) { continue }
+      $dad = $born[[int]$p.ParentProcessId]
+      $ppid = if ($dad -and $dad -le $p.CreationDate) { $p.ParentProcessId } else { 0 }
+      [string]::Format([cultureinfo]::InvariantCulture, "{0} {1} {2:F1} {3:F1} {4}", $p.ProcessId, $ppid,
+        ($now - $p.CreationDate).TotalSeconds, (($p.KernelModeTime + $p.UserModeTime) / 1e7), $p.Name) }' 2>/dev/null | tr -d '\r') || procs=""
+else
+  # etime is [[dd-]hh:]mm:ss, time [dd-]hh:mm:ss (macOS m:ss.cc): both summed from the right.
+  procs=$(ps -A -o pid= -o ppid= -o etime= -o time= -o comm= 2>/dev/null | awk '
+    function secs(t,   d, n, part, i, s) {
+      d = 0; if (index(t, "-")) { d = substr(t, 1, index(t, "-") - 1); t = substr(t, index(t, "-") + 1) }
+      n = split(t, part, ":"); s = 0; for (i = 1; i <= n; i++) s = s * 60 + part[i]
+      return d * 86400 + s }
+    { name = $5; for (i = 6; i <= NF; i++) name = name " " $i
+      print $1, $2, secs($3), secs($4), name }') || procs=""
+fi
+if [ -z "$procs" ]; then
+  echo "NOTE: stray-process check skipped, the process list could not be read"
+else
+  printf '%s\n' "$procs" | awk -v min="$stray_age" -v win="$windows_sh" '
+    { pid[NR] = $1; dad[NR] = $2; age[NR] = $3; cpu[NR] = $4
+      n = $5; for (i = 6; i <= NF; i++) n = n " " $i
+      sub(/.*[\/\\]/, "", n); n = tolower(n); sub(/\.exe$/, "", n); sub(/[0-9.]+$/, "", n); name[NR] = n; by[$1] = n }
+    END {
+      split("find fd fdfind rg grep egrep fgrep ag ack du tree ls bash sh dash zsh ksh pwsh powershell" (win ? " python py node npm npx" : ""), t, " ")
+      for (i in t) tool[t[i]] = 1
+      for (k = 1; k <= NR; k++) {
+        p = dad[k]
+        gone = p == 0 || p == 1 || !(p in by) || by[p] ~ /^(systemd|launchd|init)$/
+        if (!gone || !(name[k] in tool) || age[k] < min || cpu[k] <= 0.05 * (age[k] > 1 ? age[k] : 1)) continue
+        fix = win ? "taskkill /PID " pid[k] " /T /F" : "kill " pid[k]
+        printf "NOTE: stray process %s (%s, running %.1f h, %.0f%% of a CPU, its parent is gone): it skews every timing; if it is not yours, end it: %s\n",
+          pid[k], name[k], age[k] / 3600, 100 * cpu[k] / (age[k] > 1 ? age[k] : 1), fix } }'
+fi
+
 # --- the project's own machine checks ------------------------------------------------
 # This file is kit-owned, so a project's own checks (its dependencies installed, a browser for
 # its render tests) live in scripts/doctor.project.sh, project-owned, as a hook of its own lives
