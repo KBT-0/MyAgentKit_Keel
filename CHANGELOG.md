@@ -142,8 +142,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   overlays/ without a `KIT-OWNED` header) changed since the last release tag fails the check
   unless an ACTION item of the newest version names it; NOT RUN without a tag. CI runs the kit
   check only. (#146 in part, #111, #96, #134)
-  **ACTION** (kit maintainers): tag each release `vMAJOR.MINOR` at the release, when its
-  CHANGELOG heading is renamed from Unreleased; an earlier tag turns this check red.
+  Kit maintainers (not a project step): tag each release `vMAJOR.MINOR` at the release, when
+  its CHANGELOG heading is renamed from Unreleased; an earlier tag turns this check red.
 
 - **Kit check in two tiers** (`scripts/check_kit.py`, kit-only; #146, kit-self-checks findings
   6 to 8). The default run is the fast tier (structural checks, unit and fixture suites, within
@@ -181,9 +181,9 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   kit's secret-file tests), the mode-change test sets the file mode, and a failing shard's output
   is written with `errors='replace'` so a cp1252 console cannot hide it. POSIX and Windows test
   fixtures fixed from CI run 39065623063. (#95, #96, #147, #91, #92, #163 in part)
-  **ACTION:** re-copy `scripts/test_claude_bridge.py`. Kit maintainers: set `master` branch
-  protection with the six CI jobs as required status checks (GitHub settings; the workflow
-  cannot do it).
+  Kit maintainers (not a project step): set `master` branch protection with the six CI jobs as
+  required status checks (GitHub settings; the workflow cannot do it).
+  **ACTION:** re-copy `scripts/test_claude_bridge.py`.
 
 - **Binding research report on the kit's own checks:** `docs/research/kit-self-checks.md`
   (gate self-test, acceptance suites, test-time norms and tiers); every proposal about check_kit,
@@ -243,7 +243,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   Spawn records its exact bytes in `.myagentkit/workers/NAME.hooks-ignore-spawned`.
   Close sets it aside for the audit only while it matches that record byte for byte.
   The watcher uses the 200k context line when an older context hook or missing Python
-  cannot answer. **ACTION:** sync the overlay and re-spawn existing workers.
+  cannot answer. **ACTION:** sync the overlay (the sync writes its KIT-OWNED scripts; copy the
+  changed hook files whole from the kit) and re-spawn existing workers.
 - **Batch 10: kit checks, plugin release and review self-tests** (`scripts/check_kit.py`,
   `core/scripts/check.sh`, `core/scripts/test_claude_bridge.py`, `scripts/clean_worktrees.sh`,
   `scripts/close_worker.sh`, `tests/test_kit_runner.py`, `tests/test_selftest_status.py`,
@@ -252,9 +253,9 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   repeats the early checks' NOT RUN lines under the summary, and no longer takes a `+++`
   line inside a hunk for a file header. The plugin's version is now the kit's (0.11.0),
   and the kit check compares it with this file and runs `claude plugin validate --strict`.
-  **ACTION:** after the push, run `claude plugin update` in each dogfood project (leeway,
-  labricore-web) and verify the new version arrived; until now plugin.json said 0.1.0, so
-  an install from GitHub may never have updated. The gate runs ShellCheck (SC2028, SC2086)
+  Kit maintainers (not a project step): after the push, run `claude plugin update` in each
+  dogfood project (leeway, labricore-web) and verify the new version arrived; until now
+  plugin.json said 0.1.0, so an install from GitHub may never have updated. The gate runs ShellCheck (SC2028, SC2086)
   where it is installed. **ACTION:** a project with ShellCheck installed may go red on its
   own scripts; fix or disable each with a reason. clean_worktrees and close_worker no longer
   keep every worktree under core.autocrlf. The review self-test divides bridge and preflight
@@ -335,7 +336,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   The git guard rejects git-bearing interpreter arguments and input regardless of flags.
   It allows project-contained `.githooks` wiring only in a plain command without directory
   routing, resolving containment from the hook's own working directory.
-  **ACTION:** re-sync the overlay (new hook file, `settings.json`); update Claude Code to
+  **ACTION:** copy the overlay's hook files whole from the kit (including the new one) and
+  merge its `.claude/settings.json` by hand (sync-kit.sh writes neither); update Claude Code to
   2.1.295 or later; if the Claude account's e-mail differs from git's `user.email`, set
   `MYAGENTKIT_PRIVATE_EMAILS` in the user-level settings `env`.
 - **Review gate rules** (`docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`,
@@ -350,7 +352,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   extra review the owner asks for; the review its tier requires starts without asking. A diff
   past about 400 changed lines gets a split hint (KARARLAR B01, B02 inv2#10/#34, D03 inv1#104,
   D04, D06 inv1#37/#163; BACKLOG B14, B15).
-  **ACTION:** re-sync `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`.
+  **ACTION:** merge the kit's changes into `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`,
+  `docs/WORKFLOW.md` (`sync-kit.sh --merge`, or by hand; they are project-owned).
 - **Reminder hooks, labels, context counters, commit-msg** (`.claude/hooks/plain_report.py`,
   `.claude/hooks/progress_reminder.py`, `scripts/context_buckets.py`, `.githooks/commit-msg`).
   Progress reminders stop after three nudges per silent interval and reset on visible text or
@@ -369,7 +372,9 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   built-in checks and other valid project patterns working. **ACTION:** copy the updated
   `.claude/hooks/plain_report.py`, merge `core/docs/COMMUNICATION.md`, and keep project
   patterns in `.claude/plain_report_labels.json` instead of the synced commit hook.
-  **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
+  **ACTION:** copy the overlay hooks whole from the kit; the sync writes
+  `scripts/context_buckets.py` and `.githooks/commit-msg` (a conflict line: copy the kit's file
+  whole).
 - **Usage and cost measurement** (`scripts/agent_cost.py`, `scripts/usage_summary.py`,
   `docs/USAGE.md`, `docs/CODEX.md`, `docs/worker-cost-setups.md`). The worker cost analysis reads
   each cache write's recorded lifetime (one hour or five minutes) instead of treating every write
@@ -379,7 +384,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   95% interval with the sample floor (30 decided findings, ten rated rounds; the owner's choice).
   A later answer file replaces an earlier one per label and focus instead of counting the same
   answers again (KARARLAR B03, D06 inv2#45/#55/#107/#108/#54/#12, inv1#161/#172, D01 inv1#191;
-  BACKLOG B9, B17). **ACTION:** re-sync the two scripts and `docs/USAGE.md`.
+  BACKLOG B9, B17). **ACTION:** the sync writes the two scripts (a conflict line: copy the kit's
+  file whole); merge `docs/USAGE.md` (`sync-kit.sh --merge`, or by hand).
 - **Review tooling: bridge, dispatcher, usage** (`scripts/review.sh`, `scripts/claude_bridge.py`,
   `scripts/codex_bridge.py`, `scripts/review_dispatch.py`, `scripts/agent_usage.py`,
   `scripts/agent_process.py`, `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`,
@@ -398,8 +404,9 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   Codex review defaults to a 3600-second limit; doctor reads `claude --version` (2.1.248 or
   newer) before `--help` (KARARLAR D04 inv2#44/#126/#85, B01 (1)/(6), B12 inv2#106/#81, D07
   inv3#103, D09 inv2#80/#99/#100, B03 inv2#31, B10 inv2#113, B02 inv2#158, inv2#104/#115/#144).
-  **ACTION:** re-sync `scripts/review.sh`, the review and usage scripts above, `docs/REVIEW_GATE.md`,
-  `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`, `docs/GOTCHAS.md`; move `.myagentkit/backends/*.env`
+  **ACTION:** copy `scripts/review.sh` and the review and usage scripts above whole from the kit;
+  merge `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`, `docs/GOTCHAS.md`
+  (`sync-kit.sh --merge`, or by hand); move `.myagentkit/backends/*.env`
   to the user's config folder (or set `MYAGENTKIT_BACKENDS_DIR`).
 - **Gate, doctor, boundary example** (`scripts/check.sh`, `scripts/doctor.sh`,
   `.claude/hooks/gate_on_stop.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`, `.gitattributes`).
@@ -412,8 +419,9 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   inv2#156/#166, D05 inv1#76, B11 inv1#119/inv2#152, B10 inv1#239, D04 inv2#83).
   The module-map gate compares whole module names. **ACTION:** merge the module-map section
   of `core/scripts/check.sh` into existing project-owned gates.
-  **ACTION:** re-sync `scripts/check.sh`, `scripts/doctor.sh`, the overlay Stop hook,
-  `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`; add `* text=auto` to the project's `.gitattributes`
+  **ACTION:** the sync writes `scripts/doctor.sh`; copy the overlay Stop hook whole from the
+  kit; merge `scripts/check.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`
+  (`sync-kit.sh --merge`, or by hand); add `* text=auto` to the project's `.gitattributes`
   by hand (project-owned) and fill `module_roots` in `scripts/check.sh` if the project has modules.
 - **Working modes and model routing** (`scripts/working_mode.py`, `docs/WORKFLOW.md`,
   `/myagentkit:mode`, `/myagentkit:cross-review`, `setup/INTERVIEW.md`, `docs/CODEX.md`).
@@ -573,8 +581,8 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   recommendation, a two-layer handoff (`docs/HANDOFF.md`, "Owner summary"), no compression
   modes. New `docs/GLOSSARY.md`: the terms the owner knows and the kit terms an agent
   explains. **ACTION:** copy both files from the kit's `core/docs/`, fill `{{CHAT_LANGUAGE}}`
-  in `AGENTS.md` and `{{KNOWN_TERMS}}` in the glossary (setup interview question 12). Claude
-  Code overlay: two new hooks, `.claude/hooks/plain_report.py` (Stop: bounces a final
+  in `AGENTS.md` and `docs/COMMUNICATION.md`, and `{{KNOWN_TERMS}}` in the glossary (setup
+  interview question 12). Claude Code overlay: two new hooks, `.claude/hooks/plain_report.py` (Stop: bounces a final
   message that names a bare label outside code, once per turn) and
   `.claude/hooks/progress_reminder.py` (PostToolUse: one line of context after five tool
   calls with no visible text); **ACTION:** copy both and their entries from the overlay's
@@ -1248,6 +1256,154 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   or the owner says otherwise; then the mode before it applies again. A
   decision made for a moment never outlives its reason. **ACTION:** replace rule 7's ending in
   your `docs/WORKFLOW.md` with these closing sentences.
+### Upgrading a project from v0.10
+
+<!-- Each numbered item is one checklist entry. sync-kit.sh prints an item from its marker to
+the end of the item, so an item holds no blank line and no line that starts a list. -->
+
+Work from the project's root, top to bottom. `KIT` is a fresh, full clone of the kit at v0.11
+or later (`sync-kit.sh . --merge` needs v0.12 or later; without it merge by hand). The bullets
+above hold the reasons and each its own ACTION item, several of them the same instruction for
+the next batch of one file; this list names each file once, in its final state, and covers
+every one of them: tick a bullet's box in `docs/kit/UPGRADE.md` when an item here did what it
+says. Item 2 writes what `sync-kit.sh` owns; every other file is the project's: a script, hook
+or definition is copied whole (items 3 and 5), a project-owned file is merged (items 4 and 7 to
+10), `.claude/settings.json` is the owner's (item 6).
+
+1. **ACTION:** Prerequisites first: Python 3.11 or newer (3.10 reached end of life on
+   2026-10-01), Git 2.42 or newer (`docs/DEV_SETUP.md`) and Claude Code 2.1.295 or newer. A
+   Linux or WSL2 host installs `bubblewrap` and `socat` (the Claude reviewer's shell is
+   sandboxed; `scripts/doctor.sh` says so once item 2 has run). On native Windows the review
+   self-test needs pip's bundled launcher. If the Claude account's e-mail differs from git's
+   `user.email`, set `MYAGENTKIT_PRIVATE_EMAILS` in the user-level settings `env`. A project
+   with ShellCheck installed may go red on its own scripts once item 4 brings the gate's
+   ShellCheck check: fix each finding or disable it with a reason. A kit checkout used for the
+   kit's own check on macOS needs `brew install bash`.
+2. **ACTION:** Run `"$KIT/sync-kit.sh" .`. It overwrites the KIT-OWNED files: the four
+   `.githooks` files (`pre-commit`, `pre-merge-commit`, `commit-msg`, `post-merge`),
+   `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/context_buckets.py`,
+   `scripts/working_mode.py`, `scripts/agent_cost.py`, `scripts/usage_summary.py`, and the
+   Claude Code overlay's worker scripts the project already has (`spawn_worker.sh`,
+   `spawn_codex.sh`, `codex_worker.py`, `close_worker.sh`, `show_workers.sh`,
+   `watch_workers.sh`, `clean_worktrees.py`). It installs no overlay file the project lacks:
+   copy a missing one from `$KIT/overlays/claude-code/files/scripts/` by hand (a Codex project's
+   `spawn_codex.sh` and `codex_worker.py`, and `close_worker.sh`; `chmod +x` and
+   `git add --chmod=+x`), and the sync keeps it from then on. A `conflict:` line is a copy
+   without the KIT-OWNED header: copy the kit's file whole over it, run the sync again, and a
+   project's own git hook (a Git LFS `post-merge`) is renamed `.githooks/<same name>.project`. A
+   project's own checks in `scripts/doctor.sh` move to `scripts/doctor.project.sh`. It also
+   writes `docs/kit/UPGRADE.md` with this release's items, and records no version (item 13
+   does).
+3. **ACTION:** Copy these scripts whole from `$KIT/core/scripts/` into `scripts/`, replacing
+   yours: `review.sh` (keeping your project configuration), `claude_bridge.py`,
+   `codex_bridge.py`, `review_dispatch.py`, `agent_process.py`, `agent_usage.py`,
+   `owns_check.py`, `test_claude_bridge.py`, `review_test_support.py`, and the other review
+   companion files that `core/docs/DEV_SETUP.md` lists. Update the Claude plugin
+   (`claude plugin update`) and the Codex plugin to the same kit version: an older adapter
+   sweeps leftover review copies by age alone and can remove a new adapter's live copy. While no
+   review is running, delete leftover `myagentkit-review-*` and `myagentkit-codex-*` temporary
+   folders that have no `.lock` sibling (unmarked legacy copies are kept). In `review.sh` and
+   `check.sh` (item 4), the `kit_python=` lines probe Python by running it: `python3 -I -c ''`
+   and `python -I -c ''`, each with `</dev/null`, replace `command -v python3` and
+   `command -v python` (a Windows Store alias passes the second form and does not run). From now
+   on: write every disposition with its key, run the first large review and read its duration
+   from the chain record's timestamps (if 3600 s cut it off, ask the owner whether
+   `MAX_REVIEW_TIMEOUT` rises).
+4. **ACTION:** Merge the kit's changes into `scripts/check.sh`, keeping your filled-in values
+   (`sync-kit.sh . --merge`, or by hand from `$KIT/core/scripts/check.sh`): the Done-history
+   section, the ShellCheck hook selector, the module-map section (then fill `module_roots` if
+   the project has modules), the Git 2.42 requirement, the self-test lines that keep it from
+   changing the worktree, and, from the marker-publication change, the marker removal in
+   `cleanup` and the whole marker-publication block at the start of `self_test`, together with
+   the Stop hook of item 5. In `scripts/boundary_selftests.sh` (only if you adapted the
+   existing-file example) take `probe_env`, `probe_delete`, `probe_audit` and the `cp` line from
+   `$KIT/core/scripts/boundary_selftests.sh`, add the same two lines about a killed run's
+   injection to each refusal, and move the existing-path refusal BEFORE the baseline check,
+   since a stale injection makes the baseline fail too. Add `* text=auto` to the project's
+   `.gitattributes` and these rules to its `.gitignore`: `/.claude/mode.lock`, the
+   worker-sidecar rules of `core/.gitignore`, and, for a Unity project, the overlay's
+   `.gitignore` fragment.
+5. **ACTION:** Copy the Claude Code overlay's hook files whole from
+   `$KIT/overlays/claude-code/files/.claude/hooks/` into `.claude/hooks/` (hooks are not
+   synced): `guard_destructive_git.py`, `guard_private_email.py`, `guard_worker_route.py`,
+   `guard_boundaries.py`, `plain_report.py`, `progress_reminder.py`, `context_size.py`,
+   `after_compact.txt`, `py.sh` and `gate_on_stop.sh` (keeping your gated paths and file
+   pattern; upgrade it together with the `check.sh` marker publication of item 4, or the hook
+   waits for a self-test's lock as for any gate run). Keep project patterns for the plain-report
+   hook in `.claude/plain_report_labels.json`, not in the commit hook. Once item 6 is applied,
+   prove `py.sh`: with an uncommitted change, piping a Bash tool call that runs a hard git reset
+   into `sh .claude/hooks/py.sh .claude/hooks/guard_destructive_git.py` must print BLOCKED. Also
+   copy the overlay's agent definitions and rule: `.claude/agents/worker.md` and
+   `.claude/agents/diff-reviewer.md` from `$KIT/overlays/claude-code/files/.claude/agents/`,
+   preserving the project's own settings in `worker.md`, and `.claude/rules/state.md`.
+6. **ACTION:** The owner prepares, applies and commits `.claude/settings.json` (Claude Code's
+   auto mode refuses an agent's write to its own settings; a worktree worker runs the committed
+   file). Add from `$KIT/overlays/claude-code/files/.claude/settings.json`, copying no whole
+   file (it would drop your `env` values, deny rules and plugin choices): the hook entries of
+   item 5 (`Stop` for `plain_report.py`, `PostToolUse` for `progress_reminder.py`, `PreToolUse`
+   with matcher `Agent|Task` for `guard_worker_route.py`, the `SessionStart` entry, and the
+   entries of the git and e-mail guards), `autoCompactWindow`, `promptCacheTtl`,
+   `subagentPromptCacheTtl`, the `env` entry `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`, and the
+   whole `permissions` block, `deny` included (replace any plain `git diff`, `git show` and
+   `git log` allowance by the overlay's `--no-textconv --no-ext-diff` forms: a plain one runs a
+   repository-configured textconv driver). Replace `python3 ` at the start of each Python hook
+   command with `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" `.
+7. **ACTION:** Merge the kit's changes into `docs/WORKFLOW.md` (`sync-kit.sh . --merge`, or by
+   hand from `$KIT/core/docs/WORKFLOW.md`): "Model routing" and "Working modes, by name" over
+   your own routing text, keeping your model names, with rule 7 and its low-allowance ending,
+   the audit paragraph of the closed-findings gate, the review launch and recovery rules, the
+   STATE protocol lines, the self-test lines (the lead's step 1, "Writing a gate") and the two
+   sentences under "The lead's steps when a branch is ready". Then rewrite the
+   `**Working mode:**` line of `docs/STATE.md` (add it if absent) to `solo`, `cross` or `saver`
+   through `--read-state` and `--replace-state`, BEFORE you run `scripts/working_mode.py`:
+   claude-only becomes solo; cross-performance, claude-first and codex-first become cross;
+   cross-saving, claude-saver and codex-saver become saver with a `(low: ...)` note; and the
+   mode table of `WORKFLOW.md` has those three rows. The script refuses the old names.
+8. **ACTION:** Merge the kit's changes into the review and worker documents, each from
+   `$KIT/core/docs/` (`sync-kit.sh . --merge`, or by hand): `docs/REVIEW_GATE.md` and
+   `docs/REVIEW_RUNNING.md` (the self-test lines, the launch and recovery rules, the two
+   sentences of the accidents rule, `REVIEW_ROUND_EXCEPTION`, written before a third completed
+   review under a label), `docs/HANDOFF.md` (the worker-lifecycle sections, the `Owns:`
+   paragraph, the two sentences of the incremental-build brief), `docs/USAGE.md`,
+   `docs/GOTCHAS.md` (its new paragraphs are optional), `docs/STRONG_REVIEW.md`. In
+   `docs/DEV_SETUP.md` section 1, "Wire the commit gate", replace the embedded line-ending
+   repair program with the `sh scripts/fix_crlf.sh` paragraph of the kit's file, and take the
+   Git 2.42 requirement and the review companion list.
+9. **ACTION:** Copy `docs/COMMUNICATION.md` and `docs/GLOSSARY.md` whole from `$KIT/core/docs/`
+   (merge `COMMUNICATION.md` when you changed it), fill `{{CHAT_LANGUAGE}}` in `AGENTS.md` and
+   in `docs/COMMUNICATION.md`, and `{{KNOWN_TERMS}}` in the glossary (setup interview question
+   12). In `docs/PROJECT.md` add `**Web contact:**` near the top (the e-mail guard points at it)
+   and change the rights row to "Supersede ...".
+10. **ACTION:** Take the kit's changes into `AGENTS.md` and `docs/AGENTS.md`, re-applying the
+    project's own lines: the new lines and section of the lessons from the kit's development,
+    the two sentences of the accidents rule, the STATE protocol lines, and the rule that running
+    work is never ended without a reason that holds, under "Task discipline". A Unity project
+    takes the overlay's updated `AGENTS.md`, `UNITY_SETUP.md` and `unity_gate.sh` too.
+11. **ACTION:** Backends: a project with `.myagentkit/backends/NAME.env` moves each file to the
+    backend folder (`MYAGENTKIT_BACKENDS_DIR`, `%APPDATA%\myagentkit\backends` or
+    `~/.config/myagentkit/backends`); create a backend file by hand where a named
+    Claude-compatible backend is wanted; configure the documented Codex administrator read-deny
+    policy where supported. A project that bootstrapped on native Windows reruns bootstrap with
+    its overlays to repair the kit's executable modes (a customized gate still returns STOPPING,
+    exit 1, with its mode repaired; merge its content separately, without `--force`).
+12. **ACTION:** Workers: re-spawn every existing worker that still runs the older hook or
+    scripts, and shorten the worker name or the checkout path when spawn refuses a generated
+    path. Start a fresh lead with the enabled or the disabled behaviour-appendix command. A
+    Codex worker the first v0.11 `spawn_codex.sh` (2026-10-09) started recorded its session id
+    in the git directory (`.git/codex-session-NAME`, or
+    `.git/worktrees/NAME/codex-session-NAME`): resume it with `--resume <that id>`, then delete
+    the file. Adopt the lead-owned commit rule of `core/docs/WORKFLOW.md`, update Codex briefs
+    with the atomic publication protocol, and run spawn's printed wait command in the
+    background.
+13. **ACTION:** Prove the result: `./scripts/doctor.sh`, then `./scripts/check.sh` (expect
+    `CHECK: PASS`); the boundary fixture tests run inside it. A red gate or a check without its
+    fixture test is not finished. Then record the version BEFORE the upgrade commit, so the
+    commit carries it: run `"$KIT/sync-kit.sh" . --actions-applied` (every box of
+    `docs/kit/UPGRADE.md` ticked), run `./scripts/check.sh` again, and commit everything the
+    upgrade changed together with `docs/kit/.kit-version` in one commit. Then send every
+    problem, surprise or doubt about MyAgentKit upstream through `/myagentkit:kit-feedback` (an
+    issue), not only into the project's notes.
+
 ## v0.10 — 2026-10-07
 
 Native Windows (Git for Windows' `sh` with python.org CPython) becomes a host the kit runs on,
