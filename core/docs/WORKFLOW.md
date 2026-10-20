@@ -1105,7 +1105,17 @@ tasks, or the lead's own cost. Measure in passing: wall-clock from brief to merg
 tokens including the lead's, review rounds, and waits on an exclusive resource. The sample
 will be thin.
 
-`scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
+`scripts/spawn_worker.sh` (Claude Code overlay) opens the session with a brief file. By default
+it is a Claude Code background session (`claude --bg`, on native Windows and POSIX alike, where
+`claude --help` lists `--bg`); a Windows Terminal tab (native Windows) or tmux is the fallback,
+and `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one. A background session is keyed on the id
+the launch prints (`.myagentkit/workers/NAME.id`), seen in `claude agents` or with
+`claude attach ID`, and ended by its detached `codex_worker.py` with `claude stop ID` once its
+result is published. Three traps (`docs/research/worker-orchestration-spike.md`): its folder
+must sit under a repo root the owner trusted in Claude Code, or the spawn stops with the fix;
+a resume passes no flag (a flag starts a copy under the same name); and nothing runs
+`claude daemon stop`, which ends every background session on the host. The rest of this
+paragraph is the tmux fallback.
 Both spawn scripts hand tmux a quote-free `sh PATH` command, with an absolute temporary script path.
 They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
 The script is created and checked before any worktree is added, so a refused path leaves no

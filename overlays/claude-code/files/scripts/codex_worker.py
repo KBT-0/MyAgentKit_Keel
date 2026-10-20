@@ -3,11 +3,15 @@
 """Close a worker after a published decision or completed result; --wait notifies the lead
 without a commit, also when the worker stopped without publishing (its exit record) or its
 supervisor was killed (its lock on the .live record dropped). --publish TEMPORARY_FILE
-DESTINATION is the worker's own last step: the rename, retried while Windows refuses it."""
+DESTINATION is the worker's own last step: the rename, retried while Windows refuses it.
+QUESTION [RESULT] --bg ID supervises a `claude --bg` session and ends it with `claude stop ID`;
+--detach LOG ARGUMENTS... runs this script with ARGUMENTS outside the caller's session or job."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import signal
 import sys
@@ -354,6 +358,67 @@ def posix_tree(pid, force=False):
         pass
 
 
+BG_POLL = 5  # seconds between two `claude agents` reads of a background session: each starts the CLI
+
+
+def claude(*args):
+    """The claude CLI, quietly: from a detached supervisor on Windows it opens no console window."""
+    path = shutil.which('claude')
+    if not path:
+        raise OSError('claude is not on PATH')
+    return subprocess.run([path, *args], capture_output=True, encoding='utf-8', errors='replace',
+                          stdin=subprocess.DEVNULL, creationflags=0x08000000 if os.name == 'nt' else 0)
+
+
+def agents_row(session):
+    """The row of background session SESSION (its short id), None when absent, False when the
+    list cannot be read: no decision is taken on a failed read."""
+    try:
+        listed = claude('agents', '--json', '--all')  # without --all, done and stopped rows are left out
+        rows = json.loads(listed.stdout) if listed.returncode == 0 else None
+    except (OSError, ValueError):
+        return False
+    if not isinstance(rows, list):
+        return False
+    return next((row for row in rows if isinstance(row, dict) and row.get('id') == session), None)
+
+
+class Background:
+    """A `claude --bg` session in place of a child process: watch() and stop() take either.
+    Claude Code's supervisor owns its process, so it ends with `claude stop ID`: by id, since
+    names repeat, and never `claude daemon stop`, which ends every background session on the host
+    (docs/research/worker-orchestration-spike.md, 6 and T4). It has ended once its row is gone, or
+    shows no process in a state other than working or blocked, after its process was seen once (a
+    resumed session's row reads done until the wake) or START seconds after the supervisor began."""
+    def __init__(self, session):
+        self.session, self.returncode, self.seen = session, None, False
+        self.began, self.checked = time.monotonic(), None
+
+    def poll(self):
+        now = time.monotonic()
+        if self.returncode is None and (self.checked is None or now - self.checked >= BG_POLL):
+            self.checked = now
+            row = agents_row(self.session)
+            if row is not False:
+                self.seen = self.seen or bool(row and row.get('pid'))
+                live = row and (row.get('pid') or row.get('state') in ('working', 'blocked'))
+                if not live and (self.seen or now - self.began > START):
+                    self.returncode = 1 if not row or row.get('state') == 'failed' else 0
+        return self.returncode
+
+    def terminate(self):
+        stopped = claude('stop', self.session)
+        if stopped.returncode:
+            print('codex_worker: claude stop %s failed (%s); close it with close_worker.sh'
+                  % (self.session, (stopped.stderr or stopped.stdout).strip()), flush=True)
+        self.returncode = 0
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    kill = terminate
+
+
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == '--wait':
         options = dict(zip(sys.argv[3::2], sys.argv[4::2]))
@@ -426,6 +491,24 @@ def main():
             raise ValueError('usage: codex_worker.py --publish TEMPORARY_FILE DESTINATION')
         renamed(sys.argv[2], sys.argv[3])
         return 0
+    if sys.argv[1:2] == ['--detach']:
+        # The bg host's supervisor (spawn_worker.sh) outlives the lead's shell call that started
+        # it, as a tab's did: in a session of its own on POSIX; on Windows in a process group of
+        # its own, out of the caller's job where the job allows it, with no console window.
+        if len(sys.argv) < 4:
+            raise ValueError('usage: codex_worker.py --detach LOG ARGUMENTS...')
+        command = [sys.executable, str(Path(__file__).resolve()), *sys.argv[3:]]
+        with open(sys.argv[2], 'ab') as log:
+            options = dict(stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            if os.name != 'nt':
+                subprocess.Popen(command, start_new_session=True, **options)
+                return 0
+            flags = 0x08000000 | 0x200  # CREATE_NO_WINDOW, CREATE_NEW_PROCESS_GROUP
+            try:
+                subprocess.Popen(command, creationflags=flags | 0x01000000, **options)  # CREATE_BREAKAWAY_FROM_JOB
+            except OSError:
+                subprocess.Popen(command, creationflags=flags, **options)  # a job that forbids breakaway
+        return 0
     record = os.environ.get('KIT_WORKER_EXIT')
     previous = question_id(Path(record)) if record else None
     try:
@@ -439,10 +522,13 @@ def main():
 
 
 def supervise():
-    if len(sys.argv) < 4 or '--' not in sys.argv[2:4]:
-        raise ValueError('usage: codex_worker.py QUESTION_FILE [RESULT_FILE] -- COMMAND...')
+    # QUESTION [RESULT] --bg ID supervises a `claude --bg` session that is already running.
+    background = len(sys.argv) in (4, 5) and sys.argv[-2] == '--bg' and '--' not in sys.argv[2:4]
+    if not background and (len(sys.argv) < 4 or '--' not in sys.argv[2:4]):
+        raise ValueError('usage: codex_worker.py QUESTION_FILE [RESULT_FILE] -- COMMAND... '
+                         '| QUESTION_FILE [RESULT_FILE] --bg SESSION_ID')
     question = Path(sys.argv[1])
-    separator = sys.argv.index('--')
+    separator = len(sys.argv) - 2 if background else sys.argv.index('--')
     result = Path(sys.argv[2]) if separator == 3 else None
     answered = question_id(question)
     if answered is not None and os.environ.get('KIT_WORKER_RESUME') != '1':
@@ -456,6 +542,8 @@ def supervise():
         # Locked for this process's whole life, however it ends: --wait reads a dropped lock as a
         # supervisor that could not write its exit record (a closed tab, taskkill /F, SIGKILL).
         live = start_live(record)
+    if background:
+        return watch(Background(sys.argv[-1]), question, None, result, stale, answered)
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
     # just as spawn_worker.sh does for Windows Terminal.
     command = sys.argv[separator + 1:]
