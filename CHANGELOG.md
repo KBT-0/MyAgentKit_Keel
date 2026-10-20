@@ -1,8 +1,10 @@
 # CHANGELOG
 
-What changed in the kit, dated, newest first. `sync-kit.sh` prints the entries added since
-a project's recorded kit version, so an entry must say what a project OWNER has to do —
-not just what moved. Mark anything needing hand-application with **ACTION**.
+What changed in the kit, dated, newest first. `sync-kit.sh` writes the **ACTION** items added
+since a project's recorded kit version to the project's `docs/kit/UPGRADE.md`, so an entry
+must say what a project OWNER has to do — not just what moved. Mark anything needing
+hand-application with **ACTION**: a project-owned file (no `KIT-OWNED` header) reaches a
+project only through an ACTION item that names it.
 
 Versions are `MAJOR.MINOR`. MINOR adds or refines; MAJOR changes a rule or a file layout in
 a way that existing projects must reconcile by hand.
@@ -13,7 +15,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.12 — 2026-10-20
 
-`sync-kit.sh` prints these entries to a project whose recorded kit version is older than v0.12.
+`sync-kit.sh` writes this section's **ACTION** items to `docs/kit/UPGRADE.md` of a project whose
+recorded kit version is older than v0.12. The sync copies only `KIT-OWNED` files; every other
+file the kit changed reaches the project through these items.
 
 - **Workers run as Claude Code background sessions** (owner decision 77; research
   `docs/research/worker-orchestration-spike.md` and `-spike-posix.md`). `spawn_worker.sh` starts
@@ -54,10 +58,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `.sample`, `.template`, `.dist`) and source files such as `credentials.py` pass. The owner edits
   such a file from the terminal, so a secret never passes through an agent's context. It fails
   open on unreadable input or a missing Python. Shell writes and reads are not seen.
+  **ACTION:** copy `.claude/hooks/guard_secret_files.py` from the kit's
+  `overlays/claude-code/files/` (hooks are not synced) and add its PreToolUse entry to your
+  `.claude/settings.json` as the overlay's has it: matcher `Edit|Write|NotebookEdit`, timeout 30,
+  no `onFailure`.
 
 - **watch_workers.sh reports a finished worker even when its session is already gone** (#294).
   A GONE session's result file is read first, so it reports DONE (or BLOCKED, HANDOFF) beside
-  GONE, and a result reported once is not reported again after the session ends.
+  GONE, and a result reported once is not reported again after the session ends. A committed
+  result is the exception: the first poll after `--resume` reports the earlier run's committed
+  result once more.
 
 - **A failed Codex review names Codex's own error** (#292). A `turn.failed` or `error` event's
   message (a refused model, for one) ends the evidence as `## Failure — Codex reported: ...`
@@ -75,7 +85,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **A worktree kept for unmerged files says what to do** (#295). `clean_worktrees.py` tells you to
   copy each file to the same path in the main checkout or delete it, then close again;
-  `worker.md` tells a worker to delete its helper script before its last commit.
+  `worker.md` tells a worker to delete its helper script before its last commit (the overlay's
+  `.claude/agents/worker.md` is project-owned: the test-rules entry below has it merged).
 
 - **bootstrap.sh and sync-kit.sh list a project's own reviewer agent beside diff-reviewer.md**
   (#161). When `.claude/agents/diff-reviewer.md` exists, every other `.md` under
@@ -92,15 +103,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   a focus, so portability gets its round 1 and round 2 after logic used both; its third still needs
   `REVIEW_ROUND_EXCEPTION`, and an unset focus still takes the highest count. Only `logic` and
   `portability` exist, so a made-up name opens nothing. `scripts/usage_summary.py` numbers the
-  rounds the same way. `docs/REVIEW_GATE.md` ("Rounds") states the rule. Nothing to do: the next
-  sync brings both scripts and the doc.
+  rounds the same way. `docs/REVIEW_GATE.md` ("Rounds") states the rule. The sync brings
+  `scripts/usage_summary.py` only: `scripts/claude_bridge.py` comes with the review companion set
+  (the "review companions move as one set" entry below), and `docs/REVIEW_GATE.md` with the
+  project-owned docs.
 
 - **A bridged reviewer gets the behaviour appendix without the author's rules** (#228;
   `scripts/claude_bridge.py`, `BEHAVIOUR.md`). The three bullets a reviewer cannot act on
   (finish the scope with its check, design before code, one test per behaviour change) carry
   `<!-- author-only -->`, and a review's prompt leaves those bullets out; a proposal and a
   spawned worker still get the whole file. The review's `behaviour_sha256` and fingerprint name
-  the bytes the reviewer got. Nothing to do: the next sync brings both files.
+  the bytes the reviewer got. The sync brings `BEHAVIOUR.md`; `scripts/claude_bridge.py` comes
+  with the review companion set (entry below).
 
 - **Every plugin command and Codex skill says when the project's kit version is another**
   (#156). Each one names the plugin's kit version (`This plugin is kit v0.11.0.`, the whole
@@ -142,7 +156,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   **ACTION:** merge the new test rule into your copies of `AGENTS.md` (the "No untested code"
   bullet), `docs/WORKFLOW.md` (Task lifecycle step 4, the first bullet of "Writing a gate", and
   the sources under "Where the constitution's rules come from") and `docs/REVIEW_GATE.md`
-  (priorities 5 and 6), and take the report line of `.claude/agents/worker.md`.
+  (priorities 5 and 6), and merge the overlay's `.claude/agents/worker.md` into yours (the
+  report line, and the helper script deleted before the last commit, #295), keeping your pins.
 
 - **The project gate's whole-gate `check.sh --self-test` is gone; each check is proven by its
   own fixture test** (decision 23; `docs/research/kit-self-checks.md`, findings 1 and 2). A
@@ -156,7 +171,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   stays. (#80, #110, #124, #126, #152, #125, #84, #81 in part)
   **ACTION:** (1) Take the new `scripts/check.sh` whole and re-apply every value you filled
   (for example `toolchain_path`, `module_roots`, `architecture_file`, `build_test_cmd`,
-  `docs_only_skip_build`, `STRONG_REVIEW_DAYS`/`STRONG_REVIEW_TASKS`); new: `build_cache_inputs`; stop calling `check.sh --self-test`
+  `docs_only_skip_build`, `STRONG_REVIEW_DAYS`/`STRONG_REVIEW_TASKS`); new: `build_cache_inputs`
+  and `docs_always_build` (the gate-changes entry below); stop calling `check.sh --self-test`
   anywhere (scripts, CI, docs, agent briefs). (2) Delete `scripts/boundary_selftests.sh`, and in the header comment of your
   `scripts/boundary_checks.sh` replace "needs a matching case in scripts/boundary_selftests.sh"
   with the kit's fixture-test paragraph. For
@@ -166,7 +182,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `sh tests/boundary_checks_test.sh && <your build>`). (3) Claude Code overlay: remove the two
   `--self-test` allow rules from `.claude/settings.json` and take the new
   `.claude/hooks/gate_on_stop.sh`. (4) Unity overlay: take the new `scripts/unity_gate.sh` (no
-  `--self-test`), and replace the `boundary_selftests.sh` case of the networking check with the
+  `--self-test`; it now needs `ProjectSettings`, converts paths with `cygpath` on Git for
+  Windows, names Unity's separate CLI when it finds that instead of the editor, counts no suite
+  or run result as a test case, and fails a failed suite over passing cases; #175, #166), and replace the `boundary_selftests.sh` case of the networking check with the
   two `expect` lines in `docs/UNITY_SETUP.md`. (5) Merge the self-test-free text into your
   copies of `docs/WORKFLOW.md` ("Writing a gate"; a run beside the reviews shares their worktree
   only when it writes nothing but ignored files), `docs/DEV_SETUP.md` §5 (a PASS says the checks
@@ -213,8 +231,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
     `git ...` is judged as the command it names, an argv list laid out one item per line
     included. doctor's `cd <repo> && git config core.hooksPath .githooks` passes as printed.
   - It fails closed on what it cannot read: a ref, remote, worktree, subcommand or folder named
-    by a `$var`, `$(...)`, an xargs-appended operand, `{}` or an interpolated operand (`{b}`,
-    `#{b}`, `%s`), and code that sets a folder (`cwd=`, `chdir`), count as the worst case.
+    by a variable or a substitution of either shell (POSIX `$var`, `$(...)`, backticks;
+    PowerShell `$var`, `$env:X`, `$(...)` and a `( ... )` sub-expression), an xargs-appended
+    operand, `{}` or an interpolated operand (`{b}`, `#{b}`, `%s`), and code that sets a folder
+    (`cwd=`, `chdir`), count as the worst case.
     Accepted cost: code or data that mentions a folder change and a dirty-sensitive git command
     is refused on a clean tree too; prose that names a loss-certain command (`git stash drop`)
     still reads as that command.
@@ -252,9 +272,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   PreToolUse entry into your `.claude/settings.json`; `scripts/close_worker.sh`,
   `scripts/doctor.sh` and `docs/GOTCHAS.md` come with sync.
 
-- **`guard_boundaries.py`** (#151): its docstring and the overlay README say that writes through
-  the shell get no early warning; `scripts/check.sh` stays the gate. **ACTION:** re-copy
-  `.claude/hooks/guard_boundaries.py` (docstring only).
+- **`guard_boundaries.py`** (#151, #264, #265, #268): its docstring and the overlay README say that writes
+  through the shell get no early warning; `scripts/check.sh` stays the gate. It now also sees a
+  NotebookEdit and folds case on Windows and macOS. **ACTION:** re-copy
+  `.claude/hooks/guard_boundaries.py` and change its PostToolUse matcher in
+  `.claude/settings.json` from `Edit|Write` to `Edit|Write|NotebookEdit`.
 
 - **Kit check (`scripts/check_kit.py`, kit-only):** each test module, each shard of a long module
   and each locale suite runs as its own unit, one unit per two CPUs; a test module without a
@@ -299,16 +321,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **Kit CI and test isolation** (ci, redfix): CONTRIBUTING's release rule: a release is
   announced only after CI is green on every job of the release commit (`gh run list`,
-  `gh run view`); red means not released. Job time limits raised (macOS/Ubuntu 60 min, Windows
-  90), because a limit that cuts a run short reads as red. `scripts/check_kit.py` exports
+  `gh run view`); red means not released. Job time limits were raised because a limit that cuts
+  a run short reads as red; the two-tier entry above supersedes the numbers: each job runs one
+  tier, `timeout-minutes` 40 (fast) or 190 (slow). `scripts/check_kit.py` exports
   `GIT_CONFIG_GLOBAL=<devnull>` and `GIT_CONFIG_NOSYSTEM=1` for every unit and test, and names
   the temp folder by its long path on Windows. The review suite's fixtures write their own
   ignore rules instead of copying a project's `.gitignore` (a project ignoring `.env` failed the
   kit's secret-file tests), the mode-change test sets the file mode, and a failing shard's output
   is written with `errors='replace'` so a cp1252 console cannot hide it. POSIX and Windows test
   fixtures fixed from CI run 39065623063. (#95, #96, #147, #91, #92, #163 in part)
-  Kit maintainers (not a project step): set `master` branch protection with the six CI jobs as
-  required status checks (GitHub settings; the workflow cannot do it).
+  Kit maintainers (not a project step): set `master` branch protection with the twelve CI jobs
+  (Ubuntu, macOS and Windows × Python 3.11 and 3.14 × the fast and slow tier) as required status
+  checks (GitHub settings; the workflow cannot do it).
   **ACTION:** re-copy `scripts/test_claude_bridge.py`.
 
 - **Binding research report on the kit's own checks:** `docs/research/kit-self-checks.md`
@@ -325,6 +349,132 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   largest files. `sync-kit.sh` and `docs/kit/UPGRADE.md` print the review line once the kit
   commit is recorded. **ACTION:** add the "Kit upgrade commits" section to your copy of
   `docs/REVIEW_RUNNING.md` and its pointer line (end of "Invariant") to `docs/REVIEW_GATE.md`.
+
+- **The review companions move as one set** (#114, #118 follow-up; `docs/DEV_SETUP.md`, the
+  companion list). They carry no `KIT-OWNED` header, so the sync copies none of them. The v0.12
+  adapters call `agent_process.run(..., watch=...)` and rely on the v0.12 dispatcher's tier and
+  effort rule, `past_ok` and `--kit-verified`: new adapters beside a v0.11 `agent_process.py` or
+  `review_dispatch.py` fail every review with a `TypeError` traceback, no evidence and no usage
+  record; and the synced `usage_summary.py` imports `chain_failure` from the new
+  `claude_bridge.py`, so it fails on import until the re-copy. **ACTION:** right after the sync,
+  copy the whole set from the kit's `core/scripts/` into `scripts/`: `review.sh`,
+  `review_dispatch.py`, `claude_bridge.py`, `codex_bridge.py`, `agent_process.py`,
+  `agent_usage.py`, `codex_quota.py`, `owns_check.py`, `review_test_support.py` and the tests
+  `test_claude_bridge.py`, `test_agent_usage.py`, `test_codex_quota.py`, `test_owns_check.py`,
+  `test_agent_cost.py` and `test_context_buckets.py`; re-apply your default reviewer and model
+  pins in `review.sh`.
+
+- **The reviewer is at least the author's tier, at the author's effort** (#290, #181, #179,
+  #225; owner decisions 63 to 66; `scripts/review_dispatch.py`). Reviews that ran in v0.11 are
+  refused (exit 2) with this release:
+  - `MYAGENTKIT_AUTHOR` naming no model tier (`claude`, `codex`, `anthropic`, `openai`,
+    `claude-code`) is refused; an alias or vendor id (`opus`, `us.anthropic.claude-opus-5-v1:0`,
+    `claude-3-5-sonnet-20241022`) counts as the tier it names.
+  - A weaker tier than the author's runs only as a shadow opinion (`REVIEW_SHADOW=1`), never as
+    the required review. The top tier (Fable; a Codex astra model) reviews its own tier in a
+    fresh session. Any other tier's own-tier review is refused unless
+    `REVIEW_SAME_TIER_EXCEPTION=<reason>` names the owner's exception, which needs
+    `REVIEW_RISK=high` and effort high, holds one round per label and focus, and is recorded
+    (`same_tier_exception`). The v0.11 solo setup of an Opus author reviewed by Opus needs it.
+  - The review runs at the author's effort (`MYAGENTKIT_AUTHOR_EFFORT`; unset counts as high),
+    high at most; an effort named below it is refused.
+  A used-up quota switches to another tier of the author's family; a round 2 over the fix
+  commits keeps its label and counts, so a round 3 is refused; an unreadable checkout after a
+  review fails the chain and the round still counts.
+  **ACTION:** wherever the lead or a brief sets `MYAGENTKIT_AUTHOR`, set it to the author's model
+  id (`claude-opus-5-5`, not `claude`) and set `MYAGENTKIT_AUTHOR_EFFORT` to the author's effort;
+  pin a reviewer of the author's tier or above in `scripts/review.sh`; a solo plan with no
+  stronger tier runs a high-tier change's review with `REVIEW_SAME_TIER_EXCEPTION` and
+  `REVIEW_RISK=high`. Merge the rule into your copies of `docs/REVIEW_GATE.md` ("Invariant", the
+  effort rule), `docs/REVIEW_RUNNING.md` and `docs/WORKFLOW.md` ("Model routing", rule 7).
+
+- **A review watches its checkout and names what follows it** (#118, #121, #117, #120, #197,
+  #198, #277, #280). Once a minute a review hashes the checkout and stops the paid reviewer at
+  the first change, as `stale_checkout`: edit nothing in the reviewed checkout while its review
+  runs. The chain record names the attempt that follows (`next_attempt`: a capacity retry, a
+  quota switch, a fallback), and a review is finished only without it; it also gains
+  `top_tier_review`, `same_tier_exception` and `checkout_unverified`, and a usage record's
+  `automatic_retry` may be `null`. A Codex review loads no project doc as instructions
+  (`project_doc_max_bytes=0`); `AGENTS.md` stays evidence the prompt names. An Accept that its
+  own findings contradict is read as the stricter verdict in both adapters. A finished reviewer
+  whose descendant holds the output pipe ends after 5 s instead of as a timeout. Quoted backend
+  values are unquoted. The scripts come with the companion set above; `docs/USAGE.md` and
+  `docs/GOTCHAS.md` (project-owned docs, entry below) describe the records.
+
+- **`Owns:` lines follow git's glob rules** (#206; `scripts/owns_check.py`). `*` stays within
+  one folder and `**/` spans folders; a line inside a code block is skipped; a second `Owns:`
+  line or an unclosed code fence is a usage error (exit 2). A brief that passed in v0.11
+  (`Owns: src/*.cpp` covering `src/a/b.cpp`) is refused by `review.sh`. **ACTION:** in open
+  briefs and your brief templates, rewrite a `dir/*.ext` meant recursively as `dir/**/*.ext`,
+  and keep one `Owns:` line per brief; `docs/HANDOFF.md` item 2 states the rule (merged with the
+  project-owned docs, entry below).
+
+- **The working-mode record moves to `.myagentkit/`** (#272, #256, #257;
+  `scripts/working_mode.py`, synced). The record and its lock are `.myagentkit/mode` and
+  `.myagentkit/mode.lock`, ignored with the private store; temporary copies are written and
+  fsynced there. `.claude/mode` is no longer read, and without the new record the mode comes from
+  `docs/STATE.md`. Only a key-shaped `Working mode:` line counts, and both refusals name the
+  lines. **ACTION:** delete `.claude/mode` and `.claude/mode.lock` (`git rm` the record if it
+  was committed), remove the `/.claude/mode.lock` rule from your `.gitignore` (the
+  `/.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/` rule of the kit's `core/.gitignore` covers the
+  new place), and run `scripts/working_mode.py NAME` again if the mode is not the one
+  `docs/STATE.md` names; take the overlay's `.claude/rules/state.md` (Read then Edit, never the
+  `Working mode:` line).
+
+- **Gate changes beyond the self-test** (`scripts/check.sh`, taken whole by the self-test
+  entry's ACTION). `docs_always_build` names the documents a build or test reads, so a commit
+  changing one builds although it changes only documentation (#97). The commit gate prints
+  `NOTE [scan]: the gate checked the working tree; these paths are not what this commit records`
+  for unstaged or untracked paths (#109). The `## Module map` names modules only in table rows
+  and list entries, HTML comments cut out, and a module may be named by its path from the top
+  (#274, #88, #141). **ACTION:** name each module of your architecture file's `## Module map` in
+  a table row or a list entry: a module named only in prose or a comment fails `check.sh`.
+
+- **doctor and fix_crlf** (synced; nothing to copy). `scripts/doctor.sh` reports
+  MISSING for a project hook or `scripts/doctor.project.sh` without a `#!` line, a `.githooks`
+  layout that runs no Git LFS on a project that uses LFS, a hook the committed
+  `.claude/settings.json` does not register or registers without its file, and the Unity
+  editor, `cygpath` or `wslpath` the Unity gate needs; it prints a NOTE for a missing
+  ShellCheck and for an empty `.claude/worktree-disposable` (#165, #164, #101, #145, #216,
+  #155). A machine ready for v0.11 may show new MISSING lines: each names its fix.
+  `scripts/fix_crlf.sh` refuses a file with an edit beyond line endings, changing nothing, and
+  lists what it staged (#207).
+
+- **Claude Code overlay hooks and settings** (#83, #116, #138, #139, #174, #209, #210, #214,
+  #289). `py.sh` keeps the interpreter that passed its probe in the user's cache folder (about
+  0.5 s saved per hook call on native Windows) and refuses a missing hook file: a guard fails
+  closed, the root-scan and secret-file guards open. The context band is also named after a
+  tool call, through `progress_reminder.py`; a worker session is not nudged and a sub-agent
+  never spends the lead's nudge. `plain_report.py` bounces a final message that leaves an owner
+  question in chat text and asks for one line, not a resend. Sub-agents are back on the
+  five-minute prompt cache (long jobs go to `spawn_worker.sh` sessions). `after_compact.txt`
+  points at WORKFLOW's "The rules in brief". The three blocking guards get a 30 s timeout.
+  `.claude/worktree-disposable` documents `/NAME` (the root folder only) and the
+  committed-versus-working rule. **ACTION:** copy whole from the kit's
+  `overlays/claude-code/files/.claude/hooks/` (hooks are not synced): `py.sh`,
+  `context_size.py`, `progress_reminder.py`, `plain_report.py` and `after_compact.txt`; merge
+  the header comment of the overlay's `.claude/worktree-disposable` into yours, keeping your
+  entries. In `.claude/settings.json`: remove `subagentPromptCacheTtl` and the `env` entry
+  `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`; add `"worktree": {"bgIsolation": "none"}`; raise
+  the `timeout` of the `guard_destructive_git.py`, `guard_private_email.py` and
+  `guard_worker_route.py` entries to 30; then commit it (worktree workers run the committed
+  file).
+
+- **The project's CI checks every commit of a pull request** (#135;
+  `.github/workflows/ci.yml`). Its checkout fetched one commit, GitHub's own merge commit on a
+  pull request, which carries no `Done:` trailer, so no commit of the pull request was checked
+  and the strong-review reminder read no history. **ACTION:** add `with: fetch-depth: 0` to the
+  `actions/checkout` step of your `.github/workflows/ci.yml`.
+
+- **Project-owned docs** (#132, #142, #112, #150, #131, #107, #289). The kit's docs say what
+  the code does: risk tiers and the critical-work mark, model routing in WORKFLOW's two tables,
+  a worker's notes in `docs/worktree-notes/<branch>.md`, a brief that quotes its environment, a
+  report's last question through the question tool, the glossary's new terms. **ACTION:** merge
+  the kit's v0.12 changes into your copies of `docs/COMMUNICATION.md`, `docs/GLOSSARY.md`,
+  `docs/HANDOFF.md`, `docs/USAGE.md`, and of the other project-owned files the entries above
+  name; `"$KIT/sync-kit.sh" . --merge` merges every project-owned file under the kit's `core/`
+  and lists each as `merged:` (`docs/UPDATING.md`); overlay files are copied by hand as their
+  entries say.
 
 ## v0.11 — 2026-10-09
 
@@ -1429,7 +1579,8 @@ or definition is copied whole (items 3 and 5), a project-owned file is merged (i
    `scripts/working_mode.py`, `scripts/agent_cost.py`, `scripts/usage_summary.py`, and the
    Claude Code overlay's worker scripts the project already has (`spawn_worker.sh`,
    `spawn_codex.sh`, `codex_worker.py`, `close_worker.sh`, `show_workers.sh`,
-   `watch_workers.sh`, `clean_worktrees.py`). It installs no overlay file the project lacks:
+   `watch_workers.sh`, `clean_worktrees.py`). It installs a kit-owned overlay file the project
+   lacks only when the project already holds a kit-owned file of that overlay; otherwise
    copy a missing one from `$KIT/overlays/claude-code/files/scripts/` by hand (a Codex project's
    `spawn_codex.sh` and `codex_worker.py`, and `close_worker.sh`; `chmod +x` and
    `git add --chmod=+x`), and the sync keeps it from then on. A `conflict:` line that calls the
