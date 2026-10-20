@@ -781,6 +781,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 2c2) The AGENTS.md chain Codex loads stays under its limit
+# ---------------------------------------------------------------------------
+# Codex joins the AGENTS.md of every folder from the root down to the one it works in and
+# drops, without a word, what passes project_doc_max_bytes (32768 by default); the tail holds
+# the STOP list and the completion checklist (#143). Each chain, the root's alone included,
+# stays under 24 KiB, the kit's own margin (its tests/test_doc_pointers.py). Codex is in use
+# when scripts/review.sh names it, the record the setup interview writes (DEFAULT_REVIEWER or
+# CODEX_MODEL); without it a chain over the margin is a NOTE, not a failure.
+agents_limit=24576
+codex_in_use=""
+grep -Eq '^(DEFAULT_REVIEWER="codex"|CODEX_MODEL="[^"]+")' scripts/review.sh 2>/dev/null && codex_in_use=1
+tr '\0' '\n' < "$filelist" | grep -E '(^|/)AGENTS\.md$' | while IFS= read -r f; do
+  total=0 prefix="" rest=$f
+  while :; do
+    [ -f "${prefix}AGENTS.md" ] && total=$((total + $(wc -c < "${prefix}AGENTS.md")))
+    case "$rest" in */*) prefix="$prefix${rest%%/*}/"; rest=${rest#*/} ;; *) break ;; esac
+  done
+  [ "$total" -lt "$agents_limit" ] || printf '%s\n' "  - $f: $total bytes"
+done > "$work/agents-over"
+if [ -s "$work/agents-over" ]; then
+  if [ -n "$codex_in_use" ]; then
+    echo "FAIL [agents-size]: an AGENTS.md chain Codex loads (each AGENTS.md from the root down to it) is not under"
+    echo "                    $agents_limit bytes (24 KiB), the margin under Codex's 32768-byte project_doc_max_bytes:"
+    fail=1
+  else
+    echo "NOTE [agents-size]: an AGENTS.md chain is not under $agents_limit bytes; Codex, once scripts/review.sh names it,"
+    echo "                    drops what passes its 32768-byte project_doc_max_bytes:"
+  fi
+  cat "$work/agents-over"
+  echo "                    Move what only some tasks need into a doc the reading order points to."
+fi
+
+# ---------------------------------------------------------------------------
 # 2d) ShellCheck
 # ---------------------------------------------------------------------------
 # Two classes a static rule sees left the review's attack list for this step

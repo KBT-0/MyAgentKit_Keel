@@ -5,6 +5,13 @@ allowed-tools: Read, AskUserQuestion
 ---
 # /myagentkit:init [--overlay NAME]... [--note "agenda"]
 
+**Kit version.** This plugin is kit v0.11. Before anything else, read the project's
+`docs/kit/.kit-version` (MAJOR.MINOR, such as `0.10`). When it is there and names another
+version, print one plain line and go on, never stop for it: both versions, which one is newer
+(compared as numbers: 0.9 is older than 0.11), and that `/myagentkit:sync` brings the project
+to the kit's newest release; when the project is the newer one, update this plugin too. No
+file, or the same version: no line. Nothing here uses the network.
+
 Run from the project root, the owner's current checkout. The plugin carries no copy of the kit:
 this runs the kit's installer (`install.sh` in the kit repository), which fetches the kit at its
 release tag into `~/.myagentkit/kit` and runs that kit's `bootstrap.sh` on this folder.

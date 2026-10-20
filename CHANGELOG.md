@@ -18,6 +18,30 @@ and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, 
 prints none of these entries to a project. Tag v0.11 only together with that rename: while
 this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
+- **Every plugin command and Codex skill says when the project's kit version is another**
+  (#156). Each one names the plugin's kit version (`This plugin is kit v0.11.`, stamped by
+  `scripts/package_codex_plugin.py`, whose `--check` refuses a stale one), reads the project's
+  `docs/kit/.kit-version` and, when the two differ, prints one line: both versions, which is
+  newer, and that `/myagentkit:sync` (Codex: the `myagentkit-sync` skill) brings the project to
+  the newest release. It never stops and uses no network. Nothing to do: update the plugin.
+
+- **A changed worktree-disposable list shows what it would remove before it removes it**
+  (#288 point 2; `scripts/clean_worktrees.py`, Claude Code overlay). A removal that takes files
+  only the changed committed list makes disposable waits one `--apply` (the post-merge hook's
+  run): that run prints it as `would remove ...` with the reason, and the next one removes it.
+  The list a full `--apply` ran with is kept in the git directory
+  (`kit-worktree-disposable-applied`); a project with none recorded adopts the list in force.
+  Nothing to do: the next sync brings the script.
+
+- **The project gate keeps every AGENTS.md chain Codex loads under 24 KiB** (#143;
+  `scripts/check.sh`, `[agents-size]`). Codex joins the AGENTS.md of each folder from the root
+  down to the one it works in and drops, without a word, what passes 32 KiB
+  (`project_doc_max_bytes`); the tail holds the STOP list and the completion checklist. Each
+  chain must stay under 24 KiB when `scripts/review.sh` names Codex (`DEFAULT_REVIEWER="codex"`
+  or a `CODEX_MODEL`); without it a chain over the margin is a NOTE. **ACTION:** merge the new
+  section 2c2 into your `scripts/check.sh`; if it fails, move what only some tasks need out of
+  `AGENTS.md` into a doc the reading order points to.
+
 - **Test rules rest on a binding report** (`docs/research/test-rules.md`; decision 37). A logic
   change brings its test in the same change; writing the test first is advice, not a rule. A
   gate check keeps its red proof by a bad-input fixture test; an ordinary new test needs no

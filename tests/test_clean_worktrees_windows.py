@@ -307,6 +307,34 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertFalse(path.exists(), out)
 
     @windows_only
+    def test_a_changed_disposable_list_previews_its_removals_before_the_next_apply_makes_them(self):
+        # #288 point 2 (tests/test_clean_worktrees.py proves it on POSIX): a new entry took
+        # uncopied scratch at the next merge, unseen by the owner.
+        disposable = self.main / '.claude/worktree-disposable'
+        disposable.parent.mkdir()
+        disposable.write_text('build\n')
+        (self.main / '.gitignore').write_text('build/\nout/\n/.claude/worktrees/\n')
+        self.git('add', '.gitignore', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        old = self.worktree('old')
+        (old / 'build').mkdir()
+        (old / 'build/out.o').write_text('o\n')
+        new = self.worktree('new')
+        (new / 'out').mkdir()
+        (new / 'out/scratch.py').write_text('only here\n')
+        out = self.run_script('--apply')
+        self.assertFalse(old.exists(), out)  # no list recorded yet: the one in force is adopted
+        self.assertKept(new, out, 'outside a disposable folder: out/scratch.py')
+        disposable.write_text('build\nout\n')
+        self.git('commit', '-q', '-am', 'out is disposable')
+        out = self.run_script('--apply', '--quiet')  # what the post-merge hook runs
+        self.assertIn('would remove .claude/worktrees/new (branch worktree-new, 0 identical files, ', out)
+        self.assertIn('not yet: files only the changed .claude/worktree-disposable makes disposable', out)
+        self.assertTrue((new / 'out/scratch.py').is_file())
+        out = self.run_script('--apply')
+        self.assertFalse(new.exists(), out)
+
+    @windows_only
     def test_an_uncommitted_narrowing_of_the_disposable_list_protects_at_once(self):
         # Round-1 review of #288: following the committed list alone, a removal took uncopied
         # scratch that the owner had just taken off the list, before the edit was committed.
