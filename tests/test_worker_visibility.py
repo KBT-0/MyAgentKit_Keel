@@ -6,6 +6,7 @@ never a file named *.exe: under WSL such a file is handed to Windows), osascript
 are stubs on PATH. The panes are real captures (tests/fixtures/panes/, see the README there).
 """
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -17,9 +18,12 @@ import time
 import unittest
 import unittest.mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_close_worker import CLAUDE, agent  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
-SHOW, WATCH = SCRIPTS / 'show_workers.sh', SCRIPTS / 'watch_workers.sh'
+SHOW, WATCH, LIST = SCRIPTS / 'show_workers.sh', SCRIPTS / 'watch_workers.sh', SCRIPTS / 'list_workers.sh'
 PANES = ROOT / 'tests/fixtures/panes'
 DIALOGS = {'trust.txt': 'the folder-trust dialog', 'permission.txt': 'a permission prompt',
            'question.txt': 'a question'}
@@ -1271,6 +1275,130 @@ class ContextTests(Base):
                 self.assertTrue(result.stdout.startswith('watch_workers: nothing was waiting'), result.stdout)
                 # A figure that appears later past the line is still reported.
                 self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once').stdout)
+
+
+class BackgroundTests(Base):
+    """A Claude Code background session (NAME.host bg) is watched, shown and listed through
+    `claude agents --json --all`, a stub on PATH (tests/test_close_worker.py, CLAUDE); no tmux."""
+
+    def setUp(self):
+        super().setUp()
+        (self.bin / 'claude').write_text(CLAUDE)
+        (self.bin / 'claude').chmod(0o755)
+        self.workers = self.cwd / '.myagentkit/workers'
+        self.workers.mkdir(parents=True)
+
+    def spawned(self, name, id='aaaa0001', host='bg', age=120):
+        """A worker as spawn_worker.sh records it, AGE seconds ago."""
+        (self.workers / (name + '.host')).write_text(host + '\n')
+        for record, text in (('.id', id), ('.result-path', 'RESULT-%s.md' % name)):
+            if text:
+                (self.workers / (name + record)).write_text(text + '\n')
+                then = time.time() - age
+                os.utime(self.workers / (name + record), (then, then))
+
+    def rows(self, *rows):
+        (self.state / 'agents.json').write_text(json.dumps(list(rows)))
+
+    def run_bg(self, script, *args, **extra):
+        extra.setdefault('VIS_SESSIONS', '')
+        return self.run_script(script, *args, AGENTS_FILE=str(self.state / 'agents.json'), **extra)
+
+    def watch(self, *args, **extra):
+        return self.run_bg(WATCH, '--once', '--result', 'w1=RESULT-w1.md', *args, 'w1', **extra)
+
+    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_a_blocked_session_is_waiting_with_what_it_waits_for_once_per_wait(self):
+        self.spawned('w1')
+        blocked = agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='waiting',
+                        waitingFor='permission prompt')
+        self.rows(blocked)
+        waiting = ('watch_workers: WAITING: w1, waiting for: permission prompt (background session aaaa0001, '
+                   'state blocked)\n  look at it: claude attach aaaa0001   (claude agents lists every session)\n')
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, waiting, ''))
+        self.assertEqual(self.watch().stdout, '', 'the same wait was reported twice')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=28288, status='busy'))
+        self.assertEqual(self.watch().stdout, '')
+        self.rows(blocked)
+        self.assertEqual(self.watch().stdout, waiting, 'a new wait after work was not reported')
+        self.assertEqual(self.log('tmux'), '', 'tmux was asked about a background session')
+
+    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_an_ended_or_removed_session_is_gone_unless_its_result_says_more(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=28256, status='idle'))
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is done with no '
+                         'new result report; its process still idles (a question in its view, a usage limit or an '
+                         'error, or a park on its own background job): claude attach aaaa0001\n')
+        self.assertEqual(self.watch().stdout, '')
+        for state in ('stopped', 'failed'):
+            self.rows(agent('aaaa0001', 'w1', self.cwd, state))
+            self.assertEqual(self.watch().stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is %s '
+                             'with no new result report: read its result file\n' % state)
+        self.rows()
+        self.assertEqual(self.watch().stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is no longer '
+                         'listed (claude agents --all): read its result file\n')
+        # A result wins over any state: DONE alone, no GONE.
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        (self.workers / 'w1.watch-bg').unlink()
+        self.assertEqual(self.watch().stdout, 'watch_workers: DONE: w1, task T-7, attempt 2, remaining: none '
+                         '(result file RESULT-w1.md)\n')
+
+    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_a_session_just_spawned_and_not_yet_listed_is_not_gone(self):
+        # The spike saw no row for the first seconds after the launch.
+        self.spawned('w1', age=0)
+        self.rows()
+        self.assertEqual(self.watch().stdout, '')
+
+    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_a_question_file_wins_over_the_state(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done'))
+        (self.cwd / 'QUESTION-w1.md').write_text('A or B?\n')
+        self.assertEqual(self.watch().stdout, 'watch_workers: QUESTION: w1, a decision waits in QUESTION-w1.md: '
+                         'read it and answer it\n')
+        self.assertEqual(self.watch().stdout, '')
+
+    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_a_list_that_cannot_be_read_is_an_observation_failure(self):
+        self.spawned('w1')
+        self.rows()
+        result = self.watch(AGENTS_ERROR='connect ECONNREFUSED')
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertIn('watch_workers: w1: could not list the background sessions: ', result.stderr)
+        self.assertIn('connect ECONNREFUSED', result.stderr)
+
+    @unittest.skip('bgmanage handoff: the watch/show bg path is not written yet; remove this skip, see it red')
+    def test_show_prints_the_attach_line_and_opens_nothing(self):
+        self.spawned('w1')
+        result = self.run_bg(SHOW, 'w1', WSL_DISTRO_NAME='Test-1')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'show_workers: w1 runs in the background: claude attach aaaa0001   '
+                         '(claude agents lists every session; nothing opened)\n')
+        self.assertEqual(self.log('wt-stub') + self.log('tmux'), '')
+
+    def test_the_list_has_one_line_per_worker_of_this_checkout(self):
+        self.spawned('w1')
+        self.spawned('w2', id='bbbb0002')
+        self.spawned('t1', id=None, host='tmux')
+        (self.workers / 'c1.session').write_text('sid\n')
+        (self.cwd / 'RESULT-w2.md').write_text('x\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=1, waitingFor='permission prompt'),
+                  agent('cccc0003', 'w2', self.cwd, 'working', pid=2))
+        result = self.run_bg(LIST, VIS_SESSIONS='t1')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout.splitlines(), [
+            'NAME\tHOST\tID\tSTATE\tWAITING-FOR\tRESULT', 'c1\t-\t-\t-\t-\tn', 't1\ttmux\t-\trunning\t-\tn',
+            'w1\tbg\taaaa0001\tblocked\tpermission prompt\tn', 'w2\tbg\tbbbb0002\tabsent\t-\ty'])
+        result = self.run_bg(LIST, AGENTS_ERROR='boom')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('list_workers: claude agents --json --all failed: boom', result.stderr)
+        self.assertIn('w1\tbg\taaaa0001\t?\t-\tn', result.stdout)
 
 
 if __name__ == '__main__':

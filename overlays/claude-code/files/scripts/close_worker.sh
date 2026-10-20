@@ -50,6 +50,17 @@
 #      `git gc` keeps everything under refs/* (git-gc(1)), so the branch holds every commit
 #      the worker made; a merge done on a detached main and undone left them on no other ref
 #      (RESEARCH_LOG 2026-10-03).
+# A Claude Code background session (spawn_worker.sh recorded .myagentkit/workers/NAME.host as
+# bg, on every host) takes step 2 by its id, NAME.id, never by its name: names are not unique
+# (docs/research/worker-orchestration-spike.md, 6). Its row in `claude agents --json --all`
+# (list_workers.sh --row, which also reads NAME.id) must have started in the worker's folder
+# (#171); with no NAME.id, the one row of the name started there is it, and two are refused. A
+# live session (a pid, or working or blocked) gets `claude stop ID` and a wait of up to 15 s
+# until its row shows neither, then `claude rm ID`, which drops only the row and keeps a
+# lead-made worktree (spike, 5): the audit in step 3 stays the one path that removes it. A row
+# already gone is nothing to end; a list that cannot be read, or a session its stop leaves
+# running, fails the close with the worktree untouched. `claude daemon stop` is never run: it
+# ends every background session, the owner's too. After a removal NAME.id and NAME.host go too.
 # Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
 # claude.exe whose command line holds `-n NAME` and whose process id spawn_worker.sh recorded in
 # .myagentkit/workers/NAME.pid (names are machine-wide there: another checkout's session of the
@@ -438,9 +449,29 @@ busy() {
   done
   return 1
 }
+# background NAME: whether NAME is a Claude Code background session (NAME.host bg).
+background() { [ "$(cat -- "$top/.myagentkit/workers/$1.host" 2>/dev/null)" = bg ]; }
+# agent NAME: reads its row (list_workers.sh --row) into bstate bwait bpid bhere bid bcwd; fails
+# with the lister's words in $row when the sessions cannot be listed.
+agent() {
+  row=$(sh "$kit/list_workers.sh" --row "$1" 2>&1) || return 1
+  IFS='	' read -r bstate bwait bpid bhere bid bcwd <<EOF
+$row
+EOF
+}
+# agent_live: whether that row's session runs: a process, or a turn working or blocked.
+agent_live() {
+  case $bstate in absent|ambiguous) return 1 ;; working|blocked) return 0 ;; esac
+  [ "${bpid:--}" != - ]
+}
 # live NAME DIR: succeeds, printing what runs, while a session of the worker runs in DIR or
 # under NAME, or while that cannot be told.
 live() {
+  if background "$1"; then
+    agent "$1" || { printf '%s' "its background sessions cannot be listed ($row)"; return 0; }
+    [ "$bhere" = y ] && agent_live || return 1
+    printf '%s' "its background session $bid still runs ($bstate)"; return 0
+  fi
   if [ -n "$windows" ]; then
     if [ "$2" != "$top" ]; then
       p=$(codex "$2") || { printf '%s' "its Codex processes cannot be listed ($p)"; return 0; }
@@ -560,7 +591,45 @@ for name; do
     fi
   fi
 
-  if [ -n "$windows" ]; then
+  if background "$name"; then
+    if ! agent "$name"; then
+      fail "$name: could not list the background sessions, so $name may still run: $row; its worktree is not touched"
+      continue
+    elif [ "$bstate" = absent ]; then
+      id=$(cat -- "$record.id" 2>/dev/null) || id=""
+      say "$name: no background session ${id:-named $name} is listed (claude agents --all); nothing to end"
+    elif [ "$bstate" = ambiguous ]; then
+      fail "$name: no $record.id, and several background sessions named $name run in its folder ($bwait), so which is this worker is unknown; stop the right one by its id (claude stop ID), then close again; nothing is done for $name"
+      continue
+    elif [ "$bhere" != y ]; then
+      fail "$name: background session $bid runs in $bcwd, not in this worker's folder; another checkout's session is never stopped here; nothing is done for $name"
+      continue
+    elif [ -n "$dry" ]; then
+      say "$name: dry run: would stop its background session $bid (claude stop) and remove its row (claude rm), waiting up to 15 s for it; while it runs, the audit below keeps its worktree"; noquiet=--no-quiet
+    elif why=$(busy "$wt_dir"); then
+      refuse; continue
+    else
+      if agent_live; then
+        claude stop "$bid" >/dev/null 2>&1
+        # 15 s by the clock, as on the Windows path: one listing takes about 0.8 s.
+        end=$(( $(date +%s) + 15 ))
+        while agent "$name" && agent_live && [ "$(date +%s)" -lt "$end" ]; do sleep 1; done
+        if ! agent "$name"; then
+          fail "$name: could not establish that background session $bid ended: $row; its worktree is not touched"
+          continue
+        elif agent_live; then
+          fail "$name: background session $bid still runs after claude stop; its worktree is not touched"
+          continue
+        fi
+      fi
+      if out=$(claude rm "$bid" 2>&1); then
+        say "$name: background session $bid stopped and removed (claude stop, claude rm); its worktree stays for the audit below"
+      else
+        fail "$name: background session $bid ended, but claude rm failed: $out"
+      fi
+      noquiet=--no-quiet
+    fi
+  elif [ -n "$windows" ]; then
     pids=$(mine "$name"); st=$?
     if [ "$st" -eq 2 ]; then
       fail "$name: could not list the Claude Code sessions, so $name may still run: $pids; its worktree is not touched"
@@ -764,7 +833,7 @@ for name; do
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
-      "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" || fail "$name: could not remove its Codex session records"
+      "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"
