@@ -18,3 +18,15 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   verdict, findings and manual checks arrive as JSON, `codex_bridge` reads them as the Claude
   side does and drops its Markdown parser (`review_parts` stays for the archive text). Not run
   in batch 4: the run spends Codex quota, and the owner was away.
+
+## Filed from v0.12 release prep
+
+- bootstrap.sh / sync-kit.sh reviewer detection does not scan a symlinked `.claude/agents`
+  folder (rdet round 2).
+- #298 follow-up: a SessionEnd hook for orphaned tool processes whose shell already died (orph).
+- #298 / orph: POSIX-only tests not run on the maintainer's Windows host (close_worker session
+  tree, D3 start-time re-check, doctor's POSIX host list): the first CI / macOS run must confirm.
+- `test_clean_worktrees.py` (POSIX only) not run for mfix's twin test: the first CI run must confirm.
+- v0.10 upgrade checklist: the `rev-list --before=<date>` guess at a v0.10 project's `--base` can
+  pick a later kit commit than the one the project synced from; sync-kit's base check stops only
+  when a kit-owned file differs (mfix r2 light review manual check; kept, owner may revisit).

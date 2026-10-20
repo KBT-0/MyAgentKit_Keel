@@ -11,12 +11,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## Unreleased — v0.12
+## v0.12 — 2026-10-20
 
-This heading becomes `## v0.12 — <date>` at the release, together with README's bold version
-and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11, and sync-kit
-prints none of these entries to a project. Tag v0.11 only together with that rename: while
-this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
+`sync-kit.sh` prints these entries to a project whose recorded kit version is older than v0.12.
 
 - **bootstrap.sh and sync-kit.sh list a project's own reviewer agent beside diff-reviewer.md**
   (#161). When `.claude/agents/diff-reviewer.md` exists, every other `.md` under
@@ -520,7 +517,9 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
   destination markers count toward the budget; a deleted lock or vendored file is named by
   its old path and spends none. Rounds count per `REVIEW_FOCUS`, so a high-tier change's two
   focus reviewers each get two rounds; a review without a focus counts toward every focus, and
-  an unset or new focus takes the label's highest count. Author independence requires the
+  an unset or new focus takes the label's highest count. (Superseded in v0.12: a new named
+  focus starts its own round count; see v0.12's "A new review focus starts its own round count".)
+  Author independence requires the
   lead's model selection, and the docs no longer promise automatic author exclusion or Codex
   capacity retries.
   Review bridges cap the complete diff and carried rounds. Bridge test shards honor
