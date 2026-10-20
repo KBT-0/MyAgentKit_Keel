@@ -45,7 +45,7 @@ repository.
 | `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off; when none runs, a guard blocks (exit 2) and every hook prints `no Python found; install it or run doctor` |
 | `.claude/agents/diff-reviewer.md` | Review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md`. Its tool list has no Edit or Write; that it leaves the checkout unchanged is asked by its prompt and enforced only by the throwaway copy and the sandbox. Like the bridges' reviewer it runs only the narrow test that proves a finding, and reports only gaps that affect correctness or the stated requirements (code.claude.com/docs/en/best-practices). Its first question for a gate, "was it seen red?", is TDD's red step; it skips `docs/REVIEW_RUNNING.md`, which is for the caller, to keep its context small (code.claude.com/docs/en/sub-agents) |
 | `.claude/agents/worker.md` | Implementation worker that pins model, effort and a 150-turn cap; as a sub-agent it runs on the five-minute prompt cache, so a job whose waits pass five minutes goes to a `scripts/spawn_worker.sh` session (`docs/WORKFLOW.md`, "Worker cost") |
-| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling. The worker starts with `--disallowedTools AskUserQuestion` (its questions go to `QUESTION-NAME.md`), and a `--worktree` worker's worktree is locked (`kit worker NAME`) until `close_worker.sh` unlocks it before its audit. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
+| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then arms the disk watch it prints (`watch_workers.sh`) as one background command, its done signal; an idle-notice subscription is optional. The worker starts with `--disallowedTools AskUserQuestion` (its questions go to `QUESTION-NAME.md`), and a `--worktree` worker's worktree is locked (`kit worker NAME`) until `close_worker.sh` unlocks it before its audit. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
 | `scripts/spawn_codex.sh` | Opens an interactive Codex worker in the lead's Windows Terminal window (`-w 0`) or tmux elsewhere, with workspace-write and approval never; reserves the spawning checkout through session recording in `.myagentkit/workers/spawn.lock`, records the session id in `.myagentkit/workers/NAME.session`, outside the worker, and resumes the same session with `--resume`. The worker leaves exact files uncommitted for the lead's cross-review and gated commit |
 | `scripts/codex_worker.py` | Keeps Codex interactive and closes its process tree only when it publishes a decision (`QUESTION-NAME.md`) or a new `Kind: completed` result; a progress, handoff or blocked result leaves it working. A resume removes the answered question once the resumed session publishes a new result or exits cleanly, never on elapsed time, so the close of a session that took its answer is not refused; a failed launch, or a CLI that fails without a new result, keeps it, and a new question stays. POSIX SIGTERM and SIGHUP clean up the worker group. On every way out it controls, a decision without a blocked result included, a startup that fails before it runs the worker too, it writes `.myagentkit/workers/NAME.exit`, and it holds `NAME.live` locked while it runs. The record is published with its PID inside and its lock held, so `--wait` reports a dropped lock as EXITED, also when the wrapper itself is killed or its tab closed, and an empty or malformed record never reads as EXITED; spawn_codex.sh passes its launch-time result identity to the printed `--wait` command with `--stale FILE_ID`, and on POSIX the supervisor and the waiter hold that result open, so a new result cannot be given its inode number. After PROGRESS or HANDOFF, `--wait` prints its exact follow-up command, with the reported result's content hash as `--stale`: other contents count as new, by rename or by in-place rewrite, and a byte-identical republication does not. A poll opens a result or a new question only after its id, size or time changed, yet on Windows even its stat holds the file for a moment, which refuses a rename over it (measured: 392 of 3000 renames under two stat loops); the worker therefore publishes with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, which retries a refused rename for about two seconds (0 of 3000 failed). A poller waits through 50 consecutive Windows refusals of one file, about five seconds, then fails instead of waiting forever. `--wait` requires `--since` (the launch time) and ends with NOT STARTED when no supervisor record appears within 300 s of it; running the same wait again is safe |
 | `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch. On native Windows it refuses while a Codex session runs in the worker's folder. It refuses while a Codex worker's decision file waits for its answer, and moves an uncommitted `RESULT-NAME.md` to `.myagentkit/workers/NAME.result.md` (`NAME.result-2.md` and on beside an earlier report) before the audit, and back when the audit keeps the worktree; after a removal it deletes `NAME.session`, `NAME.exit`, `NAME.live` and `NAME.question`, and a kept worktree keeps them. An unfinished move leaves `.myagentkit/workers/NAME.report-move`, which blocks later closes; recover the original report to the recorded source or archive, then remove that marker and close again |
@@ -91,14 +91,19 @@ and the idle notice does not fire for a session that waits inside a dialog: it h
 nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
 
 **Native Windows** (Git for Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
-says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` does not apply
-there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
-0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
-refuses a name a running Claude Code session already has. The tab is the only view of it.
-The lead does not poll it: when the spawn prints "is a peer session", the lead subscribes
-with `notify_when_idle` (a subscription costs no tokens; in the vendor's docs one subscription
-is one notice, and it lapses after 12 hours, code.claude.com/docs/en/cross-session-messaging).
-If it prints WARNING, watch the tab and result file; no idle notice arrives.
+says about tmux sessions, `--batch` and `show_workers.sh` does not apply there;
+`watch_workers.sh` does, through its Windows path (below). `spawn_worker.sh` opens the worker
+as a tab of the window the lead runs in (`wt.exe -w 0`, or the launcher `KIT_WT` names) with
+the brief's instruction as its first prompt, and refuses a name a running Claude Code session
+already has. The tab is the only view of it. The lead does not poll it: right after the spawn
+it starts the printed `sh scripts/watch_workers.sh --result NAME=PATH NAME` as ONE background
+command, the done signal, and starts it again after every report but DONE and GONE. When the
+spawn prints "is a peer session", the lead may also subscribe with `notify_when_idle` (a
+subscription costs no tokens; in the vendor's docs one subscription is one notice, and it
+lapses after 12 hours, code.claude.com/docs/en/cross-session-messaging), but never relies on
+it alone: a supervised close often sends no notice (one of one on 2026-10-17, 4 of 5 on
+2026-10-20, `docs/WORKFLOW.md`). If it prints WARNING, no idle notice arrives; the watcher
+still reports.
 `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
 command line holds `-n NAME` and whose process id the spawn recorded in
 `.myagentkit/workers/NAME.pid` (another project's session of the name is never ended; one with
@@ -152,7 +157,9 @@ returns, and so re-invokes the lead, as soon as a named session is GONE or WAITI
 person; for WAITING it prints what waits and the last lines of the pane, so the lead can tell
 the owner. Otherwise it ends after `--max-minutes` (55) with one line saying nothing waited.
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
-which costs the worker nothing. Exit 3, never "nothing waiting", means the watcher could not
+which costs the worker nothing. On native Windows, where no pane can be read, it reads the
+worker's `.myagentkit/workers/NAME.state` line, its result file and its supervisor's exit
+record instead (WAITING, then the result, then GONE, then IDLE; the script's header). Exit 3, never "nothing waiting", means the watcher could not
 observe: a pane of a session that exists could not be read, or tmux could not say whether it exists
 (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 read (`... could not read the committed result ...`), or a report could not be written
@@ -190,7 +197,9 @@ and every report exits 0 with its kind on the first line (`watch_workers: KIND: 
   **PROGRESS**, none of them done; a missing or malformed head is **MALFORMED**, not done. A
   file with questions under `## Open questions for ...` is **QUESTIONS** first: "N questions
   for OWNER" and their text with the options, each line cut at 200 bytes. Each committed
-  version of the file is reported once.
+  version of the file is reported once. A file not in HEAD (the kit's default
+  `RESULT-NAME.md`, never committed) is read from the working file instead, once per
+  content, when this run published it with the supervisor's ready marker as its last line.
 - **The context figure** in the pane's status line, `<used>/<window>` with k or M (`Opus 5.5
   58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). The
   status line is the line right under the input box's bottom rule, second or third from
@@ -284,8 +293,8 @@ the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn
   the end: a session whose turn ended with a job running is "idle" to the harness, and the
   same notice was delivered three times for one pilot. A session waiting inside a dialog is
   mid-turn, so no notice comes for it. How many notices one subscription gives on the current
-  version is not re-measured yet (the vendor's docs say one). Subscribe once, and have the brief
-  end with a result FILE (plus, if the lead wants a push, one message from the worker);
+  version is not re-measured yet (the vendor's docs say one). The done signal is the disk
+  watch on the brief's result FILE, never a notice; a subscription is optional, and
   re-subscribing on every notice is a poll loop in disguise.
 - **A sub-agent inherits its lead session's effort unless its definition sets `effort:`**,
   and nothing in its output says so: a side-by-side comparison ran two sub-agents at the
@@ -317,7 +326,9 @@ the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn
   short final message and lets it write only logs, tables and captures to files
   (`docs/WORKFLOW.md`, "Worker cost", rule 7).
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
-  FILE, subscribe once with `notify_when_idle`, and read the file.
+  FILE, start the printed `sh scripts/watch_workers.sh` line as one background command (the
+  done signal; a `notify_when_idle` subscription is optional, never relied on alone), and read
+  the file.
 
 ## Closing a finished worker
 

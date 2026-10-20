@@ -1014,13 +1014,22 @@ exit 0
 
     def test_the_watch_line_names_the_result_path(self):
         # #167: it named PATH, "the result file its brief names", for the lead to fill in.
+        # 2026-10-20: 4 of 5 supervised closes sent no idle notice, so the disk watch is the done
+        # signal on both paths: printed right after the start, before any optional subscription.
         for tab in self.backend_paths():
             with self.subTest(windows=bool(tab)):
                 result = self.spawn('w1', str(self.brief), '--batch', **tab)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn('spawn_worker: watch it, as a background command: scripts/watch_workers.sh '
-                              '--result w1=%s w1\n' % shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab))),
-                              result.stdout)
+                lines = result.stdout.splitlines()
+                started = next(i for i, line in enumerate(lines) if "'w1' started with" in line)
+                self.assertEqual(lines[started + 1],
+                                 'spawn_worker: watch it now, as ONE background command whose exit is the done '
+                                 'signal (start it again after every report but DONE and GONE): '
+                                 'sh scripts/watch_workers.sh --result w1=%s w1'
+                                 % shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab))))
+                for line in lines:
+                    if 'notify_when_idle' in line:
+                        self.assertIn('never rely on it alone', line)
                 (self.state / 'claude.json').unlink()
 
     def test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab(self):
@@ -1098,6 +1107,11 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("'w3' is a peer session (process 9)", result.stdout)
         self.assertNotIn('WARNING', result.stdout)
+        # The subscription is optional and comes after the disk watch, never in its place.
+        self.assertLess(result.stdout.index('sh scripts/watch_workers.sh --result w3='),
+                        result.stdout.index("'w3' is a peer session"))
+        self.assertIn('notify_when_idle, but a supervised close often sends no notice: never rely on it alone',
+                      result.stdout)
         # No process of that name appears: the spawn fails and says the tab shows why.
         # Two sessions of the name start (round-1 review of #171): which is this checkout's
         # cannot be told, so none is recorded, and the lead is told why.
@@ -1890,7 +1904,7 @@ exit 0
         self.assertIn('show_workers: shown: w1', result.stdout)
         # The two hints name the scripts that watch and close this worker, by its name.
         self.assertIn('close it: scripts/close_worker.sh w1\n', result.stdout)
-        self.assertIn('scripts/watch_workers.sh --result w1=PATH w1 ', result.stdout)
+        self.assertIn('sh scripts/watch_workers.sh --result w1=', result.stdout)
         (self.state / 'wt.log').unlink()
         result = self.spawn('w2', str(self.brief), '--batch')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2193,6 +2207,26 @@ class TmuxStubTests(unittest.TestCase):
                     self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
             self.assertTrue((state / 'INJECTED').exists(), 'the stub did not run command substitution')
             self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
+
+
+class DoneSignalGuidanceTests(unittest.TestCase):
+    def test_the_lead_guidance_makes_the_disk_watch_the_done_signal(self):
+        # 2026-10-20: the guidance made notify_when_idle the signal, and 4 of 5 supervised
+        # closes sent no notice. Every place that steers a lead names the watch, the
+        # subscription only as optional.
+        for name in ('core/docs/WORKFLOW.md', 'overlays/claude-code/README.md', str(SCRIPT.relative_to(ROOT))):
+            with self.subTest(name=name):
+                text = ' '.join((ROOT / name).read_text(encoding='utf-8').replace('# ', ' ').split())
+                self.assertIn('watch_workers.sh --result NAME=PATH NAME', text)
+                self.assertIn('never relies on it alone', text)
+                for stale in ('subscribes once', 'subscribe once', 'subscribes for its idle notice'):
+                    self.assertNotIn(stale, text.lower())
+        workflow = ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split())
+        self.assertIn('On 2026-10-20, 4 of 5 subscriptions', workflow)
+        running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
+        self.assertIn('run `review.sh` itself as the background command', running)
+        self.assertIn("until grep -q -e '^review dispatch: ' -e '^FAIL \[review\]: '", running)
+        self.assertNotIn('kill -0', running)
 
 
 if __name__ == '__main__':
