@@ -421,6 +421,30 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((project / 'scripts/agent_cost.py').read_bytes(),
                              (ROOT / 'core/scripts/agent_cost.py').read_bytes())
 
+    def test_a_project_reviewer_agent_beside_diff_reviewer_is_listed_and_left_alone(self):
+        # The sync left a project's own reviewer agent beside the kit's diff-reviewer.md
+        # without a word, and the lead could pick either (#161). A reviewer is named by its
+        # front matter `name:`; a worker that mentions reviews in its description is not one.
+        agents = {'diff-reviewer.md': '---\nname: diff-reviewer\n---\nkit\n',
+                  'code-reviewer.md': '---\r\nname: Code-Reviewer\r\n---\r\nours\r\n',
+                  'worker.md': '---\nname: worker\ndescription: a fresh session reviews the fix\n---\nname: review\n',
+                  'notes.md': 'name: reviewer\n'}
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / 'project/.claude/agents'
+            folder.mkdir(parents=True)
+            for name, text in agents.items():
+                (folder / name).write_bytes(text.encode())
+            result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            listed = [line for line in result.stdout.splitlines() if '.claude/agents' in line]
+            self.assertEqual(listed, ["  conflict: .claude/agents/code-reviewer.md (a second reviewer agent beside "
+                                      "diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)"])
+            self.assertEqual({p.name: p.read_bytes().decode() for p in folder.iterdir()}, agents)
+            # The owner kept their own: nothing is left to list.
+            (folder / 'diff-reviewer.md').unlink()
+            result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
+            self.assertNotIn('.claude/agents', result.stdout)
+
     def test_the_first_run_refreshes_kit_owned_files_before_the_actions_are_verified(self):
         # The v0.10 checklist verifies doctor.sh in item 4 and stamps in item 5. The run that
         # prints the checklist must already have installed the new kit-owned files, or item 4
@@ -965,7 +989,7 @@ class SyncKitTests(unittest.TestCase):
             text = (ROOT / name).read_text()
             start = text.index('\n%s() {\n' % fn)
             return text[start:text.index('\n}\n', start) + 3]
-        for fn in ('blocked', 'perms', 'stage', 'put'):
+        for fn in ('blocked', 'perms', 'stage', 'put', 'reviewers'):
             with self.subTest(fn=fn):
                 self.assertEqual(body('sync-kit.sh', fn), body('bootstrap.sh', fn))
 

@@ -166,6 +166,25 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo).split()[0], b'100755')
             self.assertEqual(subprocess.check_output(['git', 'show', ':app space/scripts/check.sh'], cwd=repo), before)
 
+    def test_a_project_reviewer_agent_is_listed_beside_the_installed_diff_reviewer(self):
+        # Installing the overlay added diff-reviewer.md next to the project's own reviewer
+        # agent without a word (#161); the project's file is listed and left alone.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            (kit / 'overlays/claude-code/files/.claude/agents').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_text('## v0.11\n')
+            (kit / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md').write_text('---\nname: diff-reviewer\n---\n')
+            own = project / '.claude/agents/gate-reviewer.md'
+            own.parent.mkdir(parents=True)
+            own.write_text('---\nname: gate-reviewer\n---\nours\n')
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
+                                    capture_output=True, text=True, timeout=bootstrap_timeout(30))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  conflict: .claude/agents/gate-reviewer.md (a second reviewer agent', result.stdout)
+            self.assertEqual(own.read_text(), '---\nname: gate-reviewer\n---\nours\n')
+            self.assertTrue((project / '.claude/agents/diff-reviewer.md').is_file())
+
     def test_rerun_repairs_customized_gate_modes_before_conflict(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:

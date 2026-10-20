@@ -107,6 +107,24 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# The project's own reviewer agents beside the kit's diff-reviewer.md: two definitions for one
+# job leave the lead to pick either (#161). Listed for the owner, never moved or overwritten.
+# A reviewer is a .claude/agents/*.md whose front matter `name:` holds "review" (reviewer,
+# code-review, pr-reviewer); the description is not read, since workers and planners name
+# reviews in passing.
+reviewers() {
+  [ -f "$target/.claude/agents/diff-reviewer.md" ] || return 0
+  for f in "$target"/.claude/agents/*.md; do
+    [ -f "$f" ] && [ "${f##*/}" != diff-reviewer.md ] || continue
+    awk 'NR == 1 && !/^---[[:space:]]*$/ { exit }
+         NR > 1 && /^---/ { exit }
+         NR > 1 && tolower($0) ~ /^name:.*review/ { found = 1; exit }
+         END { exit !found }' "$f" &&
+      printf '%s\n' "  conflict: .claude/agents/${f##*/} (a second reviewer agent beside diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)"
+  done
+  return 0
+}
+
 # blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
 # the files it generates, the folders it makes): prints why REL may not be written, nothing
 # when it may. Every existing component below the target must be a real folder, and REL
@@ -440,6 +458,9 @@ EXECUTABLES
 $new
 NEW
 fi
+
+listed=$(reviewers)
+[ -z "$listed" ] || printf '\nbootstrap: reviewer agents (listed, not a stop):\n%s\n' "$listed"
 
 if [ -s "$skiplist" ]; then
   echo

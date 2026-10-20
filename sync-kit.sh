@@ -67,6 +67,24 @@ target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ -z "$base_ref" ] || [ "$merge" -eq 1 ] || die "--base is the base of --merge; pass both"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
+# The project's own reviewer agents beside the kit's diff-reviewer.md: two definitions for one
+# job leave the lead to pick either (#161). Listed for the owner, never moved or overwritten.
+# A reviewer is a .claude/agents/*.md whose front matter `name:` holds "review" (reviewer,
+# code-review, pr-reviewer); the description is not read, since workers and planners name
+# reviews in passing.
+reviewers() {
+  [ -f "$target/.claude/agents/diff-reviewer.md" ] || return 0
+  for f in "$target"/.claude/agents/*.md; do
+    [ -f "$f" ] && [ "${f##*/}" != diff-reviewer.md ] || continue
+    awk 'NR == 1 && !/^---[[:space:]]*$/ { exit }
+         NR > 1 && /^---/ { exit }
+         NR > 1 && tolower($0) ~ /^name:.*review/ { found = 1; exit }
+         END { exit !found }' "$f" &&
+      printf '%s\n' "  conflict: .claude/agents/${f##*/} (a second reviewer agent beside diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)"
+  done
+  return 0
+}
+
 # blocked REL [dir] — the one check for every path the sync reads or writes (the kit-owned
 # files and the version stamp): prints why REL may not be used, nothing
 # when it may. Every existing component below the target must be a real folder, and REL itself
@@ -316,6 +334,8 @@ while IFS= read -r src; do
   printf '%s\n' "$src" >> "$copies" || die "cannot record $rel for copying; version left at v$have"
 done < "$work_list"
 [ "$found" -eq 1 ] || echo "  (none)"
+listed=$(reviewers)
+[ -z "$listed" ] || printf '\nReviewer agents (listed, not a stop):\n%s\n' "$listed"
 if [ "$conflict" -eq 1 ] && [ "$dry" -eq 0 ]; then
   cat <<EOF
 
