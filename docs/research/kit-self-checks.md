@@ -61,6 +61,19 @@ Norm: ~10 dk commit aşaması, geri kalanı ayrı yavaş katman [18][29][30][31]
 
 Bkz. bulgu 10 ve 11. Uygulayıcı politikası (test emekliliği, bug başına test) ve test impact analysis bulunamadı.
 
+### S5. Süre sınırları asılı testi mi yakalar, yavaş makineyi mi? (v0.12.1, 2026-10-21)
+
+Tetik: 865c3a3'te hızlı katmanın 55 biriminden 42'si düştü; başka bir projenin Blender boru hattı 20 CPU'lu makineyi yüklüyordu, asılı test yoktu. Birim tavanı 480 s ve katman bütçesi 600 s (ikisi de SCALE 3 ile) bu makinenin hızına göre ayarlanmıştı; bütçe dolunca çalışan birimler durduruluyor, kuyruktakiler başlamıyordu. Aynı gün aynı yük, ölçeklenmemiş 30/60 s test-içi sınırlarla 5 yavaş birimi düşürdü.
+
+Bulgular (hepsi 2026-10-21'de okundu):
+
+- **Süre sınırı asılı-test korumasıdır, hız ölçüsü değil.** pytest-timeout: "designed to catch excessively long test durations like deadlocked or hanging tests", "not designed for precise timings or performance regressions"; sınırlar "a last resort, not an expected failure mode"; sınır sıkıysa öneri "firstly make the timeouts larger" [47]. Bazel: "A test is not penalized for an overgenerous timeout, although a warning may be issued"; boyutlar 60/300/900/3600 s; yavaş koşullar için `--test_timeout` [33]. Go: `go test -timeout` varsayılanı 10 dk, test binary'si başına; aşılırsa panic [48]. CTest: `--timeout` yalnızca varsayılan bir sınır koyar [49].
+- **Yük, geçici başarısızlığın (flaky) en büyük kaynaklarından.** Silva ve diğ. 2023 (52 proje, 27 kaynak yapılandırması): flaky testlerin %46,5'i kaynağa bağlı (RAFT), yani kaynak ayarıyla önlenebilir [50]. Google: büyük (çok RAM'li, büyük binary'li) testler daha sık flaky; yazarın notu: bazı testler test ve altyapı kodundaki timeout'lara takılıyor [51]. Bir multivocal derleme: async wait, flaky düzeltmelerinin yaklaşık yarısı [52].
+- **Paralellik yükü hesaba katabilir.** GNU make `-l`: en az bir iş çalışırken yük ortalaması sınırın altına inene kadar yeni iş başlatmaz, ilk iş her zaman başlar [53]. CTest `--test-load`: "try not to start tests when they may cause the CPU load to pass above a given threshold"; `-j` varsayılanı işlemci sayısı [49]. Go `-p` varsayılanı GOMAXPROCS, yani CPU sayısı [48]. Python: `os.getloadavg()` yalnızca Unix'te; Windows'ta standart kütüphanede yük yok [54] (GetSystemTimes'ın boşta/çekirdek/kullanıcı süreleri ctypes ile okunur; çıkarım, kaynak Win32 API).
+- GitHub barındırılan runner'da bir iş en fazla 6 saat (360 dk) çalışır, sonra sonlandırılıp düşer [55].
+
+Kit için sonuç (v0.12.1'de uygulandı): (1) birim tavanı yalnızca asılı-test korumasıdır, ölçülenin çok üstünde: hızlı 1800 s (yük altındaki en yavaş hızlı birim 461 s'nin ~4 katı), yavaş 5400 s (tam yükteki en yavaş 2703 s'nin 2 katı); (2) katman bütçesi artık bir **hedef**tir: aşılırsa saniyesiyle WARNING basılır, hiçbir şeyi düşürmez, birim durdurmaz (asılı test tavana takılır; Bazel'in "uyarı verilebilir"ine denk); (3) aynı anda koşan birim sayısı, başlangıçta başka işin meşgul ettiği CPU'ları düşer (POSIX: 1 dk yük ortalaması; Windows: GetSystemTimes ile 1 s örnek; make `-l` gibi, ama yalnızca başlangıçta); test-içi sınırların çarpanı yüksüz çalışmanınki kalır (yük, eksilen birimlerin yerini alır); (4) bugün yükte düşen test-içi sınırlar SCALE ile çarpılır. Çıkarım: yük ortalamasını "meşgul CPU" saymak make/CTest'in eşik pratiğinin sadeleştirilmiş hâlidir; birim başına dinamik kapı (make `-l`) gerekirse sonraki adımdır.
+
 ---
 
 ## 3) Kit için sonuç
@@ -69,7 +82,7 @@ Aşağıdaki sonuçlar sahibin kuralına ("kaynağı ve alandaki benzer pratiği
 
 1. **Proje gate'inin tüm-gate `--self-test`'i kaldırılır.** Gerekçe: her case için tam build'li tüm-gate self-test'in alanda yerleşik bir karşılığı bulunamadı (bulgu 2); sahibin kuralı kaynaksız pratiği siler. Yerine **kontrol başına fixture negatif testleri** gelir, build koşmadan: her kontrol küçük bir fixture'a karşı kötü girdide kırmızı, iyi girdide yeşil verir ve normal test suite'inde koşar (bulgu 1; saniyeler). Gate ilk bağlandığında ara sıra elle tatbikat yapılabilir (bulgu 2'nin tur 1 notu, ek kaynak yok; çıkarım). Bu, issue #80'deki ~3 saatlik süreyi de ortadan kaldırır.
 2. **`check_kit` kalır, ama hızlı katman ve yavaş katman olarak bölünür.** Hızlı katman (hedef Windows'ta <=10 dk; bulgu 6, 7): saf birim/fixture testleri, yapısal kontroller. Yavaş katman: bootstrap/acceptance (bake-and-run: bulgu 4) ve POSIX sinyal suite'leri; CI'da hızlı katmanla **paralel** ve release öncesi koşar (bulgu 7, 12: peer'ler paralel matrix kullanıyor; superpowers hızlı/yavaş ayrımı: bulgu 5). Tek seri 50 dk suite normla çelişir (bulgu 6). Acceptance'ı küçük biçimde (varyant başına bir bake-and-run adımı) tutmak da kanıtlıdır (bulgu 4). Çıkarım: 10 dk hedefi Fowler/DORA'daki commit-build normundan gelir; Windows'a özgü bir kaynak yok.
-3. **Zorlanan bir süre bütçesi eklenir.** Katman başına CI job timeout'u ve test başına tavan: Bazel boyut timeout'u en yakın örnek (bulgu 8); araçlar `pytest-timeout` (yalnızca asılı testler için, son çare) ve `pytest-fail-slow` (yavaş-ama-geçen testleri kırar) (bulgu 9). Uyarı: sayısal değerler (ör. 60/300/900 sn) Bazel'in varsayılanlarıdır, kit için doğrulanmış değil; kit'in kendi ölçümleriyle ve peer süreleriyle (bulgu 12) seçilmelidir. Proje düzeyinde toplam bütçeyi politika olarak uygulayan vaka çalışması yok (bulgu 9); bu kısım çıkarımdır.
+3. **Zorlanan bir süre bütçesi eklenir.** Katman başına CI job timeout'u ve test başına tavan: Bazel boyut timeout'u en yakın örnek (bulgu 8); araçlar `pytest-timeout` (yalnızca asılı testler için, son çare) ve `pytest-fail-slow` (yavaş-ama-geçen testleri kırar) (bulgu 9). Uyarı: sayısal değerler (ör. 60/300/900 sn) Bazel'in varsayılanlarıdır, kit için doğrulanmış değil; kit'in kendi ölçümleriyle ve peer süreleriyle (bulgu 12) seçilmelidir. Proje düzeyinde toplam bütçeyi politika olarak uygulayan vaka çalışması yok (bulgu 9); bu kısım çıkarımdır. v0.12.1'den beri (S5): birim tavanı yalnızca asılı-test korumasıdır, katman bütçesi aşılınca uyarı basan bir hedeftir.
 4. **Gereksiz/yinelenen testler birleştirilir.** Dayanak: suite büyümesi maliyet sorunudur ve çözüm sınıfı minimizasyon/seçimdir (bulgu 10); yavaş ya da marjinal testler refactor edilir (bulgu 10, SWE at Google); piramit çıkarımı çoğu testin yavaş olduğunu düşündürüyor (bulgu 11). Bir acceptance testi hata bulursa, aynı hatayı yakalayan **hızlı** test eklenir (bulgu 10, DORA/Fowler). Test emekliliği/silme politikası için alanda kanıt yok (bulgu 10); birleştirme kararı kit'in kendi ölçümüne (hangi testler yavaş, hangileri aynı şeyi kapsıyor, `--durations`: bulgu 9) dayanmalı.
 
 ---
@@ -127,6 +140,18 @@ Tur 2 (birincil sayfalar, 2026-10-18):
 [44] https://raw.githubusercontent.com/anthropics/claude-code/main/.github/workflows/mod-tests.yml — R
 [45] https://api.github.com/repos/anthropics/claude-plugins-official/contents — R
 [46] https://github.com/vercel/next.js/blob/canary/contributing/core/testing.md — R
+
+S5 (2026-10-21, sayfalar okundu):
+
+[47] https://pypi.org/project/pytest-timeout/ — pytest-timeout README — R
+[48] https://pkg.go.dev/cmd/go — `go test -timeout`, `-p` — R
+[49] https://cmake.org/cmake/help/latest/manual/ctest.1.html — CTest `--test-load`, `-j`, `--timeout` — R
+[50] https://arxiv.org/abs/2310.12132 — Silva ve diğ., The Effects of Computational Resources on Flaky Tests (2023) — R (özet)
+[51] https://testing.googleblog.com/2017/04/where-do-our-flaky-tests-come-from.html — Google Testing Blog, Listfield 2017 — R (yalnızca başlık ve yazarın yorumları okunabildi)
+[52] https://arxiv.org/pdf/2212.00908 — Test Flakiness' Causes, Detection, Impact and Responses: A Multivocal Review — R (arama özeti)
+[53] https://www.gnu.org/software/make/manual/html_node/Parallel.html — GNU make, Parallel Execution, `-l` — R (arama özeti)
+[54] https://docs.python.org/3/library/os.html — `os.getloadavg`, `os.cpu_count` — R
+[55] https://docs.github.com/en/actions/reference/limits — GitHub Actions limits, job execution time — R
 
 ## 5) Dürüst boşluklar
 

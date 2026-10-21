@@ -581,7 +581,9 @@ if args[0] != 'resume':
         started = time.monotonic()
         result = self.spawn('w30', str(self.brief), '--model', 'm', '--effort', 'high', KIT_WORKER_GRACE='0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertLess(time.monotonic() - started, 60, 'the worker ran on after its completed result')
+        # Times the scale (a fixed 60 s took 89 s on a loaded host), below the stand-in's 120 s sleep.
+        self.assertLess(time.monotonic() - started, min(60 * SCALE, 110),
+                        'the worker ran on after its completed result')
         self.assertIn('DONE: uncommitted result ready for the lead', result.stdout)
         self.assertTrue((self.repo / '.myagentkit/workers/w30.exit').read_text().startswith('DONE published'))
         tab = json.loads((self.state / 'wt.json').read_text())

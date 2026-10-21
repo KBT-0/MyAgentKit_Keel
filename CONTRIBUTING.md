@@ -105,10 +105,13 @@ tiers (`docs/research/kit-self-checks.md`, findings 6 to 8). The default run is 
 the structural checks and the unit and fixture suites, within ten minutes on the maintainer's
 20-CPU Windows host; run it on every change and before a push. `./scripts/check.sh --slow` runs
 the slow tier alone: bootstrap and acceptance, the review bridge, doctor, worker-spawn and
-close_worker suites and the locale run of test_git_hooks; `--all` runs both. CI runs the two tiers as parallel jobs. Each tier has a time budget and each
-unit a cap (`CAPS` in `scripts/check_kit.py`): a run over either is red with the unit's name and
-seconds, so a slow test moves to the slow tier or gets faster, and never grows the commit stage
-unseen. A slow host raises both with `MYAGENTKIT_TEST_TIMEOUT_SCALE` (CI sets 3). A change
+close_worker suites and the locale run of test_git_hooks; `--all` runs both. CI runs the two tiers as parallel jobs. Each unit has a cap and each tier a
+target (`CAPS` in `scripts/check_kit.py`, `docs/research/kit-self-checks.md` S5). The cap is a
+hang guard, far above any measured run: a unit still running at it is stopped and red with its
+name and seconds. A tier over its target prints a WARNING with its seconds and fails nothing; on
+an idle host it means a slow test moves to the slow tier or gets faster. The units at once leave
+out the CPUs other work keeps busy at the start. A slow host raises both with
+`MYAGENTKIT_TEST_TIMEOUT_SCALE` (CI sets 3). A change
 that touches the area of a slow-tier unit (the `SLOW` set in `scripts/check_kit.py`:
 `acceptance`, `test_bootstrap`, `test_claude_bridge`, `test_spawn_worker`, `test_spawn_codex`,
 `test_worker_visibility`, `test_doctor`, `test_close_worker`, `locale/test_git_hooks`, `test_install`) also runs `./scripts/check.sh --slow` before its push
