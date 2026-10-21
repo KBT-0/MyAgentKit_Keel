@@ -122,3 +122,5 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   which still carries the kit check's own previous run, so `check.sh` followed at once by `check.sh --slow` runs
   fewer units than it could and the WARNING blames "other work"; sample the load over a second as on Windows
   (`/proc/stat` on Linux, `host_statistics` on macOS) or subtract the kit's own units.
+- After v0.12.1, once usage tests and fixes are in (owner's wish, 2026-10-22): publish the side-check as a standalone
+  skill/plugin outside the kit repo.

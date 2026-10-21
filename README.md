@@ -22,6 +22,23 @@ A codebase written by agents decays in four ways, and a better prompt fixes none
 | The author reviews its own change. | Review is a gate run by a fresh session, by default a different model, in a throwaway copy where it can execute. Its output is evidence to verify, never a verdict to relay. |
 | Delegated work is invisible until it is wrong. | A spawned worker is a visible terminal tab, watched by a script that reports when it waits on a person, asks a question, or finishes; its worktree is removed after the merge only when nothing in it can be lost. |
 
+## A second pair of eyes
+
+While the lead works, a side check reads a small window of what it just did (the last ten tool
+calls, the prompt's first lines, the topics of earlier notes) and stays silent unless it can
+quote evidence that the agent missed something. Then it drops one short note, and the agent
+must check the claim with its own read-only means and write a visible verdict (correct, wrong,
+or partly) before it acts on it.
+
+- Anthropic's built-in "You should know" tells the *user*; this note goes to the *agent*, beside its next tool result.
+- Other side-agent watchdogs fire without a verdict, a ledger or a brake. This one keeps a precision ledger of its own
+  notes, runs half as often below 50% precision, and stops delivering below 25%, saying so in the chat.
+- A check costs a bounded window, not the conversation: 1,335 input tokens at a 34k main context and 1,763 at 79k.
+- `/myagentkit:suggestions on|off|status`: `status` shows the notes, the verdicts, the precision and the tokens spent.
+
+New in v0.12.1 and measured on one host; the ledger is how it earns trust, and how you will see
+if it has not. Details: [docs/COMMUNICATION.md](docs/COMMUNICATION.md).
+
 ## Install
 
 From your project's root, one line (it needs Git; on Windows, Git for Windows):
