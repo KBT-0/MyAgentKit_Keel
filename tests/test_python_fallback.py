@@ -188,6 +188,15 @@ class PythonFallbackTests(unittest.TestCase):
                 self.assertEqual(probes, 0 if state == 'cached' else 1)
                 self.assertEqual(cache.read_text(encoding='utf-8'), 'python\n')
                 self.assertFalse(marker.exists())
+        # The cached interpreter ran the hook and it exited 120 (a flush error): its input is read, so
+        # the hook never runs a second time on an empty stdin; the guard fails closed (v0.12 review).
+        runs = tmp / 'flush-runs'
+        (hooks / 'guard_flush.py').write_text('import sys; sys.stdin.read(); open(%r, "a").write("x"); sys.exit(120)\n'
+                                              % runs.as_posix(), encoding='utf-8')
+        result, _ = hook('guard_flush.py')
+        self.assertEqual((result.returncode, runs.read_text(encoding='utf-8')), (2, 'x'), result.stderr)
+        self.assertIn('exited 120', result.stderr)
+        self.assertEqual(cache.read_text(encoding='utf-8'), 'python\n')
         # No interpreter runs at all and the cached `py -3` exits 1: the guard still fails closed.
         alone = tmp / 'alone'
         alone.mkdir()

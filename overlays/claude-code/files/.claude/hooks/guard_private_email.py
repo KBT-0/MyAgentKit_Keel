@@ -67,17 +67,18 @@ if shell and SOURCES.search(text):
     block("this web command reads or prints the owner's e-mail address (MYAGENTKIT_PRIVATE_EMAILS, "
           "git's user.email, a commit's author, the environment); the shell would put it into the request. " + ADVICE)
 
-found = ""
+found, where = "", None
 try:
     for where in dict.fromkeys([os.environ.get("CLAUDE_PROJECT_DIR") or None, None]):
         read = subprocess.run(["git", "config", "--get-all", "user.email"], capture_output=True, cwd=where,
                               encoding="utf-8", errors="replace", timeout=10)
         if read.returncode not in (0, 1):  # 1: no address configured
-            raise RuntimeError(read.stderr.strip() or "exit %d" % read.returncode)
+            raise RuntimeError((read.stderr.strip() or "exit %d" % read.returncode).splitlines()[0])
         found += read.stdout + "\n"
 except Exception as exc:
     block(f"guard_private_email.py could not read the owner's address from git ({exc}), so it "
-          "cannot tell whether this request carries it. Report this to the owner.")
+          f"cannot tell whether this request carries it. Fix that error in {where or os.getcwd()} "
+          "(`git config user.email` there shows it), or report this to the owner.")
 emails = {e.casefold() for e in re.split(r"[\s,;]+", found + " " + os.environ.get("MYAGENTKIT_PRIVATE_EMAILS", ""))}
 for _ in range(10):  # %2540 -> %40 -> @
     decoded = unquote(text)

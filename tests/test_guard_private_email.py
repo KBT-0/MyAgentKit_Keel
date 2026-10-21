@@ -130,6 +130,7 @@ class GuardPrivateEmailTests(unittest.TestCase):
                 result = self.run_hook('Bash', {'command': 'curl https://x.example'}, dict(ENV, CLAUDE_PROJECT_DIR=str(where)))
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(b'could not read', result.stderr)
+                self.assertIn(b'Fix that error in ' + where.as_posix().encode(), result.stderr.replace(b'\\', b'/'))
 
     def test_the_project_identity_counts_outside_the_project(self):
         # #211: a repo-local user.email, read from the project while the shell stands elsewhere.

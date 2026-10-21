@@ -671,6 +671,9 @@ def verdict(g, depth=0):
             rest = rest[1:]
         return "shell", " ".join(rest), [None], None
     if sub and sub not in SPEC and sub not in READ_ONLY and sub not in ("stash", "add", "init", "clone"):
+        if g.cwd and not os.path.isdir(g.cwd):  # made by an earlier command of the line (a clone)
+            return False, (f"git {sub} runs in {g.cwd}, a folder that does not exist yet, so the hook "
+                           "cannot read whether it is an alias"), False
         try:
             code, alias = g.ask("config", "--get", "alias." + sub)
         except Exception:
@@ -792,6 +795,8 @@ def main():
             return unreadable.format("a PowerShell backtick (an escape or a line continuation)")
         # PowerShell keeps a backslash (paths), and `$env:NAME = v` sets NAME for later commands.
         command = re.sub(r"\$env:(\w+)\s*=\s*", r"export \1=", command.replace("\\", "/"), flags=re.I)
+        # A `( ... )` operand is a sub-expression, PowerShell's `$( ... )`: an unknown operand, its text judged.
+        command = re.sub(r"(?<!\$)\(", " $(", command)
     floor = next((why for pattern, why in FLOOR if pattern.search(command)), None)
     if floor:  # the base rule, first and never cleared by the parser below
         dirty = Git([], {}, [os.getcwd()]).dirty()

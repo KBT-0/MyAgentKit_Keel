@@ -10,8 +10,8 @@
 # The probe is a second Python start, about 0.5 s on native Windows, for every hook of every
 # tool call (#83). The interpreter that passed it is kept in the user's cache folder and tried
 # first. A hook exits 0, 1 or 2; any other code (126/127: not found; 9009 & 255: a Store alias
-# that stopped running) means Python did not run the hook, so the cache is dropped and the
-# probe decides again.
+# that stopped running) from an interpreter that no longer passes the probe means Python did
+# not run the hook, so the cache is dropped and the probe decides again.
 
 # A guard fails closed: any exit but 2 lets the tool call through
 # (https://code.claude.com/docs/en/hooks). Any other hook only reports: exit 2 from
@@ -39,9 +39,13 @@ if [ -n "$cache" ] && read -r p 2>/dev/null <"$cache"; then
       rc=$?
       case "$rc" in 0 | 2) exit "$rc" ;; esac
       # Exit 1 is a hook's error, or an interpreter that failed before the hook (`py` with no
-      # Python, a pyenv shim for a removed version): only a failed probe drops the cache.
+      # Python, a pyenv shim for a removed version): only a failed probe drops the cache. An
+      # interpreter that still runs ran the hook, which read its input: it never runs twice.
       # shellcheck disable=SC2086
-      [ "$rc" = 1 ] && $p -I -c '' </dev/null >/dev/null 2>&1 && exit 1
+      if $p -I -c '' </dev/null >/dev/null 2>&1; then
+        [ "$rc" = 1 ] && exit 1
+        fail "$1 exited $rc" "$1"
+      fi
       ;;
   esac
   rm -f "$cache"

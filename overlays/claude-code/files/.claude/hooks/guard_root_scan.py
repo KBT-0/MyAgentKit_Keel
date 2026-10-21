@@ -250,8 +250,9 @@ def commands(text, shell):
 
 
 def unwrap(argv):
-    """ARGV without the variable assignments and wrappers (`sudo -u x`, `nice -n 19`,
-    `timeout 60`) in front of the command they run."""
+    """(ARGV without the variable assignments and wrappers (`sudo -u x`, `nice -n 19`,
+    `timeout 60`) in front of the command they run, the folder `env -C` or `sudo -D` moves it to)."""
+    chdir = None
     while argv:
         name = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
         if re.match(r"\w+=", argv[0]):
@@ -261,23 +262,28 @@ def unwrap(argv):
             argv = argv[1:]
             continue
         if name not in WRAPPERS:
-            return argv
+            return argv, chdir
         argv = argv[1:]
         while argv and argv[0].startswith("-"):
+            if (name, argv[0]) in {("env", "-C"), ("env", "--chdir"), ("sudo", "-D")}:
+                chdir = argv[1] if len(argv) > 1 else ""
+            elif name == "env" and argv[0].startswith("--chdir="):
+                chdir = argv[0].split("=", 1)[1]
             argv = argv[2:] if argv[0] in WRAPPERS[name] else argv[1:]
         if name == "timeout":  # timeout [OPTION]... DURATION COMMAND
             argv = argv[1:]
-    return argv
+    return argv, chdir
 
 
 def scan(text, shell, cwd=None):
     """The first rooted walk in TEXT, as a short description, or None. CWD is the root a `cd`,
-    `pushd` or `Set-Location` named (ponytail: no other folder change is followed)."""
+    `pushd`, `Set-Location`, `env -C` or `sudo -D` named (ponytail: no other folder change is followed)."""
     windows, stack = shell != "bash", []
     for argv in commands(text, shell):
-        argv = unwrap(argv)
+        argv, chdir = unwrap(argv)
         if not argv:
             continue
+        here = cwd if chdir is None else chdir if root(chdir, windows) else None
         name = re.sub(r"\.exe$", "", argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower())
         args = argv[1:]
         if name in ("cd", "chdir", "pushd", "set-location", "sl", "push-location"):
@@ -294,15 +300,15 @@ def scan(text, shell, cwd=None):
         if name in SHELLS:
             at = next((k for k, a in enumerate(args) if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", a)), None)
             inner = None if at is None else next((a for a in args[at + 1:] if not a.startswith("-")), None)
-            found = inner and scan(inner, "bash", cwd)
+            found = inner and scan(inner, "bash", here)
         elif name in ("powershell", "pwsh"):
             at = next((k for k, a in enumerate(args) if a.lower() in ("-c", "-command")), None)
-            found = at is not None and scan(" ".join(args[at + 1:]), "ps", cwd)
+            found = at is not None and scan(" ".join(args[at + 1:]), "ps", here)
         elif name == "cmd":
             at = next((k for k, a in enumerate(args) if a.lower() in ("/c", "/k", "//c", "//k")), None)
-            found = at is not None and scan(" ".join(args[at + 1:]), "cmd", cwd)
+            found = at is not None and scan(" ".join(args[at + 1:]), "cmd", here)
         else:
-            found = walk(name, args, shell, cwd)
+            found = walk(name, args, shell, here)
         if found:
             return found
     return None
