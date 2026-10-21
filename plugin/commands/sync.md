@@ -31,8 +31,9 @@ to its release tag and runs that kit's `sync-kit.sh` on this folder.
    curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh -s -- sync OPTIONS
    ```
 
-   It is not pre-approved on purpose: it downloads and runs code, and the permission prompt is
-   the second gate. On a refusal, give the owner that command to run.
+   It is not pre-approved on purpose (the `allowed-tools` line lists only what runs without a
+   prompt, not every tool this command uses): it downloads and runs code, and the permission
+   prompt is the second gate. On a refusal, give the owner that command to run.
 4. No `install: kit` line in the output means the download failed (curl printed why; the
    pipe still exits 0): say so and stop. Show the output and the **ACTION** items it wrote to
    `docs/kit/UPGRADE.md`: they are the product, so do not summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and

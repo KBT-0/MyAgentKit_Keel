@@ -22,8 +22,9 @@ file the kit changed reaches the project through these items.
 - **Workers run as Claude Code background sessions** (owner decision 77; research
   `docs/research/worker-orchestration-spike.md` and `-spike-posix.md`). `spawn_worker.sh` starts
   a worker with `claude --bg` on every platform whose CLI lists `--bg`; the Windows Terminal tab
-  and tmux stay as the fallback, and `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one. It records
-  `NAME.host`, `NAME.id` and the full `NAME.session`, and prints `claude agents`, `claude attach
+  and tmux stay as the fallback, and `MYAGENTKIT_WORKER_HOST=bg|tab|tmux` forces one (`--bg` in
+  the help counts with or without a comma after it). It records `NAME.host`, `NAME.id` and the full
+  `NAME.session`, and prints `claude agents`, `claude attach
   ID` and `claude logs ID` to see the worker. A worker's settings carry `worktree.bgIsolation:
   none` (it never pushes on its own), `MYAGENTKIT_ROLE=worker` in `env` and no commit
   attribution. `--resume` wakes the same session by its full id from the worker's folder.
@@ -95,6 +96,10 @@ file the kit changed reaches the project through these items.
   it does not stop the run, and neither file is moved or changed. The description is not
   read: workers and planners mention reviews in passing. Nothing to do: keep one definition
   when the line appears (docs/UPDATING.md).
+
+- **bootstrap.sh stops on an empty `docs/kit/.kit-version`** instead of stamping the latest
+  version over it, as sync-kit.sh does. Nothing to do: the stop says to write the version or
+  delete the file for a first install.
 
 - **A new review focus starts its own round count** (#102, #248; owner decision 67;
   `scripts/claude_bridge.py`, `prior_rounds`). A high-tier change's natural order, logic round 1,
@@ -238,6 +243,10 @@ file the kit changed reaches the project through these items.
     Accepted cost: code or data that mentions a folder change and a dirty-sensitive git command
     is refused on a clean tree too; prose that names a loss-certain command (`git stash drop`)
     still reads as that command.
+  - In PowerShell a `( ... )` operand is read as a sub-expression: `git branch -D ($b)`,
+    `git tag -d (...)`, `git update-ref -d (...)` and `git remote remove (...)` name a ref the
+    hook cannot read and are refused. A git subcommand run in a folder the line has not made yet
+    (a `git clone` then `cd`) is refused by that name, not as an unreadable alias.
   - `#` comments end at their line; a `!` alias, `submodule foreach` and `bash -s` are judged.
   - The spawn scripts' clean-up hints no longer suggest `branch -D` (kit-owned, synced).
   **ACTION:** re-copy `.claude/hooks/guard_destructive_git.py`; merge the guard paragraph of
@@ -250,7 +259,8 @@ file the kit changed reaches the project through these items.
   a built-in `--format`/`--pretty` that prints addresses, `%ae`/`%ce`/`%(authoremail)` and the
   like, `git var`, `git config -l`/`--list`/`--get-regexp`/`list`/`get --regexp`, `env`,
   `printenv` and PowerShell `Get-ChildItem env:`. Quoted `-C` paths and `ws://`/`wss://` URLs are
-  read. **ACTION:** re-copy `.claude/hooks/guard_private_email.py`.
+  read. A git error reading the owner's address names the folder to fix and git's first error
+  line. **ACTION:** re-copy `.claude/hooks/guard_private_email.py`.
 
 - **`guard_worker_route.py`** (#137): an Agent call without model/effort passes when the agent's
   definition pins both with real values (diff-reviewer, and worker after setup). The definition
@@ -262,7 +272,8 @@ file the kit changed reaches the project through these items.
   core busy for seven hours and skewed every timing. The new `guard_root_scan.py` (PreToolUse:
   Bash, PowerShell, Monitor) refuses a search or walk from a filesystem or drive root
   (`find /`, `grep -r /`, `rg`, `du`, `tree`, `ls -R`, `dir /s`, `Get-ChildItem -Recurse C:\`)
-  unless bounded to depth 3; it reads the command as the shell does (heredoc bodies are data)
+  unless bounded to depth 3 (`env -C DIR`, `env --chdir=DIR` and `sudo -D DIR` set the walk's
+  folder); it reads the command as the shell does (heredoc bodies are data)
   and fails open, so a stalled guard never refuses a call. `close_worker.sh` ends the process
   tree below a tmux session's panes with the session, never a pid that has since gone to another
   process (Windows: `taskkill /T` already does). `doctor.sh` lists, never ends, search or walk
@@ -291,7 +302,9 @@ file the kit changed reaches the project through these items.
   unless an ACTION item of the newest version names it; NOT RUN without a tag. CI runs the kit
   check only. (#146 in part, #111, #96, #134)
   Kit maintainers (not a project step): tag each release `vMAJOR.MINOR` at the release, when
-  its CHANGELOG heading is renamed from Unreleased; an earlier tag turns this check red.
+  its CHANGELOG heading is renamed from Unreleased. After the tag the check reads the next
+  cycle's ACTION items under the `## Unreleased` heading; only a newest versioned heading equal
+  to the tag turns it red.
 
 - **Kit check in two tiers** (`scripts/check_kit.py`, kit-only; #146, kit-self-checks findings
   6 to 8). The default run is the fast tier (structural checks, unit and fixture suites, within
@@ -305,9 +318,11 @@ file the kit changed reaches the project through these items.
   named with its seconds, a queued unit does not start, and the run is red with a summary
   before CI's `timeout-minutes`. Each unit leads its own process group on POSIX: a cap kill,
   SIGTERM/SIGINT and a closed terminal (SIGHUP, in `scripts/check.sh` and the runner) stop the
-  unit's test processes too. A local Windows run now runs `test_bootstrap` (slow tier) instead
-  of NOT RUN. The `test_gate_checks` count drops to 11 on a host that cannot make symlinks, whose
-  link test is a declared skip. A failed `git diff` in the ACTION check prints a KIT CHECK: FAIL
+  unit's test processes too. A cancel stops each running unit at once instead of letting it run
+  its next test, and on native Windows ends the unit's whole process tree (`taskkill /T`). A
+  local Windows run now runs `test_bootstrap` (slow tier) instead of NOT RUN. The
+  `test_gate_checks` count drops by one on a host that cannot make symlinks, whose link test is
+  a declared skip. A failed `git diff` in the ACTION check prints a KIT CHECK: FAIL
   line, not a traceback (#134 follow-up). Test fixes: test_bootstrap names its global git config
   with `GIT_CONFIG_GLOBAL` (#147 follow-up); test_spawn_codex and test_worker_paths_windows scale
   their bounds; test_overlay_permissions writes with an encoding; stale guard counts in
@@ -329,7 +344,9 @@ file the kit changed reaches the project through these items.
   ignore rules instead of copying a project's `.gitignore` (a project ignoring `.env` failed the
   kit's secret-file tests), the mode-change test sets the file mode, and a failing shard's output
   is written with `errors='replace'` so a cp1252 console cannot hide it. POSIX and Windows test
-  fixtures fixed from CI run 39065623063. (#95, #96, #147, #91, #92, #163 in part)
+  fixtures fixed from CI run 39065623063. The kit's own CI clones the whole history
+  (`fetch-depth: 0`), so the ACTION check runs there once a release tag is pushed. (#95, #96,
+  #147, #91, #92, #163 in part)
   Kit maintainers (not a project step): set `master` branch protection with the twelve CI jobs
   (Ubuntu, macOS and Windows × Python 3.11 and 3.14 × the fast and slow tier) as required status
   checks (GitHub settings; the workflow cannot do it).
@@ -347,7 +364,9 @@ file the kit changed reaches the project through these items.
   list is in the evidence and the chain record. The Claude adapter reviews a `--commit` that is
   not HEAD from an archive of that commit; a `--commit HEAD` still needs a clean checkout. The DIFF_LIMIT refusal names its size and the
   largest files. `sync-kit.sh` and `docs/kit/UPGRADE.md` print the review line once the kit
-  commit is recorded. **ACTION:** add the "Kit upgrade commits" section to your copy of
+  commit is recorded. `install.sh` fetches the release tags with the kit (`--tags --force`), so
+  `--kit-verified` finds the release tag in `~/.myagentkit/kit`; a cache from an earlier install
+  gets them on its next run. **ACTION:** add the "Kit upgrade commits" section to your copy of
   `docs/REVIEW_RUNNING.md` and its pointer line (end of "Invariant") to `docs/REVIEW_GATE.md`.
 
 - **The review companions move as one set** (#114, #118 follow-up; `docs/DEV_SETUP.md`, the
@@ -396,8 +415,10 @@ file the kit changed reaches the project through these items.
   `top_tier_review`, `same_tier_exception` and `checkout_unverified`, and a usage record's
   `automatic_retry` may be `null`. A Codex review loads no project doc as instructions
   (`project_doc_max_bytes=0`); `AGENTS.md` stays evidence the prompt names. An Accept that its
-  own findings contradict is read as the stricter verdict in both adapters. A finished reviewer
-  whose descendant holds the output pipe ends after 5 s instead of as a timeout. Quoted backend
+  own findings contradict is read as the stricter verdict in both adapters: Reject when an item
+  leads with Critical or High, also written `High, x.py:1`, `High in x.py:1` or `High
+  severity:`. A finished reviewer whose descendant holds the output pipe ends after 5 s instead of
+  as a timeout. Quoted backend
   values are unquoted. The scripts come with the companion set above; `docs/USAGE.md` and
   `docs/GOTCHAS.md` (project-owned docs, entry below) describe the records.
 
@@ -443,8 +464,12 @@ file the kit changed reaches the project through these items.
 - **Claude Code overlay hooks and settings** (#83, #116, #138, #139, #174, #209, #210, #214,
   #289). `py.sh` keeps the interpreter that passed its probe in the user's cache folder (about
   0.5 s saved per hook call on native Windows) and refuses a missing hook file: a guard fails
-  closed, the root-scan and secret-file guards open. The context band is also named after a
-  tool call, through `progress_reminder.py`; a worker session is not nudged and a sub-agent
+  closed, the root-scan and secret-file guards open; a cached interpreter whose hook exits with a
+  code other than 0, 1 or 2 is not run a second time on an emptied input (a guard fails closed).
+  `gate_on_stop.sh` no longer reads a file name starting `160000 ` as a submodule (the gate ran
+  on every new turn; the self-test entry's ACTION item 3 takes it). The context band is also
+  named after a tool call, through `progress_reminder.py`; a worker session is not nudged and a
+  sub-agent
   never spends the lead's nudge. `plain_report.py` bounces a final message that leaves an owner
   question in chat text and asks for one line, not a resend. Sub-agents are back on the
   five-minute prompt cache (long jobs go to `spawn_worker.sh` sessions). `after_compact.txt`

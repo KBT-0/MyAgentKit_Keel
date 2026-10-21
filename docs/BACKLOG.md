@@ -24,8 +24,8 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `show_workers.sh` says "runs in the background" for a session whose state is done (bge2e Low).
 - A finished bg session's row can vanish from `claude agents --all` without a kit `claude rm`
   (bge2e e2e2); close treats it as nothing to end, a later `--resume` of such a session is untried.
-- POSIX: the bg suites' minimums (test_spawn_worker 94, test_codex_worker 67/66,
-  test_worker_visibility 94, test_close_worker 49, test_sync_kit 58) are the Windows deltas, not
+- POSIX: the bg suites' minimums (test_spawn_worker 95, test_codex_worker 67/66,
+  test_worker_visibility 94, test_close_worker 49, test_sync_kit 59) are the Windows deltas, not
   measured: the first CI run must confirm. `MYAGENTKIT_ROLE=worker` seen inside a live bg worker's
   hook is asserted only through the merged settings (bgspawn NOT RUN).
 
@@ -52,3 +52,31 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   `Set-Content`) nor a read.
 - #295 / #294 / usagesum: POSIX-only runs owed to the first CI run (test_clean_worktrees, the
   watch_workers suite under dash and macOS sh, the Windows-path usage_summary test's red).
+
+## Filed from the v0.12 fix round (reports/fullrev-*.md; fixcl, fixhooks, fixkit, fixsync)
+
+- fullrev-review L: a past-mode `--commit` of an older commit on a dirty tree is refused for a
+  secret-looking or filtered file in the working tree the review never reads; the message blames
+  the file, not the dirty tree (`claude_bridge.py` past mode).
+- fullrev-review L: `review_dispatch.judge`, same-tier branch: a bad `MYAGENTKIT_AUTHOR_EFFORT`
+  passes silently under the exception (effort is forced high, so the floor holds; the typo is
+  not named).
+- fullrev-review L: `agent_process.py:251` the checkout watch stops after one slow look and the
+  record does not say so.
+- fullrev-hooks M1: `guard_destructive_git.py` does not route `git checkout -B` / `git switch -C`
+  through `moved_refs`; add it with an ancestor check (old tip reachable from the new start point)
+  so `git checkout -B <current branch>` is not refused; `switch -f -C` returns the dirty-tree
+  reason before the ref check.
+- fullrev-hooks M2 (rest): `git clone URL && cd r && git submodule update --init` is still
+  refused; skip the alias lookup for git's builtins (`git --list-cmds=builtins`).
+- fullrev-gate L: `owns_check.py:24` FENCE allows more than three leading spaces; a fence inside
+  a list item is indented by the item, so the fix needs list-context tracking.
+- fullrev-gate L: `unity_gate.sh:93` prints the editor's stderr on a passing run too (whether a
+  pass should hide it is a behaviour choice).
+- fixsync: `sync-kit.sh` own_repo on Git for Windows: a kit path holding `'` gives no kit commit
+  and no review line (MSYS does not convert such a path for git.exe); a silent degrade.
+- fullrev-kitcheck M: the CI tier budgets (fast 1800 s, slow 10800 s) are unmeasured on 2-4 vCPU
+  runners; set them from the first CI run.
+- fullrev-kitcheck L: `check_actions` matches a basename anywhere in the ACTION text (README.md
+  covers both overlay READMEs); match whole paths if a shared name ever lets a change through.
+- fullrev-docs M5: push master and the release tag in one atomic push (release order).

@@ -3935,6 +3935,12 @@ class BridgeTests(unittest.TestCase):
                 (['High core/x drops records.'], [], 'Reject', []),
                 (['High C:\\x drops records.'], [], 'Reject', []),
                 (['High line:12 drops records.'], [], 'Reject', []),
+                # fullrev-review M: a comma or one word before the path, or `High severity:`.
+                (['High, x.py:12 drops records.'], [], 'Reject', []),
+                (['High in x.py:12 drops records.'], [], 'Reject', []),
+                (['High severity: x.py:12 drops records.'], [], 'Reject', []),
+                ([], ['High availability of the api: confirm failover.'], 'Accept with Manual Checks',
+                 ['High availability of the api: confirm failover.']),
                 ([], ['High availability confirm failover on staging.'], 'Accept with Manual Checks',
                  ['High availability confirm failover on staging.'])):
             value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': checks}
@@ -7339,17 +7345,18 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def test_one_ladder_tier_in_any_version_is_one_tier(self):
         # Owner decision 65: gpt-6-astra and gpt-6.1-astra are one tier, so the top tier's effort
         # floor and the same-tier refusal hold across a version bump; Claude ids go by family name.
+        from unittest.mock import patch
         import review_dispatch
-        os.environ['MYAGENTKIT_AUTHOR_EFFORT'] = 'high'
-        self.assertEqual(review_dispatch.tier('gpt-6.1-astra'), review_dispatch.tier('openai/gpt-6-astra'))
-        self.assertEqual(review_dispatch.tier('gpt-5.5'), 'gpt-5.5')
-        self.assertEqual(review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'high'), ('top', None))
-        kind, why = review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'low')
-        self.assertEqual(kind, 'top')
-        self.assertIn('review effort low is below', why)
-        self.assertEqual(review_dispatch.judge('gpt-6-sol', 'gpt-6.1-sol', 'high')[0], 'same')
-        self.assertEqual(review_dispatch.judge('claude-opus-5', 'claude-opus-5-5', 'high')[0], 'same')
-        self.assertEqual(review_dispatch.judge('gpt-6-astra', 'gpt-6.1-sol', 'high'), (None, None))
+        with patch.dict(os.environ, MYAGENTKIT_AUTHOR_EFFORT='high'):
+            self.assertEqual(review_dispatch.tier('gpt-6.1-astra'), review_dispatch.tier('openai/gpt-6-astra'))
+            self.assertEqual(review_dispatch.tier('gpt-5.5'), 'gpt-5.5')
+            self.assertEqual(review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'high'), ('top', None))
+            kind, why = review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'low')
+            self.assertEqual(kind, 'top')
+            self.assertIn('review effort low is below', why)
+            self.assertEqual(review_dispatch.judge('gpt-6-sol', 'gpt-6.1-sol', 'high')[0], 'same')
+            self.assertEqual(review_dispatch.judge('claude-opus-5', 'claude-opus-5-5', 'high')[0], 'same')
+            self.assertEqual(review_dispatch.judge('gpt-6-astra', 'gpt-6.1-sol', 'high'), (None, None))
 
     def test_a_substitute_of_the_author_tier_is_blocked(self):
         # KARARLAR B01 (1) with lead decision 7: a used-up Codex quota switches to Claude, but never

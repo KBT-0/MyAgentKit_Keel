@@ -212,7 +212,7 @@ lists_bg() {
     [ "$i" -lt 100 ] || { kill "$p" 2>/dev/null || :; break; }
     i=$((i + 1)); sleep 0.1
   done
-  rc=0; grep -q -e '--bg,' "$help" || rc=1
+  rc=0; grep -qE -e '--bg([, ]|$)' "$help" || rc=1
   rm -f -- "$help"
   return "$rc"
 }
