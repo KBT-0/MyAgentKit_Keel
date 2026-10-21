@@ -191,7 +191,7 @@ class PythonFallbackTests(unittest.TestCase):
         # The cached interpreter ran the hook and it exited 120 (a flush error): its input is read, so
         # the hook never runs a second time on an empty stdin; the guard fails closed (v0.12 review).
         runs = tmp / 'flush-runs'
-        (hooks / 'guard_flush.py').write_text('import sys; sys.stdin.read(); open(%r, "a").write("x"); sys.exit(120)\n'
+        (hooks / 'guard_flush.py').write_text('import sys; sys.stdin.read(); open(%r, "a", encoding="utf-8").write("x"); sys.exit(120)\n'
                                               % runs.as_posix(), encoding='utf-8')
         result, _ = hook('guard_flush.py')
         self.assertEqual((result.returncode, runs.read_text(encoding='utf-8')), (2, 'x'), result.stderr)
