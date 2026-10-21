@@ -514,8 +514,9 @@ fi
 # WSL's init) that used more than 5% of a CPU over its life, and whose name is a typical tool
 # command, never another program: a search or walk tool or a shell, and on Windows also python,
 # node and npm. On POSIX those three are left out, as a service of the owner (systemd, launchd)
-# has a parent of that kind too. Each line is a NOTE with the command that ends it, for the owner
-# to run.
+# has a parent of that kind too. A name matches whole once its .exe and trailing version are cut
+# (python3.13 is python): pythonw or a helper such as node-gyp is not listed. Each line is a
+# NOTE with the command that ends it, for the owner to run.
 # One process listing: Win32_Process (about a second) or ps. DOCTOR_PROCESSES (lines "pid ppid
 # age-seconds cpu-seconds name") and DOCTOR_STRAY_AGE exist for the test only.
 stray_age=${DOCTOR_STRAY_AGE:-7200}
@@ -530,7 +531,7 @@ elif [ -n "$windows_sh" ]; then
       $dad = $born[[int]$p.ParentProcessId]
       $ppid = if ($dad -and $dad -le $p.CreationDate) { $p.ParentProcessId } else { 0 }
       [string]::Format([cultureinfo]::InvariantCulture, "{0} {1} {2:F1} {3:F1} {4}", $p.ProcessId, $ppid,
-        ($now - $p.CreationDate).TotalSeconds, (($p.KernelModeTime + $p.UserModeTime) / 1e7), $p.Name) }' 2>/dev/null | tr -d '\r') || procs=""
+        ($now - $p.CreationDate).TotalSeconds, (($p.KernelModeTime + $p.UserModeTime) / 1e7), $p.Name) }' 2>/dev/null | tr -d '\r')
 else
   # etime is [[dd-]hh:]mm:ss, time [dd-]hh:mm:ss (macOS m:ss.cc): both summed from the right.
   procs=$(ps -A -o pid= -o ppid= -o etime= -o time= -o comm= 2>/dev/null | awk '
@@ -539,7 +540,7 @@ else
       n = split(t, part, ":"); s = 0; for (i = 1; i <= n; i++) s = s * 60 + part[i]
       return d * 86400 + s }
     { name = $5; for (i = 6; i <= NF; i++) name = name " " $i
-      print $1, $2, secs($3), secs($4), name }') || procs=""
+      print $1, $2, secs($3), secs($4), name }')
 fi
 if [ -z "$procs" ]; then
   echo "NOTE: stray-process check skipped, the process list could not be read"

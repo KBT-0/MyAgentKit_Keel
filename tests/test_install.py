@@ -67,6 +67,10 @@ class InstallTests(unittest.TestCase):
         head = subprocess.run(['git', '-C', str(self.source), 'rev-parse', 'v-test^{commit}'], capture_output=True,
                               text=True, encoding='utf-8', check=True).stdout.strip()
         self.assertEqual((project / 'docs/kit/.kit-commit').read_text(encoding='utf-8').strip(), head)
+        # The cache holds the release tags: review.sh --kit-verified asks it which v* tag holds the commit.
+        tags = subprocess.run(['git', '-C', str(self.cache), 'tag', '--contains', head, '--list', 'v*'],
+                              capture_output=True, text=True, encoding='utf-8', check=True).stdout.split()
+        self.assertIn('v-test', tags)
         before = tree(project)
         marker = self.cache / '.git/not-cloned-again'
         marker.write_text('', encoding='utf-8')

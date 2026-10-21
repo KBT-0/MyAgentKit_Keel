@@ -751,6 +751,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('holds hooks git runs today: pre-push;', result.stderr)
             self.assertIn('.githooks/<same name> itself', result.stderr)
+            # The STOP already says the run ended; the exit trap adds no second line.
+            self.assertNotIn('stopped by the failure above', result.stderr)
             self.assertNotEqual(subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath'],
                                                capture_output=True).returncode, 0, 'hooks path set')
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
@@ -778,6 +780,7 @@ class BootstrapTests(unittest.TestCase):
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("core.hooksPath is '.husky'", result.stderr)
+            self.assertNotIn('stopped by the failure above', result.stderr)
             self.assertEqual(subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath'],
                                             capture_output=True, text=True).stdout.strip(), '.husky')
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
@@ -1081,6 +1084,20 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("cannot read the project's own .gitattributes", result.stderr)
             self.assertEqual(attributes.read_bytes(), b'*.png binary\n')
+
+    def test_an_empty_stamp_stops_the_rerun_instead_of_stamping_the_latest_version(self):
+        # An empty docs/kit/.kit-version read as no prior install, and the rerun stamped the
+        # kit's latest version over ACTION items nobody applied; sync-kit.sh refuses to guess.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            (project / 'docs/kit').mkdir(parents=True)
+            (project / 'docs/kit/.kit-version').write_text('\n')
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True,
+                                    text=True, timeout=bootstrap_timeout(60))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('.kit-version is empty', result.stderr)
+            self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '\n')
 
     def test_an_unreadable_kit_attributes_file_stops_bootstrap_unstamped(self):
         # r8: the kit's rules were read at the head of a pipeline whose last command decided

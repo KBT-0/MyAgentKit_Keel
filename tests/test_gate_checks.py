@@ -27,6 +27,8 @@ GIT = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', '
        '-c', 'core.hooksPath=/dev/null']
 # Assembled, never literal: the kit's own files carry no unfilled marker.
 MARKER = '{{' + 'GATE_TEST_MARKER}}'
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run side by side.
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
 
 def symlinks_work():
@@ -59,7 +61,7 @@ class GateCheckTests(unittest.TestCase):
 
     def gate(self, **extra):
         result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build, **extra),
-                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120 * SCALE)
         return result.returncode, result.stdout + result.stderr
 
     def assert_red(self, line, **extra):
@@ -235,7 +237,7 @@ class GateCheckTests(unittest.TestCase):
                 # System32 first on native Windows: a find(1) in the example met FIND.EXE there.
                 path = os.environ['PATH'] if os.name != 'nt' else r'C:\Windows\System32;' + os.environ['PATH']
                 result = subprocess.run(['sh', 'tests/boundary_checks_test.sh'], cwd=self.project, capture_output=True,
-                                        text=True, encoding='utf-8', errors='replace', timeout=60,
+                                        text=True, encoding='utf-8', errors='replace', timeout=60 * SCALE,
                                         env=dict(os.environ, PATH=path))
                 out = result.stdout + result.stderr
                 self.assertEqual(result.returncode, code, out)
@@ -273,7 +275,7 @@ class BuildCacheTests(unittest.TestCase):
 
         def gate(**extra):
             result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build, **extra),
-                                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+                                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120 * SCALE)
             out = result.stdout + result.stderr
             self.assertEqual(result.returncode, 0, out)
             return out, builds()
@@ -330,6 +332,32 @@ class BuildCacheTests(unittest.TestCase):
             self.assertEqual(count, want, out)
         self.assertIn('NOTE [build]: build_cache_inputs failed, so the build is not cached', out)
 
+    def test_a_cache_key_that_cannot_be_made_is_a_note_not_a_traceback(self):
+        # The key read the gate by the caller's $0, which a nested run from the parent folder
+        # spells relative to it, and a listed file the build deleted raised FileNotFoundError:
+        # each left a Python traceback on the gate's stderr (the run was only uncached).
+        script = self.project / 'scripts/check.sh'
+        write(script, script.read_text(encoding='utf-8').replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=true\n'))
+        nested = self.tmp / 'nested.out'
+        # The deleted file first: the nested run's outer gate records its key, which a later
+        # run on the same files would read as cached.
+        for name, build in (('deleted', 'rm existing.txt\n'),
+                            ('nested', '[ -n "$NESTED" ] || (cd .. && NESTED=1 sh project/scripts/check.sh) > "%s" 2>&1\n'
+                             % nested.as_posix())):
+            with self.subTest(name):
+                write(self.build, build)
+                result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build),
+                                        capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                        timeout=240 * SCALE)
+                out = result.stdout + result.stderr
+                if name == 'nested':
+                    out = nested.read_text(encoding='utf-8', errors='replace')
+                    self.assertIn('CHECK: PASS', out)
+                else:
+                    self.assertIn('NOTE [build]: existing.txt could not be read', out)
+                self.assertEqual(result.returncode, 0, out)
+                self.assertNotIn('Traceback', out)
+
     @unittest.skipUnless(SYMLINKS, 'this host may not make symlinks (Windows without Developer Mode or '
                                    'administrator rights)')
     def test_a_link_to_a_file_the_key_does_not_hash_turns_the_cache_off(self):
@@ -353,14 +381,14 @@ class BuildCacheTests(unittest.TestCase):
                 for _ in range(2):
                     result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build),
                                             capture_output=True, text=True, encoding='utf-8', errors='replace',
-                                            timeout=120)
+                                            timeout=120 * SCALE)
                     out = result.stdout + result.stderr
                     self.assertEqual(result.returncode, 0, out)
                 self.assertEqual(builds() - before, 1 if cached else 2, out)
                 self.assertEqual('is a symlink to a file outside the tree or in an ignored folder' in out, not cached, out)
                 write(target, 'bad\n')
                 result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build),
-                                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+                                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120 * SCALE)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
     # Declared, so the kit check prints its NOT RUN line and does not count it (issue #56).
     test_a_link_to_a_file_the_key_does_not_hash_turns_the_cache_off._kit_platform_skip = not SYMLINKS

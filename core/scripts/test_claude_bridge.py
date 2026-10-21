@@ -29,7 +29,6 @@ desktop.ini
 __pycache__/
 *.py[cod]
 .claude/worktrees/
-/.claude/mode.lock
 /QUESTION-*.md
 *.md.question.md
 /.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/

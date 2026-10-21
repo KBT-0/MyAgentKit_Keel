@@ -750,6 +750,11 @@ class SyncKitTests(unittest.TestCase):
             result = run('--merge')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('pass --base <commit>', result.stderr)
+            # A commit the kit clone lacks: the installer's cache fetched at an older release
+            # than the project's is named beside a shallow clone, not a shallow clone alone.
+            result = run('--merge', '--base', '0123456789abcdef0123456789abcdef01234567')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('older than the one this project came from', result.stderr)
             # A later base than the project's own: its kit-owned copies give it away, and a
             # merge from it would keep the old lines without a conflict.
             git('add', '-A')
@@ -939,6 +944,29 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
             self.assertIn(command, result.stdout)
             self.assertTrue((Path(tmp) / 'project/docs/kit/.kit-commit').exists())
+
+    def test_a_kit_path_holding_a_quote_is_quoted_alike_in_the_checklist_and_the_printed_line(self):
+        # awk -v read the review line's '\'' as an escape and dropped the backslash: the
+        # checklist's line was quoted wrong for such a kit path while the printed one was right.
+        if not_on_windows(self.id(), "Git for Windows' sh passes no /tmp path holding a ' on to git"):
+            return
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.join(tmp, "o'k")
+            os.mkdir(tmp)
+            self.sync(tmp, ACTION, '--dry-run')
+            kit = Path(tmp) / 'kit'
+            for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                         'commit', '-q', '--allow-empty', '-m', 'k']):
+                subprocess.run(['git', '-C', str(kit), *args], check=True, env=env, capture_output=True)
+            result, _ = self.sync(tmp, ACTION, env=env)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            listed = (Path(tmp) / 'project/docs/kit/UPGRADE.md').read_text(encoding='utf-8')
+            self.tick(Path(tmp) / 'project')
+            result, _ = self.sync(tmp, ACTION, '--actions-applied', env=env)
+            printed = next(line.strip() for line in result.stdout.splitlines() if '--kit-verified' in line)
+            self.assertIn("o'\\''k", printed)
+            self.assertIn(printed, listed)
 
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the

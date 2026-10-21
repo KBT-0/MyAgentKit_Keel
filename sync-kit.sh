@@ -227,7 +227,7 @@ if [ "$merge" -eq 1 ]; then
     die "--merge needs the kit commit this project's v$have came from: no docs/kit/.kit-commit, so pass --base <commit> (the changelog's upgrade section names the release commit)"
   own_repo || die "--merge reads the kit's history, and $kit is no git clone of its own"
   base=$(git -C "$kit" rev-parse -q --verify "$base_ref^{commit}") ||
-    die "the kit has no commit $base_ref (a shallow clone?); clone the kit whole"
+    die "the kit at $kit has no commit $base_ref: a shallow clone, or a kit older than the one this project came from (the installer's cache fetches one release); clone the kit whole at the release you sync to"
   mdir=$(mktemp -d) || die "cannot create a temp folder"
   # A base named by hand is checked against the project's kit-owned files as its last commit
   # holds them: the copies of the commit it came from. A later base reads the kit's fixes in
@@ -490,7 +490,8 @@ list=docs/kit/UPGRADE.md
 review=""
 own_repo && review="./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'"
 render() {
-  awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" -v review="$review" '
+  # The review line through the environment: -v reads its '\'' as an escape.
+  review="$review" awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" '
     FILENAME == ck { sub(/\r$/, ""); if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }
     !head { head = 1
       print "# Upgrade checklist, v" from " to v" to; print ""
@@ -498,6 +499,7 @@ render() {
       print "and tick its box (- [x]) when it is done; each one'\''s whole entry is in " src "."
       print "Then rerun sync-kit.sh with --actions-applied: it records v" to " only when every box is"
       print "ticked, and deletes this file."
+      review = ENVIRON["review"]
       if (review != "") print "Commit the upgrade, then review that commit: " review " (see docs/REVIEW_RUNNING.md)."
       print "" }
     { i = index($0, "\t"); t = substr($0, 1, i - 1) ": " substr($0, i + 1); print "- [" (t in done ? "x" : " ") "] " t }

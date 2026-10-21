@@ -364,7 +364,8 @@ printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 # install. A rerun keeps the stamp and its kit commit, and leaves a differing gate alone.
 prior=""
 [ -n "$(blocked docs/kit/.kit-version)" ] || [ ! -f "$target/docs/kit/.kit-version" ] ||
-  prior=$(tr -d '[:space:]' < "$target/docs/kit/.kit-version")
+  { prior=$(tr -d '[:space:]' < "$target/docs/kit/.kit-version") && [ -n "$prior" ]; } ||
+  die "$target/docs/kit/.kit-version is empty; refusing to guess which version this project has (write it, or delete it for a first install)"
 record=${prior:-$version}
 
 check_attributes
@@ -586,7 +587,7 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # .project chain is the kit's own convention.
   effective=$(git -C "$target" config --get core.hooksPath) || effective=""
   if [ -n "$effective" ] && [ "$effective" != ".githooks" ]; then
-    rm -f "$part"; part=""
+    rm -f "$part"; part=""; said=1
     printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
     printf '%s\n' "  Move each hook of '$effective' into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2
     printf '%s\n' "  (executable; the kit's hook runs it first, with git's arguments; post-merge cannot veto), any other name (pre-push, ...) as .githooks/<same name> itself." >&2
@@ -604,7 +605,7 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
      ( cd "$target" && cd "$hooks_dir" 2>/dev/null ) && left=$(cd "$target" && cd "$hooks_dir" &&
        for h in *; do if [ -f "$h" ] && [ -x "$h" ] && hook_name "$h"; then printf ' %s' "$h"; fi; done) &&
      [ -n "$left" ]; then
-    rm -f "$part"; part=""
+    rm -f "$part"; part=""; said=1
     printf '%s\n' "bootstrap: STOP: $hooks_dir holds hooks git runs today:$left; the kit's hooks path (.githooks) would silence them (Git LFS keeps its pre-push there)." >&2
     printf '%s\n' "  Move each one into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2
     printf '%s\n' "  (executable; the kit's hook runs it first, with git's arguments; post-merge cannot veto), any other name (pre-push, ...) as .githooks/<same name> itself;" >&2
@@ -616,7 +617,7 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # Verified as git sees it: a scope above the local one (worktree config, global) wins.
   now=$(git -C "$target" config --get core.hooksPath) || now=""
   if [ "$now" != ".githooks" ]; then
-    rm -f "$part"; part=""
+    rm -f "$part"; part=""; said=1
     printf '%s\n' "bootstrap: STOP: core.hooksPath reads '$now' after the local setting: a worktree, global or system scope sets it. Unset it there (git config --unset core.hooksPath --global, or --worktree), then rerun." >&2
     exit 1
   fi
