@@ -16,7 +16,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## v0.12.1 — 2026-10-21
 
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,
-failed). The sync brings every changed file but three review files (ACTION below).
+failed). The sync brings the changed kit-owned files; the ACTION items below name the project-owned ones.
 
 - `spawn_worker.sh` and `watch_workers.sh` use no `-ef`, `-nt` or `-ot` (undefined in POSIX sh,
   shellcheck SC3013): a same-file test through `os.path.samefile` and a `newer` helper on `find
@@ -48,6 +48,18 @@ failed). The sync brings every changed file but three review files (ACTION below
 - A patch release names three numbers: `working_mode.py` reads a recorded kit version such as
   `0.12.1` (it refused it as unreadable), and the kit check's release and ACTION checks and
   `tests/test_install.py` read a `## v0.12.1` heading (they skipped it for `## v0.12`).
+- Durations (owner request via leeway): `BEHAVIOUR.md` says a duration is agent wall clock built
+  from measured times, or "not measured", never human weeks, person-days or a line count alone;
+  `docs/WORKFLOW.md`, "Task sizing" says how it is summed (steps, review rounds, gates, merges,
+  session starts and compactions, owner waits apart, a rewrite sized by the library's implicit
+  features) and holds a fixed seven-row "Measured agent times" table the lead overwrites;
+  `docs/COMMUNICATION.md` asks an option's cost in agent time. Sources:
+  `docs/research/agent-durations.md`.
+- **ACTION:** in `docs/WORKFLOW.md`, "Task sizing", add the duration paragraph, the "Measured
+  agent times" paragraph and its seven-row table from the kit's `core/docs/WORKFLOW.md` (fill a
+  row only from a measured run), and in "Worker cost" the "(into "Task sizing"'s rows)" note; in
+  `docs/COMMUNICATION.md`, "Questions and approvals", change "how long" to "how long in agent time
+  (`docs/WORKFLOW.md`, "Task sizing")". `BEHAVIOUR.md` comes with the sync.
 - **ACTION:** re-copy `scripts/claude_bridge.py`, `scripts/review_dispatch.py` and
   `scripts/test_claude_bridge.py` from the kit (project-owned, so the sync does not bring them):
   the macOS archive, `CLAUDE_CLI_BIN` probe and backend-folder fixes above, with their tests.

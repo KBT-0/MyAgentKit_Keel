@@ -12,3 +12,6 @@
   job ends without asking; any other ending is the owner's call.
 - A question from the owner is a question, not an order: answer it and change nothing.
 - A decision made for one moment ends with that moment; then the standing rules apply again.
+- A duration is agent wall clock built from the measured rows in `docs/WORKFLOW.md`, "Task sizing"
+  (in the kit's own checkout, `CONTRIBUTING.md`, "Measured agent times"), or says "not measured";
+  never human weeks, person-days or a line count alone. <!-- author-only -->

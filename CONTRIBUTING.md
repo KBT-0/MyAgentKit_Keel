@@ -143,6 +143,22 @@ tmp=$(mktemp -d) && ./bootstrap.sh "$tmp" && cd "$tmp" && git init -q && git add
 A contribution that leaves the gate red, or leaves a gate that can no longer fail, is the
 one thing this kit cannot take.
 
+## Measured agent times
+
+The kit's own rows for `BEHAVIOUR.md`'s duration line; `core/docs/WORKFLOW.md`, "Task sizing" is
+the template and keeps "not measured" for every project. The lead overwrites a row after a merge,
+as that section says, and never appends one.
+
+| Unit | Measured (range, n, date) |
+|---|---|
+| Worker step, brief to result | not measured |
+| Review fix round | not measured |
+| Light review | not measured |
+| Full review | not measured |
+| Gate run | check_kit fast 480-589 s, slow 1802 s (n=2 and 1, 2026-10-18, `RESEARCH_LOG.md`) |
+| Merge | not measured |
+| Session start or compaction | not measured |
+
 ## Privacy — read this before pasting anything
 
 An issue or a PR is PUBLIC, and may be cached or indexed even if you delete it later.

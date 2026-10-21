@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-21 — v0.12.1 durations: agent time from measured rows, not a human team's
+
+Backflow from project-leeway-9a: a platform switch planned as "4-6 weeks of worker time" from
+~2,000 lines took ~27 h of wall clock (a night included) and ~5,500 lines. Estimates built from
+measured step, review and gate times held (4-6 h estimated, 5.5-6 h actual); the lead drifted
+back to human framing whenever no measurement was cited, and the last step ran 2x over from four
+compacted workers in sequence. The research (`docs/research/agent-durations.md`, 25 sources)
+found that models over-predict agent work 3-10x and that a prompt alone does not fix it while a
+clock or measured data does, so the rule got a place for the project's own times: a fixed
+seven-row table, overwritten, never appended. A hook that injects elapsed time into each turn
+is the next step if the rule and table do not hold (finding 10).
+
 ### 2026-10-18 — v0.12 tiers: the budget is enforced during the run
 
 The tiers batch split check_kit into a fast and a slow tier (decision 23; findings 6 to 8).
