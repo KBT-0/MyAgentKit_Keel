@@ -586,9 +586,15 @@ class SectionPointerTests(unittest.TestCase):
             self.assertIn(needed, rule[0])
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         sizing = workflow.split('## Task sizing', 1)[1].split('\n## ', 1)[0]
+        units = ['Worker step, brief to result', 'Review fix round', 'Light review',
+                 'Full review', 'Gate run', 'Merge', 'Session start or compaction']
         rows = re.findall(r'^\| ([^|]+?) \| not measured \|$', sizing, re.M)
-        self.assertEqual(rows, ['Worker step, brief to result', 'Review fix round', 'Light review',
-                                'Full review', 'Gate run', 'Merge', 'Session start or compaction'])
+        self.assertEqual(rows, units, 'the template ships every row "not measured"')
+        # The kit's own checkout has no docs/WORKFLOW.md: its rows live in CONTRIBUTING.md, so the
+        # kit's times never ship in the template (review r1).
+        self.assertIn('(in the kit\'s own checkout, `CONTRIBUTING.md`, "Measured agent times")', rule[0])
+        kit = (ROOT / 'CONTRIBUTING.md').read_text(encoding='utf-8').split('## Measured agent times', 1)[1]
+        self.assertEqual(re.findall(r'^\| ([^|]+?) \| [^|]+ \|$', kit.split('\n## ', 1)[0], re.M)[1:], units)
         flat = ' '.join(sizing.split())
         for needed in ('overwrites', 'never appended', 'docs/research/agent-durations.md',
                        'implicit', 'waits'):

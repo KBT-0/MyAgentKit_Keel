@@ -27,7 +27,7 @@ Backflow from project-leeway-9a: a platform switch planned as "4-6 weeks of work
 ~2,000 lines took ~27 h of wall clock (a night included) and ~5,500 lines. Estimates built from
 measured step, review and gate times held (4-6 h estimated, 5.5-6 h actual); the lead drifted
 back to human framing whenever no measurement was cited, and the last step ran 2x over from four
-compacted workers in sequence. The research (`docs/research/agent-durations.md`, 24 sources)
+compacted workers in sequence. The research (`docs/research/agent-durations.md`, 25 sources)
 found that models over-predict agent work 3-10x and that a prompt alone does not fix it while a
 clock or measured data does, so the rule got a place for the project's own times: a fixed
 seven-row table, overwritten, never appended. A hook that injects elapsed time into each turn

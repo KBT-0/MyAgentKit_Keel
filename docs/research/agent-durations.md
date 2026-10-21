@@ -9,7 +9,7 @@ araştırmaları, pratisyenler, tahmin literatürü) ve kitte uygulanan her kura
 > tablosu (değer üzerine yazılır, satır eklenmez); `docs/COMMUNICATION.md` soru seçeneklerinde "ne kadar sürer"
 > aynı biçimde. Zaman damgası enjekte eden bir hook bu sürümde YOK (Bulgu 10).
 
-Etiketler: **R** araştırma/makale, **P** vendor birincil doküman, **B** blog/pratisyen, **F** forum/issue, **K** kitin
+Etiketler: **R** araştırma/makale/kılavuz, **P** vendor birincil doküman, **B** blog/pratisyen, **F** forum/issue, **K** kitin
 kendi proje kanıtı. Güç: **güçlü** (hakemli ya da vendor dokümanı, ölçüm), **orta** (preprint, workshop, uzman blogu,
 tek setli ölçüm), **zayıf** (anekdot, forum). Kaynak numaraları `[n]`, liste bölüm 4'te. "İkincil" yazan kaynağı
 birincil sayfasından okuyamadım; sayılar aktaranın sözüdür.
@@ -66,7 +66,10 @@ bilgiden kaçın [22]. Bu yüzden ölçüm yoksa uydurma sayı değil "ölçülm
 [16][17][24] (Özet 6).
 
 **Bulgu 5 — Satır sayısı örtük kütüphane işini kaçırır (aday 5): DOĞRULANDI.** [23] (uzman denemesi, orta) ve [24].
-"Satır sayısı tek başına kötü bir boyut ölçüsüdür" genellemesi bunların ötesinde **lead'in yargısı, kaynaksız**.
+"Satır sayısı tek başına eforu belirlemez": COCOMO II'de efor boyutun üssü ile 17 efor çarpanının çarpımıdır ve
+aynı 100 KSLOC proje yalnız ölçek faktörleriyle 105 ile 331 kişi-ay arasında değişir; uyarlanan kod "software
+understanding" maliyetiyle eşdeğer boyuta çevrilir [25]. Bu model insan ekibi kişi-ayıyla çalışır; kitte yalnız "boyut
+tek başına yetmez" için alınır, süre birimi olarak değil.
 
 **Bulgu 6 — İnsan ölçekli kıyas yerine geçmez.** [1][2][11]. METR ufkunu bir süreye çevirmek yanlış olur: ufuk insan
 dakikasıdır ve başarı uzun görevlerde üstel düşer [1][4].
@@ -74,7 +77,8 @@ dakikasıdır ve başarı uzun görevlerde üstel düşer [1][4].
 **Bulgu 7 — Bekleme ayrı.** [3] (METR notu, varsayımsal proje, orta) ve [24].
 
 **Bulgu 8 — Aralık ver, tek nokta değil.** Geçmiş hatadan aralık [22]; planlama yanılgısında en kötü senaryo tahmini
-bile aşıldı (tez: en iyi 33,9 gün, en kötü 48,6, gerçek 55,5) [19].
+bile tutmadı (tez: en iyi tahmin ortalaması 33,9 gün, iyimser senaryo 27,4, kötümser senaryo 48,6, gerçek 55,5;
+kötümserle gerçek arasındaki fark anlamlı değil, en iyi tahmin süresinde bitiren %29,7) [19].
 
 **Bulgu 9 — Tablo güncel tutulmazsa çürür.** Öğrenme sonuç ve neden bilgisine ve hızlı geri bildirime bağlı [21]. Kitin
 "yaşayan belge şişmez" kuralı (sahip kuralı, dış kaynak yok): sabit satır, değer üzerine yazılır.
@@ -93,13 +97,15 @@ tutmaz" diyor, bu yüzden tablo eklendi (brief "araştırma gösterirse" diyordu
 
 | Kitteki satır | Kaynak |
 |---|---|
-| `BEHAVIOUR.md`: süre ölçülmüş zamanlardan kurulan agent duvar saati ya da "ölçülmedi"; hafta, kişi-gün, yalnız satır sayısı asla | [5][6][10][12][21][22][24] |
+| `BEHAVIOUR.md`: süre ölçülmüş zamanlardan kurulan agent duvar saati ya da "ölçülmedi"; hafta, kişi-gün asla | [5][6][10][12][21][22][24] |
+| `BEHAVIOUR.md`: "yalnız satır sayısı" asla | [25][23][24] |
 | WORKFLOW "Task sizing": parçalar (adım, review ve düzeltme turu, gate, merge, oturum başı ve sıkıştırma) | [15][16][17][24] |
 | Aralık ve n ile ver | [19][22] |
 | Ölçüm yoksa "ölçülmedi", tahmin uydurma | [21][22] |
 | Bekleme (sahip, gece, onay) ayrı söylenir | [3][24] |
 | İnsan ölçekli sayı ya da METR ufku süre değildir | [1][2][11] |
-| Yeniden yazım, kütüphanenin örtük işiyle boyutlanır | [23][24] |
+| Yeniden yazım, kütüphanenin örtük işiyle boyutlanır | [23][24][25] |
+| Kitin kendi checkout'unda tablo `CONTRIBUTING.md`, "Measured agent times" (şablon "not measured" kalır) | lead'in yargısı, kaynaksız (kitin kendi kuralları CONTRIBUTING'de, `claude_bridge.py` gibi) |
 | Sabit yedi satırlı tablo, değer üzerine yazılır | [20][22] (referans sınıfı); satır sabitliği sahip kuralı, kaynaksız |
 | Ölçüm kaynakları: git zaman damgaları, RESULT, `usage_summary.py`, `claude_code.compaction` `duration_ms` | [17]; git/RESULT lead'in yargısı |
 | `COMMUNICATION.md`: seçeneğin "ne kadar sürer"i aynı biçimde | Bulgu 3 ile aynı |
@@ -165,8 +171,9 @@ tutmaz" diyor, bu yüzden tablo eklendi (brief "araştırma gösterirse" diyordu
 18. **P, orta (ikincil aktarım).** OpenAI, Codex lansmanı 2025-05 (görevler 1–30 dk) ve "Introducing upgrades to Codex"
     2025-09-15 (GPT-5-Codex 7 saati aşan koşular). https://openai.com/index/introducing-upgrades-to-codex/
 19. **R, güçlü.** Buehler, Griffin, Ross, "Exploring the 'Planning Fallacy'", JPSP 1994.
-    https://bear.warrington.ufl.edu/brenner/mar7588/Papers/buehler-et-al-1994.pdf — tez süresi: en iyi 33,9, en kötü
-    48,6, gerçek 55,5 gün.
+    https://bear.warrington.ufl.edu/brenner/mar7588/Papers/buehler-et-al-1994.pdf — Çalışma 1, tez süresi (n=37): en iyi
+    tahmin ortalaması 33,9 gün, iyimser senaryo 27,4, kötümser senaryo 48,6 (gerçekle farkı anlamlı değil, ns), gerçek
+    55,5; en iyi tahmin süresinde bitiren %29,7. PDF'den okundu 2026-10-21.
 20. **R, güçlü.** Flyvbjerg, "From Nobel Prize to Project Management: Getting Risks Right", Project Management Journal
     37(3), 2006. https://arxiv.org/abs/1302.3642 — referans sınıfı tahmini: benzer projelerin gerçek performansından.
 21. **R, güçlü.** Jørgensen, "Practical Guidelines for Expert-Judgment-Based Software Effort Estimation", IEEE Software
@@ -183,3 +190,7 @@ tutmaz" diyor, bu yüzden tablo eklendi (brief "araştırma gösterirse" diyordu
     worker zamanı", ~2.000 satır; gerçek ~27 sa duvar saati (gece dahil), ~5.500 satır. Ölçülen: adım 18–60 dk, review
     düzeltmesi ~20 dk, gate ~10 dk, hafif review 4–10 dk; ölçümden kurulan tahmin tuttu (4–6 sa / 5,5–6 sa); son adım
     sıkıştırmalarla 2 kat aştı; lead sonra insan çerçevesine döndü.
+25. **R, güçlü (birincil kılavuz).** USC, "COCOMO II.1997 Reference Manual", University of Southern California, 1997.
+    https://www.cs.montana.edu/courses/spring2004/352/public/cocomo/referman.pdf — efor = A × Boyut^B × Π(efor
+    çarpanları); 5 ölçek faktörü ve 17 çarpan; örnek: 100 KSLOC, tüm faktörler en iyi 105 PM, en kötü 331 PM; uyarlanan
+    kod "Software Understanding (SU)" ve "Assessment and Assimilation (AA)" ile eşdeğer boyuta çevrilir.
