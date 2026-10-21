@@ -29,7 +29,7 @@
 # unless started with a `timeout` (at most two hours): pass one there (Claude Code tools
 # reference, "Time limit for background commands"). --once checks once and prints nothing
 # when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error, a name with no record
-# in this checkout's .myagentkit/workers too where tmux cannot say GONE (run it from the checkout
+# in this checkout's .myagentkit/workers and no tmux session too (run it from the checkout
 # the worker was spawned in: the line spawn_worker.sh prints cds there), unless its --result
 # file holds a ready result, which is then reported as any result. Exit 3: a pane of
 # a session that exists could not be read, or tmux could not say whether it exists
@@ -662,15 +662,14 @@ context() {
 
 # A name with no record here and no session tmux knows was spawned from another checkout (its
 # records are in that one's .myagentkit/workers). A ready --result file of it is read and
-# reported all the same. Else, where tmux cannot say GONE (native Windows, no tmux), it said
-# nothing, forever (2026-10-21): that is a usage error.
+# reported all the same. Else it is a usage error on every host: without tmux it said nothing,
+# forever (2026-10-21), and tmux's "no session" proves nothing for a bg worker, never a tmux one.
 for n in "$@"; do
   norec "$n" || continue
   s=1; [ -z "$tmuxok" ] || { s=0; has "$n" || s=$?; }
   [ "$s" -eq 1 ] || continue
   rfile "$n"
   if [ -n "$f" ] && [ -f "$f" ] && published "$f"; then lonely=$lonely$n$nl; continue; fi
-  [ -z "$tmuxok" ] || continue  # tmux says GONE
   at=""
   while IFS= read -r t; do
     [ -n "$t" ] && { [ -e "$t/.myagentkit/workers/$n.result-path" ] || [ -e "$t/.myagentkit/workers/$n.host" ]; } &&

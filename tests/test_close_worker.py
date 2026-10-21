@@ -685,7 +685,14 @@ class CloseWorkerTests(unittest.TestCase):
         nested = lead / '.claude/worktrees/w2'
         self.git('worktree', 'add', '-q', str(nested), '-b', 'worktree-w2', cwd=lead)
         (lead / '.myagentkit/workers/w2.result-path').write_text(str(nested / 'RESULT-w2.md') + '\n')
+        (lead / '.myagentkit/workers/w2.merged-running').write_text('')
+        self.git('worktree', 'lock', '--reason', 'kit worker w2', str(nested), cwd=lead)
         out = self.close('w2', cwd=lead, code=1)
+        # Kept means kept whole: its lock and its merged-running record stay with it.
+        self.assertNotIn('unlocked', out)
+        self.assertEqual((Path(self.git('rev-parse', '--absolute-git-dir', cwd=nested)) / 'locked').read_text().strip(),
+                         'kit worker w2')
+        self.assertTrue((lead / '.myagentkit/workers/w2.merged-running').exists(), out)
         self.assertIn('close_worker: w2: its worktree %s is not in %s, the one folder the audit removes from'
                       % (self.git('rev-parse', '--show-toplevel', cwd=nested),
                          self.git('rev-parse', '--show-toplevel') + '/.claude/worktrees'), out)

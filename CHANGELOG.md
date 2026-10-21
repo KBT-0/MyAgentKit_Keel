@@ -36,9 +36,10 @@ file the kit changed reaches the project through these items.
   that instruction.
 
 - **A watch never loops silently on a worker it cannot see.** A name with no record in the
-  watching checkout and no session exits 2 and names the worktree that holds its records, or
-  reads the `--result NAME=PATH` given; the printed watch line runs from the checkout holding
-  the records, and a second printed line is a plain until-loop on the result file.
+  watching checkout and no session exits 2 on every host, tmux or none, and names the worktree
+  that holds its records, or reads the `--result NAME=PATH` given; the printed watch line runs
+  from the checkout holding the records, and a second printed line is a plain until-loop on the
+  result file.
 
 - **A finished worker's worktree is removed after its merge.** The gate's own state in the
   worktree's git folder (`kit-stop-gate.tree`, `check-gated-tree`) no longer counts as unsaved
@@ -53,7 +54,8 @@ file the kit changed reaches the project through these items.
 - **A worker spawned from a linked worktree is closed.** Both spawns put a `--worktree` worker's
   worktree in the main checkout's `.claude/worktrees`, the one folder the audit removes from;
   nested in the lead's worktree, `close_worker.sh` said "nothing to remove" and left it. Close,
-  watch and list look there; one an older spawn nested is kept and named, never dropped.
+  watch and list look there; one an older spawn nested is kept, lock included, and named, never
+  dropped.
 
 - **The lead's done signal is a disk watch, not an idle notice** (owner order 2026-10-20).
   `spawn_worker.sh` prints `sh scripts/watch_workers.sh --result NAME=PATH NAME` first, on tmux and

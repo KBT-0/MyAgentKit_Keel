@@ -47,9 +47,9 @@
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
 #      merge, or this script again, removes it then. The worktree is the main checkout's
 #      .claude/worktrees/NAME, where both spawns put it whichever checkout the lead works in, else
-#      this checkout's (an older spawn nested it there, beyond the audit: kept and named). Before
-#      the audit the worker's copy of its brief (.myagentkit/workers/NAME.brief.md) goes while it
-#      is the lead's record NAME.brief.md byte for byte.
+#      this checkout's (an older spawn nested it there, beyond the audit: kept, lock included, and
+#      named). Before the audit the worker's copy of its brief (.myagentkit/workers/NAME.brief.md)
+#      goes while it is the lead's record NAME.brief.md byte for byte.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
 #      `git gc` keeps everything under refs/* (git-gc(1)), so the branch holds every commit
 #      the worker made; a merge done on a detached main and undone left them on no other ref
@@ -109,7 +109,8 @@
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
 # could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a waiting
 # decision, a Codex session running in this checkout, an unfinished report move (NAME.report-move), a tmux or
-# lister that could not answer, or a removal that could not run.
+# lister that could not answer, a worktree nested outside .claude/worktrees of the main checkout, or a removal
+# that could not run.
 set -u
 
 # Every line of this script is printed with its control bytes as `?` (a name is an argument).
@@ -738,9 +739,12 @@ for name; do
   # worktree, whether the audit below removes it or keeps it for a later merge's audit. A lock
   # with another reason is someone's choice to keep the worktree, and stays. A close that failed
   # above may leave the session running, so the lock stays and the audit keeps the worktree.
+  # A nested worktree (below) is kept whole: its lock and NAME.merged-running stay too.
+  nested=""; [ "$wt_dir" = "$top" ] || [ "$wt_dir" = "$home/$name" ] || nested=1
   if [ "$wt_dir" != "$top" ] && gd=$(git -C "$wt_dir" rev-parse --absolute-git-dir 2>/dev/null) &&
      [ "$(cat -- "$gd/locked" 2>/dev/null)" = "kit worker $name" ]; then
     if [ -n "$failed" ]; then say "$name: its worktree stays locked (kit worker $name): the close failed above"
+    elif [ -n "$nested" ]; then say "$name: its worktree stays locked (kit worker $name): it is kept below"
     elif [ -n "$dry" ]; then say "$name: dry run: would unlock its worktree (kit worker $name)"
     elif git worktree unlock "$wt_dir" 2>/dev/null; then say "$name: worktree unlocked (kit worker $name)"; rm -f -- "$record.merged-running"
     else fail "$name: could not unlock its worktree; the audit below keeps it"; fi
@@ -787,7 +791,7 @@ for name; do
     # A successor at the original path proves no restoration. Keep every non-collision failure.
     say "$name: the audit did not run, so a worktree stays: publication of RESULT-$name.md failed; recover the report from its source, archive or the path printed above, else from a .report-move-* folder in ${record%/*}; after recovery remove $record.report-move if present and close again"
     kept=1
-  elif [ "$wt_dir" != "$top" ] && [ "$wt_dir" != "$home/$name" ]; then
+  elif [ -n "$nested" ]; then
     # Said, never "nothing to remove": that close dropped the records and left the worktree.
     fail "$name: its worktree $wt_dir is not in $home, the one folder the audit removes from (a spawn before v0.12 nested it in the lead's checkout); it and its records are kept: once its branch is merged, remove it with git worktree remove, then close again"
     kept=1
