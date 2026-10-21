@@ -42,8 +42,8 @@ kit: the kit's installer, in sync mode, updates the cached kit in `~/.myagentkit
    it or ask for approval. When it cannot run here, give the user the command to run and stop;
    do not try to work around the sandbox.
 4. No `install: kit` line in the output means the download failed: say so and stop. Show the
-   output: the changelog entries since the project's version are the product, so do not
-   summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and the
+   output and the **ACTION** items it wrote to `docs/kit/UPGRADE.md`: they are the product, so
+   do not summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and the
    version stays put: list them and apply them only on the user's go-ahead, then run this again
    with `--actions-applied`. With `--merge`, exit 2 is its normal end: the kit's changes are
    merged into the project-owned files and the version stays put; show each merged file's diff

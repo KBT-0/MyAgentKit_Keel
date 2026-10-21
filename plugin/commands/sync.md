@@ -34,8 +34,8 @@ to its release tag and runs that kit's `sync-kit.sh` on this folder.
    It is not pre-approved on purpose: it downloads and runs code, and the permission prompt is
    the second gate. On a refusal, give the owner that command to run.
 4. No `install: kit` line in the output means the download failed (curl printed why; the
-   pipe still exits 0): say so and stop. Show the output: the changelog entries since the
-   project's version are the product, so do not summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and
+   pipe still exits 0): say so and stop. Show the output and the **ACTION** items it wrote to
+   `docs/kit/UPGRADE.md`: they are the product, so do not summarise them away. Without `--merge`, exit 2 means **ACTION** items are open and
    the version stays put: list them and apply them only on the owner's go-ahead, then run this
    again with `--actions-applied`. With `--merge`, exit 2 is its normal end: the kit's changes
    are merged into the project-owned files and the version stays put; show each merged file's
