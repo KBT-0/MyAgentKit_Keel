@@ -30,6 +30,9 @@ failed). Every changed file is kit-owned; no ACTION.
   MISSING on 3.11.
 - `review_dispatch.py`: the backend folder inside the repository is refused when the repository
   is named through a symlink too (macOS's `/var` is `/private/var`).
+- `clean_worktrees.py`: a tmux session of the worker's name that started in another checkout,
+  or in another worker's worktree of this one, no longer keeps the worktree, as `close_worker.sh`
+  already reads it (#171); one started in this worktree, or with no start folder, still does.
 - `codex_worker.py`: a worker group whose members are all zombies (macOS answers `killpg` with
   EPERM) is nothing left to stop; a supervisor stopped by SIGTERM or SIGHUP exited 1.
 - Tests: two new (the zombie group, POSIX and Windows; the early-ending tar, POSIX), so

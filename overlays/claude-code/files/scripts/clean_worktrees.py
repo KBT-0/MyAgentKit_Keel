@@ -818,21 +818,37 @@ def within(cwd, root):
 
 
 def tmux_sessions():
-    """The tmux session names; none only when tmux is absent or says no server runs."""
+    """Each tmux session's name and the folder it started in (b'' when tmux names none); none
+    only when tmux is absent or says no server runs."""
     exe = shutil.which('tmux')
     if not exe:
-        return set()
-    result = subprocess.run([exe, 'list-sessions', '-F', '#{session_name}'], capture_output=True,
+        return {}
+    # Session names hold no `:` (tmux replaces it), so the first one ends the name.
+    result = subprocess.run([exe, 'list-sessions', '-F', '#{session_name}:#{session_path}'], capture_output=True,
                             stdin=subprocess.DEVNULL, env=dict(os.environ, LC_ALL='C'))
     if result.returncode == 0:
-        return set(result.stdout.split(b'\n')) - {b''}
+        return dict(line.partition(b':')[::2] for line in result.stdout.split(b'\n') if line)
     error = result.stderr.strip()
     # tmux's own two answers for "nothing listens on the socket": refused, or no socket file.
     # Permission denied and every other error are not proof of no session.
     if (re.fullmatch(rb'no server running on [^\n]*', error)
             or re.fullmatch(rb'error connecting to [^\n]* \(No such file or directory\)', error)):
-        return set()
+        return {}
     raise Unproven('`tmux list-sessions` failed: %s' % (show(error) or 'exit %d' % result.returncode))
+
+
+def anothers_session(started, worktree, main_root):
+    """Whether a tmux session that started in STARTED is another checkout's or another worker's,
+    as close_worker.sh's has() reads it (#171: every project shares the default tmux server):
+    outside the main checkout, or in another folder of its .claude/worktrees. A start folder
+    tmux does not name, or one inside this worktree, is this worker's: the audit keeps more."""
+    if not started:
+        return False
+    worktrees = os.path.join(main_root, b'.claude', b'worktrees')
+    for path in {started, os.path.realpath(started)}:
+        if within(path, worktree) or within(path, main_root) and not within(path, worktrees):
+            return False
+    return True
 
 
 def lock_held(gitdir):
@@ -964,7 +980,8 @@ def audit(record, ctx):
         out = []
         if lock_held(gitdir):
             out.append('in use: the gate holds its lock (%s)' % show(os.path.join(gitdir, b'check.lock')))
-        if facts['name'] in tmux_sessions():
+        started = tmux_sessions().get(facts['name'])
+        if started is not None and not anothers_session(started, facts['real'], ctx['main_root']):
             out.append('in use: a tmux session is named %s' % show(facts['name']))
         if not ctx['assume_idle']:
             try:
