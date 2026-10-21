@@ -23,6 +23,12 @@ it: a worker (MYAGENTKIT_ROLE=worker) and a sub-agent's call get nothing. Silent
   suggestions.py add-note JSON               the side check's note; a note with no evidence or
                                              check, or a known topic, is dropped
   suggestions.py report                      what the owner reads after a few days
+  suggestions.py on | off | status           the owner's switch, kept per project in
+                                             `.myagentkit/suggestions.json`; off = no side check,
+                                             no delivery, no reminder (the mod's
+                                             /myagentkit:suggestions runs these)
+  suggestions.py gate                        JSON for the mod: enabled, stopped, interval,
+                                             known topics, the last notes' claims
 """
 import json
 import os
@@ -38,6 +44,17 @@ FIELDS = ('claim', 'evidence', 'check', 'topic')
 
 def ledger_path() -> Path:
     return Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd()) / '.myagentkit/suggestions.jsonl'
+
+
+def switch_path() -> Path:
+    return ledger_path().with_name('suggestions.json')
+
+
+def enabled() -> bool:
+    try:
+        return json.loads(switch_path().read_text(encoding='utf-8')).get('enabled') is not False
+    except (OSError, ValueError, AttributeError):
+        return True  # on unless the owner turned it off
 
 
 def read_rows(path: Path) -> list:
@@ -98,7 +115,7 @@ def framed(row: dict) -> str:
 def deliver(data: dict, via: str, event: str):
     path = ledger_path()
     s = state(read_rows(path))
-    if s['stopped']:
+    if s['stopped'] or not enabled():
         return None
     pending = [r for n, r in sorted(s['notes'].items())
                if n not in s['delivered'] and r.get('session') == data.get('session_id')]
@@ -127,6 +144,8 @@ def said_verdicts(transcript: Path) -> dict:
 
 
 def stop(data: dict):
+    if not enabled():
+        return None
     path = ledger_path()
     s = state(read_rows(path))
     session = data.get('session_id')
@@ -157,19 +176,41 @@ def stop(data: dict):
 
 def add_note(text: str) -> None:
     note = json.loads(text)
+    if not enabled() or not isinstance(note, dict):
+        return
     path = ledger_path()
     s = state(read_rows(path))
-    if (not isinstance(note, dict) or any(not str(note.get(k) or '').strip() for k in FIELDS)
+    if (note.get('abstain') or any(not str(note.get(k) or '').strip() for k in FIELDS)
             or note['topic'].strip().lower() in s['known']):
-        return  # the deterministic second filter (7.5): no evidence or check, or a known topic
-    append(path, dict(note, kind='note', id=max(s['notes'], default=0) + 1))
+        # The deterministic second filter (7.5): no evidence or check, or a known topic. The check
+        # still cost tokens, so it is kept as a check row the report counts.
+        append(path, {'kind': 'check', 'session': note.get('session'), 'trigger': note.get('trigger'),
+                      'usage': note.get('usage'), 'outcome': 'abstain' if note.get('abstain') else 'dropped'})
+        return
+    n = max(s['notes'], default=0) + 1
+    append(path, dict(note, kind='note', id=n))
+    print(n)
+
+
+def gate() -> dict:
+    s = state(read_rows(ledger_path()))
+    return {'enabled': enabled(), 'stopped': s['stopped'], 'interval': s['interval'], 'known': sorted(s['known']),
+            'recent': [r.get('claim') for _, r in sorted(s['notes'].items())][-5:]}
+
+
+def switch(mode: str) -> str:
+    if mode in ('on', 'off'):
+        path = switch_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'enabled': mode == 'on'}) + '\n', encoding='utf-8')
+    return 'myagentkit-suggestion: suggestions: %s\n%s' % ('on' if enabled() else 'off', report())
 
 
 def report() -> str:
     rows = read_rows(ledger_path())
     s = state(rows)
-    if not s['notes']:
-        return 'myagentkit-suggestion: no notes yet (%s)' % ledger_path()
+    if not rows:
+        return 'myagentkit-suggestion: no side checks yet (%s)' % ledger_path()
     counts = {v: sum(1 for x in s['verdicts'].values() if x == v) for v in ('correct', 'partly', 'wrong')}
     lines = ['myagentkit-suggestion: %d notes, %d delivered, %d judged (correct %d, partly %d, wrong %d), '
              '%d delivered with no verdict' % (len(s['notes']), len(s['delivered']), sum(counts.values()),
@@ -179,13 +220,13 @@ def report() -> str:
         lines.append('precision (last %d judged): %d%% (%d/%d)' % (WINDOW, round(100 * s['precision']), s['hits'],
                                                                  len(s['judged'])))
     lines.append('delivery: stopped' if s['stopped'] else 'delivery: on, interval x%d' % s['interval'])
-    tokens = {}
-    for note in s['notes'].values():
-        for key, value in (note.get('usage') or {}).items():
+    tokens, checks = {}, [r for r in rows if r.get('kind') == 'check'] + list(s['notes'].values())
+    for row in checks:
+        for key, value in (row.get('usage') or {}).items():
             if isinstance(value, int):
                 tokens[key] = tokens.get(key, 0) + value
-    if tokens:
-        lines.append('side-check tokens: ' + ', '.join('%s %d' % kv for kv in sorted(tokens.items())))
+    lines.append('%d side checks, tokens: %s' % (len(checks), ', '.join('%s %d' % kv for kv in sorted(tokens.items()))
+                                                 or 'none recorded'))
     return '\n'.join(lines)
 
 
@@ -195,7 +236,13 @@ def main() -> None:
         print(report())
         return
     if mode == 'add-note':
-        add_note(sys.argv[2])
+        add_note(sys.argv[2] if len(sys.argv) > 2 else sys.stdin.buffer.read().decode('utf-8'))
+        return
+    if mode in ('on', 'off', 'status'):
+        print(switch(mode))
+        return
+    if mode == 'gate':
+        print(json.dumps(gate()))
         return
     data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
     if not isinstance(data, dict) or data.get('agent_id') or os.environ.get('MYAGENTKIT_ROLE') == 'worker':

@@ -129,11 +129,52 @@ class LedgerTests(unittest.TestCase):
         self.assertIn('#6', self.context(self.run_hook('post-tool', self.event())))
 
     def test_report_without_a_ledger_and_a_broken_line_fail_open(self):
-        self.assertIn('no notes yet', self.run_hook('report').stdout)
+        self.assertIn('no side checks yet', self.run_hook('report').stdout)
         self.ledger.write_text('{broken\n', encoding='utf-8')
         self.write(note(1))
         self.assertIn('#1', self.context(self.run_hook('post-tool', self.event())))
         self.assertEqual(self.run_hook('stop', 'not json').returncode, 0)
+
+
+    def test_off_silences_every_hook_and_on_brings_it_back(self):
+        self.write(note(1))
+        self.assertIn('off', self.run_hook('off').stdout)
+        self.assertEqual(self.context(self.run_hook('post-tool', self.event())), '')
+        self.assertEqual(self.context(self.run_hook('prompt', self.event())), '')
+        self.run_hook('add-note', None, json.dumps({'session': 's1', 'claim': 'E', 'evidence': 'e', 'check': 'ls',
+                                                    'topic': 'new'}))
+        self.assertEqual(len(self.rows('note')), 1)
+        self.assertEqual(json.loads(self.run_hook('gate').stdout)['enabled'], False)
+        self.assertIn('suggestions: off', self.run_hook('status').stdout)
+        self.run_hook('on')
+        self.assertIn('suggestions: on', self.run_hook('status').stdout)
+        self.assertIn('#1', self.context(self.run_hook('post-tool', self.event())))
+
+    def test_gate_tells_the_side_check_what_it_needs_and_add_note_prints_the_id(self):
+        self.judged('wrong', 'wrong', 'wrong', 'correct', 'partly')
+        added = self.run_hook('add-note', None, json.dumps({'session': 's1', 'claim': 'F', 'evidence': 'f',
+                                                            'check': 'ls', 'topic': 'Fresh topic'}))
+        self.assertEqual(added.stdout.strip(), '6')
+        gate = json.loads(self.run_hook('gate').stdout)
+        self.assertEqual((gate['enabled'], gate['stopped'], gate['interval']), (True, False, 2))
+        self.assertIn('fresh topic', gate['known'])
+        self.assertEqual(gate['recent'][-1], 'F')
+
+
+    def test_every_check_counts_its_tokens_an_abstain_too(self):
+        usage = {'input_tokens': 3, 'output_tokens': 20, 'cache_read_input_tokens': 9000,
+                 'cache_creation_input_tokens': 100}
+        self.run_hook('add-note', None, json.dumps({'session': 's1', 'abstain': True, 'trigger': 'periodic',
+                                                    'usage': usage}))
+        env = {**os.environ, 'CLAUDE_PROJECT_DIR': str(self.project)}
+        subprocess.run([sys.executable, str(HOOK), 'add-note'], input=json.dumps(
+            {'session': 's1', 'claim': 'G', 'evidence': 'g', 'check': 'ls', 'topic': 'g', 'usage': usage}),
+            text=True, encoding='utf-8', capture_output=True, timeout=30, env=env)
+        self.assertEqual([r['kind'] for r in self.rows()], ['check', 'note'])
+        report = self.run_hook('report').stdout
+        self.assertIn('2 side checks', report)
+        self.assertIn('cache_read_input_tokens 18000', report)
+        self.assertIn('output_tokens 40', report)
 
 
 class RuleTests(unittest.TestCase):
