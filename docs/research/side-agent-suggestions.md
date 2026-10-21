@@ -13,6 +13,8 @@ Ek (sahip, aynı gün, bağlayıcı): "bu arada öneri aracının önerdiği şe
 claude'un öneri aracını ben ana sohbet'e gönderdiğimde ana sohbet ajanı öneriye eleştrek yaklaşıp yan aşan notu doğru
 y a da değil çünkü şöyle gibi açıklamalar yapıyor, aynı eleştirellikte olunmalı"
 
+> **2026-10-22:** çatal maliyet yüzünden reddedildi; kontrol pencereli `$.model.complete` (bölüm 7.11).
+>
 > **Önerilen (karar sahibin):** kitin kendi Claude Code mod'u `myagentkit-suggestion`. Ana oturumun konuşmasını
 > önbellekten okuyan bir çatal (`$.model.fork`) ile seyrek ve kurala bağlı aralıklarla tek bir not arar, emin değilse
 > susar. Notu ajana bir sonraki araç sonucundan hemen sonra (`$.session.append`, `claude-code-watchdog`'un çalışan
@@ -507,6 +509,31 @@ olduğu [31].
 | Çekme (pull) modeli: ajana "danış" aracı | Vendor emsali var [40] ve ucuz; ama sahibin istediği kendiliğinden itme. İleride ek olarak düşünülebilir |
 | Notu ajanı durduran bir gate yapmak | Erişilebilirliği çökertir [28]; kitte yıkıcı eylem kuralları zaten ayrı |
 | Not hükümlerini review/gate'e bağlamak | İzleyiciye göre optimizasyon gizlemeye yol açar [24] |
+
+### 7.11 Karar 2026-10-22: çatal yerine pencereli `complete` (sahip)
+
+Sahip çatalı maliyeti yüzünden reddetti: her `$.model.fork` konuşmanın tamamını önbellekten okur (spike'ta 34k,
+sahibin gerçek oturumlarında 200-300k), yani kontrol başına bedel oturumla büyür. Yerine `$.model.complete`, oturumun
+modeliyle, yalnız bir **pencere** okur: son 10 ana döngü araç çağrısı (ad, kırpılmış argümanlar, sonucun başı,
+hatalar), şu anki prompt'un ilk satırları, bilinen konular ve son notlar; pencere en çok 6000 karakter, cevap en çok
+400 token (`maxTokens`). 7.5'in "önce sus" kuralları aynı; araç yolunda beklenmez, hata açık kalır, her kontrol
+(susan da) deftere `usage` ile yazılır. 7.3'ün "aynı model" gerekçesi korunur; kaybedilen şey pencere dışındaki
+bağlamdır, bu yüzden talimat "pencere ajanın onu ele aldığını göstermiyor olabilir" durumunda da susmayı söyler.
+
+Ölçüm (bu makine, `claude -p --plugin-dir`, Opus 5.5, 2026-10-22; ana bağlam `turn.step` önbellek okumasından):
+
+| Ana bağlam | Kontrol girdisi | Çıktı | Önbellek okuma / yazma | Sonuç |
+|---|---|---|---|---|
+| ~34k | 1335 | 10 | 0 / 0 | sustu |
+| ~79k | 1763 | 219 | 0 / 0 | sustu |
+| (çatal, 2026-10-21) ~34k | ~480-500 taze | 10-117 | 33.6k-34.6k / 6-76 | sustu |
+
+Pencere sınırlı olduğu için girdi oturumun boyuyla büyümez; çatalın önbellek okuması ise oturumla birlikte büyürdü.
+Aynı spike'ta canlı doğrulananlar (bölüm 8): Stop hook'unun `additionalContext`'i turu sürdürüp ajana ulaşıyor
+(ikinci Stop `stop_hook_active: true` ile geldi); `$.session.id()` ayar hook'larının `session_id`'sine eşit;
+`tool.call` argümanları üst düzeyde taşır (`command`) ve her çağrıda değişen `tool_use_id` ile modelin serbest
+`description`'ını da taşır, bu yüzden tekrar anahtarı ikisini dışarıda bırakır; yerleşik aracın sonucu
+`{ result, text, ... }`, ajanın okuduğu metin `text`.
 
 ---
 

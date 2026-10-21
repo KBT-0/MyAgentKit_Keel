@@ -1,21 +1,24 @@
-"""The myagentkit-suggestion mod's own tests (plugin/tests/*.test.ts), run through `claude plugin test`."""
+"""The myagentkit-suggestion mod's own tests (plugin/tests/*.test.ts), run through `claude plugin test`.
+
+The test runner is the claude CLI itself, so a host without it (CI) declares the skip and
+check_kit's minimum for this suite drops to 0 there, the way validate_plugin prints NOT RUN."""
 from pathlib import Path
 import shutil
 import subprocess
 import unittest
 
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugin'
+CLAUDE = shutil.which('claude')
 
 
 class SuggestionModTests(unittest.TestCase):
+    @unittest.skipIf(CLAUDE is None, 'NOT RUN: no claude CLI on PATH; `claude plugin test` in plugin/ runs the mod tests')
     def test_claude_plugin_test_passes(self):
-        claude = shutil.which('claude')
-        if claude is None:
-            self.skipTest('NOT RUN: no claude CLI on PATH; `claude plugin test plugin` runs the mod tests')
-        result = subprocess.run([claude, 'plugin', 'test'], cwd=PLUGIN, capture_output=True, text=True,
+        result = subprocess.run([CLAUDE, 'plugin', 'test'], cwd=PLUGIN, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=300)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(' 0 fail', result.stdout)
+    test_claude_plugin_test_passes._kit_platform_skip = CLAUDE is None
 
 
 if __name__ == '__main__':
