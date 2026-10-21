@@ -110,8 +110,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   localized WinError text without it; a test that forces a narrow code page would hold it.
 - shellcheck 0.11.0 (this host) does not report SC3013 (`-nt`/`-ot`/`-ef`); only CI's newer shellcheck catches it.
   Pin a version or add a kit lint for those operators.
-- test_doctor's macOS "probe never created its temp file": fixci scaled the 10 s wait; the cause is inferred. If it
-  recurs, look at doctor's start-up time on macOS under load.
 - Many tests compare a path the code resolves with an unresolved temp path (macOS /var vs /private/var); resolve the
   fixtures' temp roots once, or a shared helper, to end the class.
 - clean_worktrees anothers_session: on a case-insensitive file system (macOS default) a session start folder spelled

@@ -30,6 +30,11 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   MISSING on 3.11.
 - `doctor.sh`: the CLI check prints UTF-8, replacing what it cannot encode, whatever the console code page; a
   localized Windows error ("[WinError 193] ... değil") raised in print, and doctor said ready.
+- `spawn_worker.sh`: the Windows tab script prints claude's exit status with `printf` (no `echo`
+  prints a value); the echo scan now runs on native Windows too.
+- Tests: test_doctor's interrupt case pins `mktemp` to `TMPDIR`, which Apple's bare `mktemp`
+  ignores for the per-user temp folder; the backend NUL test no longer flags macOS's
+  `/private/var` path.
 - `review_dispatch.py`: the backend folder inside the repository is refused when the repository
   is named through a symlink too (macOS's `/var` is `/private/var`).
 - `clean_worktrees.py`: a tmux session of the worker's name that started in another checkout,
