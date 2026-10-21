@@ -98,7 +98,7 @@
 #
 # A Claude Code background session (NAME.host bg, on every host) has no pane and needs no tmux:
 # its row in `claude agents --json --all` (list_workers.sh --row: by NAME.id) is read instead.
-# A file wins over any state: first QUESTION-NAME.md in the worker's folder (.claude/worktrees/NAME,
+# A file wins over any state: first QUESTION-NAME.md in the worker's folder (.claude/worktrees/NAME of the main checkout or of this one,
 # else this checkout: where the supervisor reads it), published (its ready marker) and newer than
 # NAME.result-path (`QUESTION: NAME, a decision waits in PATH`, once per content), then the result
 # as above. Then blocked is WAITING with its waitingFor (`no reason given` when the row names
@@ -495,7 +495,11 @@ EOF
   # supervisor stops it on those alone): no IDLE or GONE for it.
   rp=$wdir/$1.result-path; settled=""
   # The question is where the supervisor and the worker's instruction put it: the worker's folder.
-  q=${wdir%/.myagentkit/workers}; [ ! -d "$q/.claude/worktrees/$1" ] || q=$q/.claude/worktrees/$1
+  # Its worktree is in the main checkout's .claude/worktrees (both spawns), or nested in this
+  # checkout by an older spawn.
+  q=${wdir%/.myagentkit/workers}
+  m=$(git -C "$q" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); [ -n "$m" ] || m=$q
+  for t in "$m/.claude/worktrees/$1" "$q/.claude/worktrees/$1"; do [ ! -d "$t" ] || { q=$t; break; }; done
   q=$q/QUESTION-$1.md
   if [ -f "$q" ] && [ ! "$q" -ot "$rp" ] && published "$q"; then
     settled=1

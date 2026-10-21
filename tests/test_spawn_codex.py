@@ -138,13 +138,13 @@ class SpawnCodexTests(unittest.TestCase):
                                   check=True).stdout.rstrip('\n')
         return 'C:' + str(path).replace('/', '\\') if flag == '-w' else str(path)
 
-    def spawn(self, *args, tmux=False, **extra):
+    def spawn(self, *args, tmux=False, cwd=None, **extra):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                    CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), KIT_SESSION_WAIT='2', **dict.fromkeys(MARKERS, '1'), CLAUDE_CODE_EXECPATH='x', **extra)
         if tmux:
             (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
             (self.bin / 'uname').chmod(0o755)
-        return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
+        return subprocess.run(['sh', str(SCRIPT), *args], cwd=cwd or self.repo, env=env,
                               capture_output=True, text=True, encoding='utf-8', timeout=60 * SCALE)
 
     def publisher(self, stdout):
@@ -724,6 +724,17 @@ if args[0] != 'resume':
                         'a kept, possibly unfinished worker lost its resume id')
         # A closed worker leaves no locked worktree: the audit after a later merge decides.
         self.assertIsNone(self.lock(tree))
+
+    def test_a_lead_in_a_linked_worktree_puts_the_workers_worktree_in_the_main_checkouts(self):
+        # As spawn_worker.sh (bgbrief): nested in the lead's linked worktree, the audit never judged it.
+        lead = self.repo / '.claude/worktrees/lead'
+        subprocess.run(['git', 'worktree', 'add', '-q', str(lead), '-b', 'worktree-lead'], cwd=self.repo,
+                       check=True, capture_output=True)
+        result = self.spawn('w1', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree', cwd=lead)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (run,) = self.runs()
+        self.assertEqual(Path(run['cwd']).resolve(), (self.repo / '.claude/worktrees/w1').resolve())
+        self.assertFalse((lead / '.claude/worktrees').exists())
 
     def test_a_resumed_worktree_worker_is_locked_again(self):
         # #240: close_worker.sh unlocks the worktree and keeps it resumable; the resumed run then

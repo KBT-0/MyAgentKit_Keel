@@ -40,6 +40,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   work. `codex_worker.py --publish` refuses a question file without the end marker, which left
   the session waiting forever; `close_worker.sh` no longer fails a project's shellcheck (SC2086).
 
+- **A `--worktree` worker starts without a permission click.** Its brief, or a resume's answer,
+  outside its folder is copied to `.myagentkit/workers/NAME.brief.md` inside it and the prompt
+  names that copy: on a host not in auto mode the worker's first read stopped on a prompt. Its
+  reach is not widened; `close_worker.sh` removes the copy before its audit.
+
+- **A worker spawned from a linked worktree is closed.** Both spawns put a `--worktree` worker's
+  worktree in the main checkout's `.claude/worktrees`, the one folder the audit removes from;
+  nested in the lead's worktree, `close_worker.sh` said "nothing to remove" and left it. Close,
+  watch and list look there; one an older spawn nested is kept and named, never dropped.
+
 - **The lead's done signal is a disk watch, not an idle notice** (owner order 2026-10-20).
   `spawn_worker.sh` prints `sh scripts/watch_workers.sh --result NAME=PATH NAME` first, on tmux and
   on a Windows Terminal tab, to run as one background command whose exit wakes the lead; a

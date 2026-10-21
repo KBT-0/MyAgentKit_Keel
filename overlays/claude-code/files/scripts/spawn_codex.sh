@@ -183,8 +183,14 @@ if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # unquoted at every use
 if [ -n "$worktree" ]; then
-  dir=$top/.claude/worktrees/$name
+  # In the main checkout's .claude/worktrees, as spawn_worker.sh's (the audit removes from there
+  # alone); a resume takes the folder git lists for its branch, where an older spawn may have nested it.
+  main=$(git worktree list --porcelain | sed -n '1s/^worktree //p') && [ -n "$main" ] ||
+    die "--worktree: git worktree list names no main checkout"
+  dir=$main/.claude/worktrees/$name
   if [ -n "$resume" ]; then
+    listed=$(git worktree list --porcelain | awk -v b="branch refs/heads/worktree-$name" '/^worktree /{p=substr($0,10)} $0==b{print p; exit}')
+    [ -z "$listed" ] || dir=$listed
     [ -d "$dir" ] || die "--resume --worktree: no worktree at $dir"
   else
     ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||

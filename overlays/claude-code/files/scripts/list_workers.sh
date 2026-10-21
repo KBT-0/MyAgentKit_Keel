@@ -16,7 +16,8 @@
 # The row is the one whose id (or sessionId) is NAME.id, the id `claude --bg` printed; with no
 # NAME.id, the one row named NAME whose cwd is the worker's folder: names are not unique, a resume
 # with flags starts a copy under the same name (docs/research/worker-orchestration-spike.md, 6).
-# The worker's folder is .claude/worktrees/NAME when it exists, else this checkout. --row prints
+# The worker's folder is .claude/worktrees/NAME of the main checkout (both spawns put it there,
+# whichever checkout the lead works in) or of this one (an older spawn), else this checkout. --row prints
 # STATE WAITING-FOR PID HERE ID CWD with a tab between them, HERE y when the row's cwd is the
 # worker's folder, else n (another checkout's session); or `absent`; or `ambiguous` and the ids;
 # or `elsewhere` and windows or posix: the native-Windows and the WSL lists are disjoint (two
@@ -43,6 +44,7 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
 # Git for Windows: the Windows Python reads D:/x, never /d/x.
 ! command -v cygpath >/dev/null 2>&1 || top=$(cygpath -m "$top")
 wdir=$top/.myagentkit/workers
+main=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); [ -n "$main" ] || main=$top
 json="" listed=y
 if [ "$mode" = row ] || grep -qsx bg "$wdir"/*.host; then
   # Its stdout alone is the list: a notice on stderr (an update) broke the parse.
@@ -54,7 +56,7 @@ if [ "$mode" = row ] || grep -qsx bg "$wdir"/*.host; then
   rm -f -- "$errf"
 fi
 printf '%s' "$json" | $kit_python -I -c 'import json, os, re, subprocess, sys
-mode, wdir, top, name, listed = sys.argv[1:]
+mode, wdir, top, name, listed, main = sys.argv[1:]
 raw = sys.stdin.buffer.read().decode("utf-8", "replace")
 rows = None
 if raw.strip():
@@ -73,8 +75,11 @@ def read(n, ext):
         return ""
 
 def folder(n):
-    tree = os.path.join(top, ".claude", "worktrees", n)
-    return tree if os.path.isdir(tree) else top
+    for root in (main, top):
+        tree = os.path.join(root, ".claude", "worktrees", n)
+        if os.path.isdir(tree):
+            return tree
+    return top
 
 def same(a, b):
     key = lambda p: os.path.normcase(os.path.realpath(p))
@@ -140,4 +145,4 @@ for n in sorted(names):
         state = "-"
     result = os.path.join(top, read(n, "result-path") or os.path.join(folder(n), "RESULT-%s.md" % n))
     out([n, field(host), field(read(n, "id")), state, waiting, "y" if os.path.isfile(result) else "n"])
-' "$mode" "$wdir" "$top" "$name" "$listed"
+' "$mode" "$wdir" "$top" "$name" "$listed" "$main"

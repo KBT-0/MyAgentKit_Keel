@@ -107,8 +107,8 @@
 #   - Every value that goes into the temporary script's shell command, and the brief path, passes
 #     through `q`: a value with an apostrophe (a --settings JSON string) otherwise
 #     ends its quoting and the rest runs as shell in the new pane.
-#   - --worktree makes the worktree here with `git worktree add` from the commit the lead's
-#     checkout is on now. Passing `-w` to the tool built it from a stale base, and workers
+#   - --worktree makes the worktree in the main checkout's .claude/worktrees, with `git worktree
+#     add` from the commit the lead's checkout is on now. Passing `-w` to the tool built it from a stale base, and workers
 #     started without fixes the lead had already merged: `-w` branches from the remote default
 #     branch unless `worktree.baseRef: head` is set, and that has had bugs across versions
 #     (code.claude.com/docs/en/worktrees, "Choose the base branch").
@@ -164,6 +164,7 @@ case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows=""
 # every backslash is a separator, spelled `/` first. The x guard keeps a trailing newline.
 if [ -n "$windows" ]; then brief=$(printf '%sx' "$brief" | tr '\\' '/') && brief=${brief%x}; fi
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
+brief_src=$brief  # the file just checked, which a copy into the worker's folder reads (below)
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 # Every path handed on is physical (`pwd -P`): a plain `pwd` printed the logical path when the
 # caller exported a matching PWD and the physical one otherwise, so the same brief was named
@@ -378,8 +379,16 @@ printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort"
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   project_settings=$top/.claude/settings.json
-  dir=$top/.claude/worktrees/$name
+  # In the MAIN checkout's .claude/worktrees, whichever checkout the lead works in: the audit
+  # (close_worker.sh, the post-merge hook) removes from that folder alone, and a worktree nested in
+  # a lead's linked worktree was left there by its close (bgwait). A resume takes the folder git
+  # lists for its branch: an older spawn may have nested it.
+  main=$(git worktree list --porcelain | sed -n '1s/^worktree //p') && [ -n "$main" ] ||
+    die "--worktree: git worktree list names no main checkout"
+  dir=$main/.claude/worktrees/$name
   if [ -n "$resume" ]; then
+    listed=$(git worktree list --porcelain | awk -v b="branch refs/heads/worktree-$name" '/^worktree /{p=substr($0,10)} $0==b{print p; exit}')
+    [ -z "$listed" ] || dir=$listed
     [ -d "$dir" ] || die "--resume --worktree: no worktree at $dir"
   else
     ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
@@ -602,7 +611,29 @@ cmd="$cmd --disallowedTools AskUserQuestion"
 # the pane, where nobody may be looking. On native Windows every path is Windows' own spelling:
 # Git Bash's /tmp/... is a folder the worker's tools do not know.
 [ -z "$windows" ] || brief=$(cygpath -m "$brief") || die "cygpath cannot convert the brief's path: $brief"
-instruction="Read $(q "$brief") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way and with the same last line, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
+# The worker reads its brief inside its own folder: one outside it (a --worktree worker's always)
+# stopped a host not in auto mode on a read-permission prompt before the worker's first step
+# (bgwait), and the worker's reach stays that folder (owner: no --add-dir of the lead's checkout).
+# Such a brief, or a resume's answer, is copied to .myagentkit/workers/NAME.brief.md there, the
+# private store the kit's .gitignore keeps out of commits, and kept as NAME.brief.md in the lead's
+# records: close_worker.sh removes the worker's copy before its audit while it is that record.
+# Where the copy is not the record (a worktree), a .gitignore beside it that ignores itself and
+# the copy keeps the worktree clean in a project that does not ignore the store; close removes it.
+brief_ignore="# spawn_worker.sh: ignores the worker's copy of its brief; close_worker.sh removes both"
+told=$brief; copy=""
+case $brief in "$(native "$dir")"/*) ;; *)
+  copy=$dir/.myagentkit/workers/$name.brief.md
+  told=$(native "$copy") || die "cygpath cannot convert the path: $copy" ;;
+esac
+place_brief() {
+  [ -n "$copy" ] || return 0
+  { mkdir -p -- "$wdir" "${copy%/*}" &&
+    { [ "$brief_src" -ef "$wdir/$name.brief.md" ] || cp -- "$brief_src" "$wdir/$name.brief.md"; } &&
+    { [ "$copy" -ef "$wdir/$name.brief.md" ] || { cp -- "$wdir/$name.brief.md" "$copy" &&
+      { [ -e "${copy%/*}/.gitignore" ] || printf '%s\n*\n' "$brief_ignore" > "${copy%/*}/.gitignore"; }; }; }; } ||
+    die "cannot copy the brief into the worker's folder: $copy"
+}
+instruction="Read $(q "$told") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way and with the same last line, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
 # opens as a Windows Terminal tab (KIT_WT names another launcher, as for show_workers.sh) with
@@ -740,6 +771,7 @@ if [ -n "$bg" ]; then
   fi
   prepare_settings
   prepare_worktree
+  place_brief
   supervisor
   reset_state
   record_result
@@ -787,6 +819,7 @@ fi
 if [ -n "$windows" ]; then
   prepare_settings
   prepare_worktree
+  place_brief
   supervisor
   reset_state
   record_result
@@ -867,6 +900,7 @@ fi
 # removed worktree, say) is gone, whatever -c says.
 [ -z "$worktree" ] || prepare_settings
 prepare_worktree
+place_brief
 supervisor
 reset_state
 [ -z "$backend" ] || cmd=$(backend_command "$cmd")
