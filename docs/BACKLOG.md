@@ -97,3 +97,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   test_sync_kit took 687 s in the fast tier alone, over its 1440 s cap (SCALE 3) under `--all` on
   20 CPUs. The release ran the tiers one after the other; cap a fast unit by the run's load, or
   run `--all` as the two tiers in sequence.
+- flakefix: unscaled poll deadlines (`time.monotonic() + N`) left in test_codex_worker (644, 771, 1045),
+  test_kit_runner (86, 175, 199, 642, 843), test_review_windows (134, 182, 255), test_check_gate_windows
+  (530, 552, 598), fixtures/windows_lockcase (153, 193, 246); check each before scaling (843 is passed to the code).
