@@ -90,3 +90,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   a git repository (`report_result` needs a HEAD) prints nothing and exits 0.
 - fullrev-workers L6: a spawn refused after place_brief (the trust refusal) leaves `NAME.brief.md`
   in the lead's records with no worker; harmless, the next spawn of the name overwrites it.
+- slowfix observation: `agent_process._supervise` does not collect output queued by the drain
+  thread (Windows) or still in the pipe (POSIX) when the deadline hits at the loop head; a
+  non-blocking `take(chunks, 0)` before the break, plus its POSIX twin.
