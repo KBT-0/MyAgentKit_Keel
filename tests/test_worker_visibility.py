@@ -23,6 +23,9 @@ from test_close_worker import CLAUDE, agent  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run
+# side by side, and a fixed 60 s ran out on a loaded host (v0.12.1).
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 SHOW, WATCH, LIST = SCRIPTS / 'show_workers.sh', SCRIPTS / 'watch_workers.sh', SCRIPTS / 'list_workers.sh'
 PANES = ROOT / 'tests/fixtures/panes'
 DIALOGS = {'trust.txt': 'the folder-trust dialog', 'permission.txt': 'a permission prompt',
@@ -169,8 +172,9 @@ class Base(unittest.TestCase):
         argv = sh_argv(script, args, env, redirect)
         if stdout is not None:
             return subprocess.run(argv, cwd=self.cwd, env=env, stdout=stdout,
-                                  stderr=subprocess.PIPE, text=True, encoding='utf-8', timeout=60)
-        return subprocess.run(argv, cwd=self.cwd, env=env, capture_output=True, text=True, encoding='utf-8', timeout=60)
+                                  stderr=subprocess.PIPE, text=True, encoding='utf-8', timeout=60 * SCALE)
+        return subprocess.run(argv, cwd=self.cwd, env=env, capture_output=True, text=True, encoding='utf-8',
+                              timeout=60 * SCALE)
 
     def tmux_record(self, name):
         # The record a tmux spawn leaves in its checkout: without one, a name tmux does not know

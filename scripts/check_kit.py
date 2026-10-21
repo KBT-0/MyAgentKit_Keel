@@ -169,11 +169,14 @@ LONG = ('test_sync_kit', 'test_guard_destructive_git', 'test_claude_sandbox',
 SLOW = {'acceptance', 'test_bootstrap', 'test_claude_bridge', 'test_spawn_worker', 'test_spawn_codex',
         'test_worker_visibility', 'test_doctor', 'test_close_worker', 'locale/test_git_hooks',
         'test_install'}
-# Each tier's time budget (finding 8, Bazel's test-size timeouts): (per-unit cap, whole-tier
-# cap) in seconds, times SCALE on a slow host. A unit over its cap is stopped and fails; a tier
-# over its cap fails; each is named with its seconds. The measured times and headroom are in
-# the tiers report.
-CAPS = {'fast': (480, 600), 'slow': (3000, 3600)}
+# Each tier's (per-unit cap, tier target) in seconds, times SCALE on a slow host
+# (docs/research/kit-self-checks.md, S5). The unit cap is a hang guard, as Bazel's test-size
+# timeouts and pytest-timeout are: a unit still running at it is stopped and fails with its name
+# and seconds. It sits far above any measured run, not at this host's speed: about 4x the
+# slowest fast unit under load (461 s) and 2x the slowest slow one (2703 s), so a busy or slower
+# host passes. The tier target is the ten-minute commit stage (finding 6): a tier over it prints
+# a WARNING with its seconds and fails nothing (a hang is the cap's). Measured in the tiers report.
+CAPS = {'fast': (1800, 600), 'slow': (5400, 3600)}
 
 
 # --timing: each phase's and each suite's seconds, and a suite's ten slowest tests.
@@ -303,19 +306,50 @@ SCALE = "MYAGENTKIT_TEST_TIMEOUT_SCALE"
 
 def limit(seconds):
     """A wall-clock bound on a child, times SCALE: a slow host sets it, and run_units multiplies
-    it by the units running at once, at most 4 (three units on one CPU each take about three
-    times as long)."""
+    it by the units an unloaded run starts at once, at most 4 (three units on one CPU each take
+    about three times as long)."""
     return seconds * float(os.environ.get(SCALE, "1"))
 
 
-def degree(cpus, units):
-    """How many units run at once. On a 3-CPU runner three at once took 300 s each and timed out;
-    one after another is what passed there. GitHub's standard runners: macOS 3 vCPU, Linux and
+def busy_cpus(cpus):
+    """How many of the host's CPUs other work keeps busy now: the 1-minute load average on POSIX
+    (os.getloadavg), on native Windows GetSystemTimes' busy share over one second times the CPUs.
+    0 where neither answers."""
+    if hasattr(os, 'getloadavg'):
+        try:
+            return float(min(os.getloadavg()[0], cpus))
+        except OSError:
+            return 0.0
+    if os.name != 'nt':
+        return 0.0
+    import ctypes
+
+    def times():
+        idle, kernel, user = ctypes.c_ulonglong(), ctypes.c_ulonglong(), ctypes.c_ulonglong()
+        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        return idle.value, kernel.value + user.value  # kernel time includes the idle time
+    first = times()
+    time.sleep(1)
+    second = times()
+    if not first or not second or second[1] <= first[1]:
+        return 0.0
+    return min(max(cpus * (1 - (second[0] - first[0]) / (second[1] - first[1])), 0.0), float(cpus))
+
+
+def degree(cpus, units, busy=0.0):
+    """How many units run at once. The CPUs other work keeps busy (busy_cpus) are taken, as GNU
+    make's -l starts no job over a load limit: ten units beside a 3D export ran the fast tier
+    three times as long. Read once at the start; ponytail: a load that starts mid-run is not
+    seen, gate each unit's start on the load (make -l) if that ever times a run out.
+    On a 3-CPU runner three at once took 300 s each and timed out; one after another is what
+    passed there. GitHub's standard runners: macOS 3 vCPU, Linux and
     Windows 2 (private repositories) or 4 (public) (docs.github.com/en/actions/reference/runners/
     github-hosted-runners, read 2026-10-15). From 4 CPUs, one unit per two CPUs: a unit's tests
     start shells and git, more processes than the one CPU each (the 4 and the half are the kit's
     own choice; measured in #146)."""
-    return 1 if cpus < 4 else min(units, max(2, cpus // 2))
+    free = round(cpus - busy)
+    return 1 if free < 4 else min(units, max(2, free // 2))
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
@@ -1295,15 +1329,13 @@ def stop_tree(child):
         child.kill()
 
 
-def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=None, left_out=0):
+def run_units(units, timing=False, parallel=None, said=(), caps=None, factor=None, left_out=0):
     """Run the (name, command) units, `parallel` at once (default all); print each unit's whole
-    output in the given order. Each unit's timeouts scale by `parallel` (see limit()). `said`:
+    output in the given order. Each unit's timeouts scale by `factor` (default `parallel`, at
+    most 4; see limit()): on a loaded host fewer units run, but the host is as busy. `said`:
     the NOT RUN lines the checks before the units printed, repeated under the summary first.
     `caps`: each unit's wall-clock cap in seconds; a unit still running at its cap is stopped
     and fails with its name and seconds (#146, run_units had no bound of its own).
-    `deadline`: the tier budget's end (time.monotonic()); a unit still running then is stopped
-    and named, and a unit queued after it does not start, so a CI job's timeout never cancels
-    the run before it says what ran over.
     `left_out`: the tests of the suites that do not run on this host, counted by their
     REQUIRED_SUITES number, for the NOT RUN total under the summary (#231).
 
@@ -1340,33 +1372,27 @@ def run_units(units, timing=False, parallel=None, said=(), caps=None, deadline=N
         with lock:
             if cancelled:
                 return 1, '', time.monotonic() - started
-            if deadline is not None and started >= deadline:
-                return 1, "KIT CHECK: FAIL — unit %s did not start: the tier's budget ran out\n" % name, 0.0
             # Its own session: a cap or a cancel stops the unit's test processes with it.
             child = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, env=env, start_new_session=True,
                                      stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
             children.append(child)
-        left = None if deadline is None else max(deadline - started, 0)
-        budget_first = left is not None and (cap is None or left < cap)
         with child:
             try:
-                output = child.communicate(timeout=left if budget_first else cap)[0]
+                output = child.communicate(timeout=cap)[0]
             except subprocess.TimeoutExpired:
                 stop_tree(child)
                 try:
                     output = child.communicate(timeout=30)[0]
                 except subprocess.TimeoutExpired:
                     output = ''
-                why = ("was still running when the tier's budget ran out" if budget_first
-                       else "ran over its cap of %.0f s" % cap)
-                return 1, output + ("KIT CHECK: FAIL — unit %s %s and was stopped at %.0f s\n"
-                                    % (name, why, time.monotonic() - started)), time.monotonic() - started
+                return 1, output + ("KIT CHECK: FAIL — unit %s ran over its cap of %.0f s and was stopped at %.0f s\n"
+                                    % (name, cap, time.monotonic() - started)), time.monotonic() - started
         return child.returncode, output, time.monotonic() - started
 
     parallel = parallel or len(units)
     # Capped at 4: under load a unit ran 1.2-1.7x slower (#146), and 10x at 20 CPUs let a hung
     # acceptance phase (1800 s) run for five hours before it failed.
-    env = dict(os.environ, **{SCALE: str(float(os.environ.get(SCALE, "1")) * min(parallel, 4))})
+    env = dict(os.environ, **{SCALE: str(float(os.environ.get(SCALE, "1")) * (factor or min(parallel, 4)))})
     with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
             ThreadPoolExecutor(max_workers=parallel) as pool, stop_units():
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
@@ -1458,11 +1484,12 @@ def main():
     tier_of = lambda name: "slow" if module(name) in SLOW or name in SLOW else "fast"
     units = [name for name in units if tier_of(name) in tiers]
     host = float(os.environ.get(SCALE, "1"))
-    budget = sum(CAPS[name][1] for name in tiers) * host
+    target = sum(CAPS[name][1] for name in tiers) * host
     cpus = os.cpu_count() or 1
-    parallel = degree(cpus, len(units))
-    print("KIT CHECK: %s tier, %d of %d units at once (%d CPUs), %.0f s budget"
-          % (" and ".join(tiers), parallel, len(units), cpus, budget))
+    busy = busy_cpus(cpus)
+    parallel = degree(cpus, len(units), busy)
+    print("KIT CHECK: %s tier, %d of %d units at once (%d CPUs, %.1f busy with other work), %.0f s target"
+          % (" and ".join(tiers), parallel, len(units), cpus, busy, target))
     for line in not_here:
         print(line)
     # -u: a unit's error, on stderr, lands after what it printed before failing.
@@ -1470,15 +1497,15 @@ def main():
     left_out = sum(REQUIRED_SUITES[directory][name] for directory, reasons in NOT_ON_WINDOWS.items()
                    for name in reasons if tier_of(name) in tiers)
     passed = run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
-                       caps=[CAPS[tier_of(name)][0] * host for name in units], deadline=started + budget,
-                       left_out=left_out)
+                       caps=[CAPS[tier_of(name)][0] * host for name in units],
+                       factor=min(degree(cpus, len(units)), 4), left_out=left_out)
     seconds = time.monotonic() - started
     if passed:
         print("TIME: %.1f s in all" % seconds)
-    if seconds > budget:
-        print("KIT CHECK: FAIL — the %s tier took %.0f s, over its budget of %.0f s; move a slow unit to the "
-              "slow tier or make it faster" % (" and ".join(tiers), seconds, budget), file=sys.stderr)
-        return 1
+    if seconds > target:
+        print("KIT CHECK: WARNING — the %s tier took %.0f s, over its target of %.0f s (%.1f of %d CPUs were "
+              "busy with other work at the start); on an idle host, move a slow unit to the slow tier or make "
+              "it faster" % (" and ".join(tiers), seconds, target, busy, cpus), file=sys.stderr)
     if not passed:
         return 1
     if _PASSED_FILE:

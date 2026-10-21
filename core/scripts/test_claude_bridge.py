@@ -400,8 +400,10 @@ except ValueError as error:
                    MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_TASK_ID='', STUB_QUOTA='',
                    PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
         env.update(extra)
-        return subprocess.run(['sh', str(repo / 'scripts/review.sh'), *args],
-                              env=env, text=True, capture_output=True, timeout=30)
+        # A hang guard, times the scale: an unscaled 30 s ran out on a loaded host (v0.12.1).
+        return subprocess.run(['sh', str(repo / 'scripts/review.sh'), *args], env=env, text=True,
+                              capture_output=True,
+                              timeout=30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1')))
 
     def test_each_reviewer_prints_model_and_effort_before_running(self):
         for primary in ('codex', 'claude'):

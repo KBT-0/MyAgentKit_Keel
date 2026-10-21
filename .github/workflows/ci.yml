@@ -12,11 +12,11 @@ permissions:
 # Each OS and Python runs the kit check's two tiers as parallel jobs (docs/research/
 # kit-self-checks.md, findings 7 and 12): the fast tier, and the slow one (--slow: bootstrap,
 # acceptance, the review bridge, worker-spawn and close_worker suites, locale test_git_hooks).
-# A runner is slower than a developer host (finding 9), so the tier budgets and unit caps run at three times their local seconds
-# here (fast 30 min, slow 180 min). The kit check enforces the budget during the run: at its end
-# it stops and names the units still running and starts no more. timeout-minutes sits 10 minutes
-# above it, for the job's setup steps and that summary, so the kit check fails by name before
-# GitHub cancels the job.
+# A runner is slower than a developer host (finding 9), so the unit caps and tier targets run at
+# three times their local seconds here. A unit cap is a hang guard (S5): a unit still running at
+# it (fast 90 min, slow 270 min here) fails by name; a tier over its target only warns.
+# timeout-minutes is GitHub's own hang guard above a normal run plus one unit's cap, so the cap
+# names a hung unit first; the slow job sits at GitHub's 360-minute job maximum.
 env:
   MYAGENTKIT_TEST_TIMEOUT_SCALE: '3'
 
@@ -24,7 +24,7 @@ jobs:
   acceptance:
     name: ${{ matrix.os }} / Python ${{ matrix.python }} / ${{ matrix.tier }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.tier == 'slow' && 190 || 40 }}
+    timeout-minutes: ${{ matrix.tier == 'slow' && 360 || 150 }}
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +55,7 @@ jobs:
   windows:
     name: windows-latest / Python ${{ matrix.python }} / ${{ matrix.tier }}
     runs-on: windows-latest
-    timeout-minutes: ${{ matrix.tier == 'slow' && 190 || 40 }}
+    timeout-minutes: ${{ matrix.tier == 'slow' && 360 || 150 }}
     strategy:
       fail-fast: false
       matrix:

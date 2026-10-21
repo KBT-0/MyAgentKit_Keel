@@ -18,6 +18,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,
 failed). The sync brings the changed kit-owned files; the ACTION items below name the project-owned ones.
 
+- The kit check's time limits catch hangs, not a busy or slower host (`docs/research/
+  kit-self-checks.md` S5): a unit cap is a hang guard (fast 1800 s, slow 5400 s, from 480 and
+  3000); a tier over its target (600 / 3600 s) prints a WARNING with its seconds and no longer
+  fails or stops the units still running; the units at once leave out the CPUs other work keeps
+  busy (the load average on POSIX, GetSystemTimes on Windows), and their timeout factor stays an
+  unloaded run's. CI's timeout-minutes 150 / 360. The review, watch_workers and spawn_codex test
+  limits that ran out under load scale with `MYAGENTKIT_TEST_TIMEOUT_SCALE`.
 - `spawn_worker.sh` and `watch_workers.sh` use no `-ef`, `-nt` or `-ot` (undefined in POSIX sh,
   shellcheck SC3013): a same-file test through `os.path.samefile` and a `newer` helper on `find
   -newer`, with the same results.

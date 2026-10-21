@@ -833,10 +833,13 @@ def main():
         time.sleep(5)
         self.assertFalse(survived.exists(), "the cancelled unit's child ran on")
 
-    def test_a_tier_over_its_budget_fails_with_its_seconds(self):
+    def test_a_tier_over_its_budget_warns_with_its_seconds_and_passes(self):
+        # The budget failed the run and stopped the units still running at its end: on a host
+        # loaded by other work, 42 of 55 fast units failed with no hang among them. A hang is the
+        # unit cap's; the budget only warns, and a unit running past it ends on its own.
         quiet = [sys.executable, '-c', 'import time; time.sleep(1.5); print("UNIT DONE: quiet")']
         real = check_kit.run_units
-        for budget, code in ((1, 1), (600, 0)):
+        for budget, over in ((1, True), (600, False)):
             with self.subTest(budget=budget):
                 out = io.StringIO()
                 with unittest.mock.patch.dict(os.environ, {check_kit.SCALE: '1'}), \
@@ -852,26 +855,11 @@ def main():
                         unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
                         unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
                         contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                    self.assertEqual(check_kit.main(), code, out.getvalue())
-                self.assertEqual(bool(re.search(r'the fast tier took \d+ s, over its budget of 1 s', out.getvalue())),
-                                 bool(code), out.getvalue())
-                self.assertEqual('KIT CHECK: PASS' in out.getvalue(), not code)
-
-    def test_the_tier_budget_stops_the_run_and_names_the_unit_still_running(self):
-        # The budget was checked only after every unit ended, so a CI job past its timeout-minutes
-        # was cancelled with no summary. Now a unit still running at the budget's end is stopped and
-        # named, and a queued unit does not start, well before the unit caps.
-        hang = [sys.executable, '-c', 'import time; print("hang started", flush=True); time.sleep(60)']
-        queued = [sys.executable, '-c', 'print("UNIT DONE: queued")']
-        started = time.monotonic()
-        passed, out = runner(('hang', hang), ('queued', queued), parallel=1, caps=[60, 60],
-                             deadline=time.monotonic() + 2)
-        self.assertFalse(passed)
-        self.assertLess(time.monotonic() - started, 15)
-        self.assertIn('hang started', out)
-        self.assertRegex(out, r"unit hang was still running when the tier's budget ran out and was stopped at \d+ s")
-        self.assertIn("unit queued did not start: the tier's budget ran out", out)
-        self.assertIn('failed: hang, queued', out)
+                    self.assertEqual(check_kit.main(), 0, out.getvalue())
+                self.assertEqual(bool(re.search(r'KIT CHECK: WARNING — the fast tier took \d+ s, over its target of '
+                                                r'1 s', out.getvalue())), over, out.getvalue())
+                self.assertIn('KIT CHECK: PASS', out.getvalue())
+                self.assertNotIn('FAIL', out.getvalue())
 
     def test_the_gate_checks_count_drops_with_its_link_test_on_a_host_without_symlinks(self):
         # Without symlink privilege (Windows without Developer Mode) BuildCacheTests' link test is a
@@ -1034,8 +1022,29 @@ def main():
         self.assertEqual(check_kit.degree(5, 1), 1)
         # One unit per test module (#146): dozens of units, one per two CPUs at once.
         self.assertEqual([check_kit.degree(cpus, 60) for cpus in (3, 4, 20, 64)], [1, 2, 10, 32])
+        # CPUs other work keeps busy count as taken (GNU make's -l starts no job over a load limit):
+        # with a 3D export busy on 16 of 20 CPUs, ten units at once ran three times as long.
+        self.assertEqual([check_kit.degree(20, 60, busy) for busy in (0, 0.4, 10, 16, 19.5)], [10, 10, 5, 2, 1])
+        self.assertEqual(check_kit.degree(4, 60, 3), 1)
         with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '1.5'}):
             self.assertEqual(check_kit.limit(300), 450)
+
+    def test_the_busy_cpus_are_read_from_the_host(self):
+        # POSIX: the load average; native Windows: GetSystemTimes' idle share over a second.
+        cpus = os.cpu_count() or 1
+        busy = check_kit.busy_cpus(cpus)
+        self.assertIsInstance(busy, float)
+        self.assertTrue(0 <= busy <= cpus, busy)
+
+    def test_a_unit_on_a_loaded_host_keeps_the_timeout_factor_of_a_full_run(self):
+        # Under load fewer units run at once, but the host is as busy: the factor stays at the
+        # unloaded run's, or the test-internal limits of the units still running time out.
+        unit = [sys.executable, '-c', 'import os; print("scale", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"]); '
+                'print("UNIT DONE: a")']
+        with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '2'}):
+            passed, out = runner(('a', unit), parallel=1, factor=4)
+        self.assertTrue(passed, out)
+        self.assertIn('scale 8.0', out)
 
     def test_units_run_that_many_at_once_with_their_timeouts_scaled_by_it(self):
         # Each unit marks its start and waits for the other's mark, so units that run at once overlap
