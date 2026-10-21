@@ -100,3 +100,20 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - flakefix: unscaled poll deadlines (`time.monotonic() + N`) left in test_codex_worker (644, 771, 1045),
   test_kit_runner (86, 175, 199, 642, 843), test_review_windows (134, 182, 255), test_check_gate_windows
   (530, 552, 598), fixtures/windows_lockcase (153, 193, 246); check each before scaling (843 is passed to the code).
+
+## Filed from v0.12.1 (fixci, fixci2 and their reviews)
+
+- doctor.sh: the CLI check sends stderr to /dev/null and reads empty output as ready, so any exception in
+  `import claude_bridge` or `cli_readiness` passes it silently; read the python exit status and call a non-zero exit
+  MISSING (both reviews, pre-existing).
+- doctor.sh:271 `sys.stdout.reconfigure(errors="replace")` has no CI proof: English Windows runners print the
+  localized WinError text without it; a test that forces a narrow code page would hold it.
+- shellcheck 0.11.0 (this host) does not report SC3013 (`-nt`/`-ot`/`-ef`); only CI's newer shellcheck catches it.
+  Pin a version or add a kit lint for those operators.
+- test_doctor's macOS "probe never created its temp file": fixci scaled the 10 s wait; the cause is inferred. If it
+  recurs, look at doctor's start-up time on macOS under load.
+- Many tests compare a path the code resolves with an unresolved temp path (macOS /var vs /private/var); resolve the
+  fixtures' temp roots once, or a shared helper, to end the class.
+- clean_worktrees anothers_session: on a case-insensitive file system (macOS default) a session start folder spelled
+  in another case than the main checkout reads as another checkout's, so that tmux session stops keeping the
+  worktree (the other proofs still apply); compare with os.path.normcase / samefile.
