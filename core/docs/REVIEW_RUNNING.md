@@ -30,7 +30,7 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `REVIEW_SAME_TIER_EXCEPTION` | reason the author's tier reviews a high-tier change on a plan with no tier above it (`REVIEW_RISK=high`, effort high), kept in the record; one round per label and focus (a round without a focus uses it for every focus), so a second round under it is refused, a substitute's included and `REVIEW_ROUND_EXCEPTION` notwithstanding (`docs/WORKFLOW.md`, "Model routing", rule 7) |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
 | `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; each focus gets the label's two rounds; a review without a focus counts toward every focus |
-| `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |
+| `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused. The brief may live in any checkout: the diff is the reviewed one's, the checkout `review.sh` runs in when that is a worktree of the script's repository (#302) |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700 (3600 for a high-effort Codex review), at most 3600 |
 | `REVIEW_MAX_TURNS` | Claude turns per attempt |

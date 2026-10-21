@@ -1,4 +1,5 @@
 """owns_check.py must refuse every changed path outside the brief's Owns: line, in each review scope."""
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -149,6 +150,40 @@ class OwnsCheckTests(unittest.TestCase):
         for name in ('nested/RESULT-worker.md', 'RESULT-worker.py', 'QUESTION.md'):
             self.write(name)
             self.assertIn('  ' + name + '\n', self.check('Owns: src/')[1])
+
+    def test_review_sh_checks_the_linked_worktree_it_runs_in(self):
+        # #302: the main checkout's review.sh run from a worker's linked worktree diffed the
+        # main checkout, so an unrelated commit on main left the brief's Owns: line.
+        scripts = self.repo / 'scripts'
+        scripts.mkdir()
+        for name in ('review.sh', 'owns_check.py'):
+            (scripts / name).write_bytes((SCRIPT.parent / name).read_bytes())
+        (scripts / 'review_dispatch.py').write_text('import os; print("dispatched in", os.getcwd())\n',
+                                                    encoding='utf-8')
+        self.commit()
+        base = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        worktree = Path(self.tmp.name) / 'worktree'
+        self.git('worktree', 'add', '-q', '-b', 'worker', str(worktree))
+        self.write('other.txt')
+        self.commit()
+        (worktree / 'src/a.py').write_text('worker\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(worktree), '-c', 'user.name=Fixture', '-c',
+                        'user.email=fixture@example.invalid', '-c', 'core.hooksPath=', '-c', 'commit.gpgsign=false',
+                        'commit', '-qam', 'worker'], check=True, capture_output=True)
+        env = {k: v for k, v in os.environ.items() if k != 'REVIEW_REPO_ROOT'}
+        env['REVIEW_TASK_FILE'] = str(self.brief)
+        other = Path(self.tmp.name) / 'other'
+        other.mkdir()
+        subprocess.run(['git', 'init', '-q', str(other)], check=True, capture_output=True)
+        # An unrelated repository's folder keeps the script's own checkout, main's commit included.
+        for cwd, owns, reviewed in ((worktree, 'src/', worktree), (other, 'src/, other.txt', self.repo)):
+            with self.subTest(cwd=cwd.name):
+                self.brief.write_text('Task: fixture.\nOwns: %s\n' % owns, encoding='utf-8')
+                result = subprocess.run(['sh', str(scripts / 'review.sh'), '--base', base], cwd=cwd, env=env,
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(Path(result.stdout.split('dispatched in ', 1)[1].strip()).resolve(),
+                                 reviewed.resolve())
 
 
 if __name__ == '__main__':

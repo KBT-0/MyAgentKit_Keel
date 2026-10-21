@@ -68,6 +68,14 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
 - **ACTION:** re-copy `scripts/claude_bridge.py`, `scripts/review_dispatch.py` and
   `scripts/test_claude_bridge.py` from the kit (project-owned, so the sync does not bring them):
   the macOS archive, `CLAUDE_CLI_BIN` probe and backend-folder fixes above, with their tests.
+- `review.sh` run from another checkout of its own repository (the main checkout's script in a
+  worker's linked worktree) reviews that checkout, and its `Owns:` check diffs it, wherever the
+  brief lives; it reviewed the main checkout, so an unrelated commit on main left the brief's
+  `Owns:` line (#302). `REVIEW_REPO_ROOT` still wins; a folder of another repository keeps the
+  script's own. `test_owns_check` is 10.
+- **ACTION:** in `scripts/review.sh` (project-owned), replace the `cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}"`
+  line with the kit's `core/scripts/review.sh` block that sets `repo_root` from the checkout it
+  runs in, and re-copy `scripts/test_owns_check.py`.
 
 ---
 
