@@ -855,7 +855,7 @@ if os.environ.get('SPAWN_HOLD'):
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(self.spawn, *args, SPAWN_HOLD='1')
             try:
-                deadline = time.monotonic() + 20
+                deadline = time.monotonic() + 20 * SCALE
                 while not (self.state / 'launching').exists():
                     self.assertFalse(first.done(), first.result() if first.done() else 'launch pending')
                     self.assertLess(time.monotonic(), deadline, 'first launch never reached the terminal')
