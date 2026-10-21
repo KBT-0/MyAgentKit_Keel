@@ -338,7 +338,11 @@ file the kit changed reaches the project through these items.
   line, not a traceback (#134 follow-up). Test fixes: test_bootstrap names its global git config
   with `GIT_CONFIG_GLOBAL` (#147 follow-up); test_spawn_codex and test_worker_paths_windows scale
   their bounds; test_overlay_permissions writes with an encoding; stale guard counts in
-  `REQUIRED_SUITES`.
+  `REQUIRED_SUITES`; test_bootstrap's kit copies leave out the checkout's top-level `.claude`
+  and `.myagentkit` (an old worktree's scratch folder denied access, WinError 5),
+  `test_the_bg_host_needs_no_tmux_script` runs on native Windows instead of an undeclared skip,
+  and the bridge's partial-timeout case scales its limit (one second ran out before the fake
+  printed).
 
 - **The review bridge test of every record outcome no longer times out on a loaded host:** only
   its timeout cases keep the 2 s bound (#95 follow-up). `codex_bridge.py`'s verdict rule is one

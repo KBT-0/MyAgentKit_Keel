@@ -2560,7 +2560,6 @@ class BackgroundHostTests(unittest.TestCase):
                 self.ended()
                 shutil.rmtree(self.workers)
 
-    @unittest.skipIf(WINDOWS, 'POSIX: the tmux script lives under TMPDIR')
     def test_the_bg_host_needs_no_tmux_script(self):
         spaced = self.tmp / 'a b'
         spaced.mkdir()

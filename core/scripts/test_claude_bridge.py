@@ -128,7 +128,7 @@ if case == 'archive_failure':
     (repo / 'docs/reviews').rmdir()
     (repo / 'docs/reviews').write_text('blocked archive')
 if case == 'timeout': time.sleep(20)
-if case == 'partial_timeout': print(json.dumps(result), flush=True); time.sleep(20)
+if case == 'partial_timeout': print(json.dumps(result), flush=True); time.sleep(120)
 if case == 'quota':
     result.update(is_error=True, api_error_status=429, result='Session limit reached; resets later')
     print(json.dumps(result)); sys.exit(1)
@@ -4466,10 +4466,14 @@ class BridgeTests(unittest.TestCase):
                 self.assert_supervision_os_error_keeps_usage('codex', fault)
 
     def test_timeout_keeps_partial_usage_and_raw_evidence(self):
-        code, result = self.run_bridge("partial_timeout", extra=["--timeout", "1"])
+        # The limit covers the throwaway copy and the fake's start: one second under a loaded
+        # slow tier stopped the fake before it printed (399 ms left it, exit 1, no output).
+        seconds = str(round(3 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))))
+        code, result = self.run_bridge("partial_timeout", extra=["--timeout", seconds])
         self.assertEqual(code, 5, result)
         usage = json.loads(Path(result["usage_record"]).read_text())
-        self.assertIn('"total_cost_usd": 0.123', usage["raw_stdout"])
+        self.assertIn('"total_cost_usd": 0.123', usage["raw_stdout"],
+                      {k: usage.get(k) for k in ("duration_ms", "exit_code", "raw_stderr")})
         self.assertEqual(usage["failure_kind"], "timeout")
         self.assertFalse(usage["usage"]["complete"])
 
