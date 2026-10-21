@@ -99,8 +99,16 @@ elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
 [ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+repo_root="${REVIEW_REPO_ROOT:-$script_dir/..}"
+# Run from another checkout of the same repository (the main checkout's script in a worker's
+# linked worktree), the review and its Owns: check are of the checkout it runs in (#302).
+if [ -z "${REVIEW_REPO_ROOT:-}" ] && here=$(git rev-parse --show-toplevel 2>/dev/null) &&
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
+  [ "$common" = "$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]; then
+  repo_root=$here
+fi
 # CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.
-CDPATH= cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
+CDPATH= cd -- "$repo_root" || exit 2
 
 # ---------------------------------------------------------------------------------------
 # PROJECT-OWNED CONFIGURATION. Set during setup; sync-kit.sh never overwrites this file.

@@ -75,6 +75,33 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
 - **ACTION:** re-copy `scripts/claude_bridge.py`, `scripts/review_dispatch.py` and
   `scripts/test_claude_bridge.py` from the kit (project-owned, so the sync does not bring them):
   the macOS archive, `CLAUDE_CLI_BIN` probe and backend-folder fixes above, with their tests.
+- `review.sh` run from another checkout of its own repository (the main checkout's script in a
+  worker's linked worktree) reviews that checkout, and its `Owns:` check diffs it, wherever the
+  brief lives; it reviewed the main checkout, so an unrelated commit on main left the brief's
+  `Owns:` line (#302). `REVIEW_REPO_ROOT` still wins; a folder of another repository keeps the
+  script's own. `test_owns_check` is 10.
+- **ACTION:** in `scripts/review.sh` (project-owned), replace the `cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}"`
+  line with the kit's `core/scripts/review.sh` block that sets `repo_root` from the checkout it
+  runs in, and re-copy `scripts/test_owns_check.py`.
+- The gate's build command rule names what makes a step unsafe: a remote write, a deploy
+  credential, a change users see. A read-only validation spelled like a deploy (`wrangler deploy
+  --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command records it and
+  why it writes nothing remote; an exact allow rule or a CI job answers an agent permission layer
+  that refuses its shape (#300). `setup/INTERVIEW.md` says the same.
+- **ACTION:** in `scripts/check.sh` (project-owned), replace the "Keep deploy-shaped steps out of
+  this command" comment above `build_test_cmd` with the kit's, keeping its `# read-only:` line;
+  a project that kept a dry run on a standing exception records it there.
+- `.githooks/commit-msg`: refusing a `Done: <id>` that a strong review report, an audit or
+  `docs/STRONG_REVIEW.md` still names, it says the report is a living file and the closing commit deletes the finding's line
+  (`docs/WORKFLOW.md`, "Closing deletes"); it said "or drop the trailer", and a project dropped
+  the trailer and lost the id's trace (#301). The reports stay checked. `docs/WORKFLOW.md` and
+  `docs/STRONG_REVIEW.md`: a report's finding id is a task id of the project's shape, never a
+  report-local label (`P3`, `F16`); a label of the report's own takes a prefix no task id uses.
+  `test_git_hooks` is 38.
+- **ACTION:** in `docs/WORKFLOW.md`, "The strong review cycle", add the kit's two sentences after
+  "Each finding carries a task id ("Task ids"), a severity and its evidence."; in
+  `docs/STRONG_REVIEW.md`, add the kit's clause after "with the triage mark beside it". A report
+  whose labels share a task id's shape renames them with a prefix in the commit that closes them.
 
 ---
 

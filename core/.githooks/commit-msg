@@ -98,7 +98,13 @@ while IFS= read -r line; do
     hits=$(git show ":$f" 2>/dev/null | grep -inE "(^|[^A-Za-z0-9_-])$id([^A-Za-z0-9_-]|\$)")
     [ -n "$hits" ] || continue
     printf '%s\n' "commit-msg: this commit closes $id but $f still mentions it: delete the line (the history" >&2
-    echo "            is in git), or drop the trailer." >&2
+    case $f in
+      # The list and its reports are living files too (#301): dropping the trailer loses the id's trace.
+      docs/STRONG_REVIEW.md|docs/reviews/*|docs/audits/*)
+        echo "            is in git). The strong review list, its reports and audits keep only open findings: the closing" >&2
+        echo "            commit deletes the finding's line (docs/WORKFLOW.md, \"Closing deletes\")." >&2 ;;
+      *) echo "            is in git), or drop the trailer." >&2 ;;
+    esac
     printf '%s\n' "$hits" | sed "s|^|            $f:|" >&2
     mentioned=1
   done <<FILES

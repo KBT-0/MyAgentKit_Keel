@@ -588,6 +588,27 @@ class GitHookTests(unittest.TestCase):
             result = self.commit(root, git, 'closed\n\nDone: K4\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_report_refusal_says_the_report_is_a_living_file(self):
+        # #301: told only "or drop the trailer", a project dropped it, losing the task-id trace;
+        # the strong review list, a report or an audit loses the closed finding's line instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            self.docs(root, git)
+            for where in ('docs/reviews/strong-today.md', 'docs/audits/2026-10.md', 'docs/STRONG_REVIEW.md'):
+                with self.subTest(where=where):
+                    (root / where).parent.mkdir(parents=True, exist_ok=True)
+                    (root / where).write_text('- P3: a finding\n', encoding='utf-8')
+                    git('add', 'docs')
+                    result = self.commit(root, git, 'close\n\nDone: P3\n')
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('closes P3 but %s still mentions it' % where, result.stderr)
+                    self.assertIn('Closing deletes', result.stderr)
+                    self.assertNotIn('drop the trailer', result.stderr)
+                    git('rm', '-qf', where)
+            self.docs(root, git, '- P3: in flight\n')
+            result = self.commit(root, git, 'close\n\nDone: P3\n')
+            self.assertNotIn('Closing deletes', result.stderr)
+
     def test_a_done_id_matches_the_state_files_in_any_case(self):
         # `Done: k4` passed while the staged STATE.md named K4: ids are case-insensitive.
         with tempfile.TemporaryDirectory() as tmp:

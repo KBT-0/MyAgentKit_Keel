@@ -21,6 +21,20 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-21 — v0.12.1 issues300: a gate step is unsafe for what it does, not how it is spelled
+
+Backflow from labricore-web (#300): its only check of the Wrangler config was `wrangler deploy
+--dry-run`, which the v0.9 rule banned by name. The ban came from one agent permission layer that
+refused a gate ending in a deploy tool's dry run ("Gates that did not gate" below), not from a
+write. The tools draw the line by effect: Wrangler's dry run compiles "without actually deploying
+to live servers" (developers.cloudflare.com/workers/wrangler/commands/workers/), Terraform keeps
+`validate`, which "does not validate remote services", apart from `plan` and `apply`
+(developer.hashicorp.com/terraform/cli/commands/validate). So the rule now names the effects
+(a remote write, a deploy credential, a user-visible change), and a read-only step spelled like a
+deploy stays once a `# read-only:` line in the gate config records it; the permission layer is
+answered by an exact allow rule (code.claude.com/docs/en/permissions) or a CI job. No check
+enforces either rule: nothing in the gate ever matched deploy words.
+
 ### 2026-10-21 — v0.12.1 durations: agent time from measured rows, not a human team's
 
 Backflow from project-leeway-9a: a platform switch planned as "4-6 weeks of worker time" from
