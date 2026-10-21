@@ -18,6 +18,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,
 failed). The sync brings the changed kit-owned files; the ACTION items below name the project-owned ones.
 
+- `BEHAVIOUR.md`: a side agent's note (myagentkit-suggestion, You should know) is an unverified
+  claim; the agent runs its check, writes "correct | wrong | partly, because ..." on one visible
+  line, then acts or drops it (`docs/research/side-agent-suggestions.md`, 7.6).
+- New kit-owned `.claude/hooks/suggestions.py` (Claude Code overlay): the myagentkit-suggestion
+  ledger, `.myagentkit/suggestions.jsonl`. It delivers a side check's note once (next to a tool
+  result or with the next prompt), reads the verdict lines at Stop and asks once for a missing
+  one (`stop_hook_active` respected), throttles on precision over the last 20 judged notes
+  (below 50% doubles the interval, below 25% stops delivery and says so), skips workers and
+  sub-agents, and fails open; `suggestions.py report` prints the precision. Not yet registered in
+  `.claude/settings.json`: the side check that writes the notes (a mod) waits on the owner.
+
 - `spawn_worker.sh` and `watch_workers.sh` use no `-ef`, `-nt` or `-ot` (undefined in POSIX sh,
   shellcheck SC3013): a same-file test through `os.path.samefile` and a `newer` helper on `find
   -newer`, with the same results.
