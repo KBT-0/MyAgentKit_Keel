@@ -265,10 +265,10 @@ elif [ "$reviewer" = claude ]; then
     # Present is not enough: a claude too old for a flag the review passes (--restricted), or
     # npm's claude.cmd on native Windows, failed every review. The adapter itself names the
     # claude it would launch and the flags it needs (claude_bridge.cli_readiness).
-    # The output replaces what the pipe's code page cannot hold: Windows' own error text (a
-    # Turkish "[WinError 193] ... değil") raised in print, and the hidden traceback read as ready.
+    # The output is UTF-8 whatever the pipe's code page: Windows' own error text (a Turkish
+    # "[WinError 193] ... değil") raised in print, and the hidden traceback read as ready.
     cli_problem=$(python3 -B -c 'import sys; sys.path.insert(0, "scripts"); import claude_bridge
-sys.stdout.reconfigure(errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 print(claude_bridge.cli_readiness() or "")' 2>/dev/null)
     [ -n "$cli_problem" ] && miss "${cli_problem%%|*}" "${cli_problem#*|}"
     # The review's Bash runs only in Claude Code's sandbox, which needs these two on Linux and

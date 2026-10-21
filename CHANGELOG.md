@@ -28,7 +28,7 @@ failed). The sync brings every changed file but three review files (ACTION below
 - `claude_bridge.py`: `CLAUDE_CLI_BIN` naming a file is probed as the review launches it; on
   native Windows doctor called an unlaunchable extensionless file ready on Python 3.12+ and
   MISSING on 3.11.
-- `doctor.sh`: the CLI check's output replaces what the console code page cannot hold; a
+- `doctor.sh`: the CLI check prints UTF-8, replacing what it cannot encode, whatever the console code page; a
   localized Windows error ("[WinError 193] ... değil") raised in print, and doctor said ready.
 - `review_dispatch.py`: the backend folder inside the repository is refused when the repository
   is named through a symlink too (macOS's `/var` is `/private/var`).

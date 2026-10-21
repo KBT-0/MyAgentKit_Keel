@@ -547,8 +547,10 @@ class DoctorTests(unittest.TestCase):
                     for text in expected:
                         self.assertIn(text, line)
             # The ready claude stub on PATH stays ready (above), and so does one CLAUDE_CLI_BIN names.
-            ready = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True, capture_output=True,
-                                   env=dict(env, CLAUDE_CLI_BIN=str(bin_dir / 'claude')))
+            # doctor prints the CLI check in UTF-8 (Windows' localized error text), whatever the
+            # code page; this run reads it so, under check_kit's -X utf8 or not.
+            ready = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, encoding='utf-8', errors='replace',
+                                   capture_output=True, env=dict(env, CLAUDE_CLI_BIN=str(bin_dir / 'claude')))
             if WINDOWS:
                 # A sh stub is no Windows executable: the review cannot launch it, on every Python
                 # (3.14 called it ready, as its shutil.which no longer finds an extensionless path).
