@@ -53,7 +53,7 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - #295 / #294 / usagesum: POSIX-only runs owed to the first CI run (test_clean_worktrees, the
   watch_workers suite under dash and macOS sh, the Windows-path usage_summary test's red).
 
-## Filed from the v0.12 fix round (reports/fullrev-*.md; fixcl, fixhooks, fixkit, fixsync)
+## Filed from the v0.12 fix round (reports/fullrev-*.md; fixcl, fixhooks, fixkit, fixsync, fixworkers)
 
 - fullrev-review L: a past-mode `--commit` of an older commit on a dirty tree is refused for a
   secret-looking or filtered file in the working tree the review never reads; the message blames
@@ -80,3 +80,13 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - fullrev-kitcheck L: `check_actions` matches a basename anywhere in the ACTION text (README.md
   covers both overlay READMEs); match whole paths if a shared name ever lets a change through.
 - fullrev-docs M5: push master and the release tag in one atomic push (release order).
+- fullrev-workers L3: `spawn_worker.sh` place_brief: a plain spawn from a subfolder of the
+  checkout with a brief outside it copies the brief and a `*` `.gitignore` to
+  `SUBFOLDER/.myagentkit/workers/`, which no close removes (`wt_dir == top` skips the removal).
+- fullrev-workers L4 (pre-exists): a lead in a linked worktree: the post-merge hook in main runs
+  `close_worker.sh --finished` with no records there, so the lead's `NAME.*` records stay and
+  `list_workers.sh` lists the worker as `absent` for good.
+- fullrev-workers L5 (pre-exists): `watch_workers.sh` lone `--result` path: a ready result outside
+  a git repository (`report_result` needs a HEAD) prints nothing and exits 0.
+- fullrev-workers L6: a spawn refused after place_brief (the trust refusal) leaves `NAME.brief.md`
+  in the lead's records with no worker; harmless, the next spawn of the name overwrites it.

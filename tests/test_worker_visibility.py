@@ -172,6 +172,16 @@ class Base(unittest.TestCase):
                                   stderr=subprocess.PIPE, text=True, encoding='utf-8', timeout=60)
         return subprocess.run(argv, cwd=self.cwd, env=env, capture_output=True, text=True, encoding='utf-8', timeout=60)
 
+    def tmux_record(self, name):
+        # The record a tmux spawn leaves in its checkout: without one, a name tmux does not know
+        # is a usage error, never GONE (a bg worker spawned elsewhere is no tmux session either).
+        workers = self.cwd / '.myagentkit' / 'workers'
+        workers.mkdir(parents=True, exist_ok=True)
+        (workers / (name + '.host')).write_text('tmux\n')
+        exclude = self.cwd / '.git' / 'info' / 'exclude'
+        if exclude.exists() and '.myagentkit/' not in exclude.read_text():
+            exclude.write_text(exclude.read_text() + '\n.myagentkit/\n')
+
     def log(self, name):
         path = self.state / (name + '.log')
         return path.read_text(encoding='utf-8') if path.exists() else ''
@@ -400,6 +410,7 @@ class WatchTests(Base):
         return self.run_script(WATCH, *args, VIS_PANE=str(PANES / pane), **extra)
 
     def test_a_gone_session_is_reported(self):
+        self.tmux_record('gone')
         for args in (('--once', 'w1', 'gone'), ('w1', 'gone')):
             with self.subTest(args=args):
                 result = self.watch(*args)
@@ -657,6 +668,7 @@ class ResultTests(Base):
         # on every later run (#294). The marker file under .myagentkit/workers/ outlives it.
         (self.cwd / '.git' / 'info' / 'exclude').write_text('.myagentkit/\n')
         (self.cwd / '.myagentkit' / 'workers').mkdir(parents=True)
+        self.tmux_record('w1')
         self.commit(HEAD % ('completed', 'none'))
         self.assertIn('DONE: w1', self.watch().stdout)
         result = self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', 'w1', VIS_SESSIONS='')
@@ -796,6 +808,7 @@ class ResultTests(Base):
     def test_a_report_that_stdout_refuses_exits_3(self):
         if not HAS_DEV_FULL:
             self.skipTest('no /dev/full on this host: a report refused by stdout is not tested')
+        self.tmux_record('w1')
         self.commit(HEAD % ('completed', 'none'))
         for sessions, pane, word in (('w1', 'working-auto.txt', 'DONE'), ('', 'working-auto.txt', 'GONE'),
                                      ('w1', 'permission.txt', 'WAITING')):
@@ -873,14 +886,16 @@ class ResultTests(Base):
 
     def test_a_name_with_no_record_here_and_no_session_is_a_usage_error(self):
         self.elsewhere()
-        for args in (('--once',), ('--interval', '10', '--max-minutes', '0')):
-            with self.subTest(args=args):
-                result = self.run_script(WATCH, *args, 'w1', VIS_UNAME='MINGW64_NT-10.0')
-                self.assertEqual((result.returncode, result.stdout), (2, ''), result.stderr)
-                self.assertIn('w1: no record of it in ', result.stderr)
-                self.assertIn('/.myagentkit/workers and no session of that name: run the watch from the '
-                              'checkout it was spawned in (', result.stderr)
-                self.assertIn('/wt-w1)', result.stderr)
+        # tmux saying "no such session" proves nothing for a name spawned elsewhere (a bg worker).
+        for platform in ({'VIS_UNAME': 'MINGW64_NT-10.0'}, {'VIS_SESSIONS': ''}):
+            for args in (('--once',), ('--interval', '10', '--max-minutes', '0')):
+                with self.subTest(platform=platform, args=args):
+                    result = self.run_script(WATCH, *args, 'w1', **platform)
+                    self.assertEqual((result.returncode, result.stdout), (2, ''), result.stderr)
+                    self.assertIn('w1: no record of it in ', result.stderr)
+                    self.assertIn('/.myagentkit/workers and no session of that name: run the watch from the '
+                                  'checkout it was spawned in (', result.stderr)
+                    self.assertIn('/wt-w1)', result.stderr)
 
     def test_an_explicit_ready_result_wins_with_no_record_here(self):
         report = self.elsewhere() / 'RESULT-w1.md'
