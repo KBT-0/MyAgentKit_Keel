@@ -33,8 +33,9 @@ release tag into `~/.myagentkit/kit` and runs that kit's `bootstrap.sh` on this 
    curl -fsSL https://raw.githubusercontent.com/KBT-0/MyAgentKit_Keel/master/install.sh | sh -s -- OPTIONS
    ```
 
-   It is not pre-approved on purpose: it downloads and runs code, and the permission prompt is
-   the second gate. On a refusal, give the owner that command to run.
+   It is not pre-approved on purpose (the `allowed-tools` line lists only what runs without a
+   prompt, not every tool this command uses): it downloads and runs code, and the permission
+   prompt is the second gate. On a refusal, give the owner that command to run.
 4. No `install: kit` line in the output means the download failed (curl printed why; the
    pipe still exits 0): say so and stop. Show the output. A non-zero exit means nothing was
    installed or bootstrap stopped on a file it will not overwrite: show the reason and stop.

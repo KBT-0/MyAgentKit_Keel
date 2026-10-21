@@ -2227,7 +2227,8 @@ class TmuxStubTests(unittest.TestCase):
 # `claude agents --json --all` prints it (the spike's fields). `--bg` adds a working row and prints
 # the spike's `backgrounded · ID · NAME`; SPAWN_UNTRUSTED prints the trust refusal, SPAWN_NO_ID no id,
 # SPAWN_COPY a new id for a resume (a copy); SPAWN_HELP_HANGS keeps --help running after its text;
-# SPAWN_PUBLISH writes that result to SPAWN_PUBLISH_TO, as a worker that finished at once.
+# SPAWN_PUBLISH writes that result to SPAWN_PUBLISH_TO, as a worker that finished at once; SPAWN_HELP
+# replaces the --help line.
 BG_CLAUDE = r'''import json, os, sys, time
 state = os.environ['SPAWN_STATE']
 args = sys.argv[1:]
@@ -2241,7 +2242,7 @@ def save():
     with open(path, 'w') as f:
         json.dump(rows, f)
 if args == ['--help']:
-    print('  --bg, --background                    Start the session in the background and', flush=True)
+    print(os.environ.get('SPAWN_HELP', '  --bg, --background                    Start the session in the background and'), flush=True)
     if os.environ.get('SPAWN_HELP_HANGS'):
         time.sleep(90)
 elif args[:1] == ['agents']:
@@ -2489,6 +2490,16 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 45 * SCALE)
         self.assertIn('host: bg', result.stdout)
         self.ended()
+
+    def test_a_help_listing_bg_without_a_comma_is_the_bg_host(self):
+        # fullrev-docs L3: the probe grepped `--bg,`; a CLI listing `--bg` alone fell back silently.
+        for line in ('  --bg                  Start the session in the background', '  --bg'):
+            with self.subTest(line=line):
+                result = self.spawn(SPAWN_HELP=line, SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('host: bg', result.stdout)
+                self.ended()
+                shutil.rmtree(self.workers)
 
     @unittest.skipIf(WINDOWS, 'POSIX: the tmux script lives under TMPDIR')
     def test_the_bg_host_needs_no_tmux_script(self):
