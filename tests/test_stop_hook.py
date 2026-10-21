@@ -192,6 +192,17 @@ class StopHookTests(unittest.TestCase):
             self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (2, 4))
             self.assertEqual((stop(hook, root, '{"stop_hook_active":true}').returncode, runs()), (0, 4))
 
+    def test_a_name_that_reads_like_a_gitlink_is_not_a_submodule(self):
+        # Only the index's own entries say "submodule": a gated new file named `160000 a.py` in the
+        # state file made every tree unnameable, so the gate ran again on each new turn (v0.12 review).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\n')
+            hook.write_text(hook.read_text().replace('gated_paths="src"', 'gated_paths="."'), newline='\n')
+            (root / '160000 a.py').write_text('new\n', newline='\n')
+            runs = lambda: (root / '.git/gate-runs').read_text().count('ran')
+            self.assertEqual((stop(hook, root).returncode, stop(hook, root).returncode, runs()), (0, 0, 1))
+
     def test_a_new_file_in_a_new_directory_is_gated(self):
         # `git status --porcelain` folds a new directory into `?? src/pkg/`, which the gated
         # pattern does not match: a turn that only added src/pkg/__init__.py ended ungated.

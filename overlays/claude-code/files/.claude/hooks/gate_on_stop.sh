@@ -64,7 +64,7 @@ names() {
     git diff --binary --no-ext-diff --no-textconv --no-color >> "$state.tree" &&
     hashed "$code_untracked" >> "$state.tree" && code=$(git hash-object -- "$state.tree") || return 1
   tree=-
-  if ! grep -q '^160000 ' "$state.tree" &&
+  if ! git ls-files --stage | grep -q '^160000 ' &&
     untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard) &&
     hashed "$untracked" >> "$state.tree"; then tree=$(git hash-object -- "$state.tree") || tree=-; fi
   printf '%s %s\n' "$code" "$tree"

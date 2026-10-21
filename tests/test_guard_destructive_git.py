@@ -848,8 +848,11 @@ class V012RoundTwoReviewTests(GuardCase):
                     payload = json.dumps({'tool_name': name, 'tool_input': {'command': command}})
                     self.assertEqual(self.run_hook(command, payload=payload).returncode, code)
         tool('PowerShell', ["$a = @('push','--force'); git @a", "$a = 'push', '--force'; git @a", 'git @args',
-                            'git push @a'], 2)
-        tool('PowerShell', ["git log -1 '@{u}'", 'git log --oneline -3'], 0)
+                            'git push @a', "$b = 'feat'; git branch -D ($b)", 'git branch -D (git branch --show-current)',
+                            'git tag -d ($t)', 'git update-ref -d ($r)', 'git remote remove ($o)',
+                            'git branch -D $(git branch --show-current)'], 2)
+        tool('PowerShell', ["git log -1 '@{u}'", 'git log --oneline -3', 'git log -1 (git rev-parse HEAD)',
+                            'git log -1 $(git rev-parse HEAD)'], 0)
         tool('Bash', ['git log --oneline -1 @'], 0)  # in Bash `@` is HEAD
 
     def test_an_interpolated_operand_in_code_is_unknown(self):
@@ -864,6 +867,14 @@ class V012RoundTwoReviewTests(GuardCase):
         self.assertVerdict(["python -c 'import os; os.system(\"git branch -D merged\")'",
                             "python -c 'import subprocess; subprocess.run(f\"git log -1 {rev}\", shell=True)'",
                             "python -c 'import os; os.system(\"git rev-parse HEAD^{tree}\")'"], 0)
+
+    def test_a_folder_that_does_not_exist_yet_is_named_not_called_an_alias(self):
+        # The alias lookup ran in the folder the clone makes: the OSError read as "an alias the
+        # hook cannot read" (v0.12 full review).
+        result = self.run_hook('git clone https://x.example/r.git r && cd r && git submodule update --init')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'does not exist yet', result.stderr)
+        self.assertNotIn(b'an alias the hook cannot read', result.stderr)
 
 
 if __name__ == '__main__':
