@@ -38,7 +38,9 @@ fi
 if git -C "$kit" rev-parse -q --verify HEAD >/dev/null && ! git -C "$kit" diff --quiet HEAD; then
   die "$kit has edits to the kit's files (git -C \"$kit\" status): it is the installer's copy, replaced on every run; save them elsewhere, discard them and rerun; nothing was changed"
 fi
-git -C "$kit" fetch -q "$repo" "$ref" ||
+# --tags: review.sh --kit-verified asks this cache which release tag holds the recorded commit;
+# --force lets a tag moved upstream replace the cache's copy.
+git -C "$kit" fetch -q --tags --force "$repo" "$ref" ||
   die "cannot fetch $ref from $repo (no network, or no such tag or branch); set MYAGENTKIT_REF to another; nothing was changed"
 git -C "$kit" -c advice.detachedHead=false checkout -q --force --detach FETCH_HEAD ||
   die "cannot check out $ref in $kit; nothing was changed"

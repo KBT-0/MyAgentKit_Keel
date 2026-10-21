@@ -964,10 +964,14 @@ for link in (l for l in (open(sys.argv[6], "rb").read() if os.path.exists(sys.ar
         sys.exit(1)
 for path in paths:
     content = hashlib.sha256()
-    with open(os.fsdecode(path), "rb") as data:
-        for chunk in iter(lambda: data.read(1 << 20), b""):
-            content.update(chunk)
-    executable = b"x" if os.stat(os.fsdecode(path)).st_mode & 0o111 else b"-"
+    try:  # the build may delete a listed file
+        with open(os.fsdecode(path), "rb") as data:
+            for chunk in iter(lambda: data.read(1 << 20), b""):
+                content.update(chunk)
+        executable = b"x" if os.stat(os.fsdecode(path)).st_mode & 0o111 else b"-"
+    except OSError as error:
+        print("NOTE [build]: %s could not be read (%s), so the build is not cached." % (os.fsdecode(path), error.strerror), file=sys.stderr)
+        sys.exit(1)
     key.update(path + b"\0" + executable + content.digest())
 if os.path.exists(sys.argv[2]):
     key.update(b"symlinks\0" + open(sys.argv[2], "rb").read())
@@ -984,7 +988,7 @@ if os.path.isdir(sys.argv[3]):
         except (OSError, UnicodeDecodeError):
             pass
 print(found.split()[0], key, found.split()[1])
-' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days" "$0" "$work/file-links"
+' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days" "$gate" "$work/file-links"
 }
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.
@@ -1113,7 +1117,7 @@ if [ "$fail" -ne 0 ]; then echo "CHECK: FAIL"; exit 1; fi
 # written costs the next run its build, nothing else.
 if [ -n "$cache_record" ]; then
   { mkdir -p "$cache_dir" &&
-    python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$0" \
+    python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$gate" \
       > "$cache_dir/$cache_record"; } 2>/dev/null || :
 fi
 printf '%s\n' "CHECK: PASS${pass_note:-}"
