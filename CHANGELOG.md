@@ -292,8 +292,8 @@ file the kit changed reaches the project through these items.
   tools and shells (on Windows also python, node, npm) older than two hours whose parent is gone
   and that used more than 5% of a CPU, each with the command that ends it. GOTCHAS: "A timing
   taken on a busy machine is not a result". **ACTION:** re-copy `.claude/hooks/guard_root_scan.py` and merge its
-  PreToolUse entry into your `.claude/settings.json`; `scripts/close_worker.sh`,
-  `scripts/doctor.sh` and `docs/GOTCHAS.md` come with sync.
+  PreToolUse entry into your `.claude/settings.json`; merge the timing entry of
+  `docs/GOTCHAS.md` into your copy; `scripts/close_worker.sh` and `scripts/doctor.sh` come with sync.
 
 - **`guard_boundaries.py`** (#151, #264, #265, #268): its docstring and the overlay README say that writes
   through the shell get no early warning; `scripts/check.sh` stays the gate. It now also sees a
