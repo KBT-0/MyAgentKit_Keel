@@ -1013,14 +1013,29 @@ def main():
             self.assertEqual(check_kit.limit(300), 450)
 
     def test_units_run_that_many_at_once_with_their_timeouts_scaled_by_it(self):
-        unit = [sys.executable, '-c', 'import os, time; s = time.time(); time.sleep(0.5); '
-                'print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time()); '
-                'import sys; print("UNIT DONE: " + sys.argv[1])']
+        # Each unit marks its start and waits for the other's mark, so units that run at once overlap
+        # however late a loaded host starts one; one at a time, a waits 1.5 s alone (past b's late
+        # start) and ends first.
+        unit = [sys.executable, '-c', '''import os, sys, time, pathlib
+name, delay, marks, other, wait = sys.argv[1:]
+time.sleep(float(delay))
+s = time.time()
+(pathlib.Path(marks) / name).touch()
+while not (pathlib.Path(marks) / other).exists() and time.time() < s + float(wait):
+    time.sleep(.05)
+print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time())
+print("UNIT DONE: " + name)''']
+        wait = check_kit.limit(10)
         # The factor stops at 4: at 10 at once a hung 1800 s phase ran five hours (#146).
         for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True), (6, 8.0, True)):
             with self.subTest(parallel=parallel), \
                     unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '2'}):
-                passed, out = runner(('a', unit + ['a']), ('b', unit + ['b']), parallel=parallel)
+                marks = self.tmp / str(parallel)
+                marks.mkdir()
+                limit = str(wait if overlap else 1.5)
+                # b starts 0.7 s late, as a loaded host started its Python after a had ended.
+                passed, out = runner(('a', unit + ['a', '0', str(marks), 'b', limit]),
+                                     ('b', unit + ['b', '0.7', str(marks), 'a', limit]), parallel=parallel)
                 self.assertTrue(passed, out)
                 spans = [line.split()[1:] for line in out.splitlines() if line.startswith('span ')]
                 self.assertEqual([float(s) for s, _, _ in spans], [scale, scale])

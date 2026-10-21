@@ -342,7 +342,9 @@ file the kit changed reaches the project through these items.
   and `.myagentkit` (an old worktree's scratch folder denied access, WinError 5),
   `test_the_bg_host_needs_no_tmux_script` runs on native Windows instead of an undeclared skip,
   and the bridge's partial-timeout case scales its limit (one second ran out before the fake
-  printed).
+  printed); test_kit_runner's units-at-once case proves the overlap with marks each unit waits
+  for instead of timestamps (a loaded host started one unit after the other had ended), and
+  test_spawn_codex's wait for the held launch scales too.
 
 - **The review bridge test of every record outcome no longer times out on a loaded host:** only
   its timeout cases keep the 2 s bound (#95 follow-up). `codex_bridge.py`'s verdict rule is one
