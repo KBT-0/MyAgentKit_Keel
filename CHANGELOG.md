@@ -393,7 +393,9 @@ file the kit changed reaches the project through these items.
   a budget (`CAPS`: fast 480/600 s, slow 3000/3600 s, times the scale); the budget is enforced
   during the run: a unit over its cap, or still running when the budget ends, is stopped and
   named with its seconds, a queued unit does not start, and the run is red with a summary
-  before CI's `timeout-minutes`. Each unit leads its own process group on POSIX: a cap kill,
+  before CI's `timeout-minutes`. (Superseded in v0.12.1: a unit cap is a hang guard only, and a
+  tier over its target warns and stops nothing; see v0.12.1's "The kit check's time limits catch
+  hangs".) Each unit leads its own process group on POSIX: a cap kill,
   SIGTERM/SIGINT and a closed terminal (SIGHUP, in `scripts/check.sh` and the runner) stop the
   unit's test processes too. A cancel stops each running unit at once instead of letting it run
   its next test, and on native Windows ends the unit's whole process tree (`taskkill /T`). A

@@ -137,7 +137,7 @@ REQUIRED_SUITES = {
               'test_codex_worker': 66 if os.name == 'nt' else 68 if Path('/proc/self/fd').is_dir() else 67, 'test_working_mode': 52,
               'test_worker_visibility': 96 if os.name == 'nt' or os.path.exists('/dev/full') else 95, 'test_doc_pointers': 28,
               'test_usage_summary': 33, 'test_done_audits': 2,
-              'test_kit_output': 3, 'test_kit_runner': 48, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 51, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 52 if os.name == 'nt' else 51, 'test_python_fallback': 3,
               'test_install': 12 if os.name == 'nt' else 8},
@@ -311,30 +311,41 @@ def limit(seconds):
     return seconds * float(os.environ.get(SCALE, "1"))
 
 
+def system_times():
+    """Native Windows' GetSystemTimes as (idle, kernel + user) ticks; None elsewhere or on failure.
+    Kernel time includes the idle time."""
+    if os.name != 'nt':
+        return None
+    import ctypes
+    idle, kernel, user = ctypes.c_ulonglong(), ctypes.c_ulonglong(), ctypes.c_ulonglong()
+    if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+        return None
+    return idle.value, kernel.value + user.value
+
+
+def busy_share(cpus, first, second):
+    """The CPUs busy between two system_times() samples: cpus x (1 - idle ticks / all ticks),
+    clamped to [0, cpus]; 0 without both samples or without a tick between them."""
+    if not first or not second or second[1] <= first[1]:
+        return 0.0
+    return min(max(cpus * (1 - (second[0] - first[0]) / (second[1] - first[1])), 0.0), float(cpus))
+
+
 def busy_cpus(cpus):
     """How many of the host's CPUs other work keeps busy now: the 1-minute load average on POSIX
     (os.getloadavg), on native Windows GetSystemTimes' busy share over one second times the CPUs.
     0 where neither answers."""
-    if hasattr(os, 'getloadavg'):
+    loadavg = getattr(os, 'getloadavg', None)
+    if loadavg:
         try:
-            return float(min(os.getloadavg()[0], cpus))
+            return float(min(loadavg()[0], cpus))
         except OSError:
             return 0.0
-    if os.name != 'nt':
+    first = system_times()
+    if first is None:
         return 0.0
-    import ctypes
-
-    def times():
-        idle, kernel, user = ctypes.c_ulonglong(), ctypes.c_ulonglong(), ctypes.c_ulonglong()
-        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
-            return None
-        return idle.value, kernel.value + user.value  # kernel time includes the idle time
-    first = times()
     time.sleep(1)
-    second = times()
-    if not first or not second or second[1] <= first[1]:
-        return 0.0
-    return min(max(cpus * (1 - (second[0] - first[0]) / (second[1] - first[1])), 0.0), float(cpus))
+    return busy_share(cpus, first, system_times())
 
 
 def degree(cpus, units, busy=0.0):

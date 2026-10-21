@@ -101,7 +101,7 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   test_kit_runner (86, 175, 199, 642, 843), test_review_windows (134, 182, 255), test_check_gate_windows
   (530, 552, 598), fixtures/windows_lockcase (153, 193, 246); check each before scaling (843 is passed to the code).
 
-## Filed from v0.12.1 (fixci, fixci2, durations and their reviews)
+## Filed from v0.12.1 (fixci, fixci2, durations, timecaps and their reviews)
 
 - doctor.sh: the CLI check sends stderr to /dev/null and reads empty output as ready, so any exception in
   `import claude_bridge` or `cli_readiness` passes it silently; read the python exit status and call a non-zero exit
@@ -118,3 +118,7 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Durations: if the `BEHAVIOUR.md` duration line and the "Measured agent times" rows do not hold in use (a lead
   still answers in human time), add a hook that puts the elapsed time into each turn: agents timed their work right
   with an elapsed-time tool (`docs/research/agent-durations.md`, finding 10, sources [6][10]).
+- timecaps review L (v0.12.1 or later, the owner's call): on POSIX `busy_cpus` reads the 1-minute load average,
+  which still carries the kit check's own previous run, so `check.sh` followed at once by `check.sh --slow` runs
+  fewer units than it could and the WARNING blames "other work"; sample the load over a second as on Windows
+  (`/proc/stat` on Linux, `host_statistics` on macOS) or subtract the kit's own units.

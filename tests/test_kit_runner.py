@@ -1036,6 +1036,43 @@ def main():
         self.assertIsInstance(busy, float)
         self.assertTrue(0 <= busy <= cpus, busy)
 
+    def test_the_windows_busy_cpus_are_the_busy_share_of_two_samples(self):
+        # GetSystemTimes' (idle, kernel + user) a second apart: 250 of 1000 ticks idle on 20 CPUs is
+        # 15 busy. A reverted formula (0.0, or the idle share) passed every other test.
+        with unittest.mock.patch.object(check_kit.os, 'getloadavg', None, create=True), \
+                unittest.mock.patch.object(check_kit.time, 'sleep') as sleep, \
+                unittest.mock.patch.object(check_kit, 'system_times', side_effect=[(100, 1000), (350, 2000)]):
+            self.assertEqual(check_kit.busy_cpus(20), 15.0)
+        sleep.assert_called_once_with(1)
+        # Clamped to [0, cpus]; no second sample, or no clock tick between them, is no load.
+        self.assertEqual(check_kit.busy_share(20, (0, 0), (2000, 1000)), 0.0)
+        self.assertEqual(check_kit.busy_share(20, (500, 0), (0, 1000)), 20.0)
+        self.assertEqual(check_kit.busy_share(20, (0, 1000), (0, 1000)), 0.0)
+        self.assertEqual(check_kit.busy_share(20, (0, 0), None), 0.0)
+        with unittest.mock.patch.object(check_kit.os, 'getloadavg', None, create=True), \
+                unittest.mock.patch.object(check_kit, 'system_times', return_value=None):
+            self.assertEqual(check_kit.busy_cpus(20), 0.0)
+
+    def test_main_runs_fewer_units_on_a_loaded_host_with_the_unloaded_timeout_factor(self):
+        # 16 of 20 CPUs busy: 2 units at once (not the unloaded 10), and the test-internal limits
+        # keep the factor of 4 an unloaded run gives (not the loaded run's 2).
+        calls = []
+        with unittest.mock.patch.object(check_kit, 'busy_cpus', return_value=16.0), \
+                unittest.mock.patch.object(check_kit.os, 'cpu_count', return_value=20), \
+                unittest.mock.patch.object(check_kit, 'run_units',
+                                           side_effect=lambda *a, **kw: calls.append((a, kw)) or True), \
+                unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
+                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(out):
+            self.assertEqual(check_kit.main(), 0, out.getvalue())
+        (units, _, parallel), options = calls[0]
+        self.assertGreater(len(units), 20)
+        self.assertEqual(parallel, check_kit.degree(20, len(units), 16.0))
+        self.assertEqual(parallel, 2)
+        self.assertEqual(options['factor'], min(check_kit.degree(20, len(units)), 4))
+        self.assertEqual(options['factor'], 4)
+        self.assertIn('2 of %d units at once (20 CPUs, 16.0 busy with other work)' % len(units), out.getvalue())
+
     def test_a_unit_on_a_loaded_host_keeps_the_timeout_factor_of_a_full_run(self):
         # Under load fewer units run at once, but the host is as busy: the factor stays at the
         # unloaded run's, or the test-internal limits of the units still running time out.
