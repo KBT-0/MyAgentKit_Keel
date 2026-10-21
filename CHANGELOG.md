@@ -25,6 +25,30 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   busy (the load average on POSIX, GetSystemTimes on Windows), and their timeout factor stays an
   unloaded run's. CI's timeout-minutes 150 / 360. The review, watch_workers and spawn_codex test
   limits that ran out under load scale with `MYAGENTKIT_TEST_TIMEOUT_SCALE`.
+- `BEHAVIOUR.md`: a side agent's note (myagentkit-suggestion, You should know) is an unverified
+  claim; the agent runs its check, writes "correct | wrong | partly, because ..." on one visible
+  line, then acts or drops it (`docs/research/side-agent-suggestions.md`, 7.6).
+- New kit-owned `.claude/hooks/suggestions.py` (Claude Code overlay): the myagentkit-suggestion
+  ledger, `.myagentkit/suggestions.jsonl`. It delivers a side check's note once (next to a tool
+  result or with the next prompt), reads the verdict lines at Stop and asks once for a missing
+  one (`stop_hook_active` respected), throttles on precision over the last 20 judged notes
+  (below 50% doubles the interval, below 25% stops delivery and says so), skips workers and
+  sub-agents, and fails open; `suggestions.py report` prints the precision.
+- The myagentkit plugin gains a mod (`plugin/hooks/register.js`): a `$.model.fork` side check
+  over the lead's conversation, read from the prompt cache, every 10 main-loop tool calls, at
+  once on the same action or error 3 times, and at the end of a long turn; it abstains unless it
+  can quote evidence, shows a note as a dim `myagentkit-suggestion #ID` line and hands it to
+  `suggestions.py`; never in a worker, a sub-agent's loop or a project without the overlay.
+  `/myagentkit:suggestions on | off | status` switches it per project with no model turn
+  (`docs/COMMUNICATION.md`, "Side-check notes"). Measured on this host: one check read about
+  34k tokens from the cache, wrote under 100, sent about 500 fresh and replied with 10 to 117.
+- **ACTION** (`.claude/settings.json`, project-owned): add the three `suggestions.py` hook
+  entries the overlay's settings now carry, `post-tool` after `progress_reminder.py` in
+  PostToolUse, `prompt` after `context_size.py` in UserPromptSubmit and `stop` after
+  `plain_report.py` in Stop; then update the plugin (`claude plugin update myagentkit@myagentkit`), which brings the mod.
+- **ACTION** (`docs/COMMUNICATION.md`, project-owned): add the section "Side-check notes
+  (myagentkit-suggestion)" from the kit's `core/docs/COMMUNICATION.md`.
+
 - `spawn_worker.sh` and `watch_workers.sh` use no `-ef`, `-nt` or `-ot` (undefined in POSIX sh,
   shellcheck SC3013): a same-file test through `os.path.samefile` and a `newer` helper on `find
   -newer`, with the same results.
