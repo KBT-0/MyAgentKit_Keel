@@ -354,7 +354,9 @@ def stop(child, close_tree=None):
 def posix_tree(pid, force=False):
     try:
         os.killpg(pid, signal.SIGKILL if force else signal.SIGTERM)
-    except ProcessLookupError:
+    # macOS answers EPERM for a group whose members are all zombies (nothing left to stop), as
+    # agent_process.stop_group reads it: a supervisor that stopped its worker then exited 1.
+    except (ProcessLookupError, PermissionError):
         pass
 
 

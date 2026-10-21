@@ -650,8 +650,10 @@ class GitHookTests(unittest.TestCase):
             root, git = self.repo(tmp)
             blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=root,
                                   input='- K4: open\n', capture_output=True, text=True, check=True, encoding='utf-8').stdout.strip()
+            # As UTF-8 bytes: under the locale suite's LC_ALL=C and PYTHONUTF8=0 an 'é' in a str
+            # argument cannot be encoded for the child.
             git('-c', 'core.protectNTFS=false', 'update-index', '--add', '--cacheinfo',
-                '100644,' + blob + ',' + name)
+                ('100644,' + blob + ',' + name).encode('utf-8'))
             message = root / 'message'
             message.write_text(message_text, encoding='utf-8')
             result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
@@ -787,7 +789,8 @@ class GitHookTests(unittest.TestCase):
                 return
             holder = subprocess.Popen(
                 [sys.executable, '-c',
-                 'import fcntl, sys, time; f = open(sys.argv[1], "a+"); '
+                 # Binary: under the locale suite a text open without an encoding is an error.
+                 'import fcntl, sys, time; f = open(sys.argv[1], "ab"); '
                  'fcntl.flock(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
                  str(root / '.git/check.lock')], stdout=subprocess.PIPE, text=True, encoding='utf-8')
             try:

@@ -1465,6 +1465,24 @@ class CleanWorktreesTests(unittest.TestCase):
         (self.tmp / 'sessions').unlink()
         self.assertRemoved(path, self.run_script('--apply'))
 
+    def test_a_session_of_its_name_keeps_it_unless_it_started_in_another_checkout_or_worktree(self):
+        # #171: every project shares the default tmux server. The stub prints what
+        # `list-sessions -F '#{session_name}:#{session_path}'` does.
+        path = self.worktree('done')
+        other = self.tmp / 'other'
+        other.mkdir()
+        for started in (path, path / 'sub', self.main, self.main / 'src', ''):
+            with self.subTest(started=started):
+                (self.tmp / 'sessions').write_text('lead:%s\ndone:%s\n' % (self.main, started))
+                self.assertKept(path, self.run_script('--apply'), 'in use: a tmux session is named done')
+        for started in (other, self.main / '.claude/worktrees/lead'):
+            with self.subTest(started=started):
+                (self.tmp / 'sessions').write_text('done:%s\n' % started)
+                out = self.run_script()
+                self.assertIn('remove .claude/worktrees/done', out)
+                self.assertNotIn('a tmux session is named', out)
+        self.assertRemoved(path, self.run_script('--apply'))
+
     def test_a_held_gate_lock_is_kept(self):
         path = self.worktree('done')
         lock = self.gitdir(path) / 'check.lock'
@@ -2246,7 +2264,7 @@ class CleanWorktreesTests(unittest.TestCase):
             (path / folder).mkdir(parents=True)
             (path / folder / 'out.o').write_text('o\n')
         self.assertKept(path, self.run_script('--apply'),
-                        'disposable folder: app/build2/out.o, deep/app/build/out.o, other/build/out.o\n')
+                        'disposable folder: app/build2/out.o, deep/app/build/out.o, other/build/out.o; ')
 
     def test_a_name_entry_does_not_reach_below_a_place_that_holds_work(self):
         self.disposable('build\n')
@@ -2255,7 +2273,7 @@ class CleanWorktreesTests(unittest.TestCase):
             (path / folder).mkdir(parents=True)
             (path / folder / 'f').write_text('f\n')
         self.assertKept(path, self.run_script('--apply'), '.claude/build/f, .myagentkit/build/f, docs/build/f, '
-                        'scripts/x/build/f\n')
+                        'scripts/x/build/f; ')
 
     def test_disposable_matching_folder_by_folder(self):
         for rel, entries, expected in (

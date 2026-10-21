@@ -55,7 +55,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 279, 'test_agent_usage': 39, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 280, 'test_agent_usage': 39, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
 WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 253, 'test_agent_usage': 35, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
@@ -1303,14 +1303,15 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
         self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
-                          'ANTHROPIC_AUTH_TOKEN=private\x00value\n')
+                          'ANTHROPIC_AUTH_TOKEN=tokenword\x00value\n')
         with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='inherited-key')), \
                 patch.object(review_dispatch.claude_bridge, 'main') as launch:
             before = dict(os.environ)
             with self.assertRaises(ValueError) as error:
                 review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--backend', 'glm'])
             self.assertTrue(dict(os.environ) == before, 'backend rejection mutated the environment')
-            self.assertNotIn('private', str(error.exception))
+            # Not 'private': the message names the file, and macOS's temp folder is /private/var.
+            self.assertNotIn('tokenword', str(error.exception))
             launch.assert_not_called()
         self.assertFalse((self.repo / '.myagentkit/usage').exists())
 
@@ -5026,7 +5027,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 timed_region = []
 
                 def slow_copy(repo, copied_head, copied_diff, destination, **kwargs):
-                    self.assertEqual((repo, copied_head, copied_diff), (self.repo, head, diff))
+                    # The repository as main resolved it (macOS's /var is /private/var).
+                    self.assertEqual((repo, copied_head, copied_diff), (self.repo.resolve(), head, diff))
                     timed_region.append(time.monotonic())
                     time.sleep(1.3)
                     shutil.copytree(prepared, destination, symlinks=True, dirs_exist_ok=True)
@@ -5191,6 +5193,30 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     os.kill(int(pid_file.read_text()), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+    @posix_only
+    def test_a_tar_that_stops_reading_at_the_archive_end_is_no_copy_failure(self):
+        # macOS's bsdtar exits 0 at the end-of-archive blocks, before git has written the zero
+        # padding of its last record: git died of SIGPIPE, and the review failed copy_failed.
+        from unittest.mock import patch
+        import claude_bridge
+        (self.repo / 'large.bin').write_bytes(b'x' * (1 << 20))  # past any pipe buffer
+        self.commit_fixture('large')
+        real_popen = subprocess.Popen
+        for code in (0, 1):
+            def launch(command, *args, **kwargs):
+                if Path(command[0]).name == 'tar':
+                    command = ['sh', '-c', 'exec 0<&-; exit %d' % code]  # done reading, as bsdtar
+                return real_popen(command, *args, **kwargs)
+
+            copy = Path(tempfile.mkdtemp(dir=self.root))
+            with self.subTest(tar_exit=code), patch('claude_bridge.subprocess.Popen', side_effect=launch):
+                if code:
+                    # A tar that fails is still the copy's failure, git's SIGPIPE named with it.
+                    with self.assertRaisesRegex(claude_bridge.BridgeError, 'git archive exited -%d' % signal.SIGPIPE):
+                        claude_bridge.throwaway_copy(self.repo, 'HEAD', None, copy)
+                else:
+                    claude_bridge.throwaway_copy(self.repo, 'HEAD', None, copy)
 
     def test_missing_tar_reaps_the_already_started_archive(self):
         from unittest.mock import patch

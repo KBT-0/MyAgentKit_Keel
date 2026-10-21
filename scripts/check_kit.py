@@ -132,12 +132,12 @@ REQUIRED_SUITES = {
               'test_check_gate': 20, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
               'test_sync_kit': 60 if case_folds() else 59, 'test_doctor': 13, 'test_git_hooks': 37, 'test_stop_hook': 12, 'test_context_hook': 14, 'test_communication_hooks': 37, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 67 if os.name == 'nt' else 66, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
-              'test_spawn_worker': 77 if os.name == 'nt' else 98, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
+              'test_spawn_worker': 77 if os.name == 'nt' else 97, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
-              'test_codex_worker': 65 if os.name == 'nt' else 67 if Path('/proc/self/fd').is_dir() else 66, 'test_working_mode': 52,
+              'test_codex_worker': 66 if os.name == 'nt' else 68 if Path('/proc/self/fd').is_dir() else 67, 'test_working_mode': 52,
               'test_worker_visibility': 96 if os.name == 'nt' or os.path.exists('/dev/full') else 95, 'test_doc_pointers': 28,
               'test_usage_summary': 33, 'test_done_audits': 2,
-              'test_kit_output': 3, 'test_kit_runner': 48, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 48, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 52 if os.name == 'nt' else 51, 'test_python_fallback': 3,
               'test_install': 12 if os.name == 'nt' else 8},
@@ -441,15 +441,18 @@ def check_release(root):
     manifest carries the kit's MAJOR.MINOR as MAJOR.MINOR.PATCH (KARARLAR B11 inv3/(h),
     lead decision 4). The Codex manifest's generated version is not compared (decisions.md 3).
     """
-    readme = re.search(r'^\*\*(v\d+\.\d+)\.\*\*', (root / 'README.md').read_text(encoding='utf-8'), re.M)
-    changelog = re.search(r'^## (v\d+\.\d+)(?=\s|$)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)
+    readme = re.search(r'^\*\*(v\d+\.\d+(?:\.\d+)?)\.\*\*', (root / 'README.md').read_text(encoding='utf-8'), re.M)
+    changelog = re.search(r'^## (v\d+\.\d+(?:\.\d+)?)(?=\s|$)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)
     if not readme or not changelog or readme.group(1) != changelog.group(1):
         raise RuntimeError("README's bold version must match CHANGELOG's newest versioned heading")
     manifest = root / 'plugin/.claude-plugin/plugin.json'
     version = str(json.loads(manifest.read_text(encoding='utf-8')).get('version', ''))
-    if not re.fullmatch(r'(\d+\.\d+)\.\d+', version) or 'v' + version.rsplit('.', 1)[0] != changelog.group(1):
+    # A patch release's heading names all three numbers, and the manifest the same three.
+    if (not re.fullmatch(r'\d+\.\d+\.\d+', version)
+            or changelog.group(1) not in ('v' + version, 'v' + version.rsplit('.', 1)[0])):
         raise RuntimeError("plugin/.claude-plugin/plugin.json's version %r must be MAJOR.MINOR.PATCH with "
-                           "CHANGELOG's newest version %s as MAJOR.MINOR" % (version, changelog.group(1)))
+                           "CHANGELOG's newest version %s as MAJOR.MINOR, or as all three for a patch release"
+                           % (version, changelog.group(1)))
 
 
 def check_actions(root):
@@ -477,9 +480,9 @@ def check_actions(root):
     if not owned:
         return
     # After a release tag the next cycle's items sit under "## Unreleased" until its release.
-    newest = re.search(r'^## (Unreleased\b[^\n]*|v\d+\.\d+)(?=\s|$)(.*?)(?=^## v|\Z)',
+    newest = re.search(r'^## (Unreleased\b[^\n]*|v\d+\.\d+(?:\.\d+)?)(?=\s|$)(.*?)(?=^## v|\Z)',
                        (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M | re.S)
-    if not newest or re.match(r'v\d+\.\d+', tag).group() == newest.group(1):
+    if not newest or re.match(r'v\d+\.\d+(?:\.\d+)?', tag).group() == newest.group(1):
         raise RuntimeError('project-owned kit files changed since %s, and CHANGELOG has no newer version '
                            'for their ACTION items: %s' % (tag, ', '.join(owned)))
     # An item runs from its **ACTION to the end of its bullet.
@@ -1174,7 +1177,10 @@ def posix_lock_cases(project, side, build, own_lock, gate):
         "            raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))\n"
         "        return real(fd, op)\n"
         "    fcntl.flock = flock\n"
-        "_fake_flock()\n")
+        "_fake_flock()\n"
+        # A nested run calls the holder's GATE_PYTHON, its sys.executable (#249): named as this
+        # stand-in, the nested proof meets the same flock (it passed through the real one).
+        "import sys as _sys; _sys.executable = %r\n" % str(fake / "python3"))
     (fake / "python3").write_text(
         "#!%s\nimport os, sys\nargs = sys.argv[1:]\n"
         "if '-c' in args:\n"

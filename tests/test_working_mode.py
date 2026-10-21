@@ -663,8 +663,9 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn('unreadable kit version in docs/kit/.kit-version', result.stderr)
         self.assertFalse((self.project / '.myagentkit/mode.lock').exists())
-        stamp.write_text('0.11\n', encoding='utf-8')
-        self.assertEqual(self.run_mode('cross').returncode, 0)
+        for version in ('0.11\n', '0.12.1\n'):  # a patch release records three numbers
+            stamp.write_text(version, encoding='utf-8')
+            self.assertEqual(self.run_mode('cross').returncode, 0, version)
 
     def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
         self.assertEqual(self.run_mode('solo').returncode, 0)

@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -549,6 +550,11 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 reap(unpacked, unpacked_pgid)
             finally:
                 agent_process.restore_mask(mask)
+            # macOS's bsdtar exits at the end-of-archive blocks, before git has written the
+            # zero padding that fills its last 10 KiB record: git then dies of SIGPIPE although
+            # tar read the whole archive and exited 0.
+            if hasattr(signal, "SIGPIPE") and archive.returncode == -signal.SIGPIPE and unpacked.returncode == 0:
+                archive.returncode = 0
             if archive.returncode or unpacked.returncode:
                 archive_err.seek(0)
                 said = archive_err.read(64 * 1024).decode(errors="replace").strip()
@@ -1728,7 +1734,11 @@ def cli_readiness(environ=os.environ) -> str | None:
 
     named = environ.get("CLAUDE_CLI_BIN")
     path_list = environ.get("PATH", "")
-    first = shutil.which(named or "claude", path=path_list)
+    # A named file is probed as the review launches it: Windows' shutil.which finds an
+    # extensionless path on Python 3.11 and not from 3.12, so doctor's verdict on one followed
+    # the Python version (an unlaunchable sh stub was ready on 3.14, MISSING on 3.11).
+    first = (named if named and os.path.dirname(named) and os.path.isfile(named)
+             else shutil.which(named or "claude", path=path_list))
     why = problem(first) if first else None
     if not why:
         return None
