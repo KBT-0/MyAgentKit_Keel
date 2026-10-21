@@ -165,7 +165,8 @@ class WorkerPathsOnWindows(unittest.TestCase):
         workers = self.tmp / '.myagentkit/workers'
         workers.mkdir(parents=True)
         state = workers / 'w1.state'
-        self.env['LIVE_STATE'] = state.as_posix()
+        # As the script names it: git's top level, the real path (macOS's /var is /private/var).
+        self.env['LIVE_STATE'] = state.resolve().as_posix()
         if os.name == 'nt':
             self.env['LIVE_STATE'] = subprocess.run(['cygpath', '-u', str(state)], check=True,
                                                     capture_output=True, text=True).stdout.strip()
@@ -194,7 +195,8 @@ class WorkerPathsOnWindows(unittest.TestCase):
         workers = self.tmp / '.myagentkit/workers'
         workers.mkdir(parents=True)
         state = workers / 'w1.state'
-        self.env['LIVE_STATE'] = state.as_posix()
+        # As the script names it: git's top level, the real path (macOS's /var is /private/var).
+        self.env['LIVE_STATE'] = state.resolve().as_posix()
         if os.name == 'nt':
             self.env['LIVE_STATE'] = subprocess.run(['cygpath', '-u', str(state)], check=True,
                                                     capture_output=True, text=True).stdout.strip()

@@ -132,9 +132,9 @@ REQUIRED_SUITES = {
               'test_check_gate': 20, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
               'test_sync_kit': 60 if case_folds() else 59, 'test_doctor': 13, 'test_git_hooks': 37, 'test_stop_hook': 12, 'test_context_hook': 14, 'test_communication_hooks': 37, 'test_overlay_permissions': 12, 'test_guard_destructive_git': 67 if os.name == 'nt' else 66, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
-              'test_spawn_worker': 77 if os.name == 'nt' else 98, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
+              'test_spawn_worker': 77 if os.name == 'nt' else 97, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
-              'test_codex_worker': 65 if os.name == 'nt' else 67 if Path('/proc/self/fd').is_dir() else 66, 'test_working_mode': 52,
+              'test_codex_worker': 66 if os.name == 'nt' else 68 if Path('/proc/self/fd').is_dir() else 67, 'test_working_mode': 52,
               'test_worker_visibility': 96 if os.name == 'nt' or os.path.exists('/dev/full') else 95, 'test_doc_pointers': 28,
               'test_usage_summary': 33, 'test_done_audits': 2,
               'test_kit_output': 3, 'test_kit_runner': 48, 'test_clean_worktrees': 143, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
@@ -1174,7 +1174,10 @@ def posix_lock_cases(project, side, build, own_lock, gate):
         "            raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))\n"
         "        return real(fd, op)\n"
         "    fcntl.flock = flock\n"
-        "_fake_flock()\n")
+        "_fake_flock()\n"
+        # A nested run calls the holder's GATE_PYTHON, its sys.executable (#249): named as this
+        # stand-in, the nested proof meets the same flock (it passed through the real one).
+        "import sys as _sys; _sys.executable = %r\n" % str(fake / "python3"))
     (fake / "python3").write_text(
         "#!%s\nimport os, sys\nargs = sys.argv[1:]\n"
         "if '-c' in args:\n"

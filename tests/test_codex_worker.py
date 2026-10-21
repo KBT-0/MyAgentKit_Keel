@@ -787,6 +787,17 @@ class CodexWorkerTests(unittest.TestCase):
                         module().posix_tree(int(pid.read_text()), True)
     test_posix_signals_stop_the_live_worker_group._kit_platform_skip = os.name == 'nt'
 
+    def test_a_group_of_zombies_is_nothing_left_to_stop(self):
+        # macOS answers killpg with EPERM for a group whose members are all zombies: the live
+        # signal case above then exited 1 ("Operation not permitted"), not 128 + the signal.
+        worker = module()
+        for error in (ProcessLookupError, PermissionError):
+            with self.subTest(error=error.__name__), \
+                    mock.patch.object(worker.signal, 'SIGKILL', 9, create=True), \
+                    mock.patch.object(worker.os, 'killpg', side_effect=error, create=True) as killpg:
+                worker.posix_tree(123, True)
+                killpg.assert_called_once()
+
     def test_normal_exit_status_is_preserved_and_no_question_is_invented(self):
         with tempfile.TemporaryDirectory() as tmp:
             question = Path(tmp) / 'QUESTION-w.md'

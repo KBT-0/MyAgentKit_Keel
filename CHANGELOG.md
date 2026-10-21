@@ -13,6 +13,35 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.12.1 — 2026-10-21
+
+CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,
+failed). Every changed file is kit-owned; no ACTION.
+
+- `spawn_worker.sh` and `watch_workers.sh` use no `-ef`, `-nt` or `-ot` (undefined in POSIX sh,
+  shellcheck SC3013): a same-file test through `os.path.samefile` and a `newer` helper on `find
+  -newer`, with the same results.
+- `spawn_worker.sh`: the background host's two `cd "$dir"` clear CDPATH like every other `cd`.
+- `claude_bridge.py`: macOS's bsdtar stops reading at the archive's end blocks, and `git archive`
+  died of SIGPIPE writing its record padding; a SIGPIPE'd archive whose tar exited 0 is no
+  copy failure (a review failed `copy_failed` on macOS).
+- `claude_bridge.py`: `CLAUDE_CLI_BIN` naming a file is probed as the review launches it; on
+  native Windows doctor called an unlaunchable extensionless file ready on Python 3.12+ and
+  MISSING on 3.11.
+- `review_dispatch.py`: the backend folder inside the repository is refused when the repository
+  is named through a symlink too (macOS's `/var` is `/private/var`).
+- `codex_worker.py`: a worker group whose members are all zombies (macOS answers `killpg` with
+  EPERM) is nothing left to stop; a supervisor stopped by SIGTERM or SIGHUP exited 1.
+- Tests: two new (the zombie group, POSIX and Windows; the early-ending tar, POSIX), so
+  `test_codex_worker` is 66 on Windows, 68 or 67 elsewhere and `test_claude_bridge` 280 on POSIX;
+  the POSIX count of `test_spawn_worker` is 97; the clean_worktrees, git option (run in
+  the C locale), git_hooks (UTF-8 bytes, a binary lock file), doctor (the stub lists every flag
+  but `--restricted`; the probe wait scales), sandbox, worker paths and bridge tests follow the
+  current messages and macOS's resolved temp paths; the acceptance's stand-in flock reaches a
+  nested run through `GATE_PYTHON` (#249).
+
+---
+
 ## v0.12 — 2026-10-20
 
 `sync-kit.sh` writes this section's **ACTION** items to `docs/kit/UPGRADE.md` of a project whose

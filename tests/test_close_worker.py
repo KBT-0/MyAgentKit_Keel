@@ -886,6 +886,8 @@ class CloseWorkerTests(unittest.TestCase):
         self.hooked()
         w1 = self.kit_worker('w1')
         self.env.update(self.windows('5151 "C:\\codex\\codex.exe" -C "%s" exec' % os.path.realpath(w1)))
+        # The host is native Windows here, which has no tmux: on POSIX the stub's w1 kept the worktree.
+        (self.tmp / 'sessions').unlink()
         self.result(w1, 'w1', 'Kind: completed')
         reports = self.main / '.myagentkit/workers'
         reports.mkdir(parents=True)

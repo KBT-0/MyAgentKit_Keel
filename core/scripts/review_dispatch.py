@@ -246,7 +246,10 @@ def load_backend(repo, name):
     # KARARLAR D09 inv2#80, LIDER 10: outside the repository by default, so a checkout can never
     # provide or change the file; the old in-repository place is read while projects move.
     folder = claude_bridge.backends_dir()
-    if folder.resolve() == repo or repo in folder.resolve().parents:
+    # Both resolved: a repository named through a symlink (macOS's /var is /private/var) held a
+    # backend folder inside it that the comparison did not see.
+    root = Path(repo).resolve()
+    if folder.resolve() == root or root in folder.resolve().parents:
         raise ValueError("backend folder %s must be outside the repository (MYAGENTKIT_BACKENDS_DIR)" % folder)
     path = folder / (name + ".env")
     if not os.path.lexists(path):

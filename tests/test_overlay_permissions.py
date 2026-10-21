@@ -73,7 +73,10 @@ class OverlayPermissionsTests(unittest.TestCase):
         # --ext-diff. Prove it runs, then check the shipped rules would still require a prompt.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_PAGER='cat')
+            # Git's option errors are matched in English: under the locale suite's tr_TR they were
+            # Turkish ("geçersiz seçenek"), so git alone runs in the C locale.
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_PAGER='cat',
+                       LC_ALL='C', LANGUAGE='C')
             def git(*args, check=True):
                 return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                                        '-c', 'core.hooksPath=.git/hooks', *args], cwd=root, env=env,

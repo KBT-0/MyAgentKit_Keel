@@ -116,6 +116,12 @@ set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
 die() { say "watch_workers: $1" >&2; exit 2; }
+# newer A B: A was modified after B, test's -nt, which POSIX sh lacks (SC3013). A or B missing:
+# false, so `! newer B A` is test's `! A -ot B` for an A that exists.
+newer() {
+  case $1 in -*) set -- "./$1" "$2" ;; esac
+  [ -n "$(find "$1" -prune -newer "$2" 2>/dev/null)" ]
+}
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) here=$(dirname -- "$0") ;; */*) here=${0%/*} ;; *) here=. ;; esac
 patterns=$here/waiting_patterns.txt
@@ -367,7 +373,7 @@ report_result() {
     # A lone name has no run start to compare with: its explicit result path wins.
     rp=$wdir/$1.result-path
     if lone "$1"; then [ -f "$f" ] && [ ! -L "$f" ] || return 1
-    else [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && [ "$f" -nt "$rp" ] || return 1; fi
+    else [ -f "$rp" ] && [ -f "$f" ] && [ ! -L "$f" ] && newer "$f" "$rp" || return 1; fi
     cat -- "$f" >"$body" 2>/dev/null || return 1
     published "$body" || return 1
     # Hashed as git would store it (eol and attribute filters of its path): a later commit of
@@ -501,7 +507,7 @@ EOF
   m=$(git -C "$q" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); [ -n "$m" ] || m=$q
   for t in "$m/.claude/worktrees/$1" "$q/.claude/worktrees/$1"; do [ ! -d "$t" ] || { q=$t; break; }; done
   q=$q/QUESTION-$1.md
-  if [ -f "$q" ] && [ ! "$q" -ot "$rp" ] && published "$q"; then
+  if [ -f "$q" ] && ! newer "$rp" "$q" && published "$q"; then
     settled=1
     sum=$(cksum <"$q" 2>/dev/null) || sum=""
     if [ -n "$sum" ] && [ "$(mark "$1" question)" != "$sum" ]; then
@@ -510,7 +516,7 @@ EOF
     fi
   fi
   rfile "$1"
-  if [ -n "$f" ] && [ -f "$f" ] && [ ! "$f" -ot "$rp" ] && published "$f"; then
+  if [ -n "$f" ] && [ -f "$f" ] && ! newer "$rp" "$f" && published "$f"; then
     case $(hl 1 "$f") in "Kind: completed"|"Kind: handoff") settled=1 ;; esac
   fi
   # Not the main loop's w: a report here returns 0, and the caller keeps w as bg() left it.
@@ -567,11 +573,11 @@ gone_tab() {
   rp=$wdir/$1.result-path; x=$wdir/$1.exit; l=$wdir/$1.live; v=""; dropped=""
   # The lock first, as codex_worker.py --wait reads it: an exit record written between the two
   # reads is still seen below, never reported as a dropped lock.
-  if [ -f "$l" ] && [ ! "$l" -ot "$rp" ]; then
+  if [ -f "$l" ] && ! newer "$rp" "$l"; then
     v=$(cat -- "$l" 2>/dev/null) || v=""
     if [ -n "$v" ] && [ "$(mark "$1" live)" != "$v" ] && ended "$l"; then dropped=1; fi
   fi
-  if [ -f "$x" ] && [ ! "$x" -ot "$rp" ]; then
+  if [ -f "$x" ] && ! newer "$rp" "$x"; then
     e=$(LC_ALL=C sed -n 1p "$x" 2>/dev/null | LC_ALL=C tr -d '\001-\037\177')
     # Empty: being written; the next check reads it.
     [ -n "$e" ] && [ "$(mark "$1" exit)" != "$e" ] || return 1

@@ -463,7 +463,8 @@ class ClaudeSandboxTests(unittest.TestCase):
         code, result, launches = self.bridge('propose')
         self.assertEqual(code, 0, result)
         [(_, workdir, _, scratch)] = launches
-        self.assertEqual(workdir, self.repo)
+        # The repository as the bridge resolved it (macOS's /var is /private/var).
+        self.assertEqual(workdir, self.repo.resolve())
         self.assertEqual(scratch, [])
 
     def test_a_copy_that_cannot_be_made_is_a_recorded_failure_for_either_reviewer(self):

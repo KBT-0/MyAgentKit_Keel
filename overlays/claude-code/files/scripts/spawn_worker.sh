@@ -625,11 +625,19 @@ case $brief in "$(native "$dir")"/*) ;; *)
   copy=$dir/.myagentkit/workers/$name.brief.md
   told=$(native "$copy") || die "cygpath cannot convert the path: $copy" ;;
 esac
+# same_file A B: test's -ef (both exist, one device and inode), which POSIX sh lacks (SC3013).
+same_file() {
+  $kit_python -I -c 'import os, sys
+try:
+    sys.exit(not os.path.samefile(sys.argv[1], sys.argv[2]))
+except OSError:
+    sys.exit(1)' "$(native "$1")" "$(native "$2")"
+}
 place_brief() {
   [ -n "$copy" ] || return 0
   { mkdir -p -- "$wdir" "${copy%/*}" &&
-    { [ "$brief_src" -ef "$wdir/$name.brief.md" ] || cp -- "$brief_src" "$wdir/$name.brief.md"; } &&
-    { [ "$copy" -ef "$wdir/$name.brief.md" ] || { cp -- "$wdir/$name.brief.md" "$copy" &&
+    { same_file "$brief_src" "$wdir/$name.brief.md" || cp -- "$brief_src" "$wdir/$name.brief.md"; } &&
+    { same_file "$copy" "$wdir/$name.brief.md" || { cp -- "$wdir/$name.brief.md" "$copy" &&
       { [ -e "${copy%/*}/.gitignore" ] || printf '%s\n*\n' "$brief_ignore" > "${copy%/*}/.gitignore"; }; }; }; } ||
     die "cannot copy the brief into the worker's folder: $copy"
 }
@@ -782,7 +790,7 @@ if [ -n "$bg" ]; then
   fi
   # From here a session may run in the worktree: a failure leaves it there (stranded above).
   launched=1
-  rc=0; out=$(cd "$dir" && eval "exec $bare $bg_cmd" </dev/null 2>&1) || rc=$?
+  rc=0; out=$(CDPATH= cd -- "$dir" && eval "exec $bare $bg_cmd" </dev/null 2>&1) || rc=$?
   printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
   case $out in *"Workspace not trusted"*)
     launched=""  # refused before any session (spike T1): the unused worktree goes
@@ -807,7 +815,7 @@ if [ -n "$bg" ]; then
   [ -z "${full:-}" ] || printf '%s\n' "$full" > "$wdir/$name.session" || die "cannot record the session id $full in $wdir"
   # Started in the worker's folder, which names its checkout's locks; the supervisor itself then
   # runs from the temporary folder, so it never holds the worktree a close removes.
-  (cd "$dir" && eval "KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") --detach $(q "$(native "$wdir/$name.supervisor.log")") $(q "$cquestion") $(q "$cresult") --bg $(q "$id")") ||
+  (CDPATH= cd -- "$dir" && eval "KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") --detach $(q "$(native "$wdir/$name.supervisor.log")") $(q "$cquestion") $(q "$cresult") --bg $(q "$id")") ||
     die "the session $id runs without its supervisor, so nothing ends it on its result: close it with scripts/close_worker.sh $name once it is finished"
   printf '%s\n' "spawn_worker: '$name' started with $brief as background session $id"
   watch_line

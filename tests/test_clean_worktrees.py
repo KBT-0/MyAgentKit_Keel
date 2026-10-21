@@ -2246,7 +2246,7 @@ class CleanWorktreesTests(unittest.TestCase):
             (path / folder).mkdir(parents=True)
             (path / folder / 'out.o').write_text('o\n')
         self.assertKept(path, self.run_script('--apply'),
-                        'disposable folder: app/build2/out.o, deep/app/build/out.o, other/build/out.o\n')
+                        'disposable folder: app/build2/out.o, deep/app/build/out.o, other/build/out.o; ')
 
     def test_a_name_entry_does_not_reach_below_a_place_that_holds_work(self):
         self.disposable('build\n')
@@ -2255,7 +2255,7 @@ class CleanWorktreesTests(unittest.TestCase):
             (path / folder).mkdir(parents=True)
             (path / folder / 'f').write_text('f\n')
         self.assertKept(path, self.run_script('--apply'), '.claude/build/f, .myagentkit/build/f, docs/build/f, '
-                        'scripts/x/build/f\n')
+                        'scripts/x/build/f; ')
 
     def test_disposable_matching_folder_by_folder(self):
         for rel, entries, expected in (

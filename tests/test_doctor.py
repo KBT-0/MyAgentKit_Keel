@@ -232,8 +232,10 @@ class DoctorTests(unittest.TestCase):
             (old / 'claude').write_text('#!/bin/sh\nexec sleep 30\n')
             tmpdir = root / 'tmpdir'
             tmpdir.mkdir()
+            # The wait for the probe's file scales: a loaded macOS runner took over 10 s to reach it.
             interrupt = ('sh scripts/doctor.sh >/dev/null & pid=$!; n=0\n'
-                         'while [ -z "$(ls "$TMPDIR")" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done\n'
+                         'while [ -z "$(ls "$TMPDIR")" ] && [ $n -lt %d ]; do sleep 0.1; n=$((n+1)); done\n'
+                         % int(100 * SCALE) +
                          'ls "$TMPDIR"; kill -s TERM $pid; wait $pid\n')
             seen = subprocess.run(['sh', '-c', interrupt], cwd=root, timeout=30 * SCALE, capture_output=True, text=True,
                                   env=dict(env, TMPDIR=tmpdir.as_posix(), PATH=str(old) + os.pathsep + bare))
@@ -524,8 +526,9 @@ class DoctorTests(unittest.TestCase):
             else:
                 # Every flag the review needs but --restricted (the adapter lists each one it misses).
                 (old_dir / 'claude').write_text('#!/bin/sh\necho "--allowed-tools --effort --json-schema '
-                                                '--max-budget-usd --mcp-config --no-session-persistence '
-                                                '--output-format --permission-mode --settings --strict-mcp-config"\n')
+                                                '--max-budget-usd --mcp-config --model --no-session-persistence '
+                                                '--output-format --permission-mode --safe-mode --settings '
+                                                '--strict-mcp-config --tools"\n')
                 (old_dir / 'claude').chmod(0o755)
                 cases = (({'PATH': str(old_dir) + os.pathsep + env['PATH']},
                           ['the claude CLI first on PATH (%s) lacks' % (old_dir / 'claude'), '--restricted',
@@ -546,7 +549,13 @@ class DoctorTests(unittest.TestCase):
             # The ready claude stub on PATH stays ready (above), and so does one CLAUDE_CLI_BIN names.
             ready = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True, capture_output=True,
                                    env=dict(env, CLAUDE_CLI_BIN=str(bin_dir / 'claude')))
-            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            if WINDOWS:
+                # A sh stub is no Windows executable: the review cannot launch it, on every Python
+                # (3.14 called it ready, as its shutil.which no longer finds an extensionless path).
+                self.assertEqual(ready.returncode, 1, ready.stdout + ready.stderr)
+                self.assertIn('cannot launch --version', ready.stdout)
+            else:
+                self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
 
             # From here on each case sets up a POSIX host: process groups, signals, a FIFO, a
             # shell's rc files, tmux, the host's node and npm cache, WSL paths.
