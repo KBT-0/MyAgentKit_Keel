@@ -197,12 +197,12 @@ fixed" follow as always.
   2026-10-22). A
   worker writes `Kind: handoff` only when the task truly cannot finish in its session (the
   turn backstop is near with work left, or the brief turns out to be more than one task),
-  with a handoff section in the shape of this file: it first commits the code it wrote on
-  its branch and names that commit and the exact next step. "Nothing is edited" is never a
-  hand-off body. The `SessionStart` (compact) hook reminds it. The lead's own session
+  with a handoff section in the shape of this file. The code it wrote is never discarded: a
+  Claude worker commits it on its branch when the brief and host permit it, a Codex worker
+  leaves it uncommitted in its worktree and names the changed files; either names the exact
+  next step. "Nothing is edited" is never a hand-off body. The `SessionStart` (compact) hook reminds it. The lead's own session
   follows a different rule, the context band and one compaction at most (`docs/WORKFLOW.md`,
-  "Worker cost", rule 8). A Codex worker leaves the handoff uncommitted for the lead; a
-  Claude worker commits it when its brief permits.
+  "Worker cost", rule 8).
   A worktree worker carries the project's hooks, and at red the lead sends
   "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
   https://code.claude.com/docs/en/settings, checked 2026-10-16).

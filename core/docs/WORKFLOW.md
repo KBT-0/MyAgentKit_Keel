@@ -1068,7 +1068,7 @@ Rules, binding for whoever routes workers:
    logs, tables and captures to files. Sub-agents return a summary, and many detailed returns
    fill the caller's context (code.claude.com/docs/en/sub-agents); Anthropic's research system
    passes references to files instead (its multi-agent research post). "About 350 words" is
-   the owner's choice. An attempt that ends without `Kind: completed` is reported to the owner
+   the owner's choice. A failed attempt (a result file with another `Kind`, a sub-agent's final message reporting the task not done, or an exit with neither) is reported to the owner
    at once, with its cost row (`docs/COMMUNICATION.md`, "Workers").
 8. **The lead session is compacted or handed over before it grows**, and at the end of a
    working day it reads `/usage`'s Session block (the main conversation only, not

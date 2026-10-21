@@ -102,8 +102,9 @@ pasted through. A worker session started by `scripts/spawn_worker.sh` carries
 (`.claude/agents/*.md` in the Claude Code overlay), not from a style setting, which does
 not reach sub-agents.
 
-A worker attempt that ends without `Kind: completed` (a `blocked` or `handoff` result, an exit
-without a result, a stop at the turn backstop) is reported to {{OWNER_NAME}} in the same turn
+A failed worker attempt (a result file with a `Kind` other than `completed`, a sub-agent's final
+message that reports the task not done, or an exit with neither, a stop at the turn backstop
+included) is reported to {{OWNER_NAME}} in the same turn
 the lead learns of it, never only in a closing summary: the reason, and the worker's row from
 `scripts/agent_cost.py` (requests, cache read, cache write, compactions `cmp`, peak context).
 Two attempts that wrote no code went unreported for 140 requests until the owner asked why

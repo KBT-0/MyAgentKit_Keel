@@ -122,9 +122,3 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   which still carries the kit check's own previous run, so `check.sh` followed at once by `check.sh --slow` runs
   fewer units than it could and the WARNING blames "other work"; sample the load over a second as on Windows
   (`/proc/stat` on Linux, `host_statistics` on macOS) or subtract the kit's own units.
-
-## Filed from v0.12.1 wkhandoff (#303; outside the brief's Owns)
-
-- `core/AGENTS.md:227` ("a session compacted once hands off") and the overlay's `context_size.py:139` (after a
-  compaction: "recommend a hand-off ... never a second /compact") are the lead's rule but read unscoped; a worker
-  loads both. Scope them to the lead as `after_compact.txt` now is (#303 review, Medium and Low).

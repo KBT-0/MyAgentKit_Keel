@@ -106,7 +106,8 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   compaction with no code written, and the next one paid their reading again. `.claude/agents/worker.md`, `docs/HANDOFF.md` and `after_compact.txt` now say a worker
   records its compactions in its report and goes on; it hands off only when the task truly
   cannot finish (the turn backstop near, or more than one task), after committing the code it
-  wrote, never with "nothing is edited". The lead's own band and one-compaction rule stay.
+  wrote (a Codex worker leaves it uncommitted and names the files), never with "nothing is edited". The lead's own band and one-compaction rule stay,
+  and `AGENTS.md` and `context_size.py` now say they are the lead's; "a failed attempt" no longer catches a sub-agent that succeeded.
 - `docs/WORKFLOW.md`, "Worker cost", rule 3: a sub-agent with the kit's `worker` definition
   was measured compacting at a median 168k (83 compactions; a measured figure, Anthropic names
   none), about 120k past its start, so a sub-agent's brief is sized to that: one file group,
