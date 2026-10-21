@@ -850,7 +850,7 @@ if [ -n "$windows" ]; then
   [ -z "$backend" ] || tab_cmd=$(backend_command "$tab_cmd")
   tab_cmd="KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") $supervise $(q "$bash") -c $(q "exec $tab_cmd")"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "t=\$(date +%s); $tab_cmd; s=\$?; grep -q ' published at ' $(q "$wdir/$name.exit") 2>/dev/null || [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+    "t=\$(date +%s); $tab_cmd; s=\$?; grep -q ' published at ' $(q "$wdir/$name.exit") 2>/dev/null || [ \$((\$(date +%s) - t)) -gt 10 ] || { printf 'claude ended at once (exit %s); press Enter to close\n' \"\$s\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   # From here a session may run in the worktree: a failure leaves it there (stranded above).
   launched=1

@@ -232,14 +232,21 @@ class DoctorTests(unittest.TestCase):
             (old / 'claude').write_text('#!/bin/sh\nexec sleep 30\n')
             tmpdir = root / 'tmpdir'
             tmpdir.mkdir()
-            # The wait for the probe's file scales: a loaded macOS runner took over 10 s to reach it.
+            # Apple's mktemp, called bare as doctor calls it, takes the per-user temp folder
+            # (confstr _CS_DARWIN_USER_TEMP_DIR) over TMPDIR, so the probe's file was never in
+            # tmpdir on macOS. A mktemp first on PATH puts it there, by the real mktemp.
+            pinned = root / 'pinned'
+            pinned.mkdir()
+            (pinned / 'mktemp').write_text('#!/bin/sh\nPATH=${PATH#*:}\nexec mktemp "$TMPDIR/tmp.XXXXXXXX"\n')
+            (pinned / 'mktemp').chmod(0o755)
             interrupt = ('sh scripts/doctor.sh >/dev/null & pid=$!; n=0\n'
                          'while [ -z "$(ls "$TMPDIR")" ] && [ $n -lt %d ]; do sleep 0.1; n=$((n+1)); done\n'
                          % int(100 * SCALE) +
                          'ls "$TMPDIR"; kill -s TERM $pid; wait $pid\n')
             seen = subprocess.run(['sh', '-c', interrupt], cwd=root, timeout=30 * SCALE, capture_output=True, text=True,
-                                  env=dict(env, TMPDIR=tmpdir.as_posix(), PATH=str(old) + os.pathsep + bare))
-            self.assertTrue(seen.stdout.strip(), 'the probe never created its temp file')
+                                  env=dict(env, TMPDIR=tmpdir.as_posix(),
+                                           PATH=os.pathsep.join((str(pinned), str(old), bare))))
+            self.assertTrue(seen.stdout.strip(), 'the probe never created its temp file: ' + seen.stderr)
             self.assertEqual(list(tmpdir.iterdir()), [], 'an interrupted probe left its temp file')
 
     def test_python_floor_is_enforced_and_old_claude_code_is_told(self):
