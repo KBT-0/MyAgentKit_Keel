@@ -313,6 +313,7 @@ ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_native_windows_generated_path_boundary',
               'test_no_error_message_echoes_a_control_character',
+              'test_no_echo_in_the_scripts_prints_a_value',
               'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own',
               'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
               'test_term_after_tmux_accepts_preserves_the_panes_script',
@@ -840,11 +841,13 @@ exit 0
 
     def test_backend_nul_and_nonregular_files_refuse_before_launch(self):
         path = self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
-                                 'ANTHROPIC_AUTH_TOKEN=private\x00value\n')
+                                 'ANTHROPIC_AUTH_TOKEN=nul-head-secret\x00nul-tail-secret\n')
         for tab in self.backend_paths():
             result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertNotIn('private', result.stdout + result.stderr)
+            # Not a word a path holds: macOS names the backend file /private/var/folders/...
+            for secret in ('nul-head-secret', 'nul-tail-secret'):
+                self.assertNotIn(secret, result.stdout + result.stderr)
             self.assertIsNone(self.launched())
         path.unlink()
         path.mkdir()
@@ -1600,9 +1603,13 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(self.physical(brief), result.stdout)
         self.assertNotIn('\x1b', result.stdout + result.stderr)
-        # The same holds in every shell only if no echo prints a value: none in these scripts.
+
+    def test_no_echo_in_the_scripts_prints_a_value(self):
+        # The case above holds in every shell only if no echo prints a value. A plain file scan,
+        # so it runs on native Windows too: the tab script's echo of claude's exit status was
+        # found only by the POSIX jobs.
         for script in (SCRIPT, ROOT / 'bootstrap.sh', ROOT / 'sync-kit.sh'):
-            for n, line in enumerate(script.read_text().splitlines(), 1):
+            for n, line in enumerate(script.read_text(encoding='utf-8').splitlines(), 1):
                 code = line.split('#', 1)[0] if line.lstrip().startswith('#') else line
                 self.assertNotRegex(code, r'\becho\b[^|;&]*\$', '%s:%d' % (script.name, n))
 
