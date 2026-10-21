@@ -84,8 +84,8 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
 - **ACTION:** in `scripts/check.sh` (project-owned), replace the "Keep deploy-shaped steps out of
   this command" comment above `build_test_cmd` with the kit's, keeping its `# read-only:` line;
   a project that kept a dry run on a standing exception records it there.
-- `.githooks/commit-msg`: refusing a `Done: <id>` that a strong review report or an audit still
-  names, it says the report is a living file and the closing commit deletes the finding's line
+- `.githooks/commit-msg`: refusing a `Done: <id>` that a strong review report, an audit or
+  `docs/STRONG_REVIEW.md` still names, it says the report is a living file and the closing commit deletes the finding's line
   (`docs/WORKFLOW.md`, "Closing deletes"); it said "or drop the trailer", and a project dropped
   the trailer and lost the id's trace (#301). The reports stay checked. `docs/WORKFLOW.md` and
   `docs/STRONG_REVIEW.md`: a report's finding id is a task id of the project's shape, never a

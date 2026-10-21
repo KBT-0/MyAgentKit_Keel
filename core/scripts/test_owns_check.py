@@ -175,11 +175,15 @@ class OwnsCheckTests(unittest.TestCase):
         other = Path(self.tmp.name) / 'other'
         other.mkdir()
         subprocess.run(['git', 'init', '-q', str(other)], check=True, capture_output=True)
-        # An unrelated repository's folder keeps the script's own checkout, main's commit included.
-        for cwd, owns, reviewed in ((worktree, 'src/', worktree), (other, 'src/, other.txt', self.repo)):
-            with self.subTest(cwd=cwd.name):
+        # An unrelated repository's folder keeps the script's own checkout, main's commit included,
+        # and REVIEW_REPO_ROOT names the reviewed checkout even from a linked worktree.
+        for cwd, root, owns, reviewed in ((worktree, None, 'src/', worktree),
+                                          (other, None, 'src/, other.txt', self.repo),
+                                          (worktree, self.repo, 'src/, other.txt', self.repo)):
+            with self.subTest(cwd=cwd.name, root=root):
                 self.brief.write_text('Task: fixture.\nOwns: %s\n' % owns, encoding='utf-8')
-                result = subprocess.run(['sh', str(scripts / 'review.sh'), '--base', base], cwd=cwd, env=env,
+                result = subprocess.run(['sh', str(scripts / 'review.sh'), '--base', base], cwd=cwd,
+                                        env=dict(env, REVIEW_REPO_ROOT=str(root)) if root else env,
                                         capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(Path(result.stdout.split('dispatched in ', 1)[1].strip()).resolve(),
