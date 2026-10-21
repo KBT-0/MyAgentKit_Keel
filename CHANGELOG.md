@@ -136,6 +136,30 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   "Each finding carries a task id ("Task ids"), a severity and its evidence."; in
   `docs/STRONG_REVIEW.md`, add the kit's clause after "with the triage mark beside it". A report
   whose labels share a task id's shape renames them with a prefix in the commit that closes them.
+- A compaction never ends a worker's task (#303): two Opus workers handed off at their second
+  compaction with no code written, and the next one paid their reading again. `.claude/agents/worker.md`, `docs/HANDOFF.md` and `after_compact.txt` now say a worker
+  records its compactions in its report and goes on; it hands off only when the task truly
+  cannot finish (the turn backstop near, or more than one task), after committing the code it
+  wrote (a Codex worker leaves it uncommitted and names the files), never with "nothing is edited". The lead's own band and one-compaction rule stay,
+  and `AGENTS.md` and `context_size.py` now say they are the lead's; "a failed attempt" no longer catches a sub-agent that succeeded.
+- `docs/WORKFLOW.md`, "Worker cost", rule 3: a sub-agent with the kit's `worker` definition
+  was measured compacting at a median 168k (83 compactions; a measured figure, Anthropic names
+  none), about 120k past its start, so a sub-agent's brief is sized to that: one file group,
+  the design done by the lead, the lines to read named (`docs/HANDOFF.md`, **Design:**). The
+  issue's "near 80k" was the last request after the second compaction, read as the peak.
+  `docs/COMMUNICATION.md`, "Workers": the lead reports a worker attempt that ends without
+  `Kind: completed` to the owner in the same turn, with its `agent_cost.py` row.
+- `agent_cost.py` prints each agent's compactions (`cmp`, the `compact_boundary` records, a
+  continued session's copy once) and its peak context: `ctx0->ctxN` is now `ctx0->max->ctxN`,
+  since the last request's context is small after a compaction. `test_agent_cost` is 10.
+- **ACTION:** merge the overlay's `.claude/agents/worker.md` compaction bullet into yours
+  (replacing "After one compaction of your context, finish only if ..."), keeping your pins;
+  copy `.claude/hooks/after_compact.txt` whole from the overlay; in `docs/HANDOFF.md`, replace
+  the "A worker whose context was compacted once" bullet and extend **Design:** with the
+  kit's; in `docs/WORKFLOW.md`, "Worker cost", take the kit's rule 3 paragraph "A sub-agent
+  compacts far below the band", the line in "The rules in brief" item 3, the sentence ending
+  rule 7 and the sub-agent line after rule 8's `--context-warn`; in `docs/COMMUNICATION.md`,
+  "Workers", add the failed-attempt paragraph. Re-copy `scripts/test_agent_cost.py`.
 
 ---
 

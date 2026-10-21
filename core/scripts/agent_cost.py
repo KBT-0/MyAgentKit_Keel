@@ -28,6 +28,10 @@ in the kit's founding project (docs/WORKFLOW.md, "Worker cost"):
               cWrite>TTL and poll help investigate a low hit rate.
   out         output tokens, priced above input: a reviewer or report writer
               spends here, not in the cache columns.
+  cmp         compactions (`compact_boundary` records, the ones context_buckets.py
+              reads): a sub-agent is compacted far below the lead's bands (#303).
+  ctx0->max->ctxN  the context of the first request, the largest, and the last; the
+              last is small after a compaction, so the peak is the one to read.
 
 Not covered: the permission classifier and other requests that never reach a transcript.
 """
@@ -57,16 +61,23 @@ def is_poll(tool: str, inp) -> bool:
     return tool == 'Bash' and isinstance(inp, dict) and bool(POLL.search(inp.get('command', '')))
 
 
-def requests(path: Path, seen: set | None = None) -> list[dict]:
+def requests(path: Path, seen: set | None = None, compactions: list | None = None) -> list[dict]:
     """Deduplicated API requests of one transcript, sorted by time. A request id already in
     `seen` (shared across the transcripts read together) is left out: a continued session's
-    transcript copies its parent's requests, billed to the parent (#253)."""
+    transcript copies its parent's requests, billed to the parent (#253). Each compaction
+    boundary is added to `compactions`, a copied one (its uuid in `seen`) once."""
     reqs: dict = collections.OrderedDict()
     with open(path, errors='replace') as stream:
         for line in stream:
             try:
                 rec = json.loads(line)
             except ValueError:
+                continue
+            if rec.get('type') == 'system' and rec.get('subtype') == 'compact_boundary':
+                if compactions is not None and ('uuid', rec.get('uuid')) not in (seen or ()):
+                    compactions.append(rec.get('timestamp'))
+                if seen is not None and rec.get('uuid'):
+                    seen.add(('uuid', rec['uuid']))
                 continue
             msg = rec.get('message') or {}
             if rec.get('type') != 'assistant' or msg.get('model') == '<synthetic>':
@@ -99,7 +110,7 @@ def requests(path: Path, seen: set | None = None) -> list[dict]:
     return rows
 
 
-def summarize(name: str, rows: list[dict]) -> dict:
+def summarize(name: str, rows: list[dict], compactions: int = 0) -> dict:
     gap_cw = polls = longest = 0
     prev = None
     for r in rows:
@@ -120,7 +131,8 @@ def summarize(name: str, rows: list[dict]) -> dict:
             'cw_gap': gap_cw, 'poll': polls,
             'w1h': sum(r['w1h'] for r in rows), 'w5': sum(r['w5'] for r in rows),
             'w1h_unused': 0 if longest > CACHE_TTLS['w5'] else sum(r['w1h'] for r in rows),
-            'ctx0': ctx(rows[0]) if rows else 0, 'ctxN': ctx(rows[-1]) if rows else 0,
+            'cmp': compactions, 'ctx0': ctx(rows[0]) if rows else 0, 'ctxN': ctx(rows[-1]) if rows else 0,
+            'ctxMax': max(map(ctx, rows), default=0),
             'models': sorted({str(r['model']) for r in rows})}
 
 
@@ -157,13 +169,13 @@ def hit(s: dict) -> str:
 
 
 def table(summaries: list[dict]) -> str:
-    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>TTL":>10} {"out":>8} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"ctx0->ctxN":>14}'
+    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>TTL":>10} {"out":>8} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"cmp":>3} {"ctx0":>6}->max->ctxN'
     lines = [head]
     for s in sorted(summaries, key=lambda s: -s['cr']):
         bucket = f'{fmt(s["w1h"])}/{fmt(s["w5"])}'
         lines.append(f'{s["agent"][:40]:40} {s["req"]:4} {s["tool"]:4} {fmt(s["cr"]):>8} {fmt(s["cw"]):>8} '
-                     f'{fmt(s["cw_gap"]):>10} {fmt(s["out"]):>8} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
-                     f'{fmt(s["ctx0"]):>6}->{fmt(s["ctxN"]):<6}')
+                     f'{fmt(s["cw_gap"]):>10} {fmt(s["out"]):>8} {s["poll"]:4} {bucket:>13} {hit(s):>4} {s["cmp"]:3} '
+                     f'{fmt(s["ctx0"]):>6}->{fmt(s["ctxMax"])}->{fmt(s["ctxN"])}')
     tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'out', 'cw_gap', 'poll', 'w1h_unused')}
     share = 100 * tot['cw_gap'] / tot['cw'] if tot['cw'] else 0
     lines.append(f'TOTAL requests {tot["req"]}  cRead {fmt(tot["cr"])}  cWrite {fmt(tot["cw"])}  '
@@ -200,7 +212,11 @@ def main(argv: list[str]) -> int:
         if not session.is_file():
             raise SystemExit(f'agent_cost: not a file: {session}')
         print(f'== {session}')
-        print(table([summarize(n, requests(p, seen)) for n, p in session_agents(session)]))
+        summaries = []
+        for name, path in session_agents(session):
+            found: list = []
+            summaries.append(summarize(name, requests(path, seen, found), len(found)))
+        print(table(summaries))
     return 0
 
 

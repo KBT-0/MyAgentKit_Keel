@@ -224,7 +224,8 @@ an explicit "start it here".
 - Context past 200k tokens (the `context_size.py` hook names the band) → no new round; at
   300k recommend `/compact` or a hand-off, whichever is cheaper now, with the number, at the
   next clean stop; at 400k stop now (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is
-  the default; a session compacted once hands off.
+  the default; the lead session compacted once hands off, while a worker follows its own rule
+  (`docs/HANDOFF.md`).
 - A time or token cost you saw repeat, with a cheaper way around it → propose it with a number
   from `scripts/agent_cost.py` or `/usage`. Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}

@@ -137,9 +137,10 @@ def notice(transcript: Path) -> str:
     if now <= said:
         return ''
     if compactions:
-        advice = ('This session was compacted already, and a summary of a summary drifts: in this '
+        advice = ('The lead session was compacted already, and a summary of a summary drifts: in this '
                   "turn's closing summary, recommend a hand-off (update STATE, write the handoff, "
-                  'fresh session) to the owner in one line with this number, never a second /compact')
+                  'fresh session) to the owner in one line with this number, never a second /compact; '
+                  'a worker follows its own rule: docs/HANDOFF.md')
     else:
         advice = ("In this turn's closing summary, recommend ONE to the owner in one line with this "
                   'number and the reason: /compact when docs/STATE.md and the open operation files '

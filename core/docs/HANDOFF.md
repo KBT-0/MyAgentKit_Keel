@@ -61,7 +61,9 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    review when the branch exists (`docs/WORKFLOW.md`, "Review rounds — early, inside the
    worker, in parallel"). The fresh sub-agent is a reviewer, not the author.
    **Design:** the brief carries a design of five to ten lines, or tells the worker to write
-   one at the top of its result before any code (the same section).
+   one at the top of its result before any code (the same section). A sub-agent's brief
+   carries the design and names the lines to read: a sub-agent has about 120k of context
+   before its first compaction (`docs/WORKFLOW.md`, "Worker cost", rule 3).
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
@@ -186,12 +188,21 @@ fixed" follow as always.
   idle notice is a hint, never the done signal.
 - `blocked` means the worker waits on a decision, or failed: the worker could not finish and
   says why.
-- A worker whose context was compacted once finishes only if its `Remaining:` line is short;
-  it writes `Kind: handoff` at the second compaction, or at once when much work remains,
-  with a handoff section in the shape of this file. The `SessionStart` (compact) hook reminds
-  it. This is the lead's rule too (`docs/WORKFLOW.md`, "Worker cost", rule 8). A Codex
-  worker leaves the handoff uncommitted for the lead; a Claude worker commits it when its
-  brief permits.
+- A compaction never ends a worker's task. It is a cost signal the worker records in its
+  report (how many, and the context at which each fired, the `preTokens` of its
+  `compact_boundary` record, when its transcript shows it, else "compacted N times"), then
+  it goes on: running work "keeps running unless {{OWNER_NAME}} asked for it to end, or it
+  is provably finished or hung" (`AGENTS.md`). Two workers that handed off at their second
+  compaction had written no code, and the next one paid their reading again (#303,
+  2026-10-22). A
+  worker writes `Kind: handoff` only when the task truly cannot finish in its session (the
+  turn backstop is near with work left, or the brief turns out to be more than one task),
+  with a handoff section in the shape of this file. The code it wrote is never discarded: a
+  Claude worker commits it on its branch when the brief and host permit it, a Codex worker
+  leaves it uncommitted in its worktree and names the changed files; either names the exact
+  next step. "Nothing is edited" is never a hand-off body. The `SessionStart` (compact) hook reminds it. The lead's own session
+  follows a different rule, the context band and one compaction at most (`docs/WORKFLOW.md`,
+  "Worker cost", rule 8).
   A worktree worker carries the project's hooks, and at red the lead sends
   "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
   https://code.claude.com/docs/en/settings, checked 2026-10-16).

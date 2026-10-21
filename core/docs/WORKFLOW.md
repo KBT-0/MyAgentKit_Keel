@@ -901,7 +901,8 @@ compaction; the full rule below, with its measurements and sources, when one is 
 1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.
 2. A gate finding goes back to the author's side while its context is under the band and the
    fix is no redesign; otherwise a fresh worker takes it.
-3. One small task per worker, sized to end under the context band.
+3. One small task per worker, sized to end under the context band; a sub-agent's brief to the
+   about 120k it has before its first compaction (rule 3).
 4. The lead does not poll either; it waits for notifications. After every spawn it starts the
    printed `sh scripts/watch_workers.sh` line as ONE background command: the disk is the done
    signal, and an idle notice is optional, never relied on alone.
@@ -991,6 +992,23 @@ Rules, binding for whoever routes workers:
    requests `maxTurns` counts; a worker stopped there returns partial output and can be
    resumed) and `autoCompactWindow` at the band (code.claude.com/docs/en/sub-agents). 150 is a
    backstop, not a measured optimum. Split before starting: a mechanism first, then its uses.
+   **A sub-agent compacts near 168k.** In one project, 83 sub-agent compactions
+   (2026-10-19 to 10-21, the `preTokens` of their `compact_boundary` records; #303) fired at
+   165k to 180k of context, median 168k: the definition's `autoCompactWindow` of 200000 less
+   a reserve. That is a measured figure, not a documented limit: Anthropic names no point at
+   which a sub-agent compacts; the field can only lower the window, and
+   `CLAUDE_CODE_AUTO_COMPACT_WINDOW` or `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` overrides it
+   (code.claude.com/docs/en/sub-agents, checked 2026-10-22). A worker starts near 49k (its
+   definition, `AGENTS.md` and the brief), so about 120k of reading and work fit before the
+   first compaction. The two #303 workers were compacted twice before their first edit
+   (peaks 165.7k and 166.8k); the 79.8k and 77.9k read as their peak were their last
+   request, after the second compaction. So a sub-agent's brief is sized to those 120k: one
+   file group per task, the design already done by the lead (`docs/HANDOFF.md`, "The brief",
+   **Design:**), the files and lines to read named in the brief, never "read the module and
+   design first". Work that needs more reading is split, or runs as a separate session ("The
+   shape follows a threshold", below). `scripts/agent_cost.py` shows each agent's compactions
+   (`cmp`) and its peak context (`ctx0->max->ctxN`); a compaction never ends a worker's task
+   (`docs/HANDOFF.md`, the result file).
 4. **The lead does not poll either.** It waits for task notifications or the exit of a
    background command that watches the disk: `scripts/watch_workers.sh` for a separate session
    (an idle notice is optional and never relied on alone: "The disk is the done signal", below), a log
@@ -1050,7 +1068,8 @@ Rules, binding for whoever routes workers:
    logs, tables and captures to files. Sub-agents return a summary, and many detailed returns
    fill the caller's context (code.claude.com/docs/en/sub-agents); Anthropic's research system
    passes references to files instead (its multi-agent research post). "About 350 words" is
-   the owner's choice.
+   the owner's choice. A failed attempt (a result file with another `Kind`, a sub-agent's final message reporting the task not done, or an exit with neither) is reported to the owner
+   at once, with its cost row (`docs/COMMUNICATION.md`, "Workers").
 8. **The lead session is compacted or handed over before it grows**, and at the end of a
    working day it reads `/usage`'s Session block (the main conversation only, not
    sub-agents) and runs `scripts/agent_cost.py --latest`, and writes both into the handoff
@@ -1095,6 +1114,8 @@ Rules, binding for whoever routes workers:
    answer (`docs/COMMUNICATION.md`).
    A worker session uses the same absolute band: `scripts/watch_workers.sh --context-warn`
    warns at the smaller of 200k and 50% of the window (`NNNk` or `NN%` changes it).
+   A sub-agent compacts near 168k, before the red band (rule 3), and its compactions never end
+   its task.
    A worktree worker carries the project's hooks, and at red the lead sends
    "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
    https://code.claude.com/docs/en/settings, checked 2026-10-16).
