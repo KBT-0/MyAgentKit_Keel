@@ -28,6 +28,15 @@ def not_on_windows(case, why):
     return WINDOWS
 
 
+def copy_kit(source, kit, also=()):
+    """Copy the kit checkout at `source` for a test, without its top-level .claude and .myagentkit."""
+    # They hold the lead's worktrees (old scratch folders there deny access: WinError 5) and
+    # a live worker's locked files, which no kit copy needs.
+    shutil.copytree(source, kit, ignore=lambda folder, names: {
+        name for name in names if name in ('.git', '__pycache__', *also)
+        or Path(folder) == Path(source) and name in ('.claude', '.myagentkit')})
+
+
 def cut_short(shims, needle):
     # A `cat` on PATH that cuts the one write whose "SOURCE:FIRST LINE" matches the shell
     # pattern `needle` short: it writes part of it, leaves `fired` and fails. `put` writes
@@ -44,6 +53,19 @@ def cut_short(shims, needle):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_a_kit_copy_leaves_out_the_leads_worktrees_and_state(self):
+        # The slow tier copied the lead's .claude/worktrees, whose old scratch folders deny
+        # access (WinError 5), and the autocrlf case errored before it ran.
+        with tempfile.TemporaryDirectory() as tmp:
+            source, kit = Path(tmp) / 'source', Path(tmp) / 'kit'
+            for name in ('README.md', '.claude/worktrees/w/run.sh', '.myagentkit/workers/w.brief.md',
+                         'core/.claude/hooks/hook.sh', '.git/HEAD', 'core/__pycache__/x.pyc'):
+                (source / name).parent.mkdir(parents=True, exist_ok=True)
+                (source / name).write_text('x')
+            copy_kit(source, kit)
+            self.assertEqual(sorted(p.relative_to(kit).as_posix() for p in kit.rglob('*') if p.is_file()),
+                             ['README.md', 'core/.claude/hooks/hook.sh'])
+
     def test_new_scripts_are_staged_only_at_the_repository_top_level_and_reported(self):
         root = Path(__file__).resolve().parents[1]
         for subfolder in ('', 'app space'):
@@ -1110,7 +1132,7 @@ class BootstrapTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
             kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
-            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            copy_kit(root, kit)
             project.mkdir()
             (project / '.gitattributes').write_bytes(b'*.png binary\n')
             source = kit / 'core/.gitattributes'
@@ -1243,7 +1265,7 @@ class BootstrapTests(unittest.TestCase):
             attributes = (owned / '.gitattributes').read_text()
             self.assertTrue(attributes.startswith('*.png binary\n'), attributes)
             self.assertEqual(attributes.count('*.sh text eol=lf'), 1, attributes)
-            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            copy_kit(root, kit)
             for repo, prose in ((project, 'AGENTS.md'), (owned, 'AGENTS.md'), (kit, 'README.md')):
                 with self.subTest(repo=repo.name):
                     for args in (['init', '-q'], ['add', '-A'],
@@ -1267,11 +1289,7 @@ class BootstrapTests(unittest.TestCase):
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as project:
             kit = Path(tmp) / 'kit'
-            # Not the root's .claude and .myagentkit: they hold the worktrees and a live worker's
-            # locked files, which bootstrap never reads.
-            shutil.copytree(ROOT, kit, ignore=lambda folder, names: {
-                name for name in names if name in ('.git', '__pycache__', 'tests')
-                or Path(folder) == ROOT and name in ('.claude', '.myagentkit')})
+            copy_kit(ROOT, kit, also=('tests',))
             for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
                                          'commit', '-q', '--allow-empty', '-m', 'k']):
                 subprocess.run(['git', '-C', str(kit if own else tmp), *args], check=True, env=env,
