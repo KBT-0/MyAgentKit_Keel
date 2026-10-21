@@ -93,3 +93,7 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - slowfix observation: `agent_process._supervise` does not collect output queued by the drain
   thread (Windows) or still in the pipe (POSIX) when the deadline hits at the loop head; a
   non-blocking `take(chunks, 0)` before the break, plus its POSIX twin.
+- release check: under `--all` a fast unit keeps the fast cap while slow units load the host;
+  test_sync_kit took 687 s in the fast tier alone, over its 1440 s cap (SCALE 3) under `--all` on
+  20 CPUs. The release ran the tiers one after the other; cap a fast unit by the run's load, or
+  run `--all` as the two tiers in sequence.
