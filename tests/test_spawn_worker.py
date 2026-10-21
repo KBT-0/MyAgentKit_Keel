@@ -1889,7 +1889,9 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         argv = self.launched()['argv']
         self.assertEqual(argv[1:5], ['-n', 'rw', '--resume', 'sid-1'])
-        self.assertIn('answer.md', argv[0])
+        # The answer, copied into the worker's folder (bgbrief), is what it is told to read.
+        self.assertIn('/.claude/worktrees/rw/.myagentkit/workers/rw.brief.md', argv[0])
+        self.assertEqual((tree / '.myagentkit/workers/rw.brief.md').read_text(), 'Go on with A.\n')
         self.assertEqual(Path(self.launched()['cwd']).resolve(), tree.resolve())
         # Locked again for its new run: the audit never removes it under the session.
         gitdir = git('-C', str(tree), 'rev-parse', '--absolute-git-dir')
@@ -2308,14 +2310,14 @@ class BackgroundHostTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def spawn(self, *args, **extra):
+    def spawn(self, *args, cwd=None, **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))
                and k not in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')}
         env.update(PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                    KIT_WORKER_GRACE='0.2', KIT_PS=str(self.bin / 'ps-empty'), **LEAD_ENV)
         env.update(extra)
         return subprocess.run(['sh', str(SCRIPT), 'w1', str(self.brief), '--model', 'm', '--effort', 'high', *args],
-                              cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
+                              cwd=cwd or self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
 
     def calls(self):
         log = self.state / 'claude.log'
@@ -2374,6 +2376,63 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertTrue(stops)
         self.assertFalse([cwd for cwd in stops if cwd == worktree.resolve() or worktree.resolve() in cwd.parents])
         self.assertNotIn('an earlier run', (self.workers / 'w1.supervisor.log').read_text())
+
+    def briefed(self):
+        """The path the worker is told to read: its first prompt is "Read 'PATH' and follow it." """
+        prompt = self.launch()['argv'][0]
+        self.assertTrue(prompt.startswith("Read '"), prompt)
+        return Path(prompt[len("Read '"):prompt.index("' and follow it.")])
+
+    def test_a_worktree_worker_reads_its_brief_and_its_answer_from_a_copy_in_its_own_folder(self):
+        # bgwait: on a host not in auto mode a --worktree worker's first act, reading its brief in
+        # the lead's checkout, outside its folder, stopped on a read-permission prompt. Its reach
+        # stays its own folder (owner): the brief is copied into it, the answer of a resume too.
+        worktree = self.cwd / '.claude/worktrees/w1'
+        copy = worktree / '.myagentkit/workers/w1.brief.md'
+        result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.briefed().resolve(), copy.resolve())
+        self.assertEqual(copy.read_text(), 'Do the task.\n')
+        # Out of the worker's commits even where the project does not ignore the store (this one).
+        status = subprocess.run(['git', 'status', '--porcelain'], cwd=worktree, capture_output=True, text=True)
+        self.assertNotIn('.myagentkit', status.stdout)
+        # The lead's record of it: close_worker.sh removes the worker's copy only while it is that.
+        self.assertEqual((self.workers / 'w1.brief.md').read_text(), 'Do the task.\n')
+        self.ended()
+        self.brief = self.cwd / 'answer.md'
+        self.brief.write_text('Take A.\n')
+        result = self.spawn('--worktree', '--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE,
+                            SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.briefed().resolve(), copy.resolve())
+        self.assertEqual(copy.read_text(), 'Take A.\n')
+        self.ended()
+
+    def test_a_brief_already_in_the_workers_folder_is_named_where_it_is(self):
+        result = self.spawn(SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.briefed().resolve(), self.brief.resolve())
+        self.assertFalse((self.workers / 'w1.brief.md').exists())
+        self.ended()
+
+    def test_a_lead_in_a_linked_worktree_puts_the_workers_worktree_in_the_main_checkouts(self):
+        # bgwait close: spawned from a linked worktree, the worker's worktree was nested in it,
+        # where the audit, which judges <main checkout>/.claude/worktrees alone, never looks: the
+        # close left it. Beside every other worktree, the post-merge sweep judges it too.
+        lead = self.cwd / '.claude/worktrees/lead'
+        subprocess.run(['git', '-C', str(self.cwd), 'worktree', 'add', '-q', str(lead), '-b', 'worktree-lead'],
+                       check=True, capture_output=True)
+        worktree = self.cwd / '.claude/worktrees/w1'
+        self.workers = lead / '.myagentkit/workers'
+        self.brief = lead / 'brief.md'
+        self.brief.write_text('Do the task.\n')
+        result = self.spawn('--worktree', cwd=lead, SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(self.launch()['cwd']).resolve(), worktree.resolve())
+        self.assertFalse((lead / '.claude/worktrees').exists())
+        # The records stay with the lead that spawned it.
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+        self.assertTrue(self.ended().startswith('DONE published'))
 
     def test_a_resume_passes_no_flag_and_takes_the_full_session_id(self):
         # Any flag on `claude --resume ID --bg` starts a copy under the same name (spike, 6).

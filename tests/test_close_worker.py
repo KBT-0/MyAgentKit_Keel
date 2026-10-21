@@ -32,6 +32,8 @@ NT = os.name == 'nt'
 WT_DIR = '.claude/worktrees/'
 # The first line of the ignore file spawn_worker.sh writes for the hook files it copied.
 SPAWN_IGNORE = "# spawn_worker.sh: hook files copied from the lead's checkout; close_worker.sh sets this file aside\n"
+# The ignore file spawn_worker.sh writes beside the worker's copy of its brief.
+BRIEF_IGNORE = "# spawn_worker.sh: ignores the worker's copy of its brief; close_worker.sh removes both\n*\n"
 
 # Sessions live in a file, one name per line; every call is logged. Every target is exact.
 TMUX = r'''#!/usr/bin/env python3
@@ -255,9 +257,9 @@ class CloseWorkerTests(unittest.TestCase):
                 f.write(name + '\n')
         return path
 
-    def close(self, *args, code=0, **extra):
+    def close(self, *args, code=0, cwd=None, **extra):
         env = dict(self.env, **extra)
-        result = subprocess.run(sh_argv(SCRIPT, args, env), cwd=self.main, env=env, capture_output=True)
+        result = subprocess.run(sh_argv(SCRIPT, args, env), cwd=cwd or self.main, env=env, capture_output=True)
         out = (result.stdout + result.stderr).decode('utf-8', 'replace')
         self.assertEqual(result.returncode, code, out)
         return out
@@ -660,6 +662,56 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertNotIn('.gitignore', out.rstrip('\n').split('\n')[-1])
         self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), SPAWN_IGNORE + '/.gitignore\n/guard.py\n')
         self.assertEqual(self.git('status', '--porcelain', cwd=path), '?? notes.txt')
+
+    def linked_lead(self):
+        """A lead working in a linked worktree of main, as the kit's own release work does."""
+        lead = self.main / '.claude/worktrees/lead'
+        self.git('worktree', 'add', '-q', str(lead), '-b', 'worktree-lead')
+        (lead / '.myagentkit/workers').mkdir(parents=True)
+        return lead
+
+    def test_a_lead_in_a_linked_worktree_closes_the_worker_its_spawn_put_in_the_main_checkout(self):
+        # bgwait close: the close looked for the worker's worktree in the lead's own checkout,
+        # found none there, left the spawn's lock on and the audit kept the worktree for it.
+        lead = self.linked_lead()
+        path = self.worker('w1')
+        self.git('worktree', 'lock', '--reason', 'kit worker w1', str(path))
+        out = self.close('w1', cwd=lead)
+        self.assertIn('close_worker: w1: worktree unlocked (kit worker w1)', out)
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        self.assertFalse(path.exists(), out)
+        # A worktree an older spawn nested in the lead's checkout is beyond the audit: it is said,
+        # and it and the worker's records are kept, never reported as nothing to remove.
+        nested = lead / '.claude/worktrees/w2'
+        self.git('worktree', 'add', '-q', str(nested), '-b', 'worktree-w2', cwd=lead)
+        (lead / '.myagentkit/workers/w2.result-path').write_text(str(nested / 'RESULT-w2.md') + '\n')
+        out = self.close('w2', cwd=lead, code=1)
+        self.assertIn('close_worker: w2: its worktree %s is not in %s, the one folder the audit removes from'
+                      % (self.git('rev-parse', '--show-toplevel', cwd=nested),
+                         self.git('rev-parse', '--show-toplevel') + '/.claude/worktrees'), out)
+        self.assertNotIn('nothing to remove', out)
+        self.assertTrue(nested.exists(), out)
+        self.assertTrue((lead / '.myagentkit/workers/w2.result-path').exists(), out)
+
+    def test_the_brief_copy_spawn_puts_in_the_worktree_does_not_keep_it(self):
+        # spawn_worker.sh copies the brief into the worker's folder (.myagentkit/workers/NAME.brief.md)
+        # and into the lead's records: the worker's copy goes before the audit while it is that.
+        # A lead in a linked worktree: main holds no copy of it, so the audit alone kept it.
+        lead = self.linked_lead()
+        for name, text in (('w1', 'the brief\n'), ('w2', 'the brief, edited by the worker\n')):
+            path = self.worker(name)
+            (path / '.myagentkit/workers').mkdir(parents=True)
+            (path / '.myagentkit/workers' / (name + '.brief.md')).write_text(text)
+            (path / '.myagentkit/workers/.gitignore').write_text(BRIEF_IGNORE, newline='\n')
+            self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
+            (lead / '.myagentkit/workers' / (name + '.brief.md')).write_text('the brief\n')
+        out = self.close('w1', cwd=lead)
+        self.assertFalse((self.main / '.claude/worktrees/w1').exists(), out)
+        self.assertFalse((lead / '.myagentkit/workers/w1.brief.md').exists(), out)
+        out = self.close('w2', cwd=lead, code=1)
+        self.assertIn('close_worker: w2: worktree kept: ', out)
+        self.assertEqual((self.main / '.claude/worktrees/w2/.myagentkit/workers/w2.brief.md').read_text(),
+                         'the brief, edited by the worker\n')
 
     def test_an_ignore_file_the_worker_extended_keeps_the_worktree_and_its_rules(self):
         # Codex review r1 (Critical): a spawn ignore file with the worker's own rules added still

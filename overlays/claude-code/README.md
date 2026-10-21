@@ -308,14 +308,23 @@ the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn
   content carrying no instruction and sat idle for about 35 minutes asking for
   confirmation; another model given the same block started at once. `spawn_worker.sh`
   types `Read '<absolute path of the brief>' and follow it.` and refuses, before any tmux
-  session opens, a brief file that does not exist or cannot be read.
+  session opens, a brief file that does not exist or cannot be read. A brief outside the
+  worker's folder (a `--worktree` worker's always) is copied to
+  `.myagentkit/workers/NAME.brief.md` inside it, and that copy is the path named: a host not in
+  auto mode stopped the worker's first read on a permission prompt, and its reach stays its
+  folder. A `.gitignore` beside the copy ignores both, so it stays out of the worker's commits;
+  `close_worker.sh` removes the two before the audit while the copy matches the lead's record
+  `NAME.brief.md`.
 - **A worker's worktree is made with `git worktree add`, not with `claude -w`.**
   `claude -w` built the worktree from a stale base, so workers spawned after the lead
   merged fixes started without them: `-w` starts from the remote default branch, a local
   HEAD needs `worktree.baseRef: head`, and reports of stale bases span versions
   (code.claude.com/docs/en/worktrees; claude-code issue 53025). `spawn_worker.sh --worktree` runs
   `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` from the lead's checkout
-  and opens the session inside it; a leftover `worktree-NAME` branch is refused by name.
+  and opens the session inside it; a leftover `worktree-NAME` branch is refused by name. The
+  folder is the MAIN checkout's `.claude/worktrees`, whichever checkout the lead works in:
+  the audit removes from there alone, and a worktree nested in a lead's linked worktree was
+  left by its close.
 - **Every value the script puts into the session's shell command is quoted by one helper.**
   A `--settings` JSON string or a name with an apostrophe otherwise ended its quoting and
   the rest ran as shell in the new pane.

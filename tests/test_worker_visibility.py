@@ -1418,6 +1418,25 @@ class BackgroundTests(Base):
                         result.stdout)
         self.assertEqual(watch().stdout, '', 'a published question ended the session by design: no GONE')
 
+    def test_a_linked_worktree_leads_worker_is_found_in_the_main_checkouts_worktrees(self):
+        # spawn_worker.sh puts the worktree of a lead working in a linked worktree in the main
+        # checkout's .claude/worktrees (bgbrief): its row and its question are looked for there.
+        main = self.cwd
+        lead, tree = main / '.claude/worktrees/lead', main / '.claude/worktrees/w1'
+        for path, branch in ((lead, 'worktree-lead'), (tree, 'worktree-w1')):
+            subprocess.run(['git', 'worktree', 'add', '-q', str(path), '-b', branch], cwd=main, check=True,
+                           capture_output=True)
+        self.cwd, self.workers = lead, lead / '.myagentkit/workers'
+        self.workers.mkdir(parents=True)
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', tree, 'stopped'))
+        row = self.run_bg(LIST, '--row', 'w1')
+        self.assertEqual(row.stdout.split('\t')[3:4], ['y'], row.stdout + row.stderr)
+        (tree / 'QUESTION-w1.md').write_text('A or B?\n' + READY)
+        result = self.watch()
+        self.assertTrue(result.stdout.endswith('/.claude/worktrees/w1/QUESTION-w1.md: read it and answer it\n'),
+                        result.stdout + result.stderr)
+
     def test_a_report_ends_the_background_watch_loop(self):
         # bg() left the loop's own w at 1 after a WAITING or GONE, so found was never set and the
         # background watch ran to --max-minutes after its report.

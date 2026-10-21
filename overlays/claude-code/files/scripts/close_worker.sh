@@ -45,7 +45,11 @@
 #      positive end, a session this close ended or a Kind: completed result; a close that ended
 #      nothing keeps it, for a worker neither scan can see (#194). No --assume-idle: a process still inside
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
-#      merge, or this script again, removes it then.
+#      merge, or this script again, removes it then. The worktree is the main checkout's
+#      .claude/worktrees/NAME, where both spawns put it whichever checkout the lead works in, else
+#      this checkout's (an older spawn nested it there, beyond the audit: kept and named). Before
+#      the audit the worker's copy of its brief (.myagentkit/workers/NAME.brief.md) goes while it
+#      is the lead's record NAME.brief.md byte for byte.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
 #      `git gc` keeps everything under refs/* (git-gc(1)), so the branch holds every commit
 #      the worker made; a merge done on a detached main and undone left them on no other ref
@@ -96,7 +100,7 @@
 # The helper prints the .report-move-* folder of a report it could not restore. Where neither
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
-# NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid and
+# NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid, NAME.brief.md and
 # NAME.hooks-ignore-spawned, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
 # NAME.merged-running (also gone once the worktree is unlocked);
 # a kept worktree keeps them.
@@ -246,6 +250,10 @@ nl='
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 # The physical path of the worktree, or empty; /proc/PID/cwd names physical paths.
 top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+# The main checkout's .claude/worktrees: where both spawns put a worker's worktree, whichever
+# checkout the lead works in, and the one folder the audit removes from.
+main=""; [ -z "$top" ] || main=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+home=${main:-$top}/.claude/worktrees
 # below PID...: every process under the given ones (their children, theirs, ...), from ps, each as
 # PID@START, START its start time with _ for blanks; empty where ps cannot list them (Git for
 # Windows' ps has no -o).
@@ -291,7 +299,7 @@ has() {
     p=$(printf '%s\n' "$p" | sed -n "s/^$1://p")
     # Its own worktree's folder counts even when that folder is gone (wt_dir is then $top).
     [ "$p" = "$wt_dir" ] && return 0
-    case $p in "$top/.claude/worktrees/$1") return 0 ;; "$top/.claude/worktrees"|"$top/.claude/worktrees/"*) ;;
+    case $p in "$home/$1"|"$top/.claude/worktrees/$1") return 0 ;; "$top/.claude/worktrees"|"$top/.claude/worktrees/"*) ;;
       "$top"|"$top/"*) return 0 ;; esac
     other=$p; return 1
   fi
@@ -527,11 +535,15 @@ for name; do
       fail "refused the name '$name' (a control character shows as ?): a worker name is letters, digits, - and _, not starting with -; nothing done for it"
       continue ;;
   esac
-  # The worker's checkout: its worktree, or, for one spawned without --worktree, this one.
+  # The worker's checkout: its worktree where the spawn put it, else where an older spawn nested
+  # it in this checkout, or, for one spawned without --worktree, this one.
   # Checked here, and again just before the session is ended, so a run that started while the
   # sessions were listed is seen too. ponytail: a run started in the moment between that last
   # check and the kill is not seen; a lock shared with spawn and the gate would close that gap.
-  wt_dir=$top; [ -z "$top" ] || [ ! -d "$top/.claude/worktrees/$name" ] || wt_dir=$top/.claude/worktrees/$name
+  wt_dir=$top
+  if [ -n "$top" ]; then
+    for d in "$home/$name" "$top/.claude/worktrees/$name"; do [ ! -d "$d" ] || { wt_dir=$d; break; }; done
+  fi
   refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
   if why=$(busy "$wt_dir"); then refuse; continue; fi
   # --finished (the post-merge hook): a merge proves its branch merged, not its session done.
@@ -690,7 +702,7 @@ for name; do
     left=$(same $tree)
     # shellcheck disable=SC2046,SC2086
     [ -z "$left" ] || kill -TERM $(pids $left) 2>/dev/null
-    wt=""; [ -z "$top" ] || wt=$(CDPATH= cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
+    wt=""; [ "$wt_dir" = "$top" ] || wt=$(CDPATH= cd -P -- "$wt_dir" 2>/dev/null && pwd -P) || wt=""
     i=0; on=""
     while :; do
       has "$name"; st=$?
@@ -775,6 +787,10 @@ for name; do
     # A successor at the original path proves no restoration. Keep every non-collision failure.
     say "$name: the audit did not run, so a worktree stays: publication of RESULT-$name.md failed; recover the report from its source, archive or the path printed above, else from a .report-move-* folder in ${record%/*}; after recovery remove $record.report-move if present and close again"
     kept=1
+  elif [ "$wt_dir" != "$top" ] && [ "$wt_dir" != "$home/$name" ]; then
+    # Said, never "nothing to remove": that close dropped the records and left the worktree.
+    fail "$name: its worktree $wt_dir is not in $home, the one folder the audit removes from (a spawn before v0.12 nested it in the lead's checkout); it and its records are kept: once its branch is merged, remove it with git worktree remove, then close again"
+    kept=1
   else
     apply=--apply; [ -z "$dry" ] || apply=""
     if [ -z "$noquiet" ]; then
@@ -793,6 +809,19 @@ for name; do
        [ -z "$(git -C "$wt_dir" ls-files -- .claude/hooks/.gitignore 2>/dev/null)" ] &&
        mkdir -p -- "${record%/*}" && mv -- "$ignore" "$record.hooks-ignore"; then
       aside=$record.hooks-ignore
+    fi
+    # spawn_worker.sh's copy of the brief in the worker's folder has no copy in main when the lead
+    # works in a linked worktree, and the audit kept the worktree for it: it goes while it is still
+    # the lead's record NAME.brief.md byte for byte. One the worker changed stays. The .gitignore
+    # the spawn wrote beside it goes once the copy is gone, while it is still the spawn's two lines.
+    copy=$wt_dir/.myagentkit/workers/$name.brief.md; ignored=${copy%/*}/.gitignore
+    if [ -z "$dry" ] && [ "$wt_dir" != "$top" ]; then
+      if [ -f "$copy" ] && [ ! -L "$copy" ] && cmp -s -- "$copy" "$record.brief.md"; then rm -f -- "$copy"; fi
+      if [ ! -e "$copy" ] && [ -f "$ignored" ] && [ ! -L "$ignored" ] &&
+         [ "$(cat -- "$ignored")" = "# spawn_worker.sh: ignores the worker's copy of its brief; close_worker.sh removes both$nl*" ]; then
+        rm -f -- "$ignored"
+      fi
+      rmdir -- "${copy%/*}" "${copy%/*/*}" 2>/dev/null || :
     fi
     out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" $noquiet 2>&1); rc=$?
     # Deleted only with the worktree: a folder Windows moved aside and not back (MOVED) has no
@@ -846,7 +875,7 @@ for name; do
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
       "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" \
-      "$record.supervisor.log" || fail "$name: could not remove its Codex session records"
+      "$record.supervisor.log" "$record.brief.md" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

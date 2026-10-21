@@ -24,8 +24,8 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `show_workers.sh` says "runs in the background" for a session whose state is done (bge2e Low).
 - A finished bg session's row can vanish from `claude agents --all` without a kit `claude rm`
   (bge2e e2e2); close treats it as nothing to end, a later `--resume` of such a session is untried.
-- POSIX: the bg suites' minimums (test_spawn_worker 95, test_codex_worker 67/66,
-  test_worker_visibility 94, test_close_worker 49, test_sync_kit 59) are the Windows deltas, not
+- POSIX: the bg suites' minimums (test_spawn_worker 98, test_spawn_codex 60/59, test_codex_worker 67/66,
+  test_worker_visibility 95, test_close_worker 51, test_sync_kit 59) are the Windows deltas, not
   measured: the first CI run must confirm. `MYAGENTKIT_ROLE=worker` seen inside a live bg worker's
   hook is asserted only through the merged settings (bgspawn NOT RUN).
 
