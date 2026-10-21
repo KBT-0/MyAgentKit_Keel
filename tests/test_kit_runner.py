@@ -610,6 +610,9 @@ class Probe(unittest.TestCase):
         Path('ready').touch()
         time.sleep(30)
         Path('unit-completed').touch()
+    def test_wait_then(self):
+        # unittest records the first test's SystemExit as an error and runs on: the unit must not.
+        Path('second-ran').touch()
 ''')
                 startup = ("import os, sys, time\nfrom pathlib import Path\n"
                            "if '--unit' not in sys.argv:\n    Path('pid').write_text(str(os.getpid()))\n")
@@ -643,7 +646,7 @@ def main():
                     proc.send_signal(sig)
                     out = proc.communicate(timeout=10)[0]
                     self.assertEqual(proc.returncode, status, out)
-                    for name in ('completed', 'unit-completed', 'pending-completed', 'startup-completed'):
+                    for name in ('completed', 'unit-completed', 'second-ran', 'pending-completed', 'startup-completed'):
                         self.assertFalse((project / name).exists(), name + ' ran on after cancellation')
                     if not early:
                         self.assertTrue((project / 'stopped').exists(), 'the coordinator cleanup did not run')
@@ -751,6 +754,17 @@ def main():
         with unittest.mock.patch.object(check_kit.subprocess, 'run', broken_diff), \
                 self.assertRaisesRegex(RuntimeError, 'git diff against v0.1 failed: fatal: bad object'):
             check()
+        # After a release tag the next cycle's items sit under "## Unreleased" until its own release.
+        git('add', '-A')
+        git('commit', '-qm', 'two')
+        git('tag', 'v0.2')
+        (root / 'core/scripts/check.sh').write_text('echo three\n')
+        changelog = '# CHANGELOG\n\n## Unreleased — v0.3\n\n- %s\n\n## v0.2 — date\n\n- **ACTION:** sync.sh\n'
+        (root / 'CHANGELOG.md').write_text(changelog % '**ACTION:** check.sh', encoding='utf-8')
+        self.assertIn('PASS: every project-owned kit file changed since v0.2', check())
+        (root / 'CHANGELOG.md').write_text(changelog % 'nothing yet', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'no ACTION item naming them under CHANGELOG Unreleased'):
+            check()
 
     def test_a_unit_over_its_cap_is_stopped_and_fails_with_its_name_and_seconds(self):
         # run_units waited for a unit without a bound: a hung test module hung the kit check. The
@@ -769,6 +783,30 @@ def main():
         # The child is stopped with the unit (Windows: its tree; POSIX: the unit's own process
         # group), so its pipe closes at once; before, POSIX waited for the child's 20 s.
         self.assertLess(time.monotonic() - started, 15)
+
+    def test_a_cancel_stops_each_running_unit_with_the_processes_below_it(self):
+        # Windows' cancel ended the unit alone: the shells, git and test pythons it started ran on.
+        started, survived = self.tmp / 'started', self.tmp / 'survived'
+        (self.tmp / 'child.py').write_text('import sys, time\nfrom pathlib import Path\n'
+                                           'time.sleep(3)\nPath(sys.argv[1]).touch()\n')
+        (self.tmp / 'hang.py').write_text('import subprocess, sys, time\nfrom pathlib import Path\n'
+                                          'subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])\n'
+                                          'Path(sys.argv[3]).touch()\ntime.sleep(60)\n')
+        hang = [sys.executable, str(self.tmp / 'hang.py'), str(self.tmp / 'child.py'), str(survived), str(started)]
+        quick = [sys.executable, '-c', 'import sys, time\nfrom pathlib import Path\n'
+                 'while not Path(sys.argv[1]).exists(): time.sleep(0.05)\nprint("UNIT DONE: quick")', str(started)]
+
+        class Cancel(io.StringIO):
+            # Ctrl+C while the runner prints the first unit's output.
+            def write(self, text):
+                if 'UNIT DONE: quick' in text:
+                    raise KeyboardInterrupt
+                return super().write(text)
+
+        with contextlib.redirect_stdout(Cancel()), self.assertRaises(KeyboardInterrupt):
+            check_kit.run_units([('quick', quick), ('hang', hang)])
+        time.sleep(5)
+        self.assertFalse(survived.exists(), "the cancelled unit's child ran on")
 
     def test_a_tier_over_its_budget_fails_with_its_seconds(self):
         quiet = [sys.executable, '-c', 'import time; time.sleep(1.5); print("UNIT DONE: quiet")']
