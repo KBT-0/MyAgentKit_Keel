@@ -366,7 +366,7 @@ gözden geçiren iş sağlam olsa da bulgu üretir [15].
 | B2. Bağlam uyarısında durmak; ikinci sıkıştırmada devretmek | Kural 8 sahip yokken devam der; ama "bir kez sıkıştırılan devreder" geceye uymaz, devri açacak kimse yok (K) | Gecede sıkıştırma durma sebebi değildir (#303 ilkesi lead'e); hand-off dosyası güncel tutulur, otomatik sıkıştırma devam ettirir [13]; vendor satırı "do not stop tasks early" [19] |
 | B3. "X'ten önce sor" yüzünden durmak | Kural yokluğu; soru varsayılan olarak sonsuza dek açık [6] | Karar tablosu (5.4); gece `AskUserQuestion` yok, soru kuyruğa; işi sabahki cevabın tek yeri değiştireceği biçimde yapmak (COMMUNICATION) [79][77] |
 | B4. Worker'ın hand-off'unda durmak | Lead devri bekleyen iş sanıyor | Lead worker'ı yerinde sürdürür ya da sonraki worker'ı kendi başlatır (hafıza "resume cut-off sessions"; #303) |
-| B5. Kimsenin cevaplamadığı soru / izin istemi | Odaklı pencerede zaman aşımı işlemez; bg'de hiç başlamaz; izin istemi asla [6]; auto mode 3/20'de isteme döner [5] | Çıkış öncesi izin kontrolü (gecenin komutları önceden izinli); auto mode; `askUserQuestionTimeout` yalnız emniyet ağı; AWS: bekleyen onay güvenli varsayılana düşer [90] |
+| B5. Kimsenin cevaplamadığı soru / izin istemi | Odaklı pencerede zaman aşımı işlemez; bg'de hiç başlamaz; izin istemi asla [6]; auto mode 3/20'de isteme döner [5] | Çıkış öncesi izin kontrolü: gecenin beklenen eylemleri için kapsama göre allow kuralları (3 ardışık / 20 toplam engel isteme döndürür, eşikler ayarlanamaz [5]); engel sayısı görünür tutulur; `askUserQuestionTimeout` yalnız `AskUserQuestion`'ı kapatır, izin istemini ve auto mode'un isteme dönüşünü **kapsamaz** (A4); "kimsenin cevaplamadığı izin istemi" bilinen bir gece hatasıdır, sabah raporu kayıp süreyi gösterir (5.3, 5.5). Çıkarım: bu istem sabaha kadar açık kalabilir; kaynaklı çözüm yok, azaltma önceden izin vermektir. AWS: bekleyen onay güvenli varsayılana düşer [90] |
 | B6. Bitmiş worker'ı kaçırıp boşta kalmak | `notify_when_idle` güvenilmez (K; `docs/research/worker-orchestration.md`, Özet 6) | Her spawn'da diskte RESULT bekleyen arka plan döngüsü; bitince tur olarak gelir [3]; Stop girdisindeki `background_tasks` boşsa uyarı (A1) |
 | B7. Makine uyuyor / yeniden başlıyor | Uyku etkileşimli oturumu durdurur; 30 dk+ uykudan sonra Enter ister [4]; kapanış bg'yi de durdurur [9] | Çıkış listesinde güç: Awake `--pid` ya da `powercfg`; kapak/güç düğmesi engellenemez [121][122]; Windows Update (lead'in yargısı, zayıf kaynak [74]) |
 | B8. Haftalık limit | Reset 24 saatten uzaksa beklemez [4] | Geçerli durma koşulu: rapor yaz ve dur (5.3) |
@@ -407,14 +407,20 @@ modlar kullanıcı anahtarıdır [Aider ve Roo, WORKFLOW'un kendi atıfları]; a
    yalnız listede adı geçen "bitince sıradaki" işlere geçer, yeni kapsam açmaz (OWASP hedef kayması [97]).
 2. **Durma koşulları (geçerli sebepler; bunlar dışındaki her durma bahanedir):** (a) liste bitti ve rapor yazıldı;
    (b) sahibin verdiği bitiş saati; (c) reset'i 24 saatten uzak bir limit [4]; (d) kalan her iş bir "sahipsiz asla"
-   maddesine (5.4) dayanıyor; (e) `/goal`'u temizleyen düzeltilemez hata [3]. Bütçe abonelikte dolar değil, limit ve
+   maddesine (5.4) dayanıyor; (e) `/goal`'u temizleyen düzeltilemez hata [3]. `/goal` döngüsü birkaç tur araç çağrısı
+   olmazsa biter (A2); bu yüzden worker RESULT'unu beklemek tur boşa harcamak değildir: bekleme arka planda bir disk
+   izidir (kit bunu zaten yapıyor, hafıza "worker done = disk watch"), bitince bildirimi bir araç turu olarak gelir [3]
+   ve hedefi bitirmez. Bilinen gece hatası, durma koşulu değil: **kimsenin cevaplamadığı izin istemi** (auto mode 3/20'de
+   isteme döner [5], `askUserQuestionTimeout` buna işlemez [6]); önlem altta (6), kayıp süre sabah raporunda (5.5). Bütçe abonelikte dolar değil, limit ve
    saattir [93][92]; `--max-budget-usd` etkileşimli lead'de yok [8].
 3. **Karar yetkisi:** 5.4'teki tablo.
 4. **Soru kuyruğu ve karar kaydı:** tek dosya (5.6).
 5. **Sabah raporu:** 5.5.
 6. **Çıkış öncesi kontrol listesi** (`/myagentkit:mode nightwatch` yazdırır): lead etkileşimli ön plan oturumu, `--bg`
    değil, çünkü limit beklemesi yalnız orada [4] ve bg'deki soru hiç zaman aşımına girmez [6]; `autoContinueAtUsageLimit`
-   açık [4]; auto mode [3][5]; gecenin komutları için izin kuralları hazır (izin istemi asla çözülmez [6]); güç: Awake
+   açık [4]; auto mode [3][5]; gecenin beklenen eylemleri için kapsama göre allow kuralları önceden yazılı (izin istemi asla çözülmez [6]; auto mode 3
+   ardışık / 20 toplam engelde isteme döner [5], bu durumda oturum sabaha kadar istemde bekleyebilir, çıkarım); engellenen
+   eylem sayısı lead'in ilerleme satırında görünür tutulur; güç: Awake
    `--pid <claude>` ya da `powercfg`, kapak açık, prizde [121][122][123]; çalışan worker'ların disk izleri kurulu (K);
    önerilen `/goal` satırı.
 
@@ -452,7 +458,7 @@ düşürmek (WORKFLOW "Working modes"; [15]). Listeyi sahip onaylar (Açık soru
   *Yapılanlar* (commit SHA'ları ve merge'ler `git log`'dan, öz-beyandan değil [94][97]); *Kendi kararlarım* (karar,
   seçenekler, gerekçe, geri alma); *Danışmalar* (soru, vekilin cevabı, yaptığım); *Sorular* (yalnız sahibin
   cevaplayabileceği, her biri önerisiyle, öncelik sırasıyla ve kısa; uzun kuyruk toplu onaya iter [97]); *Park
-  edilenler*; *Maliyet* (`agent_cost.py --latest`, `/usage`, kural 8); *Kalan*. Durumun AWS inceleme isteği alanları
+  edilenler*; *Takılmalar* (cevaplanmamış izin istemi ya da engel yüzünden kaybedilen süre, ilerleme satırındaki saatlerden); *Maliyet* (`agent_cost.py --latest`, `/usage`, kural 8); *Kalan*. Durumun AWS inceleme isteği alanları
   [91] ve ADR durumları [108] yapısı lead'in eşlemesidir.
 - **Sabah:** sahibin ilk mesajı bulunmayı `present`'e çevirir; lead raporu iki katmanla verir (COMMUNICATION "Handoff")
   ve kuyruktaki soruları `AskUserQuestion` ile tek tek sorar ("biriktirip sabah sor").
@@ -462,7 +468,10 @@ düşürmek (WORKFLOW "Working modes"; [15]). Listeyi sahip onaylar (Açık soru
 1. **Bulunma kaydı:** `working_mode.py`'ye ikinci anahtar, `docs/STATE.md` satırı, `.myagentkit/presence`;
    `plugin/commands/mode.md`'ye `nightwatch`/`present`; açılışta 5.3'ün kontrol listesini ve önerilen `/goal` satırını
    yazdırır, örneğin `/goal every item in docs/STATE.md's night list is done or parked with a reason and the night report
-   is written, or it is 09:00` (sahibin bitiş saatiyle).
+   is written`. Saat cümlesi (`or it is 09:00`) örnekte yok: değerlendirici yalnız konuşmayı görür ve araç çalıştırmaz
+   (A2), konuşmada saat yoksa cümle tetiklenemez. Sahibin bitiş saati lead tarafında bir kontroldür (5.3, 2b): lead her
+   checkpoint'te `date` çağırıp saati ilerleme satırına yazar; saat konuşmaya böyle girerse cümle `/goal`'a da eklenebilir
+   (çıkarım).
 2. **Keep-going mekanizması: yerleşik `/goal`** (merdivenin 4. basamağı: platform özelliği, kod yok) [3][15]. Usage
    limit'te duraklayıp otomatik devamla sürmesi B1'i kapatır [3][4].
 3. **Bulunmaya duyarlı hook metinleri:** `context_size.py` ve `after_compact.txt` bulunma `away` iken "hand-off dosyasını
@@ -494,7 +503,8 @@ içindir (kritik ama geri alınabilir); "sahipsiz asla" listesi vekille de açı
 **(b) Kite uyum.** WORKFLOW "Model routing" tablosunun 3. satırı "design consultations" için Opus 5.5 high, lead seçerse
 Fable 5.1 der; kural 2 lead'in en üst modeli tek bir iş için sormadan seçmesine izin verir, önce aboneliğin o modeli
 içerdiğini kontrol ederek; saver'da en üst model ve en yüksek effort sahibin evetini ister. Danışma kısa ve tek seferlik
-bir iştir, bu yüzden **ayrı oturum değil, `model` ve `effort` açıkça verilen bir sub-agent** (WORKFLOW "Worker cost":
+bir iştir. Sahibin sözü "taze workerda"; **ayrı oturum yerine sub-agent bu raporun kendi seçimidir** (sahibin sözünden
+bir sapma: danışma kısa, tek seferlik ve sub-agent çağrısında model/effort zorunlu olduğu için), yani **ayrı oturum değil, `model` ve `effort` açıkça verilen bir sub-agent** (WORKFLOW "Worker cost":
 saatten kısa iş sub-agent'tır; `guard_worker_route.py` model ve effort'suz çağrıyı zaten reddeder). **Canlı Fable
 kontrolü:** kit plan durumunu asla kaydetmez (hafıza); lead danışmayı `fable` ile dener, model yok ya da usage credits
 onayı isteniyorsa (Claude Code advisor sayfası bazı planlarda Fable'ın usage credits'e faturalandığını söylüyor [17]) Opus
@@ -515,7 +525,8 @@ değiştirmek "sahipsiz asla" (6).
 
 ## 6) Kaynaklar
 
-Hepsi 2026-10-22'de okundu; tarih sütunu yayım tarihidir, sayfada yoksa "tarihsiz".
+Hepsi 2026-10-22'de okundu; tarih sütunu yayım tarihidir, sayfada yoksa "tarihsiz". Claude Code dokümanları [1]–[18]
+için sürüm pinlenmedi, okuma tarihi 2026-10-22 (tek sürüm bilgisi A3'te: v2.1.234).
 
 | # | Tür | Güç | Tarih | Kaynak |
 |---|---|---|---|---|
