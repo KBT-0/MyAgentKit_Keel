@@ -100,16 +100,13 @@ export function register(on) {
     const role = await $.env.get('MYAGENTKIT_ROLE')
     run.root = await $.session.root()
     run.isOn = role !== 'worker' && await $.fs.exists(run.root + '/.claude/hooks/suggestions.py')
-    try {
-      await $.command.register({ name: 'suggestions', description: 'myagentkit-suggestion side check: on, off or status',
-        argumentHint: 'on|off|status', immediate: true })
-    } catch {
-      // the name is taken: the shell form `python .claude/hooks/suggestions.py on|off|status` still works
-    }
     return next(e)
   })
 
-  on('command.run', { command: ['suggestions', 'myagentkit:suggestions'] }, async ($, e) => {
+  // The plugin's commands/suggestions.md gives the name /myagentkit:suggestions (a mod-registered
+  // command cannot carry the plugin's namespace: measured, it lists as a bare /suggestions). This
+  // hook answers it with no model turn; the markdown is the fallback where the mod does not run.
+  on('command.run', { command: 'myagentkit:suggestions' }, async ($, e) => {
     if (!run.root || !(await $.fs.exists(run.root + '/.claude/hooks/suggestions.py'))) {
       return { text: 'myagentkit-suggestion needs the kit\'s Claude Code overlay (.claude/hooks/suggestions.py).' }
     }

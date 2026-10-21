@@ -15,7 +15,6 @@ function stubs(on, calls: Calls, opts: { role?: string; gate?: object; fork?: st
   on('env.get', () => ({ value: opts.role }))
   on('session.root', () => ({ value: '/work' }))
   on('fs.exists', () => ({ value: true }))
-  on('command.register', () => ({ value: { command: 'suggestions' } }))
   on('session.id', () => ({ value: 's1' }))
   on('session.usage', () => ({ value: { rateLimits: [{ kind: 'five_hour', percentUsed: opts.limit ?? 10 }] } }))
   on('process.run', ($, e) => {
@@ -159,10 +158,10 @@ test('/myagentkit:suggestions off runs the ledger switch and prints its answer',
   const c = fresh()
   stubs(on, c)
   await start($)
-  const answer = await $.command.run({ command: 'suggestions', args: 'off' })
+  const answer = await $.command.run({ command: 'myagentkit:suggestions', args: 'off' })
   expect(c.argv.at(-1)?.slice(3)).toEqual(['off'])
   expect(answer.text).toBe('myagentkit-suggestion: suggestions: off')
-  await $.command.run({ command: 'suggestions', args: '' })
+  await $.command.run({ command: 'myagentkit:suggestions', args: '' })
   expect(c.argv.at(-1)?.slice(3)).toEqual(['status'])
 })
 

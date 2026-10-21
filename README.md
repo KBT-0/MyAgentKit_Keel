@@ -68,7 +68,8 @@ interview asks and can install it. With Claude Code, you type these two (an agen
 ```
 
 That adds `/myagentkit:init`, `/myagentkit:sync`, `/myagentkit:cross-review`,
-`/myagentkit:handoff`, `/myagentkit:kit-feedback` and `/myagentkit:mode`.
+`/myagentkit:handoff`, `/myagentkit:kit-feedback`, `/myagentkit:mode` and
+`/myagentkit:suggestions` (the side-check notes' switch, `docs/COMMUNICATION.md`).
 With Codex as the host:
 
 ```sh

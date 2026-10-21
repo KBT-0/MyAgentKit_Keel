@@ -59,6 +59,22 @@ starts a new one); five and three are starting values (Anthropic's Sonnet 5.5 pr
 guide; a hook's added context is paid on the next request, code.claude.com/docs/en/hooks).
 A worker session is not reminded: the lead reads its result, not its chat.
 
+## Side-check notes (myagentkit-suggestion)
+
+In a Claude Code lead session, a side check rereads the conversation now and then (every ten
+tool calls, at once on the same action or error three times, and at the end of a long turn)
+and abstains unless it can quote evidence. A note shows as a dim line,
+`● myagentkit: myagentkit-suggestion #ID: <claim>`, and reaches the agent beside its next tool
+result, or with {{OWNER_NAME}}'s next prompt when the session is idle. It is a claim, not an
+order: the agent runs the note's one check, writes "myagentkit-suggestion #ID: correct | wrong
+| partly, because ..." on a visible line, then acts or drops it (`BEHAVIOUR.md`). Workers never
+get one. {{OWNER_NAME}} switches it with `/myagentkit:suggestions on | off | status` (no model
+turn), or from the shell with `sh .claude/hooks/py.sh .claude/hooks/suggestions.py off`; the
+switch is kept per project in `.myagentkit/suggestions.json`, and off means no side check, no
+delivery, no cost. `status` prints the notes, the verdicts, the precision over the last 20
+judged notes and the side checks' tokens; below 50% the checks run half as often, below 25%
+delivery stops and the chat says so (the kit's `docs/research/side-agent-suggestions.md`, 7).
+
 ## Questions and approvals
 
 - Solve it yourself first. Ask only when the answer changes the work or a wrong guess
