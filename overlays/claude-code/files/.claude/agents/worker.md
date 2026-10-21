@@ -39,9 +39,17 @@ the rules below exist).
   `Task: <id or the brief's name>`, `Attempt: <n>`, `Remaining: <one line, or "none">`; then
   the body; then, if you have questions, `## Open questions for {{OWNER_NAME}}`, one numbered
   question per item with its options on the lines after it (`docs/HANDOFF.md`). Only
-  `completed` is done. After one compaction of your context, finish only if your
-  `Remaining:` line is short; write `Kind: handoff` with a handoff section at the second
-  compaction, or at once when much work remains, and commit it.
+  `completed` is done.
+- A compaction never ends your task: it is a cost signal for the next brief, not a stop.
+  Record it in your report (how many, and the context at which each fired, the `preTokens`
+  of its `compact_boundary` record, when your transcript shows it, else "compacted N
+  times") and go on. Only the owner's stop rule ends
+  running work: it "keeps running unless {{OWNER_NAME}} asked for it to end, or it is
+  provably finished or hung" (`AGENTS.md`). Write `Kind: handoff` only when the task truly
+  cannot finish in this session (the turn backstop is near with work left, or the brief
+  turns out to be more than one task); then commit the code you wrote on your branch first
+  and name that commit and the exact next step. "Nothing is edited" is never a hand-off,
+  and neither is a compaction (`docs/HANDOFF.md`).
 - The report gives the result first and stays within the brief's word cap (350 by default).
   It is written for the lead, in English, with absolute paths and the evidence beside each
   claim; the lead translates it for the owner (`docs/COMMUNICATION.md`, "Workers").

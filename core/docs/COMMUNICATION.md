@@ -102,6 +102,13 @@ pasted through. A worker session started by `scripts/spawn_worker.sh` carries
 (`.claude/agents/*.md` in the Claude Code overlay), not from a style setting, which does
 not reach sub-agents.
 
+A worker attempt that ends without `Kind: completed` (a `blocked` or `handoff` result, an exit
+without a result, a stop at the turn backstop) is reported to {{OWNER_NAME}} in the same turn
+the lead learns of it, never only in a closing summary: the reason, and the worker's row from
+`scripts/agent_cost.py` (requests, cache read, cache write, compactions `cmp`, peak context).
+Two attempts that wrote no code went unreported for 140 requests until the owner asked why
+(#303, 2026-10-22).
+
 ## Per-model notes
 
 A fixed "keep it short" line is too much for one model and too little for another. When a

@@ -172,6 +172,42 @@ class AgentCostTests(unittest.TestCase):
             self.assertIn(' out ', text.splitlines()[0])
             self.assertIn('output 2.0k', text)
 
+    def test_compactions_are_counted_per_agent_and_a_copied_one_once(self):
+        # #303: two workers handed off at their second compaction near 80k, and the table did
+        # not show it; a continued session's transcript copies the parent's boundary (#253).
+        boundary = json.dumps({'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'u1',
+                               'timestamp': '2026-10-03T10:01:00Z'})
+        second = json.dumps({'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'u2'})
+        with tempfile.TemporaryDirectory() as tmp:
+            twice, never, child = (Path(tmp) / n for n in ('a.jsonl', 'b.jsonl', 'c.jsonl'))
+            twice.write_text('\n'.join([rec('2026-10-03T10:00:00Z', 'r1', {'input_tokens': 1}), boundary,
+                                        rec('2026-10-03T10:02:00Z', 'r2', {'input_tokens': 1}), second]),
+                             encoding='utf-8')
+            never.write_text(rec('2026-10-03T10:00:00Z', 'r3', {'input_tokens': 1}), encoding='utf-8')
+            child.write_text('\n'.join([boundary, rec('2026-10-03T10:03:00Z', 'r4', {'input_tokens': 1})]),
+                             encoding='utf-8')
+            seen, counts = set(), []
+            for path in (twice, never, child):
+                found = []
+                rows = agent_cost.requests(path, seen, found)
+                counts.append(agent_cost.summarize(path.stem, rows, len(found))['cmp'])
+            self.assertEqual(counts, [2, 0, 0])
+            table = agent_cost.table([agent_cost.summarize('w', rows, 2)])
+            self.assertIn(' cmp ', table.splitlines()[0])
+            self.assertRegex(table.splitlines()[1], r'^w\s+1\s+0\s.*\s2\s')
+
+    def test_the_peak_context_is_the_largest_request_not_the_last(self):
+        # #303: ctxN is the last request's context, small after a compaction; the issue read
+        # it as the maximum. The peak is shown beside it.
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / 's.jsonl'
+            session.write_text('\n'.join(
+                rec(f'2026-10-03T10:0{i}:00Z', str(i), {'input_tokens': 1, 'cache_read_input_tokens': n})
+                for i, n in enumerate((49_000, 79_800, 12_000))), encoding='utf-8')
+            result = agent_cost.summarize('w', agent_cost.requests(session))
+            self.assertEqual((result['ctx0'], result['ctxMax'], result['ctxN']), (49_001, 79_801, 12_001))
+            self.assertIn('49.0k->79.8k->12.0k', agent_cost.table([result]))
+
 
 if __name__ == '__main__':
     unittest.main()
