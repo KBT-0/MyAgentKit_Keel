@@ -84,6 +84,17 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
 - **ACTION:** in `scripts/check.sh` (project-owned), replace the "Keep deploy-shaped steps out of
   this command" comment above `build_test_cmd` with the kit's, keeping its `# read-only:` line;
   a project that kept a dry run on a standing exception records it there.
+- `.githooks/commit-msg`: refusing a `Done: <id>` that a strong review report or an audit still
+  names, it says the report is a living file and the closing commit deletes the finding's line
+  (`docs/WORKFLOW.md`, "Closing deletes"); it said "or drop the trailer", and a project dropped
+  the trailer and lost the id's trace (#301). The reports stay checked. `docs/WORKFLOW.md` and
+  `docs/STRONG_REVIEW.md`: a report's finding id is a task id of the project's shape, never a
+  report-local label (`P3`, `F16`); a label of the report's own takes a prefix no task id uses.
+  `test_git_hooks` is 38.
+- **ACTION:** in `docs/WORKFLOW.md`, "The strong review cycle", add the kit's two sentences after
+  "Each finding carries a task id ("Task ids"), a severity and its evidence."; in
+  `docs/STRONG_REVIEW.md`, add the kit's clause after "with the triage mark beside it". A report
+  whose labels share a task id's shape renames them with a prefix in the commit that closes them.
 
 ---
 

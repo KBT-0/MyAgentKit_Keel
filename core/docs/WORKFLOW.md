@@ -429,7 +429,10 @@ cadence (ten days came from a project's request, kit issue #61).
   ("Model routing"). Its report has four headings: consistency with the design
   document's decisions; the look, where the project has one; performance and cost at full
   scale; code health (duplicate systems, test gaps). Each finding carries a task id
-  ("Task ids"), a severity and its evidence.
+  ("Task ids"), a severity and its evidence. The id is a task id of the project's own shape,
+  never a label of the report's own (`P3`, `F16`): such a label is one token with a task of
+  that name, and closing the task is refused while the report names it (#301). A report that
+  needs labels of its own gives them a prefix no task id uses.
 - **Triage:** the lead and the owner mark each finding in the list as accepted, parked or
   rejected. An accepted finding becomes a task under its id.
 - **Second reviewer**, a strong model of the other family when one is available: reviews the
