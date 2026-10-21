@@ -698,6 +698,21 @@ def main():
                 else:
                     with self.assertRaisesRegex(RuntimeError, r'plugin\.json.*version.*v0\.11'):
                         check_kit.check_release(self.tmp)
+        # A patch release names all three numbers, in the heading, the README and the manifest.
+        (self.tmp / 'CHANGELOG.md').write_text('## v0.11.1 — 2026-10-10\n\n## v0.11\n', encoding='utf-8')
+        (self.tmp / 'README.md').write_text('**v0.11.1.** The kit.\n', encoding='utf-8')
+        for version in ('0.11.1', '0.11.0', '0.11.2'):
+            with self.subTest(patch=version):
+                (self.tmp / 'plugin/.claude-plugin/plugin.json').write_text('{"version": "%s"}' % version,
+                                                                             encoding='utf-8')
+                if version == '0.11.1':
+                    check_kit.check_release(self.tmp)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, r'plugin\.json.*version.*v0\.11\.1'):
+                        check_kit.check_release(self.tmp)
+        (self.tmp / 'README.md').write_text('**v0.11.** The kit.\n', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
+            check_kit.check_release(self.tmp)
         (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n', encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
             check_kit.check_release(self.tmp)
@@ -764,6 +779,16 @@ def main():
         self.assertIn('PASS: every project-owned kit file changed since v0.2', check())
         (root / 'CHANGELOG.md').write_text(changelog % 'nothing yet', encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'no ACTION item naming them under CHANGELOG Unreleased'):
+            check()
+        # A patch release's three-part heading holds its items, and once tagged it is no newer version.
+        changelog = '# CHANGELOG\n\n## v0.2.1 — date\n\n- %s\n\n## v0.2 — date\n\n- **ACTION:** sync.sh\n'
+        (root / 'CHANGELOG.md').write_text(changelog % '**ACTION:** check.sh', encoding='utf-8')
+        self.assertIn('PASS: every project-owned kit file changed since v0.2', check())
+        git('add', '-A')
+        git('commit', '-qm', 'three')
+        git('tag', 'v0.2.1')
+        (root / 'core/scripts/check.sh').write_text('echo four\n')
+        with self.assertRaisesRegex(RuntimeError, 'changed since v0.2.1, and CHANGELOG has no newer version'):
             check()
 
     def test_a_unit_over_its_cap_is_stopped_and_fails_with_its_name_and_seconds(self):

@@ -227,7 +227,7 @@ def kit_version(project):
     if not stamp.is_file():
         return None
     text = stamp.read_text(encoding='utf-8').strip()
-    match = re.fullmatch(r'(\d+)\.(\d+)', text)
+    match = re.fullmatch(r'(\d+)\.(\d+)(?:\.\d+)?', text)  # a patch release adds .PATCH
     if match is None:
         raise ValueError('unreadable kit version in docs/kit/.kit-version: ' + shown(text))
     return int(match[1]), int(match[2])

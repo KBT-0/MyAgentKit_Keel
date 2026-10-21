@@ -6,8 +6,8 @@ must say what a project OWNER has to do — not just what moved. Mark anything n
 hand-application with **ACTION**: a project-owned file (no `KIT-OWNED` header) reaches a
 project only through an ACTION item that names it.
 
-Versions are `MAJOR.MINOR`. MINOR adds or refines; MAJOR changes a rule or a file layout in
-a way that existing projects must reconcile by hand.
+Versions are `MAJOR.MINOR`, a patch release `MAJOR.MINOR.PATCH`. MINOR adds or refines; MAJOR
+changes a rule or a file layout in a way that existing projects must reconcile by hand.
 
 WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed.
 
@@ -16,7 +16,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## v0.12.1 — 2026-10-21
 
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,
-failed). Every changed file is kit-owned; no ACTION.
+failed). The sync brings every changed file but three review files (ACTION below).
 
 - `spawn_worker.sh` and `watch_workers.sh` use no `-ef`, `-nt` or `-ot` (undefined in POSIX sh,
   shellcheck SC3013): a same-file test through `os.path.samefile` and a `newer` helper on `find
@@ -37,13 +37,20 @@ failed). Every changed file is kit-owned; no ACTION.
   already reads it (#171); one started in this worktree, or with no start folder, still does.
 - `codex_worker.py`: a worker group whose members are all zombies (macOS answers `killpg` with
   EPERM) is nothing left to stop; a supervisor stopped by SIGTERM or SIGHUP exited 1.
-- Tests: two new (the zombie group, POSIX and Windows; the early-ending tar, POSIX), so
-  `test_codex_worker` is 66 on Windows, 68 or 67 elsewhere and `test_claude_bridge` 280 on POSIX;
+- Tests: three new (the zombie group, POSIX and Windows; the early-ending tar and a tmux
+  session's start folder, POSIX), so `test_codex_worker` is 66 on Windows, 68 or 67 elsewhere,
+  `test_claude_bridge` 280 and `test_clean_worktrees` 144 on POSIX;
   the POSIX count of `test_spawn_worker` is 97; the clean_worktrees, git option (run in
   the C locale), git_hooks (UTF-8 bytes, a binary lock file), doctor (the stub lists every flag
   but `--restricted`; the probe wait scales), sandbox, worker paths and bridge tests follow the
   current messages and macOS's resolved temp paths; the acceptance's stand-in flock reaches a
   nested run through `GATE_PYTHON` (#249).
+- A patch release names three numbers: `working_mode.py` reads a recorded kit version such as
+  `0.12.1` (it refused it as unreadable), and the kit check's release and ACTION checks and
+  `tests/test_install.py` read a `## v0.12.1` heading (they skipped it for `## v0.12`).
+- **ACTION:** re-copy `scripts/claude_bridge.py`, `scripts/review_dispatch.py` and
+  `scripts/test_claude_bridge.py` from the kit (project-owned, so the sync does not bring them):
+  the macOS archive, `CLAUDE_CLI_BIN` probe and backend-folder fixes above, with their tests.
 
 ---
 

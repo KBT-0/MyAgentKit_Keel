@@ -26,7 +26,10 @@ all):
      directory inside it (/proc on Linux, lsof elsewhere, its escaped names read back exactly or
      the listing is not proven; native Windows: each process's own record of it, its PEB;
      compared case-folded and Unicode-normalised, as macOS names are), no tmux session has its
-     name, the gate's lock is free (Windows: its file can be opened for writing);
+     name unless that session started in another checkout or in another folder of
+     .claude/worktrees (#171: projects share the default tmux server; a session tmux names no
+     start folder for keeps it), the gate's lock is free (Windows: its file can be opened for
+     writing);
   f. nothing only its git directory holds: removal destroys that directory, so every object id
      in every file of it (both columns of every reflog line, every ref, every pseudo-ref, any
      file this script does not know, in either case), NO_HISTORY excepted, names no object, or

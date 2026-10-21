@@ -116,7 +116,7 @@ class InstallTests(unittest.TestCase):
         # The release steps raise it with the other version strings (CONTRIBUTING.md); a tag v<this>
         # is pushed with the release, or every install from the default fails to fetch.
         pinned = re.search(r'(?m)^version=(\S+)$', (ROOT / 'install.sh').read_text(encoding='utf-8'))[1]
-        changelog = re.search(r'(?m)^## v(\d+\.\d+)(?=\s|$)', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'))[1]
+        changelog = re.search(r'(?m)^## v(\d+\.\d+(?:\.\d+)?)(?=\s|$)', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'))[1]
         self.assertEqual(pinned, changelog)
 
     def test_a_cache_with_edits_to_the_kit_is_not_overwritten(self):
