@@ -76,6 +76,14 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
 - **ACTION:** in `scripts/review.sh` (project-owned), replace the `cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}"`
   line with the kit's `core/scripts/review.sh` block that sets `repo_root` from the checkout it
   runs in, and re-copy `scripts/test_owns_check.py`.
+- The gate's build command rule names what makes a step unsafe: a remote write, a deploy
+  credential, a change users see. A read-only validation spelled like a deploy (`wrangler deploy
+  --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command records it and
+  why it writes nothing remote; an exact allow rule or a CI job answers an agent permission layer
+  that refuses its shape (#300). `setup/INTERVIEW.md` says the same.
+- **ACTION:** in `scripts/check.sh` (project-owned), replace the "Keep deploy-shaped steps out of
+  this command" comment above `build_test_cmd` with the kit's, keeping its `# read-only:` line;
+  a project that kept a dry run on a standing exception records it there.
 
 ---
 

@@ -883,10 +883,19 @@ fi
 # An unconfigured command is a FAIL, not a warning. "No build or test command" is the
 # absent-evidence case: the gate would be reporting that nothing failed, having run nothing.
 #
-# Keep deploy-shaped steps out of this command, dry runs included. An agent's permission
-# layer refused to run a gate whose command ended in a deploy tool's --dry-run, read as a
-# production deploy, so the agent could not run the gate it is required to run. Validate
-# deploy configuration in its own CI step, or document an allow rule for that exact command.
+# No step here may write to a remote (upload, publish, push, migrate a live database), need a
+# deploy credential (an API token, a login) or change what users see: the gate runs on every
+# commit, from every agent. A step that only reads the project and writes inside the checkout
+# may stay even when it is spelled like a deploy (`wrangler deploy --dry-run --outdir <dir>`
+# compiles "without actually deploying", developers.cloudflare.com/workers/wrangler/commands/
+# workers/; `terraform validate` "does not validate remote services", developer.hashicorp.com/
+# terraform/cli/commands/validate), once it is recorded: one `# read-only:` line below names the
+# exact step and why it writes nothing remote, checked with the deploy credentials unset (#300).
+# An agent's permission layer may still read such a step as a production deploy and refuse the
+# whole gate (it did once); give it an allow rule for that exact command (a Claude Code
+# `permissions.allow` entry such as `Bash(npm run check)`, code.claude.com/docs/en/permissions),
+# or move the step to its own CI job.
+# read-only: (none)
 build_test_cmd="{{BUILD_TEST_COMMAND}}"
 # A commit that changes only documentation skips the build/test command, and nothing else:
 # every scan and check above has run. A project's gate built for minutes on every such commit.
