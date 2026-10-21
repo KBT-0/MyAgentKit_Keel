@@ -574,6 +574,28 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('default foreground timeout is 120 seconds',
                       read('overlays/claude-code/files/.claude/agents/worker.md'))
 
+    def test_a_duration_is_agent_time_from_the_projects_measured_rows(self):
+        # Owner request 2026-10-21 (leeway: "4-6 weeks" planned, ~27 h actual): a model prices work
+        # in human time and has no clock (docs/research/agent-durations.md), so the rule every lead
+        # and worker reads points at a fixed table of the project's own measured times.
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        rule = [line for line in read('core/BEHAVIOUR.md').split(' - ') if 'not measured' in line]
+        self.assertEqual(len(rule), 1, 'BEHAVIOUR.md needs one duration line')
+        for needed in ('agent wall clock', '`docs/WORKFLOW.md`, "Task sizing"', 'person-days',
+                       '<!-- author-only -->'):
+            self.assertIn(needed, rule[0])
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        sizing = workflow.split('## Task sizing', 1)[1].split('\n## ', 1)[0]
+        rows = re.findall(r'^\| ([^|]+?) \| not measured \|$', sizing, re.M)
+        self.assertEqual(rows, ['Worker step, brief to result', 'Review fix round', 'Light review',
+                                'Full review', 'Gate run', 'Merge', 'Session start or compaction'])
+        flat = ' '.join(sizing.split())
+        for needed in ('overwrites', 'never appended', 'docs/research/agent-durations.md',
+                       'implicit', 'waits'):
+            self.assertIn(needed, flat)
+        self.assertIn('how long in agent time (`docs/WORKFLOW.md`, "Task sizing")',
+                      read('core/docs/COMMUNICATION.md'))
+
     def test_the_research_index_lists_every_report(self):
         # The reports are the kit's bibliography (CONTRIBUTING.md): one missing from the index
         # is a source nobody finds, so every report needs a row that links it.

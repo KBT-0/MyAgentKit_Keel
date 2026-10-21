@@ -128,6 +128,31 @@ deletion checkable.
   with tests" is.
 - Big work is split into a task list first — planning is itself a task.
 
+A duration (an answer to "how long", a plan's size, an option's cost) is agent wall clock,
+summed from the rows below: the steps, a review and its fix round per step, a gate run per
+merge, the merges, and a session start or compaction for every fresh, handed-off or compacted
+worker. It is a range with the rows' n, and owner waits, approvals and nights are named apart.
+A part whose row says "not measured" is said so, never filled with a guess: a model prices work
+in human time and has no clock, an early guess anchors later ones, and the project's own past
+runs are the reference that holds (the kit's `docs/research/agent-durations.md`, findings
+1-8). Never weeks, person-days, a human-team figure or a line count alone; a rewrite that
+replaces a library is sized by what the library does, its implicit features included.
+
+Measured agent times. After a merge the lead overwrites a row whose range the run changes,
+from git timestamps, the result file, `scripts/usage_summary.py` (reviews) and Claude Code's
+`claude_code.compaction` `duration_ms`; a row is never appended and an old figure is never kept
+beside a new one (findings 2 and 9).
+
+| Unit | Measured (range, n, date) |
+|---|---|
+| Worker step, brief to result | not measured |
+| Review fix round | not measured |
+| Light review | not measured |
+| Full review | not measured |
+| Gate run | not measured |
+| Merge | not measured |
+| Session start or compaction | not measured |
+
 ## The state, backlog and phase files
 
 The rules for `docs/STATE.md` are in `docs/AGENTS.md`, "STATE.md discipline". This section keeps
@@ -1101,7 +1126,7 @@ The threshold is {{OWNER_NAME}}'s decision from use. The only cost comparison of
 shapes is one task on 2026-10-03 (the kit's `docs/worker-cost-setups.md`): about 107 against
 110 requests, a cost equivalent of about 2.44M against 2.40M tokens. It measured the cost
 per worker on one task with one long wait, not wall-clock time, the throughput of several
-tasks, or the lead's own cost. Measure in passing: wall-clock from brief to merge, total
+tasks, or the lead's own cost. Measure in passing: wall-clock from brief to merge (into "Task sizing"'s rows), total
 tokens including the lead's, review rounds, and waits on an exclusive resource. The sample
 will be thin.
 

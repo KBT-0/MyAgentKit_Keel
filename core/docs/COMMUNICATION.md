@@ -66,7 +66,7 @@ A worker session is not reminded: the lead reads its result, not its chat.
   message), a real scope change. A routine, reversible choice is made and reported.
 - One question, one decision: the decision as one sentence with a question mark; why it
   matters, in plain words; two or three options, each with its consequence (what changes,
-  how long, how to undo); a line marked "Recommendation" with its reason; what happens with
+  how long in agent time (`docs/WORKFLOW.md`, "Task sizing"), how to undo); a line marked "Recommendation" with its reason; what happens with
   no answer. Several decisions are separate numbered questions, never "A and B?". An
   internal id or a section title never stands in for the question.
 - While the owner is present, a decision goes through the tool's question feature (multiple
