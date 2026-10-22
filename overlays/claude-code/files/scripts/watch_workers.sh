@@ -1,10 +1,12 @@
 #!/usr/bin/env sh
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-# Watch worker sessions; return as soon as one is GONE, WAITING on a person, has a result.
+# Watch worker sessions; return as soon as one is GONE, WAITING on a person, stopped by its
+# usage LIMIT, or has a result.
 #
 # Usage: watch_workers.sh [--interval S] [--max-minutes M] [--context-warn NNNk|NN%]
 #                         [--result NAME=PATH]... NAME [NAME...]
 #        watch_workers.sh --once [the same options] NAME [NAME...]
+#        watch_workers.sh --limit NAME
 #        watch_workers.sh --list-patterns
 # It returns at the first report: while work remains, start it again after every report but
 # DONE and GONE, and after its window ends.
@@ -112,6 +114,18 @@
 # NAME.watch-bg, cleared when the session works again. A worker spawned on the other host (native
 # Windows or WSL: their lists are disjoint) is ELSEWHERE, once. A list that cannot be read, or two
 # rows of the name and no NAME.id, is exit 3 (`watch_workers: NAME: could not list ...`).
+#
+# LIMIT: a worker its usage limit stopped sits idle until the reset, and no result, state hook or
+# row says why (2026-10-22: two sat ~1 h, their rows blocked). The `limit` rule in
+# waiting_patterns.txt finds it: on tmux in the pane's last line above the input box but for
+# turn-summary lines (`✻ ... for ...`); on a background or a Windows Terminal tab worker in its
+# transcript, ${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/ID*.jsonl (ID its NAME.id, the sessionId
+# a tab spawn recorded), whose last user or assistant entry is the API-error entry Claude Code
+# writes then. It is said once per stop while the session lives (a background row working,
+# blocked, or done with its process; an ended one is GONE as before), and then the row's state
+# and a tab's IDLE say nothing while it lasts; a message or a resume adds a user entry, and that
+# ends it. --limit NAME checks that alone, with no once-marker and no row: it prints the same
+# line and exits 0, else exits 1 and prints nothing (spawn_worker.sh's printed until-loop runs it).
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -126,11 +140,13 @@ newer() {
 case $0 in *'\'*) here=$(dirname -- "$0") ;; */*) here=${0%/*} ;; *) here=. ;; esac
 patterns=$here/waiting_patterns.txt
 [ -r "$patterns" ] || die "cannot read $patterns"
-ctx_re=""
+ctx_re="" limit_re=""
 while read -r kind status version where re; do
   if [ "$kind" = context ]; then ctx_re=$re; fi
+  if [ "$kind" = limit ]; then limit_re=$re; fi
 done <"$patterns"
 [ -n "$ctx_re" ] || die "no context rule in $patterns"
+[ -n "$limit_re" ] || die "no limit rule in $patterns"
 nl='
 '
 # The mappings are joined by newlines, so a newline inside one argument split it in two:
@@ -140,7 +156,7 @@ plain() {
     die "a session name or result path contains a control character or a newline; it is not printed"
 }
 
-interval=45; max=55; warn_abs=""; warn_pct=50; warn_set=""; once=""; results=""
+interval=45; max=55; warn_abs=""; warn_pct=50; warn_set=""; once=""; results=""; limit_only=""
 while [ $# -gt 0 ]; do
   case $1 in
     --context-warn)
@@ -162,6 +178,7 @@ while [ $# -gt 0 ]; do
       case $2 in ?*=?*) ;; *) die "--result takes NAME=PATH: $2" ;; esac
       results=$results$nl$2; shift 2 ;;
     --once) once=1; shift ;;
+    --limit) limit_only=1; shift ;;
     --list-patterns)
       say "KIND STATUS VERSION WHERE ERE ($patterns)"
       grep -v '^#' "$patterns" | grep . | while IFS= read -r line; do say "$line"; done
@@ -171,7 +188,8 @@ while [ $# -gt 0 ]; do
     *) break ;;
   esac
 done
-[ $# -ge 1 ] || { sed -n '3,10p' "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n '3,12p' "$0"; exit 2; }
+[ -z "$limit_only" ] || [ $# -eq 1 ] || die "--limit takes one name"
 [ "$interval" -ge 10 ] || die "--interval $interval is below the floor of 10 seconds"
 for n in "$@"; do
   plain "$n"
@@ -200,7 +218,7 @@ lone() { case $lonely in *"$nl$1$nl"*) return 0 ;; esac; return 1; }
 tmuxok=""
 if [ -n "$windows" ]; then :
 elif command -v tmux >/dev/null; then tmuxok=1
-else for n in "$@"; do isbg "$n" || norec "$n" || die "tmux is not installed"; done
+elif [ -z "$limit_only" ]; then for n in "$@"; do isbg "$n" || norec "$n" || die "tmux is not installed"; done
 fi
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
@@ -277,6 +295,51 @@ classify() {
     printf '%s\n' "WAITING $k $s ${h##*:}"
     return 0
   done
+  t=$(pane_limit) || return 0
+  t=$(printf '%s\n' "$t" | cksum)  # the once-marker: tmux options may not keep the text's bytes
+  [ -n "$limit_only" ] || [ "$(mark "$1" limit)" != "$t" ] || return 0
+  echo LIMIT
+}
+
+# The pane's last line above the input box ($win; over the second rule from the bottom) that is
+# no turn summary (`✻ Crunched for 2m · done 8:16 PM`, as idle.txt shows after a turn), when the
+# limit rule matches it.
+pane_limit() {
+  LC_ALL=C awk '{ l[NR] = $0 }
+    END { for (i = NR; i > 1; i--) if (l[i] ~ /^ *(─)+$/ && ++r == 2) {
+            for (i--; i > 0 && l[i] ~ /^ *✻ .* for /; i--) ;
+            if (i > 0) print l[i]; exit } }' "$win" |
+    LC_ALL=C grep -E -- "$limit_re"
+}
+
+# limited ID: the transcript of session ID ends on a usage-limit stop (LIMIT above): its text in
+# $lim, the entry's checksum, the once-marker, in $limkey.
+limited() {
+  case $1 in ''|*[!0-9a-f-]*) return 1 ;; esac
+  for t in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1"*.jsonl; do
+    [ -f "$t" ] || continue
+    e=$(tail -n 50 -- "$t" 2>/dev/null | LC_ALL=C grep -E '"type":"(user|assistant)"' |
+      LC_ALL=C grep -vF '"isSidechain":true' | tail -n 1) || continue
+    case $e in *'"isApiErrorMessage":true'*) ;; *) continue ;; esac
+    lim=$(printf '%s\n' "$e" | LC_ALL=C sed -n 's/.*"text":"\([^"]*\)".*/\1/p')
+    printf '%s\n' "$lim" | LC_ALL=C grep -qE -- "$limit_re" || continue
+    limkey=$(printf '%s\n' "$e" | cksum)
+    return 0
+  done
+  return 1
+}
+
+# limit_report NAME: say LIMIT once per stop of the session NAME.id names. Return 0 when said,
+# 1 when it is not stopped so, 2 when the report could not be written, 4 when this stop was said.
+limit_report() {
+  limited "$(cat -- "$wdir/$1.id" 2>/dev/null)" || return 1
+  [ "$(mark "$1" limit)" != "$limkey" ] || return 4
+  limit_say "$1" "$lim" || return 2
+  setmark "$1" limit "$limkey"
+}
+
+limit_say() {
+  say "watch_workers: LIMIT: $1, its session stopped on a usage limit (You${2#*You}): resume it after the reset (SendMessage 'limit reset, continue', or spawn_worker.sh --resume)"
 }
 
 # Only a validated numeric field reaches the companion hook. Its constants remain the
@@ -307,6 +370,12 @@ report() {
   fi
   if [ "$1" = GONE ]; then
     say "watch_workers: GONE: $name (the tmux session no longer exists: read its result file)" || return 2
+    return 0
+  fi
+  if [ "$1" = LIMIT ]; then
+    t=$(pane_limit) || t=""
+    limit_say "$name" "$t" || return 2
+    setmark "$name" limit "$(printf '%s\n' "$t" | cksum)"
     return 0
   fi
   case $2 in
@@ -522,6 +591,12 @@ EOF
   # Not the main loop's w: a report here returns 0, and the caller keeps w as bg() left it.
   rw=0; result "$1" || rw=$?
   [ "$rw" -eq 1 ] || return "$rw"
+  # A usage-limit stop of a live session before the row's state, which says nothing while it
+  # lasts; an ended session is GONE below, whatever its transcript says (LIMIT above).
+  case $bstate in working|blocked|done)
+    [ "$bstate:$bpid" = done:- ] || { rw=0; limit_report "$1" || rw=$?
+      case $rw in 1) ;; 4) return 1 ;; *) return "$rw" ;; esac; } ;;
+  esac
   case $bstate in
     working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""; return 1 ;;
     blocked)
@@ -666,6 +741,13 @@ context() {
   return 4
 }
 
+if [ -n "$limit_only" ]; then
+  if isbg "$1" || [ -n "$windows" ]; then limited "$(cat -- "$wdir/$1.id" 2>/dev/null)" || exit 1; t=$lim
+  elif [ -n "$tmuxok" ] && [ "$(classify "$1")" = LIMIT ]; then t=$(pane_limit)
+  else exit 1; fi
+  limit_say "$1" "$t"; exit 0
+fi
+
 # A name with no record here and no session tmux knows was spawned from another checkout (its
 # records are in that one's .myagentkit/workers). A ready --result file of it is read and
 # reported all the same. Else it is a usage error on every host: without tmux it said nothing,
@@ -718,6 +800,8 @@ while :; do
         [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
         [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; gone_tab "$n" || w=$?; }
+        # 4, this stop said before: no IDLE for it either.
+        [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; limit_report "$n" || w=$?; }
         [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }
       fi; } >>"$out" || :
       case $w in

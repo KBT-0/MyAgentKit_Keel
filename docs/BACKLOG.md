@@ -128,3 +128,4 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - bootgc review L (2026-10-22): tests/test_bootstrap.py, the hook-name test (~line 871) commits and merges a bootstrapped
   kit with no `maintenance.auto false`; a detached `git maintenance run --auto` can still write .git/objects at cleanup
   (the CI red bootgc fixed). Not exposed today (more work follows each commit); set the key there too, or once in a helper.
+- limitwatch (2026-10-23, owner's call): the tmux `limit` rule in waiting_patterns.txt ships UNVERIFIED (its pane fixtures are made up); capture a real limit-stopped tmux pane on macOS (`tmux capture-pane -p -J -t =NAME:`) and mark the rule VERIFIED.
