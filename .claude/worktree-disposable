@@ -1,0 +1,4 @@
+# The kit's own list (the shipped one, empty: overlays/claude-code/files/.claude/worktree-disposable,
+# which explains the format). Python's bytecode caches: a test run leaves them in every worker's
+# worktree, and close_worker.sh kept docsowned's for 59 of them and nothing else.
+__pycache__
