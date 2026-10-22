@@ -47,7 +47,7 @@ the rules below exist).
   running work: it "keeps running unless {{OWNER_NAME}} asked for it to end, or it is
   provably finished or hung" (`AGENTS.md`). Write `Kind: handoff` only when the task truly
   cannot finish in this session (the turn backstop is near with work left, or the brief
-  turns out to be more than one task); then commit the code you wrote on your branch first
+  turns out to be more than one task) or the lead tells you to (the red context band); then commit the code you wrote on your branch first
   and name that commit and the exact next step. "Nothing is edited" is never a hand-off,
   and neither is a compaction (`docs/HANDOFF.md`).
 - The report gives the result first and stays within the brief's word cap (350 by default).

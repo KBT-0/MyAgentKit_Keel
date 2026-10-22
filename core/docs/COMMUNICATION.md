@@ -132,6 +132,12 @@ the lead learns of it, never only in a closing summary: the reason, and the work
 Two attempts that wrote no code went unreported for 140 requests until the owner asked why
 (#303, 2026-10-22).
 
+Two lead-to-lead messages carry the master-writer rule (`docs/WORKFLOW.md`, "Parallel work —
+worktree policy"):
+
+- MERGE REQUEST: `branch, base commit, review evidence path, the Owns list, "tests green at <sha>"`.
+- MAIN CHECKOUT IDLE: `<main branch> at <sha>, free until <time or "told">`; the receiver sends it back after its merge.
+
 ## Per-model notes
 
 A fixed "keep it short" line is too much for one model and too little for another. When a

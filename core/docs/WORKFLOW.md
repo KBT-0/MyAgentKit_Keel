@@ -491,6 +491,23 @@ limited token budget it is exactly the bottleneck: parallelism multiplies token 
 linearly while review capacity stays fixed, so a fourth branch does not produce a fourth
 stream of merged work — it produces a queue.
 
+**One master writer per main checkout.** Only one session writes to the main branch in the
+main checkout: the one {{OWNER_NAME}} opened for the release and merge work, recorded as a
+`**Master writer:**` line in `docs/STATE.md` next to the "Working mode:" line. Every other lead
+(another operation, another project session on the same repository) works on its own branch in
+its own worktree and never commits or merges in the main checkout. Its merge goes to the master
+writer as a MERGE REQUEST message, or waits for the writer's MAIN CHECKOUT IDLE message (both
+shapes: `docs/COMMUNICATION.md`, "Workers"). IDLE hands the main checkout over: the waiting lead
+makes its own merge there, nothing else, and sends MAIN CHECKOUT IDLE back when done; the writer
+writes nothing in the main checkout until that reply comes, even after the window. Why (field data, project_leeway, 2026-10-22: three
+lead sessions in one main checkout in one night): (1) a lead's staged file rode into another
+lead's merge commit, since staging and the gated commit are minutes apart; (2) a gated merge
+passed its gate and then failed with "cannot lock ref HEAD: is at X but expected Y", because
+another lead fast-forwarded the main branch during the gate, and the retry would have recorded
+a plain commit instead of the merge; (3) a retry hit `.git/index.lock`, held by a third lead's
+gated commit. The enforcing hook (a `.myagentkit/master-writer` marker that the gate and commit
+hook check) is planned for v0.13; until then this rule is what holds.
+
 ## Parallel work — where a branch agent writes its notes
 
 `docs/STATE.md` is a single hot file. If three branches append to it, every merge is a
