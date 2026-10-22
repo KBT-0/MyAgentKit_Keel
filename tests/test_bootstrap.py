@@ -987,6 +987,10 @@ class BootstrapTests(unittest.TestCase):
                                             capture_output=True, text=True, check=True)
             git('init', '-q')
             git('config', 'core.autocrlf', 'true')
+            # No background gc or maintenance after the commit: on CI one still wrote into .git/objects
+            # while the temporary folder was removed (Directory not empty, ubuntu py3.14 slow).
+            git('config', 'gc.auto', '0')
+            git('config', 'maintenance.auto', 'false')
             git('config', 'user.name', 'fixture')
             git('config', 'user.email', 'fixture@example.invalid')
             git('config', 'commit.gpgsign', 'false')
@@ -1037,6 +1041,10 @@ class BootstrapTests(unittest.TestCase):
             git = lambda *a: subprocess.run(['git', '-C', str(project), *a], capture_output=True, text=True, check=True)
             git('init', '-q')
             git('config', 'core.autocrlf', 'true')
+            # No background gc or maintenance after the commit: on CI one still wrote into .git/objects
+            # while the temporary folder was removed (Directory not empty, ubuntu py3.14 slow).
+            git('config', 'gc.auto', '0')
+            git('config', 'maintenance.auto', 'false')
             subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True, check=True)
             self.assertTrue((project / '.gitattributes').exists())
             git('add', '-A')
