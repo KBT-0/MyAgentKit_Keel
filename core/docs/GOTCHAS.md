@@ -30,6 +30,7 @@ A new entry adds its heading to this list.
 - Background jobs die with the session and in a low-memory reap
 - An incremental build misses its always-run inputs
 - A timing taken on a busy machine is not a result
+- PowerShell from the Microsoft Store leaves suspended processes behind
 
 ---
 
@@ -299,3 +300,24 @@ using a noticeable share of a core (`scripts/doctor.sh` lists stray tool command
 them; ending one that is not yours is the owner's call). Write that record beside the number. A
 number without it is not a result, and a slower number is a regression only once a quiet rerun
 confirms it.
+
+## PowerShell from the Microsoft Store leaves suspended processes behind
+
+On one Windows host, 377 `pwsh.exe` processes piled up in two days (about 1.2 GB): each had
+one thread in the Suspended state, most had no living parent, and every one ran the user's
+Claude Code status line, a `pwsh` command set to refresh every 3 s (#304, 2026-10-22). That
+`pwsh` was the Microsoft Store package, started through its app execution alias in
+`%LOCALAPPDATA%\Microsoft\WindowsApps`. Diagnosis on that host, not a documented mechanism:
+a run that is cancelled or abandoned while the packaged app is still being activated stays
+suspended for good, and closing a session or a worker never reaches it. Claude Code's PowerShell
+tool started the same Store `pwsh`; no stuck process from it was seen, but it can be cut off the
+same way. Expected remedy, observed for minutes only (no new suspended process after the switch):
+install PowerShell 7 from the MSI (`winget install --id Microsoft.PowerShell --source winget --installer-type wix`;
+add `--force` when winget reports the Store package as already installed; it lands in
+`C:\Program Files\PowerShell\7`), and name `"C:/Program Files/PowerShell/7/pwsh.exe"` by its
+full path in every command Claude Code runs often (`statusLine`, hooks). The MSI adds its folder to
+the machine PATH, which comes before the user PATH, so sessions started after the install pick it
+for the PowerShell tool as well. A status line has no reason to refresh faster than every 10 s.
+To count the stuck processes: `@(Get-Process pwsh | Where-Object { $_.Threads.Count -eq 1 -and
+$_.Threads[0].ThreadState -eq 'Wait' -and $_.Threads[0].WaitReason -eq 'Suspended' }).Count`.
+Ending them is the owner's call.
