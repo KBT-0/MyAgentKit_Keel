@@ -11,6 +11,8 @@
 # A hook of the project's own (husky, lefthook, a script of its own) lives beside this
 # one as pre-merge-commit.project, project-owned, and runs FIRST with git's arguments: its failure
 # is the commit's failure, and this hook still runs after it. No other hooks path.
+# The master-writer refusal (pre-commit says how) comes before it.
+sh "$(dirname -- "$0")/pre-commit" --master-writer || exit 1
 project_hook="$(dirname -- "$0")/pre-merge-commit.project"
 # A hook without a #! line is refused: Git for Windows never runs one, chmod +x or not, and
 # the documented one-line form was skipped in silence, so the project's own check never ran

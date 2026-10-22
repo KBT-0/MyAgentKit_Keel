@@ -48,6 +48,27 @@ gate=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/${0##*/}
 CDPATH= cd -- "$(dirname "$0")/.."
 fail=0
 
+# .myagentkit/env (Git-ignored): KEY=VALUE lines for what a git hook does not inherit from the
+# session that set it, such as a venv's interpreter variable (docs/GOTCHAS.md). Each key not
+# already set is exported, its value taken literally; blank and "#" lines are skipped, any other
+# line fails the gate by number. A linked worktree without its own file reads the main checkout's.
+# Read FIRST: the lines below resolve python3 and the toolchain from the environment.
+env_file=.myagentkit/env
+[ -f "$env_file" ] || { common=$(git rev-parse --git-common-dir 2>/dev/null) &&
+  common=$(CDPATH= cd -- "$common/.." 2>/dev/null && pwd) && [ -f "$common/$env_file" ] &&
+  env_file=$common/$env_file; }
+if [ -f "$env_file" ]; then
+  n=0; cr=$(printf '\r'); upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1)); line=${line%"$cr"}
+    case $line in ''|'#'*) continue ;; *=*) key=${line%%=*} ;; *) key= ;; esac
+    case $key in ''|[!"$upper"_]*|*[!"$upper"0123456789_]*)
+      printf '%s\n' "FAIL [env]: $env_file line $n is not KEY=VALUE (KEY of A-Z, 0-9 and _; no shell code)." >&2; exit 1 ;;
+    esac
+    eval "[ -n \"\${$key+set}\" ]" || export "$key=${line#*=}"
+  done < "$env_file"
+fi
+
 # Toolchains are commonly installed per-user and then missing from the PATH of git hooks
 # and other non-login shells; without this the gate fails for the wrong reason. A VALUE, not
 # a line of code — a placeholder that has to be replaced INSIDE a comment is a trap, because

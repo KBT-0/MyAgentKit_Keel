@@ -31,6 +31,7 @@ A new entry adds its heading to this list.
 - An incremental build misses its always-run inputs
 - A timing taken on a busy machine is not a result
 - PowerShell from the Microsoft Store leaves suspended processes behind
+- A variable the session set does not reach the git hook
 
 ---
 
@@ -321,3 +322,13 @@ for the PowerShell tool as well. A status line has no reason to refresh faster t
 To count the stuck processes: `@(Get-Process pwsh | Where-Object { $_.Threads.Count -eq 1 -and
 $_.Threads[0].ThreadState -eq 'Wait' -and $_.Threads[0].WaitReason -eq 'Suspended' }).Count`.
 Ending them is the owner's call.
+
+## A variable the session set does not reach the git hook
+
+A lead set a venv's interpreter variable (`LEEWAY_PIPELINE_PYTHON`) in its session, and the
+pre-commit gate ran another Python (project_leeway, 2026-10-22). A git hook inherits only the
+environment of the `git` process that runs it, and an agent's shell call starts a fresh shell
+each time, so an `export` or a venv activation in one call is gone by the commit; a terminal's
+activation never reaches a commit started elsewhere either. Put the line in `.myagentkit/env`
+(`KEY=VALUE`, Git-ignored): `check.sh` exports each key not already set before it resolves
+anything (`docs/DEV_SETUP.md`, section 2).

@@ -12,9 +12,12 @@ They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today 
 short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 `post-merge`), `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/agent_cost.py`,
 `scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
-`BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons behind the project-owned
+`scripts/master_writer.py`, `BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons behind the project-owned
 `docs/WORKFLOW.md`, by the same headings), the module-rules template, and the two setup documents
 (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
+The hooks reach a project with the sync; the files they and the gate read beside them,
+`.myagentkit/master-writer` and `.myagentkit/env`, are local and Git-ignored, and no sync
+writes them.
 A project's own machine checks, once in its own `scripts/doctor.sh`, move to
 `scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
 

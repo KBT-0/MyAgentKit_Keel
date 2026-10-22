@@ -138,6 +138,9 @@ worktree policy"):
 - MERGE REQUEST: `branch, base commit, review evidence path, the Owns list, "tests green at <sha>"`.
 - MAIN CHECKOUT IDLE: `<main branch> at <sha>, free until <time or "told">`; the receiver sends it back after its merge.
 
+The commit hooks' master-writer refusal prints the MERGE REQUEST line above as it stands here:
+this line is the one place its shape lives.
+
 ## Per-model notes
 
 A fixed "keep it short" line is too much for one model and too little for another. When a

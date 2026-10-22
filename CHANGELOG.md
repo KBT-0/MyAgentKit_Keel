@@ -62,6 +62,26 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   lead" to "the lead's disk watch stays the done signal."; in `docs/WORKFLOW.md`, after "A worker
   with `crossSessionInbound` set to `refuse` sends no notice.", the three lines from "The worker
   also messages the lead's session itself" to "so the watch stays.".
+- One master writer, enforced: `scripts/master_writer.py claim|release|show` records the
+  session (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to every shell and so to git's
+  hooks) in the Git-ignored `.myagentkit/master-writer` and in the `**Master writer:**` line of
+  `docs/STATE.md`. While it names a session, the pre-commit and pre-merge-commit hooks refuse
+  any other session's commit or merge in the main checkout, before the project's hook and the
+  gate, and print the MERGE REQUEST shape from `docs/COMMUNICATION.md`. Linked worktrees are
+  never refused; without the marker nothing changes.
+- The gate reads `.myagentkit/env` (Git-ignored, `KEY=VALUE` lines, values literal) and exports
+  each key not already set, so a variable the session set (a venv's interpreter) reaches the
+  pre-commit gate; a malformed line fails `FAIL [env]` with its number.
+- **ACTION** (`scripts/check.sh`, `docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, `docs/GOTCHAS.md`,
+  `docs/DEV_SETUP.md`, project-owned): run `sync-kit.sh . --merge`, or copy by hand: in
+  `scripts/check.sh`, after `fail=0`, the block from "# .myagentkit/env (Git-ignored)" to its
+  `fi`; in `docs/WORKFLOW.md`, "Parallel work — worktree policy", the sentences from "The writer
+  runs `python3 scripts/master_writer.py claim`" to "without the marker nothing is." in place
+  of "The enforcing hook ... is what holds."; in `docs/COMMUNICATION.md`, the paragraph after the
+  MAIN CHECKOUT IDLE line; in `docs/GOTCHAS.md`, the entry "A variable the session set does not
+  reach the git hook" and its Contents line; in `docs/DEV_SETUP.md`, section 2, the
+  `.myagentkit/env` paragraph. The hooks and `scripts/master_writer.py` come with the sync. A
+  project using the rule then has its master writer run `python3 scripts/master_writer.py claim` (`python` on native Windows).
 
 ## v0.12.1 — 2026-10-21
 

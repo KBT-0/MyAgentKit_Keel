@@ -110,6 +110,12 @@ fails for a reason that has nothing to do with the code.
 
 If the gate fails with "command not found", that is this — not a broken build.
 
+A variable the gate needs from your session (a venv's interpreter, such as
+`LEEWAY_PIPELINE_PYTHON`) goes into `.myagentkit/env`, Git-ignored, one `KEY=VALUE` per line:
+`check.sh` exports each key that is not already set, its value taken literally (no quotes, no
+`$`-expansion, no shell code), skips blank and `#` lines, and fails `FAIL [env]` with the line
+number on anything else. A linked worktree without its own file reads the main checkout's.
+
 The gate runs one at a time per checkout and needs `python3` for its lock: `fcntl.flock` on
 Linux, macOS, WSL and a POSIX Python under MSYS2 or Cygwin; on native Windows (Git for
 Windows' `sh` with a Windows Python) a lock file held open without write sharing, which a
