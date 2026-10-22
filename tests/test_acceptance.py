@@ -33,8 +33,14 @@ class AcceptanceTests(unittest.TestCase):
                                  % (shlex.quote(Path(sys.executable).as_posix()), shlex.quote(prefix)))
                     # A gate run around this test hands its own Python down (#249); not here.
                     env = {k: v for k, v in os.environ.items() if k not in ('GATE_LOCK_HELD', 'GATE_PYTHON')}
-                    result = subprocess.run(['sh', '-c', functions + source,
-                                             str(ROOT / path)], capture_output=True, text=True, env=env)
+                    # Sourced from a file, not handed as the -c text: on native Windows the
+                    # command line reached Git's sh with its backslashes changed ('\\0' in the
+                    # env block), the script was cut short, and it exited 0 unchecked.
+                    with tempfile.TemporaryDirectory() as tmp:
+                        script = Path(tmp) / 'launcher.sh'
+                        script.write_text(functions + source, encoding='utf-8', newline='\n')
+                        result = subprocess.run(['sh', '-c', '. "$1"', str(ROOT / path), script.as_posix()],
+                                                capture_output=True, text=True, env=env)
                     self.assertEqual(result.returncode, status, result.stdout + result.stderr)
                     if status:
                         self.assertIn('Python 3.11 or newer', result.stdout + result.stderr)
