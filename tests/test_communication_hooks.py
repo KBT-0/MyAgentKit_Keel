@@ -274,6 +274,16 @@ class PlainReportTests(unittest.TestCase):
         self.assertIn('AskUserQuestion', both.stderr)
         self.assertIn('D-5', both.stderr)
 
+    def test_while_away_a_question_is_queued_in_the_report_not_asked(self):
+        # v0.13 autopilot: nobody answers the question tool overnight.
+        (self.project / '.myagentkit').mkdir()
+        (self.project / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
+        result = self.stop('Tests pass. Shall I push the branch?')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('autopilot', result.stderr)
+        self.assertIn('Questions', result.stderr)
+        self.assertNotIn('AskUserQuestion', result.stderr)
+
     def test_a_worker_session_is_not_checked(self):
         result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')
         self.assertEqual((result.returncode, result.stderr), (0, ''))

@@ -19,9 +19,11 @@ message again (#209). A project adds label shapes in `.claude/plain_report_label
 It also bounces a final message whose last line ends with a question, or that names a
 question as open ("open question", "açık soru"), outside code (#289; `docs/COMMUNICATION.md`,
 "Questions and approvals"): an owner's question goes through the question tool, and a call
-to it never ends a turn, so a turn's final text holds no asked question. The hook cannot see
-whether the owner is present; the message it prints says what to do in either case. This
-check needs no commit-msg grammar: a missing one turns off only the label check.
+to it never ends a turn, so a turn's final text holds no asked question. Under the autopilot
+switch (context_size.away(): `.myagentkit/presence` says away) the message says to queue the
+question in the report; otherwise it says what to do in either case, since an owner away
+without that record is not visible to a hook. This check needs no commit-msg grammar: a
+missing one turns off only the label check.
 
 Once per turn: `stop_hook_active` is true when the turn already continued because of a stop
 hook, and the hook steps aside (Claude Code also caps consecutive blocks at eight). A worker
@@ -170,6 +172,17 @@ def bare_labels(text: str) -> list[str]:
     return found
 
 
+def away() -> bool:
+    """context_size.away(), the hooks' one presence reader; False when it is not beside this file."""
+    try:
+        sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import context_size
+        return context_size.away()
+    except Exception:  # noqa: BLE001 - an older or missing context_size.py: the general message
+        return False
+
+
 def unasked_question(text: str) -> bool:
     prose = without_code(text)
     lines = [line for line in prose.splitlines() if line.strip()]
@@ -186,7 +199,13 @@ def main() -> None:
         return
     text = data.get('last_assistant_message') or ''
     said = []
-    if unasked_question(text):
+    if unasked_question(text) and away():
+        said.append('BLOCKED: the message ends with a question or names one as open, and the owner is away '
+                    '(autopilot): nothing waits on a question. Queue it under Questions in the report '
+                    '(.myagentkit/autopilot/<date>.md, docs/AUTOPILOT.md) with your recommendation, decide what the '
+                    'rules settle, keep going, and say so in one line without a question mark (docs/WORKFLOW.md, '
+                    '"autopilot, the owner-away switch").')
+    elif unasked_question(text):
         said.append('BLOCKED: the message to the owner ends with a question or names one as open, in chat '
                     'text. While the owner is present, ask it with the question tool (AskUserQuestion: the '
                     'options, the recommended one first); while the owner is away, park it in docs/STATE.md or an '
