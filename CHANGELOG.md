@@ -134,6 +134,39 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   upgrade commits" and "Template to paste (tools without a wrapper)". A project's own gotcha
   stays in `GOTCHAS.md`, after the kit's headings. A project with its own copy of the overlay's
   `README.md` points its vendor-plugin line at `docs/DEV_SETUP_KIT.md`, as the kit's does.
+- One master writer, enforced: `scripts/master_writer.py claim|release|show` records the
+  session (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to every shell and so to git's
+  hooks; `MYAGENTKIT_SESSION_ID` for a session without it) in the Git-ignored
+  `.myagentkit/master-writer` and in the `**Master writer:**` line of `docs/STATE.md`; `show`
+  works from a worktree too. While it names a session, the pre-commit and pre-merge-commit hooks
+  refuse a commit or merge in the main checkout by any other session, before the project's hook
+  and the gate, and print the MERGE REQUEST shape from `docs/COMMUNICATION.md`. A command with no
+  session id (the owner's terminal) passes with a note; linked worktrees are never refused;
+  without the marker nothing changes. A fast-forward, rebase, cherry-pick, pull or `git add` runs
+  no hook: the rule's text holds those. A master writer releases before a hand-off.
+- The gate reads `.myagentkit/env` (Git-ignored, `KEY=VALUE` lines, values literal, UTF-8; a
+  UTF-8 BOM is dropped, UTF-16 fails by name) and exports each key not already set, so a variable
+  the session set (a venv's interpreter) reaches the pre-commit gate; a malformed line fails
+  `FAIL [env]` with its number.
+- A clean merge whose result differs from a gated HEAD only in documentation skips the build, as
+  a documentation-only commit does (#306): pre-merge-commit runs `check.sh --for-merge` (project_leeway:
+  docs-only merges each built and tested for 10-15 minutes). Every other check still runs.
+- **ACTION** (`scripts/check.sh`, `docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, `docs/GOTCHAS.md`,
+  `docs/DEV_SETUP.md`, `docs/HANDOFF.md`, project-owned): run `sync-kit.sh . --merge`, or copy by
+  hand: in `scripts/check.sh`, after `fail=0`, the block from "# .myagentkit/env (Git-ignored)" to
+  its `fi`, and the `--for-merge` option (the Usage lines, the option `case`, the
+  documentation-only condition and comment, and the `merge` argument of its Python check); in
+  `docs/WORKFLOW.md`, "Parallel work — worktree policy", the sentences from "The writer runs
+  `python3 scripts/master_writer.py claim`" to "the rule's text alone holds them." in place of
+  "The enforcing hook ... is what holds."; in `docs/COMMUNICATION.md`, the paragraph after the
+  MAIN CHECKOUT IDLE line; in `docs/GOTCHAS.md`, the headings "A variable the session set does not
+  reach the git hook" and "A PowerShell probe whose Set-Location fails goes on in the current
+  folder", each with its `Kit rules:` pointer line and its Contents line (the bodies come with
+  the kit-owned `docs/GOTCHAS_KIT.md`); in `docs/DEV_SETUP.md`, section 2, the `.myagentkit/env`
+  paragraph; in `docs/HANDOFF.md`, the master-writer paragraph after item 7. The hooks and
+  `scripts/master_writer.py` come with the sync; without the new `check.sh` a merge keeps the
+  full build. A project using the rule then has its master writer run
+  `python3 scripts/master_writer.py claim` (`python` on native Windows).
 
 ## v0.12.1 — 2026-10-21
 

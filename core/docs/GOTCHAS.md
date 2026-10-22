@@ -31,6 +31,8 @@ A new entry adds its heading to this list.
 - An incremental build misses its always-run inputs
 - A timing taken on a busy machine is not a result
 - PowerShell from the Microsoft Store leaves suspended processes behind
+- A variable the session set does not reach the git hook
+- A PowerShell probe whose Set-Location fails goes on in the current folder
 
 ---
 
@@ -102,3 +104,11 @@ Kit rules: docs/GOTCHAS_KIT.md, "A timing taken on a busy machine is not a resul
 ## PowerShell from the Microsoft Store leaves suspended processes behind
 
 Kit rules: docs/GOTCHAS_KIT.md, "PowerShell from the Microsoft Store leaves suspended processes behind".
+
+## A variable the session set does not reach the git hook
+
+Kit rules: docs/GOTCHAS_KIT.md, "A variable the session set does not reach the git hook".
+
+## A PowerShell probe whose Set-Location fails goes on in the current folder
+
+Kit rules: docs/GOTCHAS_KIT.md, "A PowerShell probe whose Set-Location fails goes on in the current folder".

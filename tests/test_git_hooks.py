@@ -195,8 +195,8 @@ class GitHookTests(unittest.TestCase):
         return root, git, build, mark
 
     def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
-        # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit)
-        # never takes it, whatever the merge brings in.
+        # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit) takes
+        # it too, for the merge's result against a gated HEAD (#306).
         with tempfile.TemporaryDirectory() as tmp:
             root, git, build, mark = self.docs_project(tmp)
             # From here on the build leaves a mark and fails.
@@ -227,14 +227,32 @@ class GitHookTests(unittest.TestCase):
             self.assertTrue(mark.exists(), result.stdout + result.stderr)
             git('reset', '-q', '--hard', 'HEAD')
             mark.unlink()
-            # A clean merge that brings in only a document still runs the build.
-            git('checkout', '-q', '-b', 'side', 'main~1')
-            (root / 'side.md').write_text('side\n', encoding='utf-8')
-            git('add', 'side.md')
-            git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'side')
-            git('checkout', '-q', 'main')
+            def branch(name, path):  # never gated: the merge's result is compared with HEAD
+                git('checkout', '-q', '-b', name, 'main~1')
+                (root / path).write_text(name + '\n', encoding='utf-8')
+                git('add', path)
+                git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', name)
+                git('checkout', '-q', 'main')
+            # A clean merge that brings in only a document, onto a gated HEAD, skips the build.
+            branch('side', 'side.md')
             result = git('merge', '-q', '--no-edit', 'side', check=False)
-            self.assertTrue(mark.exists(), 'a clean merge skipped the build: ' + result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(mark.exists(), 'a docs-only merge built: ' + result.stdout + result.stderr)
+            self.assertIn('NOTE [build]: not run: every path this commit changes is documentation (1 file).',
+                          result.stdout + result.stderr)
+            # A merge that brings in a code file builds.
+            branch('code', 'more.c')
+            result = git('merge', '-q', '--no-edit', 'code', check=False)
+            self.assertTrue(mark.exists(), 'a code merge skipped the build: ' + result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            git('merge', '--abort')
+            mark.unlink()
+            # A documents-only merge onto a HEAD the gate never recorded builds.
+            (root / '.git/check-gated-tree').unlink()
+            branch('other', 'other.md')
+            result = git('merge', '-q', '--no-edit', 'other', check=False)
+            self.assertTrue(mark.exists(), 'a merge onto an ungated HEAD skipped the build: '
+                            + result.stdout + result.stderr)
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_a_documentation_only_commit_after_a_rebase_builds_once(self):

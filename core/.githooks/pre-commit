@@ -14,6 +14,38 @@
 #
 # A gate wired into git is the only kind that survives: one that depends on discipline
 # erodes the first time someone is in a hurry.
+#
+# One master writer per main checkout (docs/WORKFLOW.md, "Parallel work — worktree policy"):
+# while .myagentkit/master-writer names a session (scripts/master_writer.py claim), any other
+# session's commit or merge in the MAIN checkout is refused here, before the project's hook
+# and the gate: the gate takes minutes, and the races it let through were the reason
+# (project_leeway, 2026-10-22). A linked worktree is never refused; no marker, no refusal.
+# The session is CLAUDE_CODE_SESSION_ID, which Claude Code exports to every shell it runs,
+# so git and this hook inherit it; MYAGENTKIT_SESSION_ID names a session without one. No id
+# at all is a human, the owner's terminal: let through with one note (owner, 2026-10-22).
+# Only commits and merge commits run a hook: a fast-forward, a rebase, a cherry-pick, a pull
+# or a `git add` in the main checkout moves or stages past it, and the rule's text alone holds.
+# pre-merge-commit asks with --master-writer, before its own project hook.
+case "${1:-}" in --merge|--master-writer) hook=pre-merge-commit ;; *) hook=pre-commit ;; esac
+here=$(git rev-parse --absolute-git-dir) && common=$(git rev-parse --git-common-dir) &&
+  here=$(CDPATH= cd -- "$here" && pwd -P) && common=$(CDPATH= cd -- "$common" && pwd -P) &&
+  marker="$(git rev-parse --show-toplevel)/.myagentkit/master-writer" || exit 1
+if [ "$here" = "$common" ] && [ -e "$marker" ]; then
+  writer=$(sed -n '1s/[[:space:]]*$//p' "$marker" 2>/dev/null)
+  me=${MYAGENTKIT_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}
+  if [ -n "$writer" ] && [ -z "$me" ]; then
+    printf '%s\n' "$hook: no session id, so taken for the owner's terminal and let through; the master writer is $writer." >&2
+  elif [ -z "$writer" ] || [ "$me" != "$writer" ]; then
+    shape=$(sed -n '/^- MERGE REQUEST: /{s///;s/[.[:space:]]*$//;p;}' "$(dirname -- "$marker")/../docs/COMMUNICATION.md" 2>/dev/null)
+    printf '%s\n' "$hook: refused before the gate ran: .myagentkit/master-writer names ${writer:-nothing readable} as the" \
+      "  one session that commits and merges in this main checkout, and this is ${me:-a session without an id}." \
+      "  Commit on your own branch in your own worktree, then send the master writer" \
+      "  MERGE REQUEST: ${shape:-the shape in docs/COMMUNICATION.md, \"Workers\"} (base commit: $(git rev-parse -q --verify HEAD))" \
+      "  or wait for MAIN CHECKOUT IDLE, then: python3 scripts/master_writer.py claim (python on native Windows)" >&2
+    exit 1
+  fi
+fi
+[ "${1:-}" != --master-writer ] || exit 0
 # A hook of the project's own (husky, lefthook, a script of its own) lives beside this
 # one as pre-commit.project, project-owned, and runs FIRST with git's arguments: its failure
 # is the commit's failure, and this hook still runs after it. No other hooks path.
@@ -61,9 +93,13 @@ fi
 # Check before believing it.
 #
 # --for-commit lets the gate skip the build when the staged change is documentation only;
-# check.sh decides that from the index. pre-merge-commit passes --merge and gets the full
-# gate. A check.sh from before this option (a project not yet upgraded) gets no flag.
-if [ "${1:-}" != --merge ] && grep -q -- '--for-commit)' scripts/check.sh; then
+# check.sh decides that from the index. pre-merge-commit passes --merge, and the gate gets
+# --for-merge: the same documentation-only rule for the merge's result against a gated HEAD
+# (project_leeway, 2026-10-22: docs-only merges each built and tested for 10-15 minutes). A
+# check.sh from before an option (a project not yet upgraded) gets no flag: the full gate.
+if [ "${1:-}" = --merge ] && grep -q -- '--for-merge)' scripts/check.sh; then
+  ./scripts/check.sh --for-merge
+elif [ "${1:-}" != --merge ] && grep -q -- '--for-commit)' scripts/check.sh; then
   ./scripts/check.sh --for-commit
 else
   ./scripts/check.sh

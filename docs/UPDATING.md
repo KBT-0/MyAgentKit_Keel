@@ -12,12 +12,15 @@ They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today 
 short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 `post-merge`), `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/agent_cost.py`,
 `scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
-`scripts/autopilot_report.py`, `BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons
+`scripts/autopilot_report.py`, `scripts/master_writer.py`, `BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons
 behind the project-owned `docs/WORKFLOW.md`, by the same headings), `docs/AUTOPILOT.md` (the
 autopilot report template), `docs/USAGE.md`, the kit's parts of four reference documents
 (`docs/DEV_SETUP_KIT.md`, `docs/GOTCHAS_KIT.md`, `docs/HANDOFF_KIT.md`,
 `docs/REVIEW_RUNNING_KIT.md`), the module-rules template, and the two setup documents
 (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
+The hooks reach a project with the sync; the files they and the gate read beside them,
+`.myagentkit/master-writer` and `.myagentkit/env`, are local and Git-ignored, and no sync
+writes them.
 A sync overwrites a kit-owned file, so an edit there is lost: a project that needs a different
 rule writes it in the project-owned file (`docs/<NAME>.md` beside `docs/<NAME>_KIT.md`;
 `docs/WORKFLOW.md` for `docs/USAGE.md`), and the project file wins over the kit's.

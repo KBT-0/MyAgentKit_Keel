@@ -449,8 +449,18 @@ lead's merge commit, since staging and the gated commit are minutes apart; (2) a
 passed its gate and then failed with "cannot lock ref HEAD: is at X but expected Y", because
 another lead fast-forwarded the main branch during the gate, and the retry would have recorded
 a plain commit instead of the merge; (3) a retry hit `.git/index.lock`, held by a third lead's
-gated commit. The enforcing hook (a `.myagentkit/master-writer` marker that the gate and commit
-hook check) is planned for v0.13; until then this rule is what holds.
+gated commit. The writer runs `python3 scripts/master_writer.py claim` (`python` on native Windows) once: it writes the session's
+id (`CLAUDE_CODE_SESSION_ID`) to the Git-ignored `.myagentkit/master-writer` and to the STATE line,
+`release` clears both, `show` prints them (from a worktree too), and the hand-over around MAIN
+CHECKOUT IDLE is the sender's `release` and the receiver's `claim`. A session without
+`CLAUDE_CODE_SESSION_ID` (another CLI) sets `MYAGENTKIT_SESSION_ID` for the claim and for every
+git command it runs. While the marker names a session, the pre-commit and pre-merge-commit hooks
+refuse a commit or merge in the main checkout by any other session before the gate runs, and
+print the MERGE REQUEST shape; a linked worktree is never refused, without the marker nothing
+is, and a command with no session id at all is the owner's terminal, let through with a note.
+The hooks enforce commits and merge commits only: a fast-forward merge, a rebase, a
+cherry-pick, a pull or a `git add` in the main checkout runs no hook, and the rule's text alone
+holds them.
 
 ## Parallel work — where a branch agent writes its notes
 

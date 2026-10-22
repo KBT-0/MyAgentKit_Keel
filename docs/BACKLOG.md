@@ -128,10 +128,3 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - bootgc review L (2026-10-22): tests/test_bootstrap.py, the hook-name test (~line 871) commits and merges a bootstrapped
   kit with no `maintenance.auto false`; a detached `git maintenance run --auto` can still write .git/objects at cleanup
   (the CI red bootgc fixed). Not exposed today (more work follows each commit); set the key there too, or once in a helper.
-
-## Filed from v0.12.1 masterwriter (project_leeway, 2026-10-22)
-
-- v0.13: the enforcing hook/gate refusal for the master-writer rule: a `.myagentkit/master-writer` marker, and a commit
-  or merge in the main checkout by another session refused.
-- v0.13: the pre-commit hook does not inherit a venv variable the session set (LEEWAY_PIPELINE_PYTHON); the gate reads
-  it from a project env file instead.
