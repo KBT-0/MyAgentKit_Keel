@@ -1093,6 +1093,16 @@ def dispositions_text() -> str | None:
         raise BridgeError("REVIEW_DISPOSITIONS %s cannot be read as UTF-8 text (%s)" % (notes, error)) from error
 
 
+def records_root(repo: Path) -> Path:
+    """The checkout whose .myagentkit/usage/ and docs/reviews/ hold the review records of `repo`:
+    the main checkout, also for a round run in a linked worktree, so the lead's checkout reads a
+    worker's rounds and `git worktree remove` takes none of them (#293). A checkout whose common
+    Git directory is not its main checkout's `.git` folder (a submodule, a bare repository's
+    worktree) keeps its own."""
+    common = Path(os.fsdecode(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip())
+    return common.parent.resolve() if common.name == ".git" and common.is_dir() else repo
+
+
 def chain_checkpoint(usage: Path, chain, attempt) -> dict | None:
     """The checkpoint the dispatcher wrote after this attempt (chains/<chain>-<attempt>.json),
     or None when the ids are malformed or it cannot be read."""
@@ -1156,17 +1166,24 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
 
     # Records written by v0.7 and v0.8 with an empty task id are refused here too, and stop
     # every review through review.sh until they are set aside: the message says exactly how.
-    aside = repo / ".myagentkit/usage-set-aside"
+    # The records are the main checkout's, also for a round in a linked worktree (#293).
+    store = records_root(repo)
+    reviews = (store / "docs/reviews").resolve()
+    aside = store / ".myagentkit/usage-set-aside"
+    # Recorded with the round: the tree it read, and its diff's files, which a later --commit
+    # round must cover to continue an --uncommitted one under its label.
+    files = sorted({os.fsdecode(name) for name, _ in diff_parts(diff.encode())} - {""})
+    continues = None
 
     def damaged(path, what):
         return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
                            "labelled round reads every record, so a new task label does not "
                            "help. Restore it, or set it aside (a record written by v0.7 or v0.8 "
                            "with an empty task id is one of these): cd %s && mkdir -p %s && mv %s %s/"
-                           % (path, what, task_id, shlex.quote(repo.as_posix()),
-                              shlex.quote(aside.relative_to(repo).as_posix()),
-                              shlex.quote(path.relative_to(repo).as_posix()),
-                              shlex.quote(aside.relative_to(repo).as_posix())))
+                           % (path, what, task_id, shlex.quote(store.as_posix()),
+                              shlex.quote(aside.relative_to(store).as_posix()),
+                              shlex.quote(path.relative_to(store).as_posix()),
+                              shlex.quote(aside.relative_to(store).as_posix())))
     def descends(older, newer):
         # Commit `older` is `newer` or one of its ancestors.
         return (isinstance(newer, str) and re.fullmatch(r"[0-9a-f]{40,64}", older) is not None
@@ -1174,7 +1191,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
                                    capture_output=True).returncode == 0)
     # Path.glob() swallows a listing error: a usage directory the owner could write but not
     # list read as "no earlier rounds". Only an absent directory has none.
-    usage, names = repo / ".myagentkit/usage", []
+    usage, names = store / ".myagentkit/usage", []
     try:
         names = os.listdir(usage) if task_id else []
     except FileNotFoundError:
@@ -1216,7 +1233,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             # silently. An archive that was never written (evidence_unavailable) has nothing to
             # check; one outside docs/reviews is not read.
             evidence = Path(value["evidence"]).resolve() if isinstance(value.get("evidence"), str) else None
-            if (evidence and evidence.is_relative_to((repo / "docs/reviews").resolve())
+            if (evidence and evidence.is_relative_to(reviews)
                     and evidence.is_file()):
                 if hashlib.sha256(evidence.read_bytes()).hexdigest() != value.get("evidence_sha256"):
                     raise BridgeError("failed review evidence %s of task %s does not match its usage "
@@ -1227,9 +1244,18 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise damaged(path, "is a completed review that names no evidence")
         # A reused label from another change must not carry that change's rounds. Compared
         # as resolved commits, never as the reference text.
-        earlier, mismatch = str(task.get("head")), None
-        if task.get("scope") != scope:
-            mismatch = "scope %s, not %s" % (task.get("scope"), scope)
+        earlier, mismatch, left = str(task.get("head")), None, None
+        # #293: the --commit of an --uncommitted round's change once it is committed or merged (a
+        # worker's round in its worktree, the lead's round after the merge) continues the label
+        # when every file that round reviewed is in this commit's diff; the ancestry checks below
+        # still apply. A record written before v0.13 names no files.
+        transition = task["scope"] == "uncommitted" and scope == "commit"
+        if transition and isinstance(task.get("files"), list) and all(isinstance(f, str) for f in task["files"]):
+            left = sorted(set(task["files"]) - set(files))
+        if task.get("scope") != scope and left != []:
+            mismatch = "scope %s, not %s" % (task.get("scope"), scope) + (
+                " (its files %s are not in the diff of commit %s)" % (", ".join(left), resolved) if left
+                else " (a record written before v0.13 names no files)" if transition else "")
         elif task.get("resolved") != resolved and not (
                 # Round 2 over the fix commits, in every scope (#119): a --base at the earlier
                 # round's head or above it, or the --commit of a fix on top of it, on HEAD's line.
@@ -1245,8 +1271,20 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("an earlier review with task label %s has %s; that is another "
                               "change, a rebase or an amend, so use a new "
                               "task label" % (task_id, mismatch))
-        evidence = Path(value["evidence"]).resolve()
-        if not evidence.is_relative_to((repo / "docs/reviews").resolve()) or not evidence.is_file():
+        if transition:
+            continues = {"scope": "uncommitted", "tree": task.get("tree"), "head": earlier, "commit": resolved}
+        evidence, copy = Path(value["evidence"]).resolve(), None
+        if not (evidence.exists() or evidence.is_relative_to(reviews) or evidence.parent.parent.parent.exists()):
+            # #293: a record written before v0.13 in a linked worktree names its archive there;
+            # once the worktree is removed, a copy under the main checkout is read by its name.
+            # The sha256 below still decides whether it is that archive.
+            copy = next((path for path in (reviews / evidence.name, usage.resolve() / evidence.name)
+                         if path.is_file()), None)
+            if copy:
+                print("review: the evidence %s of task %s went with its worktree; using its copy %s"
+                      % (evidence, task_id, copy), file=sys.stderr, flush=True)
+                evidence = copy
+        if not (evidence.is_relative_to(reviews) or evidence == copy) or not evidence.is_file():
             raise BridgeError("earlier review evidence for task %s is missing: %s; restore it or "
                               "use a new task label" % (task_id, evidence))
         # The archive is owner-writable: carry it only as the reviewer wrote it.
@@ -1280,6 +1318,12 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         measured = measure(claims)  # once, before launch: the record never reads the file again
     except ValueError as error:
         raise BridgeError(str(error)) from error
+    measured.update(tree=str(repo), files=files)
+    if continues:
+        measured["continues"] = continues  # the dispatcher copies it into the chain record
+        if "MYAGENTKIT_REVIEW_CHAIN_ID" not in os.environ:
+            print("review: task label %s continues its --uncommitted round of %s (HEAD %s) with --commit %s"
+                  % (task_id, continues["tree"], continues["head"], resolved), file=sys.stderr, flush=True)
     if claims is not None and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
@@ -1936,10 +1980,12 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
         command, tools = claude_command(os.environ.get("CLAUDE_CLI_BIN", "claude"), args,
                                         sandboxed=os.name == "posix")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
-        evidence_dir = repo / "docs" / ("reviews" if args.mode == "review" else "handoffs")
+        # In the main checkout, also for a round in a linked worktree (#293).
+        store = records_root(repo)
+        evidence_dir = store / "docs" / ("reviews" if args.mode == "review" else "handoffs")
         evidence_path = evidence_dir / (stamp + "-claude-review.md" if args.mode == "review"
                                         else stamp + "-claude-propose.json")
-        agent_usage.require_private_storage(repo, evidence_path)
+        agent_usage.require_private_storage(store, evidence_path)
         # Creating directories does not alter the tracked/untracked file fingerprint.
         evidence_dir.mkdir(parents=True, exist_ok=True)
         evidence = {"mode": args.mode, "model": args.model, "effort": args.effort,
@@ -2086,13 +2132,13 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
         try:
             published = (render(stamp, evidence, args) if args.mode == "review"
                          else json.dumps(evidence, indent=2) + "\n")
-            agent_usage.write_evidence(repo, evidence_path, published, private=True)
+            agent_usage.write_evidence(store, evidence_path, published, private=True)
             archived_path = str(evidence_path)
         except (OSError, ValueError) as error:
             evidence.update(status="failed", error="Review evidence could not be persisted: " + str(error))
             reason = "evidence_write_failed"
         try:
-            usage_path, usage = agent_usage.record(repo, "claude", args.model, args.requester,
+            usage_path, usage = agent_usage.record(store, "claude", args.model, args.requester,
                 {"id": args.task_id or (args.task_file.name if args.task_file else args.mode + "-" + scope),
                  "kind": args.mode, "scope": scope, "reference": ref,
                  "resolved": resolved, "head": head, "behaviour": "on" if behaviour else "off",
@@ -2112,7 +2158,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
             evidence.update(status="failed", failure_kind="cancelled")
             if usage_path:
                 try:
-                    agent_usage.relabel_cancelled(repo, usage_path, archived_path,
+                    agent_usage.relabel_cancelled(store, usage_path, archived_path,
                         render(stamp, evidence, args) if args.mode == "review"
                         else json.dumps(evidence, indent=2) + "\n")
                 except (OSError, ValueError) as error:

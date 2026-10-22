@@ -1,6 +1,6 @@
 {
   "name": "myagentkit",
-  "version": "0.12.1+codex.7c478a3763b0",
+  "version": "0.12.1+codex.4885e838ce97",
   "description": "Let Codex request fresh Claude reviews and implementation proposals, verify findings, and iterate safely.",
   "author": {
     "name": "Kemal Berhan TAN"

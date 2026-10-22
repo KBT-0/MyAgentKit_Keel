@@ -463,8 +463,8 @@ def main(argv=None):
     # The dispositions file is read here once and its text handed to every attempt: a
     # fallback attempt never reads a file that changed meanwhile.
     claims = claude_bridge.dispositions_text()
-    claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
-                               original[0], original[2], claims)
+    measured = claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
+                                          original[0], original[2], claims)[1]
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
@@ -476,7 +476,9 @@ def main(argv=None):
     # Claude only: Codex has no turn limit to set. A Codex review that switches to Claude on a
     # used-up quota checks it then.
     turns = review_turns() if args.reviewer == "claude" or args.allow_fallback else None
-    agent_usage.require_private_storage(repo)
+    # The main checkout's records, also for a round in a linked worktree (#293).
+    store = claude_bridge.records_root(repo)
+    agent_usage.require_private_storage(store)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id
     # An empty label is no label: kept as "", it was recorded as an id every later labelled
@@ -485,10 +487,12 @@ def main(argv=None):
         os.environ["MYAGENTKIT_TASK_ID"] = "review-" + chain_id
     chain = {"schema_version": 1, "chain_id": chain_id, "requested_reviewer": names[args.reviewer],
              "configured_models": pins, "task_id": os.environ["MYAGENTKIT_TASK_ID"],
-             "head": original[0], "fingerprint": original[1], "scope": scope, "reference": ref,
+             "tree": str(repo), "head": original[0], "fingerprint": original[1], "scope": scope, "reference": ref,
              "fallback_allowed": args.allow_fallback,
              "attempts": [], "status": "pending", "failure_kind": None,
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
+    if "continues" in measured:
+        chain["continues"] = measured["continues"]  # an --uncommitted round's label, continued (#293)
     if author:
         chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
     if args.kit_verified:
@@ -527,9 +531,9 @@ def main(argv=None):
         # Separate from provider records: usage reporting must not double-count a chain.
         chain["recovery"] = {"action": "inspect_result" if chain["status"] == "completed" else "continue_independent_work",
                              "review_approved": False, "automatic_retry": retrying}
-        path = repo / ".myagentkit/usage/chains" / (chain_id + "-%d.json" % len(chain["attempts"]))
+        path = store / ".myagentkit/usage/chains" / (chain_id + "-%d.json" % len(chain["attempts"]))
         chain["chain_record"] = str(path)
-        agent_usage.write_evidence(repo, path, json.dumps(chain, indent=2) + "\n", private=True)
+        agent_usage.write_evidence(store, path, json.dumps(chain, indent=2) + "\n", private=True)
 
     checkpoint()  # No model is called if the chain cannot be recorded.
     other = "codex" if args.reviewer == "claude" else "claude"

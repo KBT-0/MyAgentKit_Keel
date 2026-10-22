@@ -85,13 +85,18 @@ Automation never authorizes a commit or push.
   cost", rule 6), each as its own background job. Source: KARARLAR D06 inv2#38; LLVM CMake
   job pools and RAM-per-job settings (https://llvm.org/docs/CMake.html); review ordering
   follows decision 9.
-- A `review.sh` round a worker runs inside its own worktree is recorded in that worktree's
-  `.myagentkit/usage/`, never the main checkout's, and counts as an inner round: the worker's
-  report lists it (`docs/WORKFLOW.md`, "Review inside the worker"), and it does not count toward
-  the lead's two rounds. The lead's review of the merged change starts its own label in the main
-  checkout and carries the worker's review archive as dispositions. Do not copy the worktree's
-  records into the main checkout to continue its label: a `--commit` round after an
-  `--uncommitted` one is refused, and the copied evidence path points into the worktree (#293).
+- A `review.sh` round a worker runs inside its own worktree reviews that worktree's diff and is
+  recorded in the main checkout: its usage record and chain file in `.myagentkit/usage/`, its
+  archive in `docs/reviews/`. The usage record's `task.tree` and the chain's `tree` name the
+  tree the round read. The worker's report lists the round (`docs/WORKFLOW.md`, "Review inside
+  the worker"). After the merge, the lead continues the worker's label in the main checkout
+  with `--commit <merge or fix commit>`. That round continues an `--uncommitted` round when
+  every file the earlier round reviewed is in the commit's diff and the earlier HEAD is the
+  commit's ancestor; the chain records the step as `continues`. Both rounds count toward the
+  label's two. Otherwise the round is refused, and the message names the files the commit
+  lacks. Nothing is copied between checkouts (#293). A record written before v0.13 inside a
+  worktree that is removed since is read from a copy of its archive with the same name in the
+  main checkout's `docs/reviews/` or `.myagentkit/usage/`; one line names the copy.
 - Nobody edits a tree under review; one run per reviewer per tree. Source: KARARLAR D06
   inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
   sessions.
