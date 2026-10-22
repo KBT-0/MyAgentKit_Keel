@@ -90,7 +90,7 @@ chat modes, aider.chat/docs/usage/modes.html; Roo Code's modes,
 roocodeinc.github.io/Roo-Code/basic-usage/using-modes); what each mode here decides is the
 kit's own.
 
-#### autopilot, the owner-away switch
+### autopilot, the owner-away switch
 
 The owner asked for a mode to start before leaving the lead overnight, with no stop on "a
 silly excuse", decisions taken and reported in the morning, questions saved for the morning

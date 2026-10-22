@@ -299,10 +299,10 @@ def owner(project, state):
 
 def switch_presence(project, section, choice):
     """Write STATE's Owner line and .myagentkit/presence together, as a mode switch writes its two."""
-    rules = re.search(r'^#### autopilot(?![\w-]).*?(?=^#### |\Z)', section, re.M | re.S)
+    rules = re.search(r'^#{3,4} autopilot(?![\w-]).*?(?=^#{2,4} |\Z)', section, re.M | re.S)
     if rules is None:
-        raise ValueError('WORKFLOW.md has no autopilot rules ("#### autopilot" under "Working modes, by '
-                         'name"); sync the kit (v0.13) and run this again')
+        raise ValueError('WORKFLOW.md has no autopilot rules ("### autopilot, the owner-away switch" after '
+                         '"Working modes, by name"); sync the kit (v0.13) and run this again')
     state_path = checked(project, 'docs/STATE.md')
     state_bytes = state_path.read_bytes()
     state = state_bytes.decode('utf-8')

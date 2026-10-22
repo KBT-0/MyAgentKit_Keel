@@ -15,6 +15,30 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.13
 
+- **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
+  decisions of 2026-10-22): not a fourth mode but a presence switch beside the mode.
+  `/myagentkit:mode autopilot`, or the owner saying so in plain words, runs
+  `working_mode.py autopilot`: it writes `**Owner:** away (autopilot since <time>)` under the
+  "Working mode:" line of `docs/STATE.md` and `.myagentkit/presence` under the mode switch's
+  compare-and-swap rule, and prints the contract (`docs/WORKFLOW.md`, "autopilot, the
+  owner-away switch": the checklist before leaving, the valid stops, the decision table, the
+  never-without-the-owner list with push and tag allowed once every check and CI are green,
+  the proxy consult) and the `/goal` line the owner types. The owner's first message ends it:
+  `working_mode.py present`, the report (the new `docs/AUTOPILOT.md` template; the new
+  `scripts/autopilot_report.py` prints its Done section from git, the worker results and
+  `agent_cost.py --latest`), then the queued questions one by one. While away, the Claude
+  Code hooks say so: the context band says keep going (a second compaction too), each prompt
+  names the owner's return, and a question left in a final message is queued in the report.
+  Rule 8's owner-away arm points to the switch; COMMUNICATION's 45 minutes stay for a
+  project without the record. A STATE edit through `--replace-state` that changes the Owner
+  line is refused.
+- **ACTION** (`docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, project-owned): run
+  `sync-kit.sh . --merge`; without it, copy the kit's "#### autopilot, the owner-away switch"
+  subsection into "Working modes, by name" before "#### How a mode improves" (the switch
+  refuses to run without it), its one-sentence pointer at the end of that section's opening
+  paragraph, rule 8's "With the owner away (...)" sentence, and COMMUNICATION's "While the
+  owner is away" bullet.
+
 - `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
   placeholder stay in the project-owned file (1,741 lines to 1,565), the worker-cost rules 1-9
   whole among them; the reasons, the sources, the measurements and the long examples move,

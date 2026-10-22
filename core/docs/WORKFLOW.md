@@ -834,7 +834,20 @@ critical Claude change.
 - **Lessons:** every Claude worker counts against the low side: a sub-agent spends the same
   allowance as a spawned session.
 
-#### autopilot, the owner-away switch
+#### How a mode improves
+
+Each mode's **Lessons** list is how a mode gets cheaper with use. When a mode cost more
+than it should have (a wasted round, a worker on the wrong side, an allowance that ran out
+early), the lead adds one line to that mode's list: the failure, with a number when there is
+one, and the rule that prevents it. The lead then offers it to the kit with
+`/myagentkit:kit-feedback`, so every project's copy of the mode learns it. A lesson that the
+mode's own rules come to state leaves the list, and a lesson a later one supersedes is
+deleted: the list holds only what is not yet a rule. Written lessons kept for later attempts
+measurably help (Shinn et al., Reflexion, arxiv.org/abs/2303.11366), while a context file that
+grows hurts (Gloaguen et al., arxiv.org/abs/2602.11988; code.claude.com/docs/en/best-practices:
+cut any line whose removal would not cause a mistake), so a lesson that became a rule leaves.
+
+### autopilot, the owner-away switch
 
 Not a mode: a presence switch beside the mode in force, which keeps deciding who writes and
 reviews. `**Owner:** away (autopilot since <time>)` or `**Owner:** present` in
@@ -844,7 +857,7 @@ under the mode switch's rules, and nothing else changes the line. No record is p
 
 - **Starts:** `/myagentkit:mode autopilot`, or {{OWNER_NAME}} saying so in plain words
   ("autopilot'a al", "gece moduna alalım", "I'm off, keep going"): the lead runs
-  `python scripts/working_mode.py autopilot` itself and shows what it prints, this subsection
+  `python3 scripts/working_mode.py autopilot` (`python` on native Windows) itself and shows what it prints, this subsection
   and the `/goal` line. A second run keeps the first stamp.
 - **Before {{OWNER_NAME}} leaves** (the lead checks each and says what is missing):
   1. `docs/STATE.md` lists the work for the absence, each item with its done criterion, and
@@ -891,28 +904,15 @@ under the mode switch's rules, and nothing else changes the line. No record is p
   after each; at red (300k) the hand-off file is written and the session goes on (rule 8).
   Reviews run by tier; only Critical and High block.
 - **The report:** `.myagentkit/autopilot/<date of the stamp>.md` (ignored by Git), from
-  `docs/AUTOPILOT.md`; `python scripts/autopilot_report.py` prints its Done section from git.
+  `docs/AUTOPILOT.md`; `python3 scripts/autopilot_report.py` prints its Done section from git.
 - **Ends:** {{OWNER_NAME}}'s first message. Before anything else the lead runs
-  `python scripts/working_mode.py present`, gives the report in two layers
+  `python3 scripts/working_mode.py present`, gives the report in two layers
   (`docs/COMMUNICATION.md`, "Handoff"), then asks its Questions one by one with
   AskUserQuestion, the recommended option first; an Issue draft is posted only on
   {{OWNER_NAME}}'s yes. The Claude Code overlay's `context_size.py` names this at each prompt
   while away.
 
 Why: docs/WORKFLOW_RATIONALE.md, "autopilot, the owner-away switch".
-
-#### How a mode improves
-
-Each mode's **Lessons** list is how a mode gets cheaper with use. When a mode cost more
-than it should have (a wasted round, a worker on the wrong side, an allowance that ran out
-early), the lead adds one line to that mode's list: the failure, with a number when there is
-one, and the rule that prevents it. The lead then offers it to the kit with
-`/myagentkit:kit-feedback`, so every project's copy of the mode learns it. A lesson that the
-mode's own rules come to state leaves the list, and a lesson a later one supersedes is
-deleted: the list holds only what is not yet a rule. Written lessons kept for later attempts
-measurably help (Shinn et al., Reflexion, arxiv.org/abs/2303.11366), while a context file that
-grows hurts (Gloaguen et al., arxiv.org/abs/2602.11988; code.claude.com/docs/en/best-practices:
-cut any line whose removal would not cause a mistake), so a lesson that became a rule leaves.
 
 ## Worker cost — waits and long lives are what you pay for
 
@@ -1111,8 +1111,8 @@ Rules, binding for whoever routes workers:
    line. At red the lead stops at the next clean point and proposes a hand-off or `/compact`,
    because a session end kills the background jobs started from its tool shell (survivors:
    `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
-   decides at that stop, never mid-flow. With the owner away (`**Owner:** away` in
-   `docs/STATE.md`, "autopilot, the owner-away switch"; without that record,
+   decides at that stop, never mid-flow. With the owner away (`**Owner:** away` in STATE,
+   the switch of "autopilot, the owner-away switch"; without that record,
    `docs/COMMUNICATION.md`'s 45 minutes), the lead writes the hand-off file, runs `/compact`
    when jobs are in flight, and continues, after a second compaction too; it does not wait
    for an answer.

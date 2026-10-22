@@ -784,7 +784,7 @@ class WorkingModeTests(unittest.TestCase):
         stamp = lines[3].split('since ')[1].rstrip(')')
         self.assertEqual(presence.read_text(encoding='utf-8'), 'away ' + stamp + '\n')
         self.assertFalse((self.project / '.myagentkit/mode').exists())
-        self.assertIn('#### autopilot', result.stdout)  # the contract, from WORKFLOW.md
+        self.assertIn('### autopilot, the owner-away switch', result.stdout)  # the contract, from WORKFLOW.md
         self.assertIn('/goal every item', result.stdout)
         self.assertIn('.myagentkit/autopilot/' + stamp[:10] + '.md', result.stdout)
         self.assertIn('Owner: away (autopilot since ' + stamp + ')', self.run_mode().stdout)
