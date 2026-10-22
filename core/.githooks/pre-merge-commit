@@ -6,8 +6,9 @@
 # runs pre-commit; a fast-forward creates no commit and runs no hook. The tree it brings in
 # was gated only if no rebase, cherry-pick or revert made it: those run no hook either (#115),
 # so `./scripts/check.sh` runs on a rebased branch before it fast-forwards (docs/WORKFLOW.md).
-# --merge: a merge commit always gets the full gate, the build included, even when what the
-# merge brings in is documentation only (git shows no MERGE_HEAD to this hook).
+# --merge: a merge commit gets the whole gate; only the build is skipped, when the merge's
+# result differs from a gated HEAD in documentation alone (check.sh --for-merge). git shows
+# no MERGE_HEAD to this hook, so --merge is the only sign of a merge.
 # A hook of the project's own (husky, lefthook, a script of its own) lives beside this
 # one as pre-merge-commit.project, project-owned, and runs FIRST with git's arguments: its failure
 # is the commit's failure, and this hook still runs after it. No other hooks path.

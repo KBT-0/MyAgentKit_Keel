@@ -71,8 +71,15 @@ class HookTests(unittest.TestCase):
         self.assertIn('MERGE REQUEST: `branch, base commit, review evidence path, the Owns list, '
                       '"tests green at <sha>"`', result.stderr)
         self.assertIn('or wait for MAIN CHECKOUT IDLE', result.stderr)
-        # A session with no identity (another tool, a terminal) is not the writer either.
-        self.assertNotEqual(self.commit('b').returncode, 0)
+        # No identity is the owner's terminal (owner 2026-10-22): let through, with one note naming the holder.
+        result = self.commit('b')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.runs(), before + 1)
+        self.assertIn('writer-1', result.stderr)
+        self.assertNotIn('MERGE REQUEST', result.stderr)
+        # An empty marker names nobody: refused, fail closed.
+        self.claim('')
+        self.assertNotEqual(self.commit('c', CLAUDE_CODE_SESSION_ID='writer-1').returncode, 0)
 
     def test_a_foreign_merge_is_refused_before_the_projects_merge_hook_and_the_gate(self):
         self.git('checkout', '-q', '-b', 'side')
@@ -171,6 +178,12 @@ class ScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('main checkout', result.stderr)
         self.assertFalse((tree / '.myagentkit/master-writer').exists())
+        # show works in a worktree: a worker learns whom to send its MERGE REQUEST.
+        self.assertEqual(self.run_script('claim', CLAUDE_CODE_SESSION_ID='writer-1').returncode, 0)
+        result = self.run_script('show', cwd=tree, CLAUDE_CODE_SESSION_ID='other-2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Master writer: writer-1', result.stdout)
+        self.assertNotEqual(self.run_script('release', cwd=tree, CLAUDE_CODE_SESSION_ID='writer-1').returncode, 0)
 
 
 class EnvFileTests(unittest.TestCase):
@@ -203,6 +216,24 @@ class EnvFileTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.out.read_text(encoding='utf-8'), 'C:/venv/py $HOME `x` "q"')
 
+    def test_a_utf8_bom_is_stripped_and_utf16_is_named(self):
+        code, out = self.run_gate('﻿KIT_ENV_PROBE=bom\n')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.out.read_text(encoding='utf-8'), 'bom')
+        self.out.unlink()
+        # Windows PowerShell 5.1's Out-File writes UTF-16 LE with a BOM; without the BOM it still has NULs.
+        for data in ('﻿KIT_ENV_PROBE=x\r\n'.encode('utf-16-le'), 'KIT_ENV_PROBE=x\n'.encode('utf-16-le')):
+            with self.subTest(data=data[:4]):
+                (self.project / '.myagentkit/env').write_bytes(data)
+                result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, capture_output=True,
+                                        env=environment(self.build, KIT_ENV_OUT=self.out.as_posix()),
+                                        text=True, encoding='utf-8', errors='replace', timeout=120)
+                out = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, out)
+                self.assertIn('FAIL [env]: .myagentkit/env is UTF-16', out)
+                self.assertIn('save it as UTF-8', out)
+                self.assertFalse(self.out.exists())
+
     def test_an_already_set_key_wins(self):
         code, out = self.run_gate('KIT_ENV_PROBE=from-file\n', KIT_ENV_PROBE='from-session')
         self.assertEqual(code, 0, out)
@@ -215,6 +246,67 @@ class EnvFileTests(unittest.TestCase):
                 self.assertEqual(code, 1, out)
                 self.assertIn('FAIL [env]: .myagentkit/env line 3', out)
                 self.assertFalse(self.out.exists(), 'the gate ran on a refused env file')
+
+
+class DocsOnlyMergeTests(unittest.TestCase):
+    """A clean merge whose result differs from a gated HEAD only in documents skips the build, as a
+    documentation-only commit does; one that brings in anything else builds (project_leeway, 2026-10-22)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tmp = Path(tmp.name)
+        self.project = tmp / 'project'
+        make_project(self.project)
+        shutil.copytree(ROOT / 'core/.githooks', self.project / '.githooks')
+        self.log = tmp / 'builds'
+        self.build = tmp / 'build.sh'
+        self.build.write_text('echo built >> "$KIT_BUILD_LOG"\n', encoding='utf-8', newline='\n')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'base')
+        self.main = self.git('rev-parse', '--abbrev-ref', 'HEAD').stdout.strip()
+
+    def git(self, *args, check=True, cwd=None):
+        env = environment(self.build, KIT_BUILD_LOG=self.log.as_posix())
+        env.pop('CLAUDE_CODE_SESSION_ID', None)
+        return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                               '-c', 'core.hooksPath=.githooks', '-c', 'commit.gpgsign=false', *args],
+                              cwd=cwd or self.project, env=env, capture_output=True, text=True, encoding='utf-8',
+                              errors='replace', check=check)
+
+    def builds(self):
+        return self.log.read_text(encoding='utf-8').count('built') if self.log.exists() else 0
+
+    def branch_commit(self, name, path):
+        # In its own worktree, as a worker commits: check-gated-tree is one file per worktree.
+        tree = self.project.parent / name
+        self.git('worktree', 'add', '-q', '-b', name, str(tree), self.main)
+        (tree / path).write_text(name + '\n', encoding='utf-8', newline='\n')
+        self.git('add', path, cwd=tree)
+        self.git('commit', '-q', '-m', 'add ' + path, cwd=tree)
+
+    def test_a_docs_only_merge_onto_a_gated_head_skips_the_build_and_a_code_merge_builds(self):
+        self.branch_commit('docs', 'docs/guide.md')
+        before = self.builds()
+        merge = self.git('merge', '-q', '--no-ff', '--no-edit', 'docs', check=False)
+        self.assertEqual(merge.returncode, 0, merge.stdout + merge.stderr)
+        self.assertEqual(self.builds(), before, 'a docs-only merge onto a gated HEAD built')
+        self.assertIn('NOTE [build]: not run: every path this commit changes is documentation (1 file).',
+                      merge.stdout + merge.stderr)
+        self.branch_commit('code', 'tool.txt')
+        before = self.builds()
+        merge = self.git('merge', '-q', '--no-ff', '--no-edit', 'code', check=False)
+        self.assertEqual(merge.returncode, 0, merge.stdout + merge.stderr)
+        self.assertEqual(self.builds(), before + 1, 'a merge bringing in a code file skipped the build')
+        self.assertNotIn('NOTE [build]: not run', merge.stdout + merge.stderr)
+
+    def test_a_docs_only_merge_onto_an_ungated_head_builds(self):
+        self.branch_commit('docs', 'docs/guide.md')
+        (self.project / '.git/check-gated-tree').unlink()
+        before = self.builds()
+        merge = self.git('merge', '-q', '--no-ff', '--no-edit', 'docs', check=False)
+        self.assertEqual(merge.returncode, 0, merge.stdout + merge.stderr)
+        self.assertEqual(self.builds(), before + 1)
 
 
 if __name__ == '__main__':

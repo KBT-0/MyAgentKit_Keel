@@ -32,6 +32,7 @@ A new entry adds its heading to this list.
 - A timing taken on a busy machine is not a result
 - PowerShell from the Microsoft Store leaves suspended processes behind
 - A variable the session set does not reach the git hook
+- A PowerShell probe whose Set-Location fails goes on in the current folder
 
 ---
 
@@ -332,3 +333,14 @@ each time, so an `export` or a venv activation in one call is gone by the commit
 activation never reaches a commit started elsewhere either. Put the line in `.myagentkit/env`
 (`KEY=VALUE`, Git-ignored): `check.sh` exports each key not already set before it resolves
 anything (`docs/DEV_SETUP.md`, section 2).
+
+## A PowerShell probe whose Set-Location fails goes on in the current folder
+
+A worker tested a git hook from PowerShell with a throwaway commit: `Set-Location $T` into a
+scratch folder, then `git add` and `git commit` (kit v0.13 masterhook, 2026-10-22). The folder did
+not exist (the shell step that was to create it had been refused), `Set-Location` failed, and
+PowerShell went on: a cmdlet's error does not stop the script by default. The commit landed in the worker's own
+worktree, under the throwaway author, and the lead had to rebase it out. Make a throwaway step
+stop on the first error (`$ErrorActionPreference = 'Stop'`, or `-ErrorAction Stop` on the
+`Set-Location`), and before the commit check that `git rev-parse --show-toplevel` names the
+throwaway folder.

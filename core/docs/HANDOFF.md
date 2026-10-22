@@ -101,6 +101,11 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    known sidecar and exits its separate session. A peer ends its turn and accepts SendMessage.
    The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
+A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
+`python3 scripts/master_writer.py release` (`python` on native Windows) before it ends, and the
+next session runs `claim`. After a crash the marker still names the old session: the successor
+runs `claim --force` and tells {{OWNER_NAME}} so in one line.
+
 End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. A
 worker on a branch or in a worktree writes `docs/worktree-notes/<branch>.md` instead and
 leaves `docs/STATE.md`, `docs/BACKLOG.md` and the `Done: <id>` trailer to the lead at the

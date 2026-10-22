@@ -11,10 +11,11 @@
 # workflow skipped by path leaves a required check Pending (GitHub, "Troubleshooting required
 # status checks"), and this script already decides what a documentation-only change skips.
 #
-# Usage: check.sh [--for-commit]
+# Usage: check.sh [--for-commit|--for-merge]
 #   default       run the gates
 #   --for-commit  what .githooks/pre-commit runs: the gates, without the build when the
 #                 staged change is documentation only (section 4 decides; the flag only asks)
+#   --for-merge   what .githooks/pre-merge-commit runs: the same, for the merge's result
 #
 # ADDING A GATE: add the check, AND a fixture test for it in the project's test suite: a
 # small input that breaks the rule must turn the check red with its own `FAIL [tag]` line,
@@ -58,9 +59,19 @@ env_file=.myagentkit/env
   common=$(CDPATH= cd -- "$common/.." 2>/dev/null && pwd) && [ -f "$common/$env_file" ] &&
   env_file=$common/$env_file; }
 if [ -f "$env_file" ]; then
-  n=0; cr=$(printf '\r'); upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+  # Windows PowerShell 5.1's Out-File writes UTF-16: a BOM (FF FE, FE FF) or NUL bytes. A UTF-8
+  # BOM, which some editors add, is dropped from line 1.
+  case "$(od -An -tx1 -N2 "$env_file" | tr -d ' \n')" in
+    fffe|feff) env_utf16=1 ;;
+    *) env_utf16=$(od -An -c "$env_file" | grep -c '\\0') ;;
+  esac
+  [ "$env_utf16" = 0 ] || {
+    printf '%s\n' "FAIL [env]: $env_file is UTF-16 (Windows PowerShell's Out-File writes it so); save it as UTF-8." >&2
+    exit 1; }
+  n=0; cr=$(printf '\r'); bom=$(printf '\357\273\277'); upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1)); line=${line%"$cr"}
+    [ "$n" != 1 ] || line=${line#"$bom"}
     case $line in ''|'#'*) continue ;; *=*) key=${line%%=*} ;; *) key= ;; esac
     case $key in ''|[!"$upper"_]*|*[!"$upper"0123456789_]*)
       printf '%s\n' "FAIL [env]: $env_file line $n is not KEY=VALUE (KEY of A-Z, 0-9 and _; no shell code)." >&2; exit 1 ;;
@@ -378,11 +389,12 @@ case "$lock_path" in
   *) build_log="${lock_path%.lock}-build.log" ;;
 esac
 
-for_commit="" pass_note=""
+for_commit="" for_merge="" pass_note=""
 case "${1:-}" in
   "")           ;;
   --for-commit) for_commit=1 ;;
-  *)            echo "usage: check.sh [--for-commit]"; exit 2 ;;
+  --for-merge)  for_merge=1 ;;
+  *)            echo "usage: check.sh [--for-commit|--for-merge]"; exit 2 ;;
 esac
 
 # Every scan, filter and boundary check below reads text in the C locale. In a UTF-8 locale
@@ -1029,7 +1041,7 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     echo "              so that the choice is visible in the diff instead of implied."
     fail=1 ;;
   *)
-    # The path is taken only when .githooks/pre-commit asks (--for-commit) and the INDEX shows
+    # The path is taken only when a commit hook asks (--for-commit, --for-merge) and the INDEX shows
     # a documentation-only change; the caller cannot declare one. Documentation-only: at least
     # one change against HEAD, renames off (a code file renamed to .md is a deletion of code),
     # every path ending in .md, and each added, modified or deleted entry a regular file
@@ -1042,16 +1054,19 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     # recorded: .githooks/pre-commit writes the tree of each commit it gated into the worktree's
     # check-gated-tree, and a HEAD whose tree is not there builds. A rebase, cherry-pick or
     # revert runs no hook (#115), and a pull or a branch switch brings in another tree. A clean
-    # `git merge` never comes here: pre-merge-commit asks for the full gate.
+    # `git merge` comes with --for-merge from pre-merge-commit: its index holds the merge's
+    # result, read against HEAD by the same rule, so a merge that brings in documents alone
+    # does not build (project_leeway, 2026-10-22). git writes MERGE_HEAD only after that hook;
+    # a conflicted merge, finished by `git commit` with MERGE_HEAD present, builds.
     docs_only=""
-    if [ -n "$for_commit" ] && [ "$docs_only_skip_build" = 1 ]; then
+    if { [ -n "$for_commit" ] || [ -n "$for_merge" ]; } && [ "$docs_only_skip_build" = 1 ]; then
       docs_only=$(python3 -c '
 import fnmatch, os, subprocess, sys
 def git(*args):
     return subprocess.run(("git",) + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
     sys.exit(1)
-if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
+if sys.argv[2] != "merge" and git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
     sys.exit(1)
 head = git("rev-parse", "-q", "--verify", "HEAD^{tree}").stdout.strip()
 try:
@@ -1076,7 +1091,7 @@ for meta, path in zip(fields[0::2], fields[1::2]):
     if any(fnmatch.fnmatchcase(os.fsdecode(path), glob) for glob in sys.argv[1].split()):
         sys.exit(1)
 print(len(fields) // 2)
-' "$docs_always_build" 2>/dev/null) || docs_only=""
+' "$docs_always_build" "${for_merge:+merge}" 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
     if [ -n "$docs_only" ]; then

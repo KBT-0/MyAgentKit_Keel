@@ -22,17 +22,20 @@ def session():
     return os.environ.get('MYAGENTKIT_SESSION_ID') or os.environ.get('CLAUDE_CODE_SESSION_ID') or ''
 
 
-def main_checkout():
-    """The main checkout's root; a linked worktree is refused, as the hooks never refuse there."""
+def main_checkout(linked_ok=False):
+    """The main checkout's root. From a linked worktree only when LINKED_OK (show): the hooks never
+    refuse there, so a claim or a release there would mean nothing."""
     git = lambda *args: subprocess.run(['git', 'rev-parse', *args], capture_output=True, text=True,
                                        check=True).stdout.strip()
     try:
         root, here, common = git('--show-toplevel'), git('--absolute-git-dir'), git('--git-common-dir')
     except (OSError, subprocess.CalledProcessError):
         raise ValueError('not in a git checkout') from None
-    if Path(here).resolve() != Path(common).resolve():
+    if Path(here).resolve() == Path(common).resolve():
+        return Path(root).resolve()
+    if not linked_ok:
         raise ValueError('run it in the main checkout: a linked worktree has no master writer')
-    return Path(root).resolve()
+    return Path(common).resolve().parent
 
 
 def write_state(project, value):
@@ -64,14 +67,16 @@ def main():
                         help="take over or clear another session's claim: only on the owner's word")
     args = parser.parse_args()
     try:
-        project = main_checkout()
+        project = main_checkout(linked_ok=args.action == 'show')
         marker = checked(project, '.myagentkit/master-writer')
+        read = lambda: marker.read_text(encoding='utf-8').strip() if marker.exists() else ''
+        me = session()
+        if args.action == 'show':
+            holder = read()
+            print('Master writer: ' + (holder or 'none') + (' (this session)' if holder and holder == me else ''))
+            return
         with switch_lock(project):
-            holder = marker.read_text(encoding='utf-8').strip() if marker.exists() else ''
-            me = session()
-            if args.action == 'show':
-                print('Master writer: ' + (holder or 'none') + (' (this session)' if holder and holder == me else ''))
-                return
+            holder = read()
             if not me:
                 raise ValueError('no session id: CLAUDE_CODE_SESSION_ID is unset; set MYAGENTKIT_SESSION_ID')
             if holder and holder != me and not args.force:
