@@ -3881,6 +3881,9 @@ class BridgeTests(unittest.TestCase):
                                   # REVIEW_PROMPT asks for "plus N similar" past five Lows.
                                   (['Low: a', 'Plus 3 similar Low findings.'], True), (['- Plus 3 similar.'], True),
                                   (['No qualifying findings.'], True), (['High: a', 'Plus 2 similar'], False),
+                                  # #305: the issue's payload, verbatim; prose after it is no placeholder.
+                                  (['No qualifying findings. ...'], True),
+                                  (['No qualifying findings. High x.py:1 drops records.'], False),
                                   (['Plus 3 similar, and High: y is broken'], False),
                                   # fix4 notes: "Low-level" is no severity, an empty Pre-existing
                                   # is no item, and real Codex prose for a clean review is.
@@ -3898,6 +3901,15 @@ class BridgeTests(unittest.TestCase):
                 else:
                     # #120: read as the stricter verdict, not refused.
                     self.assertNotEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'], 'Accept')
+
+    def test_the_prompt_asks_a_clean_review_for_empty_lists(self):
+        # #305: a clean Accept with its "No qualifying findings." prose in the findings list was
+        # refused by an older bridge; the identical re-run returned findings: [] and passed.
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        self.assertIn('A clean review returns an empty findings list and an empty manual_checks list',
+                      log.read_text(encoding='utf-8'))
 
     def test_a_contradicted_accept_is_read_as_the_stricter_verdict(self):
         # #120, owner decision 59 A: refused, a whole paid review was lost to its own lists. A
@@ -4302,6 +4314,52 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual([entry['path'] for entry in bridge.kit_verified(self.repo, 'HEAD', kit)], expected)
         self.assertIn('kit commit %s does not descend from %s' % (kit_commit, newer), err.getvalue())
 
+    def test_an_upgrade_with_pending_action_items_is_verified_by_the_named_kit_commit(self):
+        # #305: sync-kit.sh records docs/kit/.kit-commit only with --actions-applied, so an upgrade
+        # with pending ACTION items, reviewed before them, verified nothing and its diff ran past
+        # the limit. --kit-commit names the copied kit commit (on a release tag, no downgrade);
+        # --base reviews an upgrade of several commits.
+        from contextlib import redirect_stderr
+        base = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        kit, kit_commit = self.kit_upgrade(record=False)
+        blob = self.git('rev-parse', 'HEAD:x.sh').stdout.decode().strip()
+        expected = [{'path': 'x.sh', 'blob': blob, 'kit_commit': kit_commit}]
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit), [])
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit, kit_commit), expected)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit, 'v1.0.0'), [])
+        self.assertIn('--kit-commit v1.0.0 is no full commit id', err.getvalue())
+        result, chain = self.dispatch_result(fallback=False, args=(
+            '--commit', 'HEAD', '--kit-verified', '--kit', str(kit), '--kit-commit', kit_commit))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(chain['kit_verified'], expected)
+        # The upgrade's second commit; --base reviews both, the kit's copy left out.
+        (self.repo / 'file.py').write_text('second\n')
+        self.commit_fixture('Upgrade, part 2')
+        self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit, kit_commit, base), expected)
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(extra=['--base', base, '--kit-verified', str(kit), '--kit-commit', kit_commit],
+                                       env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, result)
+        diff = log.read_text(encoding='utf-8').partition('\nDiff:\n')[2]
+        self.assertIn('+second', diff)
+        self.assertIn('+plain', diff)
+        self.assertNotIn('x.sh', diff)
+        # A named kit commit older than the one the commit itself records is a downgrade.
+        (kit / 'core/x.sh').write_bytes(b'# KIT-OWNED: do not edit locally\necho kit 2\n')
+        self.kit_git(kit, 'commit', '-qam', 'kit 2')
+        self.kit_git(kit, 'tag', 'v2.0.0')
+        (self.repo / 'docs/kit').mkdir(parents=True)
+        (self.repo / 'docs/kit/.kit-commit').write_text(self.kit_git(kit, 'rev-parse', 'HEAD') + '\n')
+        (self.repo / 'file.py').write_text('third\n')
+        self.commit_fixture('Records kit 2')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(bridge.kit_verified(self.repo, 'HEAD', kit, kit_commit, base), [])
+        self.assertIn('kit commit %s does not descend from' % kit_commit, err.getvalue())
+
     def test_a_past_commit_review_keeps_its_mode_when_the_checkout_moves_onto_it(self):
         # kitv4 item 8: past mode is decided by the first snapshot; a recheck after the owner
         # stashed the tree and checked the reviewed commit out keeps the commit's fingerprint.
@@ -4327,7 +4385,7 @@ class BridgeTests(unittest.TestCase):
     def test_kit_verified_needs_a_claude_commit_review(self):
         import review_dispatch
         for argv, why in ((['--reviewer', 'codex', '--commit', 'HEAD', '--kit-verified'], '--reviewer claude'),
-                          (['--uncommitted', '--kit-verified'], 'a --commit only'),
+                          (['--uncommitted', '--kit-verified'], 'a --commit or a --base only'),
                           (['--commit', 'HEAD', '--kit', str(self.root)], 'for --kit-verified only')):
             with self.subTest(argv=argv), self.assertRaises(ValueError) as caught:
                 review_dispatch.main(['--repo', str(self.repo), *argv])
@@ -5910,6 +5968,70 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(record['task']['continues'], {'scope': 'uncommitted', 'tree': str(linked.resolve()),
                                                        'head': round_one, 'commit': merged})
         self.assertIn('continues its --uncommitted round', self.stderr)
+
+    def test_a_moved_or_non_ascii_file_continues_only_when_the_commit_has_it(self):
+        # chainmain review: a file moved without staging is a deletion and an addition in the
+        # --uncommitted round and one rename in the commit, so the --commit round was refused; a
+        # name Git quotes (core.quotePath) was dropped from the files, so a commit without it
+        # continued the label.
+        self.commit_fixture('Base')
+        (self.repo / 'a.py').write_text(''.join('%d\n' % n for n in range(20)))
+        self.commit_fixture('a.py')
+        (self.repo / 'a.py').rename(self.repo / 'b.py')
+        task = {'MYAGENTKIT_TASK_ID': 'move'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        self.assertEqual(json.loads(Path(first['usage_record']).read_text(encoding='utf-8'))['task']['files'],
+                         ['a.py', 'b.py'])
+        self.commit_fixture('Move')
+        code, second = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 0, second)
+        (self.repo / 'ü.py').write_text('x\n')
+        self.commit_fixture('ü.py')
+        (self.repo / 'ü.py').write_text('y\n')
+        task = {'MYAGENTKIT_TASK_ID': 'quoted'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        self.assertEqual(json.loads(Path(first['usage_record']).read_text(encoding='utf-8'))['task']['files'], ['ü.py'])
+        self.git('checkout', '--', 'ü.py')
+        (self.repo / 'other.py').write_text('z\n')
+        self.commit_fixture('other.py')
+        code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('ü.py', refused['error'])
+
+    def test_a_commit_round_continues_the_newest_uncommitted_round_and_names_a_rebased_head(self):
+        # chainmain review: `continues` was the last record os.listdir returned, and a worker head
+        # rebased away was refused as "reference None resolved to None".
+        task = {'MYAGENTKIT_TASK_ID': 'two-rounds', 'REVIEW_ROUND_EXCEPTION': 'fixture: three rounds'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        (self.repo / 'other.py').write_text('between\n')
+        self.git('add', 'other.py')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null',
+                 '-c', 'commit.gpgsign=false', 'commit', '-qm', 'between')
+        newest = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        code, middle = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, middle)
+        # The older round's record renamed to sort last, so a listing in name order meets it last.
+        older = Path(first['usage_record'])
+        older.rename(older.with_name('zzzz.json'))
+        self.commit_fixture('The change')
+        code, second = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 0, second)
+        self.assertEqual(json.loads(Path(second['usage_record']).read_text(encoding='utf-8'))['task']['continues']['head'],
+                         newest)
+        task = {'MYAGENTKIT_TASK_ID': 'rebased'}
+        (self.repo / 'file.py').write_text('worker\n')
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null',
+                 '-c', 'commit.gpgsign=false', 'commit', '-qa', '--amend', '-m', 'amended')
+        code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('head %s' % head, refused['error'])
+        self.assertNotIn('resolved to None', refused['error'])
 
     def test_evidence_left_in_a_removed_worktree_is_read_from_its_copy_in_the_main_checkout(self):
         # #293: a record written before v0.13 in a worktree names its archive there; after the

@@ -150,6 +150,12 @@ REVIEW_READS = (
     "sandbox for one on native Windows. Read the code, mark each finding REASONED and name "
     "the command that would reproduce it, and list as NOT RUN every check you "
     "could not run. Never use the network and never call a paid model.")
+# #305: the structured answer's lists are read item by item (validate()); a clean Accept with a
+# "No qualifying findings." sentence plus prose in its findings was read as an open item.
+REVIEW_OUTPUT = (
+    "Your final answer is the structured output. A clean review returns an empty findings list "
+    "and an empty manual_checks list; never write \"None.\" or a sentence such as \"No "
+    "qualifying findings.\" as a list item, since every item is read as a finding or a check.")
 # Claude Code's own Bash sandbox (macOS Seatbelt; bubblewrap and socat on Linux and WSL2).
 # Writes go only to the working directory (the copy) and Claude Code's per-user temporary
 # directory; the network allowlist is empty and strict; a command the sandbox stops cannot
@@ -180,17 +186,44 @@ SAME_TIER_ENV = "MYAGENTKIT_REVIEW_SAME_TIER"
 AUTHOR_EFFORT_ENV = "MYAGENTKIT_AUTHOR_EFFORT"
 
 
+def header_name(prefix: bytes) -> bytes:
+    """A name in a diff header line, plain or in Git's C-style quotes (core.quotePath quotes
+    any non-ASCII byte)."""
+    return rb'(?:%s(?!")([^\n]*?)\t?|"%s((?:[^"\\\n]|\\.)*)")$' % (prefix, prefix)
+
+
+def header_value(match) -> bytes:
+    """The name a header_name() match holds, its C-style quoting undone."""
+    if match[1] is not None:
+        return match[1]
+    escapes = {b"a": b"\a", b"b": b"\b", b"t": b"\t", b"n": b"\n", b"v": b"\v", b"f": b"\f", b"r": b"\r"}
+    return re.sub(rb"\\([0-7]{3}|.)", lambda m: bytes([int(m[1], 8)]) if len(m[1]) == 3
+                  else escapes.get(m[1], m[1]), match[2])
+
+
 def diff_parts(diff: bytes):
     """Yield (path, part) for each file's part of `diff`; b"" when the header names no path."""
     for part in filter(None, re.split(rb"(?m)^(?=diff --git )", diff)):
         # The diff --git header is ambiguous when the old name contains " b/". Only
-        # the destination marker before the hunk names this part unambiguously.
+        # the destination marker before the hunk names this part unambiguously; a deletion
+        # has no destination, so its --- line names it, and a pure rename has neither.
         header = part.partition(b"\n@@")[0]
-        named = re.search(rb'(?m)^\+\+\+ (?:b/([^\n]*?)\t?|"b/([^"\\\n]*)")$', header)
-        if not named and re.search(rb"(?m)^\+\+\+ /dev/null$", header):
-            # A deletion has no destination: its old name on the --- line names it.
-            named = re.search(rb'(?m)^--- (?:a/([^\n]*?)\t?|"a/([^"\\\n]*)")$', header)
-        yield next((name for name in named.groups() if name is not None), b"") if named else b"", part
+        match = (re.search(rb"(?m)^\+\+\+ " + header_name(b"b/"), header)
+                 or (re.search(rb"(?m)^\+\+\+ /dev/null$", header)
+                     and re.search(rb"(?m)^--- " + header_name(b"a/"), header))
+                 or re.search(rb"(?m)^(?:rename|copy) to " + header_name(b""), header))
+        yield header_value(match) if match else b"", part
+
+
+def diff_files(diff: bytes) -> list:
+    """The names `diff` changes, a rename's old name too: a move reads the same whether Git
+    diffs it as one rename (a commit) or as a deletion and an addition (an unstaged move)."""
+    names = set()
+    for name, part in diff_parts(diff):
+        names.add(name)
+        names.update(header_value(match) for match in re.finditer(
+            rb"(?m)^rename from " + header_name(b""), part.partition(b"\n@@")[0]))
+    return sorted({os.fsdecode(name) for name in names} - {""})
 
 
 def budgeted(diff: bytes) -> tuple[int, int]:
@@ -749,23 +782,32 @@ KIT_MARKER = re.compile(rb"(?m)^(# |<!-- )KIT-OWNED:")
 DEFAULT_KIT = Path.home() / ".myagentkit" / "kit"
 
 
-def kit_verified(repo: Path, commit: str, kit: Path) -> list:
+def kit_verified(repo: Path, commit: str, kit: Path, kit_commit: str | None = None,
+                 base: str | None = None) -> list:
     """The changed paths of `commit` that are the kit's own files (#114, lead decision 1), as
     {"path", "blob", "kit_commit"}: added or modified regular files with the KIT-OWNED header
     whose bytes hash, by sync-kit.sh's `hash-object --path` rule in the kit clone (so its
-    line-ending settings apply), to the kit's blob for their source at the kit commit that
-    `commit` records in docs/kit/.kit-commit, with the kit's mode and no mode change. That kit
-    commit must be on a release tag v* (lead decision 6) and, when `commit` changes it, descend
-    from the one its parent records (lead decision 7). A path with a changed path below it is
-    not verified: its exclusion pathspec would hide those too. On any doubt nothing is
-    verified: all is reviewed."""
+    line-ending settings apply), to the kit's blob for their source at the kit commit, with the
+    kit's mode and no mode change. The kit commit is `kit_commit` (--kit-commit, a full id: an
+    upgrade reviewed before its ACTION items are applied has no docs/kit/.kit-commit yet, #305),
+    else the one `commit` records there. It must be on a release tag v* (lead decision 6) and
+    descend from the one the diff's start records and the one `commit` records (lead decision 7:
+    no downgrade). The diff starts at `base` (--base: the merge base), else at `commit`'s first
+    parent. A path with a changed path below it is not verified: its exclusion pathspec would
+    hide those too. On any doubt nothing is verified: all is reviewed."""
     def nothing(why):
         print("NOTE [review]: --kit-verified verified no file: %s; every changed file is reviewed" % why,
               file=sys.stderr)
         return []
-    recorded = git(repo, "cat-file", "-p", commit + ":docs/kit/.kit-commit", allowed=(0, 128)).decode(
-        errors="replace").strip()
-    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", recorded):
+    def kit_commit_of(tree):
+        return git(repo, "cat-file", "-p", tree + ":docs/kit/.kit-commit", allowed=(0, 128)).decode(
+            errors="replace").strip()
+    full_id = r"[0-9a-f]{40}|[0-9a-f]{64}"
+    own = kit_commit_of(commit)
+    recorded = kit_commit or own
+    if kit_commit is not None and not re.fullmatch(full_id, kit_commit):
+        return nothing("--kit-commit %s is no full commit id" % kit_commit)
+    if not re.fullmatch(full_id, recorded):
         return nothing("commit %s records no kit commit in docs/kit/.kit-commit" % commit[:12])
     try:
         if git(kit, "rev-parse", "--show-prefix").strip():
@@ -775,14 +817,13 @@ def kit_verified(repo: Path, commit: str, kit: Path) -> list:
         # Only a released kit was reviewed by the kit's own gate: not a local or branch commit.
         if not git(kit, "tag", "--contains", recorded, "--list", "v*").strip():
             return nothing("kit commit %s is on no release tag v* of the kit clone %s" % (recorded, kit))
-        parents = git(repo, "rev-list", "--parents", "-n", "1", commit).decode().split()[1:]
-        before = (git(repo, "cat-file", "-p", parents[0] + ":docs/kit/.kit-commit", allowed=(0, 128)).decode(
-            errors="replace").strip() if parents else "")
+        parents = [base] if base else git(repo, "rev-list", "--parents", "-n", "1", commit).decode().split()[1:]
         # A downgrade puts older kit files back with nothing in the diff but this hash.
-        if before and before != recorded and (
-                not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", before)
-                or git(kit, "rev-list", "-n", "1", before, "^" + recorded, "--").strip()):
-            return nothing("kit commit %s does not descend from %s, the one the parent records" % (recorded, before))
+        for before, which in ((kit_commit_of(parents[0]) if parents else "", "the diff's start"), (own, "the commit")):
+            if before and before != recorded and (
+                    not re.fullmatch(full_id, before)
+                    or git(kit, "rev-list", "-n", "1", before, "^" + recorded, "--").strip()):
+                return nothing("kit commit %s does not descend from %s, the one %s records" % (recorded, before, which))
         # Each kit file under the project path sync-kit.sh's relpath() copies it to.
         sources = {}
         for entry in git(kit, "ls-tree", "-r", "-z", recorded, "--", "core", "setup", "overlays").split(b"\0"):
@@ -820,6 +861,15 @@ def kit_verified(repo: Path, commit: str, kit: Path) -> list:
     return verified
 
 
+def verify_kit(repo: Path, scope: str, reference: str | None, kit: Path, kit_commit: str | None = None) -> list:
+    """kit_verified() for a --commit or a --base review: its commit, or HEAD from the merge base."""
+    resolved = resolve(repo, scope, reference)
+    if scope != "base":
+        return kit_verified(repo, resolved, kit, kit_commit)
+    head = git(repo, "rev-parse", "--verify", "HEAD").decode().strip()
+    return kit_verified(repo, head, kit, kit_commit, git(repo, "merge-base", resolved, head).decode().strip())
+
+
 def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = False,
              verified: list | None = None, past: bool | None = None) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
@@ -846,13 +896,14 @@ def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = Fals
     resolved = resolve(repo, scope, reference)
     kit_proof = []
     if verified:
-        if scope != "commit":
-            raise BridgeError("--kit-verified needs --commit")
+        if scope == "uncommitted":
+            raise BridgeError("--kit-verified needs --commit or --base")
         # Bound to the commit: a reference moved since the list was made names other blobs.
+        tip = resolved if scope == "commit" else head
         found = git(repo, "cat-file", "--batch-check=%(objectname)", stdin=b"".join(
-            (resolved + ":" + entry["path"] + "\n").encode() for entry in verified)).decode().split("\n")
+            (tip + ":" + entry["path"] + "\n").encode() for entry in verified)).decode().split("\n")
         if found[:len(verified)] != [entry["blob"] for entry in verified]:
-            raise BridgeError("the kit-verified files are not the blobs of commit %s; run the review again" % resolved)
+            raise BridgeError("the kit-verified files are not the blobs of commit %s; run the review again" % tip)
         kit_proof = [":(exclude,literal)" + entry["path"] for entry in verified]
     # Old reports used <timestamp>-<branch>.md. Also inspect the reference tree so
     # removing an old tracked archive cannot send its entire transcript to a reviewer.
@@ -1004,7 +1055,7 @@ def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = Fals
         if scope == "commit" and resolved != head and not past:
             raise BridgeError("--commit must be the checked-out HEAD so readable files match")
         if scope == "base":
-            diff = git(repo, "diff", *raw_diff, resolved + "...HEAD", "--", ".", *exclusions)
+            diff = git(repo, "diff", *raw_diff, resolved + "...HEAD", "--", ".", *exclusions, *kit_proof)
         else:
             # Commit review is the delta against its first parent, including merges.
             diff = (git(repo, 'diff', *raw_diff, parents[0], resolved, '--', '.', *exclusions, *kit_proof)
@@ -1172,8 +1223,8 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     aside = store / ".myagentkit/usage-set-aside"
     # Recorded with the round: the tree it read, and its diff's files, which a later --commit
     # round must cover to continue an --uncommitted one under its label.
-    files = sorted({os.fsdecode(name) for name, _ in diff_parts(diff.encode())} - {""})
-    continues = None
+    files = diff_files(diff.encode())
+    continues, newest = None, ""
 
     def damaged(path, what):
         return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
@@ -1256,6 +1307,9 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             mismatch = "scope %s, not %s" % (task.get("scope"), scope) + (
                 " (its files %s are not in the diff of commit %s)" % (", ".join(left), resolved) if left
                 else " (a record written before v0.13 names no files)" if transition else "")
+        elif transition and not (descends(earlier, resolved) and descends(resolved, head)):
+            # A worker branch rebased or amended before the merge leaves the round's head off the line.
+            mismatch = "head %s, and commit %s does not descend from it on HEAD %s's line" % (earlier, resolved, head)
         elif task.get("resolved") != resolved and not (
                 # Round 2 over the fix commits, in every scope (#119): a --base at the earlier
                 # round's head or above it, or the --commit of a fix on top of it, on HEAD's line.
@@ -1271,7 +1325,9 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("an earlier review with task label %s has %s; that is another "
                               "change, a rebase or an amend, so use a new "
                               "task label" % (task_id, mismatch))
-        if transition:
+        if transition and str(value.get("recorded_at")) >= newest:
+            # The newest round, whatever order the directory lists the records in.
+            newest = str(value.get("recorded_at"))
             continues = {"scope": "uncommitted", "tree": task.get("tree"), "head": earlier, "commit": resolved}
         evidence, copy = Path(value["evidence"]).resolve(), None
         if not (evidence.exists() or evidence.is_relative_to(reviews) or evidence.parent.parent.parent.exists()):
@@ -1890,6 +1946,8 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
     parser.add_argument("--kit-verified", type=Path, metavar="KIT",
                         help="Leave out the commit's files that equal the kit's own in the "
                         "kit clone KIT (#114; docs/REVIEW_RUNNING.md, \"Kit upgrade commits\")")
+    parser.add_argument("--kit-commit", help="The kit commit the upgrade copied, for --kit-verified "
+                        "before docs/kit/.kit-commit records it (#305)")
     args = parser.parse_args(argv)
     allow_secret_files(args.allow_secret_file)
     if args.effort is None:
@@ -1923,10 +1981,12 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
         if repo != top:
             raise BridgeError("--repo must name the repository root")
         scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
-        if args.kit_verified is not None and (scope != "commit" or args.mode != "review"):
-            raise BridgeError("--kit-verified reviews a --commit only")
+        if args.kit_verified is not None and (scope == "uncommitted" or args.mode != "review"):
+            raise BridgeError("--kit-verified reviews a --commit or a --base only")
+        if args.kit_commit is not None and args.kit_verified is None:
+            raise BridgeError("--kit-commit names the kit commit for --kit-verified only")
         if args.kit_verified is not None and verified is None:
-            verified = kit_verified(repo, resolve(repo, scope, ref), args.kit_verified)
+            verified = verify_kit(repo, scope, ref, args.kit_verified, args.kit_commit)
         # resolved is captured with the snapshot: the usage record names what was reviewed even
         # when the reference is deleted or moved before the review ends.
         head, fingerprint, diff, resolved = snapshot(repo, scope, ref, True, verified)
@@ -1956,7 +2016,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
             prompt_prefix = REVIEW_PROMPT % ", ".join(docs)
             carried, measured = prior_rounds(repo, args.task_id, scope, resolved, head, diff, claims)
             prompt_suffix = (
-                (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n"
+                (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n" + REVIEW_OUTPUT + "\n"
                 + carried
                 + review_context(args.task_file)
                 + ("Verified by hash, not reviewed: these changed paths are equal to the kit's file after "

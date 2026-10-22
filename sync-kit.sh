@@ -487,8 +487,11 @@ fi
 list=docs/kit/UPGRADE.md
 # The upgrade commit is too big for one review (#114): the kit-owned files equal to the kit's
 # are verified by hash and only the rest is reviewed. A kit that records no commit verifies none.
+# The line names the kit commit copied: with ACTION items pending, docs/kit/.kit-commit is not
+# written yet and the upgrade is reviewed before them (#305).
 review=""
-own_repo && review="./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'"
+own_repo && review="./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'" &&
+  copied=$(git -C "$kit" rev-parse -q --verify HEAD) && review="$review --kit-commit $copied"
 render() {
   # The review line through the environment: -v reads its '\'' as an escape.
   review="$review" awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" '

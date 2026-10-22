@@ -25,7 +25,7 @@ import sys
 
 # The findings parser the review gate uses, found beside this file under `python -I` too.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from claude_bridge import chain_failure, review_parts  # noqa: E402
+from claude_bridge import BridgeError, chain_failure, records_root, review_parts  # noqa: E402
 
 CLAIM_KEYS = ('fixed', 'disproved', 'deferred')
 # Owner's choice, not measurements: KARARLAR B03 inv2#57/#58/(d), 2026-10-15.
@@ -61,11 +61,12 @@ def evidence_fields(repo, record):
         return effort, None, None
     # The adapters store an absolute path, so a moved or recloned checkout looks for the
     # archive under its own docs/reviews/ before calling it missing (#291); the basename splits
-    # on both separators, so a record written on Windows is found on POSIX too.
+    # on both separators, so a record written on Windows is found on POSIX too. A copy under
+    # .myagentkit/usage/ is the one claude_bridge.prior_rounds() reads too (#293).
     name, path = PureWindowsPath(path).name, Path(path)
     if not path.is_absolute():
         path = repo / path
-    for candidate in (path, repo / 'docs/reviews' / name):
+    for candidate in (path, repo / 'docs/reviews' / name, repo / '.myagentkit/usage' / name):
         try:
             data = candidate.read_bytes()
             break
@@ -161,6 +162,11 @@ def main():
     parser.add_argument('--repo', type=Path, default=Path.cwd())
     parser.add_argument('--task', help='summarize only the records of this task label')
     args = parser.parse_args()
+    # The main checkout's records, also from a linked worktree (#293); outside Git, --repo's own.
+    try:
+        args.repo = records_root(args.repo)
+    except BridgeError:
+        pass
     usage = args.repo / '.myagentkit/usage'
     # One checkpoint read per record: a listing of chains/ per chain id grew quadratically.
     rows, unreadable = [], 0

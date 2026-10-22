@@ -7,7 +7,7 @@
 #
 # Usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
 #                  [--fallback] [--backend NAME] [--allow-secret-file PATH]...
-#                  [--kit-verified [--kit DIR]]
+#                  [--kit-verified [--kit DIR] [--kit-commit SHA]]
 #        review.sh --self-test
 #   default scope     --uncommitted (staged + unstaged + untracked) — the pre-commit case.
 #   default reviewer  the one configured below during setup.
@@ -25,11 +25,12 @@
 #   --allow-secret-file PATH  review a file that looks like a secret (.env, *.pem, *.key,
 #                     .npmrc, .netrc, credentials*) knowingly; without it such a file in scope
 #                     stops the review (claude_bridge.secret_like). Repeat it per path.
-#   --kit-verified    with --commit and the Claude reviewer: a kit upgrade commit's files that are
-#                     equal to the kit's own after git's line-ending normalisation (hash-object
+#   --kit-verified    with --commit or --base and the Claude reviewer: a kit upgrade's files that
+#                     are equal to the kit's own after git's line-ending normalisation (hash-object
 #                     --path, in the kit clone ~/.myagentkit/kit, or --kit DIR) at a released kit
 #                     commit are left out of the diff and listed as verified, not reviewed
-#                     (docs/REVIEW_RUNNING.md, "Kit upgrade commits").
+#                     (docs/REVIEW_RUNNING.md, "Kit upgrade commits"). The kit commit is the one
+#                     docs/kit/.kit-commit records, or --kit-commit SHA, the line sync-kit.sh prints.
 #
 # THE KIT TAKES NO POSITION ON WHICH MODEL WRITES AND WHICH REVIEWS. The rule is that the
 # AUTHOR never reviews its own patch and the REVIEWER is a different model — not that a
@@ -63,7 +64,7 @@
 #     script instead. An ordinary edit during a review fails it as stale_checkout.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
-# above, --reviewer, --fallback, --backend, --allow-secret-file, --kit-verified and --kit are the ONLY accepted arguments, and a backend
+# above, --reviewer, --fallback, --backend, --allow-secret-file, --kit-verified, --kit and --kit-commit are the ONLY accepted arguments, and a backend
 # never relaxes the sandbox flags. There is deliberately no pass-through for further flags —
 # an agent must not be able to talk this script into a run outside the copy or with the
 # sandbox off. "Please be careful" is not a guarantee when the caller is a model.
@@ -136,7 +137,7 @@ CLAUDE_MODEL=""
 # ---------------------------------------------------------------------------------------
 
 usage() {
-  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]... [--kit-verified [--kit DIR]]"
+  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]... [--kit-verified [--kit DIR] [--kit-commit SHA]]"
   echo "       review.sh --self-test"
   exit 2
 }
@@ -166,6 +167,7 @@ reviewer="${REVIEW_REVIEWER:-$DEFAULT_REVIEWER}"
 backend="${MYAGENTKIT_BACKEND:-}"
 kit_verified=0
 kit=""
+kit_commit=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --uncommitted)
@@ -198,6 +200,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || usage
       case "$2" in -*|"") usage ;; esac
       kit="$2"; shift 2 ;;
+    --kit-commit)
+      [ $# -ge 2 ] || usage
+      case "$2" in -*|"") usage ;; esac
+      kit_commit="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -218,10 +224,11 @@ if [ -n "${REVIEW_TASK_FILE:-}" ]; then
     die "the diff leaves the brief's Owns: paths, or they could not be checked (above)"
 fi
 # After owns_check, which parses only the scope flags; the dispatcher refuses the rest of a misuse.
-[ "$kit_verified" -eq 0 ] || [ "$scope_flag" = --commit ] || usage
-[ -z "$kit" ] || [ "$kit_verified" -eq 1 ] || usage
+[ "$kit_verified" -eq 0 ] || [ "$scope_flag" != --uncommitted ] || usage
+[ -z "$kit$kit_commit" ] || [ "$kit_verified" -eq 1 ] || usage
 [ "$kit_verified" -eq 0 ] || set -- "$@" --kit-verified
 [ -z "$kit" ] || set -- "$@" --kit "$kit"
+[ -z "$kit_commit" ] || set -- "$@" --kit-commit "$kit_commit"
 # The dispatcher checks the name and reads the file; without a backend its argv is unchanged.
 if [ -n "$backend" ] && [ "$reviewer" = codex ]; then
   printf '%s\n' 'review: --backend is ignored for --reviewer codex' >&2

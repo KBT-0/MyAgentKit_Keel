@@ -939,6 +939,10 @@ class SyncKitTests(unittest.TestCase):
             result, _ = self.sync(tmp, ACTION, env=env)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn(command, listing.read_text(encoding='utf-8'))
+            # #305: the ACTION items are pending, so no .kit-commit yet: the line names the copied commit.
+            copied = subprocess.run(['git', '-C', str(kit), 'rev-parse', 'HEAD'], check=True, env=env,
+                                    capture_output=True, text=True).stdout.strip()
+            self.assertIn("' --kit-commit %s (see docs/REVIEW_RUNNING.md)" % copied, listing.read_text(encoding='utf-8'))
             self.tick(Path(tmp) / 'project')
             result, stamp = self.sync(tmp, ACTION, '--actions-applied', env=env)
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)

@@ -15,6 +15,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.13
 
+- Kit upgrades are verified before their ACTION items (#305): `review.sh --kit-verified` takes
+  `--kit-commit <sha>`, the kit commit the sync copied (still on a release tag, no downgrade), and
+  `--base <ref>` for an upgrade of several commits. `sync-kit.sh` prints the review line with it,
+  in `docs/kit/UPGRADE.md` too: `docs/kit/.kit-commit` is written only by `--actions-applied`.
+- The Claude reviewer is told that a clean review returns empty findings and manual-check lists
+  (#305); a "No qualifying findings." line followed by prose stays a check, never a hidden finding.
+- A `--commit` round continues an `--uncommitted` round of a moved file or a non-ASCII file name
+  correctly, from the newest such round, and a rebased worker head is named in the refusal;
+  `agent_usage.py` and `usage_summary.py` read the main checkout's records from a linked worktree.
 - `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
   placeholder stay in the project-owned file (1,741 lines to 1,565), the worker-cost rules 1-9
   whole among them; the reasons, the sources, the measurements and the long examples move,

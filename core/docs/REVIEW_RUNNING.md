@@ -91,12 +91,15 @@ Automation never authorizes a commit or push.
   tree the round read. The worker's report lists the round (`docs/WORKFLOW.md`, "Review inside
   the worker"). After the merge, the lead continues the worker's label in the main checkout
   with `--commit <merge or fix commit>`. That round continues an `--uncommitted` round when
-  every file the earlier round reviewed is in the commit's diff and the earlier HEAD is the
-  commit's ancestor; the chain records the step as `continues`. Both rounds count toward the
-  label's two. Otherwise the round is refused, and the message names the files the commit
-  lacks. Nothing is copied between checkouts (#293). A record written before v0.13 inside a
-  worktree that is removed since is read from a copy of its archive with the same name in the
-  main checkout's `docs/reviews/` or `.myagentkit/usage/`; one line names the copy.
+  every file the earlier round reviewed is in the commit's diff (a moved file by its old and its
+  new name) and the earlier HEAD is the commit's ancestor on HEAD's line; the chain records the
+  step, from the newest such round, as `continues`. Both rounds count toward the label's two.
+  Otherwise the round is refused, and the message names the files the commit lacks or the
+  earlier HEAD it does not descend from. Nothing is copied between checkouts (#293). A record
+  written before v0.13 inside a worktree that is removed since is read from a copy of its
+  archive with the same name in the main checkout's `docs/reviews/` or `.myagentkit/usage/`;
+  one line names the copy. `agent_usage.py` and `usage_summary.py` read the main checkout's
+  records too when `--repo` names a linked worktree, and find such a copy.
 - Nobody edits a tree under review; one run per reviewer per tree. Source: KARARLAR D06
   inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
   sessions.
@@ -105,16 +108,20 @@ Automation never authorizes a commit or push.
 
 A sync's upgrade commit is usually too big for one review (#114). After committing it, run the
 line `sync-kit.sh` prints: `./scripts/review.sh --reviewer claude --commit <upgrade commit>
---kit-verified --kit '<kit>'` (`--kit` defaults to `~/.myagentkit/kit`; Claude reviewer only).
-**Verified by hash, not reviewed:** a changed file with the `KIT-OWNED` header, with the kit's
-mode and no mode change, that is equal to the kit's file after git's line-ending normalisation
-(`hash-object --path` in the kit clone) at the kit commit `docs/kit/.kit-commit` records in that
-commit. That kit commit must be on a release tag `v*` of the kit clone and, when the commit
-changes `.kit-commit`, descend from the one the parent records (no downgrade). **Reviewed:**
-everything else, the project-owned files and merges and every kit-owned file the project
-edited. A missing `.kit-commit`, a kit clone without that commit, an untagged kit commit, a
-downgrade, a differing file or mode, or a changed path below a kit file's path verifies nothing
-for it, and it stays in the diff. Line-ending churn is checked over every changed file, the
+--kit-verified --kit '<kit>' --kit-commit <sha>` (`--kit` defaults to `~/.myagentkit/kit`;
+Claude reviewer only). An upgrade of several commits takes `--base <ref>` in place of
+`--commit`. **Verified by hash, not reviewed:** a changed file with the `KIT-OWNED` header, with
+the kit's mode and no mode change, that is equal to the kit's file after git's line-ending
+normalisation (`hash-object --path` in the kit clone) at the kit commit: `--kit-commit`'s full
+id, the one the sync copied, else the one `docs/kit/.kit-commit` records in the reviewed commit.
+`--kit-commit` is what lets an upgrade be reviewed while its ACTION items are pending: the sync
+writes `.kit-commit` only when `--actions-applied` records the version (#305). That kit commit
+must be on a release tag `v*` of the kit clone and descend from the one the diff's start (the
+parent, or the merge base for `--base`) records and the one the reviewed commit records (no
+downgrade). **Reviewed:** everything else, the project-owned files and merges and every
+kit-owned file the project edited. No kit commit, a kit clone without it, an untagged kit
+commit, a downgrade, a differing file or mode, or a changed path below a kit file's path
+verifies nothing for it, and it stays in the diff. Line-ending churn is checked over every changed file, the
 verified ones too. The verified list (path, blob, kit commit) is in the review evidence and the
 chain record. A commit that is not HEAD is reviewed from an archive of it ("past mode"); a
 `--commit HEAD` still needs a clean checkout. Limits: `BEHAVIOUR.md` is read from the working
