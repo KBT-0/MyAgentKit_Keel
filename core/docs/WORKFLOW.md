@@ -497,7 +497,9 @@ main checkout: the one {{OWNER_NAME}} opened for the release and merge work, rec
 (another operation, another project session on the same repository) works on its own branch in
 its own worktree and never commits or merges in the main checkout. Its merge goes to the master
 writer as a MERGE REQUEST message, or waits for the writer's MAIN CHECKOUT IDLE message (both
-shapes: `docs/COMMUNICATION.md`, "Workers"). Why (field data, project_leeway, 2026-10-22: three
+shapes: `docs/COMMUNICATION.md`, "Workers"). IDLE hands the main checkout over: the waiting lead
+makes its own merge there, nothing else, and sends MAIN CHECKOUT IDLE back when done; the writer
+writes nothing in the main checkout until that reply comes, even after the window. Why (field data, project_leeway, 2026-10-22: three
 lead sessions in one main checkout in one night): (1) a lead's staged file rode into another
 lead's merge commit, since staging and the gated commit are minutes apart; (2) a gated merge
 passed its gate and then failed with "cannot lock ref HEAD: is at X but expected Y", because

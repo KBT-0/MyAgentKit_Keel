@@ -122,12 +122,12 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   which still carries the kit check's own previous run, so `check.sh` followed at once by `check.sh --slow` runs
   fewer units than it could and the WARNING blames "other work"; sample the load over a second as on Windows
   (`/proc/stat` on Linux, `host_statistics` on macOS) or subtract the kit's own units.
-## Filed from v0.12.1 masterwriter (project_leeway, 2026-10-22)
-
-- v0.13: the enforcing hook/gate refusal for the master-writer rule: a `.myagentkit/master-writer` marker, a commit or
-  merge in the main checkout by another session refused, and the merge-request form a worktree lead uses.
-- v0.13: the pre-commit hook does not inherit a venv variable the session set (LEEWAY_PIPELINE_PYTHON); the gate reads
-  it from a project env file instead.
-
 - After v0.12.1, once usage tests and fixes are in (owner's wish, 2026-10-22): publish the side-check as a standalone
   skill/plugin outside the kit repo.
+
+## Filed from v0.12.1 masterwriter (project_leeway, 2026-10-22)
+
+- v0.13: the enforcing hook/gate refusal for the master-writer rule: a `.myagentkit/master-writer` marker, and a commit
+  or merge in the main checkout by another session refused.
+- v0.13: the pre-commit hook does not inherit a venv variable the session set (LEEWAY_PIPELINE_PYTHON); the gate reads
+  it from a project env file instead.

@@ -135,7 +135,7 @@ Two lead-to-lead messages carry the master-writer rule (`docs/WORKFLOW.md`, "Par
 worktree policy"):
 
 - MERGE REQUEST: `branch, base commit, review evidence path, the Owns list, "tests green at <sha>"`.
-- MAIN CHECKOUT IDLE: `master at <sha>, free until <time or "told">`.
+- MAIN CHECKOUT IDLE: `<main branch> at <sha>, free until <time or "told">`; the receiver sends it back after its merge.
 
 ## Per-model notes
 
