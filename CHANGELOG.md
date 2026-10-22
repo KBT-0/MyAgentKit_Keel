@@ -56,12 +56,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   instruction says the published file is the signal. Best-effort: the printed disk watch stays
   the done signal. Its supervisor now ends a finished worker 60 s after the result, not 10, so
   the message is not cut off (delivered 21 and 27 s after the publish on a loaded host).
-- **ACTION** (`docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`,
-  or copy by hand the kit's new sentences: in `docs/HANDOFF.md`, after "before closing the
-  worker's process tree.", the paragraph from "A Claude worker first publishes, then messages the
-  lead" to "the lead's disk watch stays the done signal."; in `docs/WORKFLOW.md`, after "A worker
-  with `crossSessionInbound` set to `refuse` sends no notice.", the three lines from "The worker
-  also messages the lead's session itself" to "so the watch stays.".
+- **ACTION** (`docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`, or copy by hand
+  the kit's new sentences: after "A worker with `crossSessionInbound` set to `refuse` sends no
+  notice.", the three lines from "The worker also messages the lead's session itself" to "so the
+  watch stays.". The `docs/HANDOFF.md` paragraph arrives with the kit-owned `docs/HANDOFF_KIT.md`.
 - The kit's generic text in four reference documents is kit-owned (#94, owner decision
   2026-10-22): it moves, verbatim, to the new `docs/DEV_SETUP_KIT.md`, `docs/GOTCHAS_KIT.md`,
   `docs/HANDOFF_KIT.md` and `docs/REVIEW_RUNNING_KIT.md`, which the sync adds and from then on
@@ -80,15 +78,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **ACTION** (`docs/DEV_SETUP.md`, `docs/GOTCHAS.md`, `docs/HANDOFF.md`, `docs/REVIEW_RUNNING.md`,
   project-owned): run `sync-kit.sh . --merge`. A conflict means the project edited text that
   moved: take the kit side, and keep a rule of the project's own in the project file, which wins
-  over the `_KIT.md` file. Without `--merge`, delete these from the project's copies and put the
-  kit's pointer lines in their place (the kit's `core/docs/` files show the result): in
+  over the `_KIT.md` file. Without `--merge`, delete these from the project's copies and end
+  each such section with the kit's pointer line (the kit's `core/docs/` files show the result): in
   `DEV_SETUP.md`, section 3 from "**Optional: the vendor plugin for your host agent.**" to "this
   file is wrong." and the body of section 4; in `GOTCHAS.md`, the paragraph "The entries below
   ship with the kit." and the body of every entry, its heading kept; in `HANDOFF.md`, from "End
-  the prompt with:" to "never completion." (this covers the donemsg item above) and the body of
+  the prompt with:" to "never completion." and the body of
   "Sizing the task before you write the brief"; in `REVIEW_RUNNING.md`, the bodies of "Kit
   upgrade commits" and "Template to paste (tools without a wrapper)". A project's own gotcha
-  stays in `GOTCHAS.md`, after the kit's headings.
+  stays in `GOTCHAS.md`, after the kit's headings. A project with its own copy of the overlay's
+  `README.md` points its vendor-plugin line at `docs/DEV_SETUP_KIT.md`, as the kit's does.
 
 ## v0.12.1 — 2026-10-21
 

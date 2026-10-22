@@ -12,6 +12,9 @@ replaces it. Generic rules live here by the owner's decision of 2026-10-22 (docs
 
 ## The brief
 
+This part follows the brief's seven items, which stay in `docs/HANDOFF.md`, "The brief"; "the
+prompt" below is that brief.
+
 End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. A
 worker on a branch or in a worktree writes `docs/worktree-notes/<branch>.md` instead and
 leaves `docs/STATE.md`, `docs/BACKLOG.md` and the `Done: <id>` trailer to the lead at the

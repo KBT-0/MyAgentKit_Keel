@@ -50,7 +50,7 @@
 #   and PROGRESS (not done); a missing or malformed head is MALFORMED (not done). A file with
 #   questions under "## Open questions for ..." is QUESTIONS with their text, first. Each
 #   committed version of the file is reported once. A file not in HEAD (the kit's default
-#   RESULT-NAME.md, never committed: docs/HANDOFF.md) is read from the working file instead,
+#   RESULT-NAME.md, never committed: docs/HANDOFF_KIT.md) is read from the working file instead,
 #   once per content, when this run published it: a regular file, not a symlink, newer than
 #   .myagentkit/workers/NAME.result-path (spawn_worker.sh writes it at every spawn and resume,
 #   so an older file is an earlier run's), its last non-blank line the supervisor's ready

@@ -101,9 +101,6 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    known sidecar and exits its separate session. A peer ends its turn and accepts SendMessage.
    The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
-Kit rules: docs/HANDOFF_KIT.md, "The brief".
-A project that needs a different rule writes it here, and this file wins over `docs/HANDOFF_KIT.md`.
-
 The result file starts with four lines, exact keys, in this order:
 
 ```
@@ -149,6 +146,9 @@ the file is committed on a clean tree, and reports the open questions with their
 A handoff written at the end of a working day also carries the cost figures that
 `docs/WORKFLOW.md`, "Worker cost", rule 8 names (`/usage` and `scripts/agent_cost.py
 --latest`), next to the number of tasks done, so the next lead routes from a number.
+
+A project that needs a different rule writes it here, and this file wins over `docs/HANDOFF_KIT.md`.
+Kit rules: docs/HANDOFF_KIT.md, "The brief".
 
 ## Sizing the task before you write the brief
 

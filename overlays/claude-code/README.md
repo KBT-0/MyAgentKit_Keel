@@ -635,7 +635,7 @@ repository. There is no `overlays/codex/`, and
 
 The vendor plugin (`openai/codex-plugin-cc`) is OPTIONAL and is not used by
 `scripts/review.sh`; it adds in-session delegation commands, which the kit does not ship for
-this direction. `docs/DEV_SETUP.md` §3 covers
+this direction. `docs/DEV_SETUP_KIT.md` §3 covers
 both, including the two cautions worth reading before installing it.
 
 Install it ALONGSIDE `/myagentkit:cross-review`, not instead of it. Its `/codex:review` is a

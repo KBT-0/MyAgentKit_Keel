@@ -263,8 +263,8 @@ See the [Codex configuration reference](https://learn.chatgpt.com/docs/config-fi
 See [Claude environment precedence](https://code.claude.com/docs/en/env-vars)
 and [sandbox filesystem rules](https://code.claude.com/docs/en/sandboxing).
 
-Kit rules: docs/DEV_SETUP_KIT.md, "3. The reviewing model — the Claude CLI alone is enough".
 A project that needs a different rule writes it here, and this file wins over `docs/DEV_SETUP_KIT.md`.
+Kit rules: docs/DEV_SETUP_KIT.md, "3. The reviewing model — the Claude CLI alone is enough".
 
 ## 4. Check the machine — every session start, every machine
 

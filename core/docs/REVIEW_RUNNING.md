@@ -103,8 +103,8 @@ Automation never authorizes a commit or push.
 
 ## Kit upgrade commits
 
-Kit rules: docs/REVIEW_RUNNING_KIT.md, "Kit upgrade commits".
 A project that needs a different rule writes it here, and this file wins over `docs/REVIEW_RUNNING_KIT.md`.
+Kit rules: docs/REVIEW_RUNNING_KIT.md, "Kit upgrade commits".
 
 ## Unavailable reviewer
 

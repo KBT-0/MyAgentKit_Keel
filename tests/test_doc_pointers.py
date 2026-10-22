@@ -691,8 +691,9 @@ class SectionPointerTests(unittest.TestCase):
                 self.assertTrue(pointers)
                 for pointer in pointers:
                     self.assertIn(pointer[1], headings(path))
-                    # The pointer sits in the project's section of the same name.
+                    # The pointer ends the project's section of the same name (CHANGELOG, UPDATING.md).
                     self.assertEqual(re.findall(r'^#{2,4} (.+)$', project[:pointer.start()], re.M)[-1], pointer[1])
+                    self.assertRegex(project[pointer.end():], r'^\n*(#|\Z)')
                 # A quote of a heading still finds it in the file it names.
                 self.assertEqual([h for h in headings(path) if h not in headings(ROOT / 'core/docs' / (name + '.md'))], [])
         for name in ('REVIEW_GATE', 'COMMUNICATION', 'GLOSSARY', 'STRONG_REVIEW', 'AGENTS'):

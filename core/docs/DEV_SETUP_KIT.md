@@ -12,6 +12,9 @@ replaces it. Generic rules live here by the owner's decision of 2026-10-22 (docs
 
 ## 3. The reviewing model — the Claude CLI alone is enough
 
+This part follows the reviewing CLI and the optional second backend, which stay in
+`docs/DEV_SETUP.md`, section 3.
+
 **Optional: the vendor plugin for your host agent.**
 
 Separate from the above, and NOT needed by `scripts/review.sh`. If your host agent has an
