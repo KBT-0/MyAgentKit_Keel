@@ -13,7 +13,8 @@ before that line is deleted.
 
 ## Contents
 
-A new entry adds its heading to this list.
+A new entry adds its heading to this list. An entry the kit added after this file was
+installed is listed in `docs/GOTCHAS_KIT.md`, "Contents".
 
 - Uncommitted work is NOT in the reflog
 - `.gitignore` — the LAST matching rule wins

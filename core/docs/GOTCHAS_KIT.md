@@ -13,6 +13,32 @@ replaces it. Generic rules live here by the owner's decision of 2026-10-22 (docs
 The entries below ship with the kit. They are not hypothetical: each cost a real day
 somewhere, and none of them depends on a particular language or stack.
 
+## Contents
+
+A new entry adds its heading to this list. A project's `docs/GOTCHAS.md` lists the
+entries it was installed with; one the kit added later is listed here.
+
+- Uncommitted work is NOT in the reflog
+- `.gitignore` — the LAST matching rule wins
+- The executable bit has to be put in the git index by hand
+- A fake-CLI test harness cannot catch what the real CLI rejects
+- A tool's relative output path resolves against ITS working directory, not yours
+- Waiting on your own process: `pgrep -f` and shell wait loops match themselves
+- An agent puts the user's e-mail into a web request
+- A red gate that passes on re-run is a finding, not a pass
+- A checkout under `/mnt/<drive>` in WSL
+- Under WSL, a file named `*.exe` runs on Windows
+- A build server the gate started keeps the gate lock
+- A worker spawned from a lead's shell inherits its child-session markers
+- Background jobs die with the session and in a low-memory reap
+- An incremental build misses its always-run inputs
+- A timing taken on a busy machine is not a result
+- PowerShell from the Microsoft Store leaves suspended processes behind
+- A variable the session set does not reach the git hook
+- A PowerShell probe whose Set-Location fails goes on in the current folder
+
+---
+
 ## Uncommitted work is NOT in the reflog
 
 `git reset --hard`, `git checkout -- <path>`, `git restore`, `git clean -f` and

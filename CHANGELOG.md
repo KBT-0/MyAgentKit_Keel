@@ -166,6 +166,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   project-owned file, and the project file wins. `AGENTS.md`, `docs/AGENTS.md`,
   `docs/COMMUNICATION.md`, `docs/REVIEW_GATE.md`, `docs/GLOSSARY.md` and
   `docs/STRONG_REVIEW.md` stay project-owned whole (`docs/UPDATING.md` says why). No rule changed.
+- `docs/GOTCHAS_KIT.md` has its own Contents: a project's `docs/GOTCHAS.md` is not synced, so its
+  Contents never named an entry the kit added after the install; the kit's list arrives with
+  every sync, and the `GOTCHAS.md` Contents points at it.
 - **ACTION** (`docs/USAGE.md`, now kit-owned): before the sync, move any rule of your own from
   `docs/USAGE.md` to `docs/WORKFLOW.md`, then copy the kit's `core/docs/USAGE.md` over yours;
   without that, the sync stops on it with `conflict:` (a file without the KIT-OWNED header is

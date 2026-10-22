@@ -507,11 +507,15 @@ class SectionPointerTests(unittest.TestCase):
                 self.assertFalse('core.checkStat' in text, 'the list is copied, not pointed at')
 
     def test_the_gotchas_contents_lists_every_entry(self):
-        text = (ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8')
-        contents = text[text.index('## Contents'):text.index('---')]
-        for heading in headings(ROOT / 'core/docs/GOTCHAS.md'):
-            if heading != 'Contents':
-                self.assertIn(heading, contents)
+        # GOTCHAS_KIT.md too: the project's GOTCHAS.md is not synced, so its Contents never
+        # names an entry the kit added after the install.
+        for path in (ROOT / 'core/docs/GOTCHAS.md', ROOT / 'core/docs/GOTCHAS_KIT.md'):
+            text = path.read_text(encoding='utf-8')
+            contents = text[text.index('## Contents'):text.index('---')]
+            for heading in headings(path):
+                if heading != 'Contents':
+                    with self.subTest(path=path.name, heading=heading):
+                        self.assertIn(heading, contents)
 
     def test_review_docs_state_what_the_code_does(self):
         # #229: the skill said authentication fails over and a round makes two attempts.
