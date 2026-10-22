@@ -42,7 +42,7 @@
 # --result FILE names the worker's result, which the instruction names to it (relative: to the
 # worker's folder), else RESULT-NAME.md there. codex_worker.py supervises the session, as it
 # does spawn_codex.sh's: a result published with its header (Kind/Task/Attempt/Remaining) and end marker as Kind:
-# completed or Kind: handoff, or a decision published to QUESTION-NAME.md there, ends the session 10 s later,
+# completed or Kind: handoff, or a decision published to QUESTION-NAME.md there, ends the session 60 s later,
 # once no commit (index.lock) or gate (check.sh's check.lock) runs in its checkout, and its tab
 # or tmux session ends with it (owner 2026-10-16: finished worker tabs stayed open for hours). A progress result or a free-form file ends nothing. The path is recorded in
 # .myagentkit/workers/NAME.result-path, which close_worker.sh --finished reads after a merge.
@@ -76,7 +76,9 @@
 # WAITING), and the lead starts it again after every report but DONE and GONE. It may also
 # subscribe with SendMessage `notify_when_idle` (a peer session; a tmux worker registers), but
 # never relies on it alone: the supervisor's close of a finished worker often sends no idle
-# notice (4 of 5 closes on 2026-10-20). It reads the result FILE the brief asks the worker to
+# notice (4 of 5 closes on 2026-10-20). The worker also messages the lead's own session once it
+# has published (SendMessage; the spawn prints "lead session: NAME"), best-effort as well: the
+# watch stays the guarantee. It reads the result FILE the brief asks the worker to
 # write. It does not poll and it does not chat with the worker: every message to an idle
 # session is a full-context turn. After reading the file
 # the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it ends by
@@ -478,9 +480,13 @@ if [ -n "$windows" ]; then
 fi
 # The run starts once its worktree exists (#168): a committed result that the checkout wrote is
 # older than the start, so the supervisor takes it for an earlier run's and never as this run's DONE.
+# The supervisor ends a finished worker 60 s after its result, not codex_worker.py's 10: the
+# worker messages the lead after publishing (below), and on a loaded host that message was
+# delivered 21 and 27 s after the publish (donemsg spikes, 2026-10-22); a session ended sooner
+# drops it. 60 is a bound with twice that margin, not a measurement; an idle session costs nothing.
 supervisor() {
   start=$($kit_python -I -c 'import time; print(time.time())')
-  supervise="KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
+  supervise="KIT_WORKER_GRACE=$(q "${KIT_WORKER_GRACE:-60}") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
 }
 # Written once the name is known to be free: a running worker's record is never replaced.
 # NAME.host names the host it runs on (bg, tab or tmux) for close_worker.sh and the watcher.
@@ -641,7 +647,29 @@ place_brief() {
       { [ -e "${copy%/*}/.gitignore" ] || printf '%s\n*\n' "$brief_ignore" > "${copy%/*}/.gitignore"; }; }; }; } ||
     die "cannot copy the brief into the worker's folder: $copy"
 }
-instruction="Read $(q "$told") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way and with the same last line, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
+instruction="Read $(q "$told") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 60 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way and with the same last line, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
+# The worker tells the lead itself once it has published (donemsg: 5 of 5 finished workers told
+# the lead nothing, 2026-10-21/22). Best-effort, as every cross-session message is
+# (docs/research/worker-orchestration.md [13]): the watch the spawn prints stays the done signal.
+# The lead's shell names its session by CLAUDE_PID and CLAUDE_CODE_SESSION_ID, read here before
+# the launch clears them; Claude Code's peer record sessions/PID.json gives the name SendMessage
+# takes, `-n NAME` or one derived from the folder (myagentkit-keel-d9). A record of another
+# session (a reused pid) or a name with other characters names no lead.
+peer_lead=""
+if [ -n "${CLAUDE_PID:-}" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  peer_lead=$($kit_python -I -c 'import json, re, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+n = d.get("name")
+if d.get("sessionId") == sys.argv[2] and type(n) is str and re.fullmatch(r"[A-Za-z0-9._-]+", n):
+    print(n)' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions/$CLAUDE_PID.json" "$CLAUDE_CODE_SESSION_ID" 2>/dev/null) || peer_lead=""
+fi
+if [ -n "$peer_lead" ]; then
+  instruction="$instruction Once a publish of a result or a question has succeeded (never in the same response as the publish), tell the lead session $(q "$peer_lead") with SendMessage (load it with ToolSearch before that publish, as the session may end 60 seconds after it): one message naming the published file's path, its Kind and one line on it; none after a Kind: progress result, and if SendMessage is unavailable or fails, go on without it: the published file is the signal."
+  printf '%s\n' "spawn_worker: lead session: $peer_lead (the worker messages it once it has published; best-effort: the watch below is the done signal)"
+else
+  instruction="$instruction No lead session was found to message, so send no message: the published file is the signal."
+  printf '%s\n' "spawn_worker: lead session: none found (CLAUDE_PID and CLAUDE_CODE_SESSION_ID name no Claude Code session record): the watch below is the only done signal"
+fi
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
 # opens as a Windows Terminal tab (KIT_WT names another launcher, as for show_workers.sh) with
@@ -815,7 +843,7 @@ if [ -n "$bg" ]; then
   [ -z "${full:-}" ] || printf '%s\n' "$full" > "$wdir/$name.session" || die "cannot record the session id $full in $wdir"
   # Started in the worker's folder, which names its checkout's locks; the supervisor itself then
   # runs from the temporary folder, so it never holds the worktree a close removes.
-  (CDPATH= cd -- "$dir" && eval "KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") --detach $(q "$(native "$wdir/$name.supervisor.log")") $(q "$cquestion") $(q "$cresult") --bg $(q "$id")") ||
+  (CDPATH= cd -- "$dir" && eval "KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") KIT_WORKER_GRACE=$(q "${KIT_WORKER_GRACE:-60}") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") --detach $(q "$(native "$wdir/$name.supervisor.log")") $(q "$cquestion") $(q "$cresult") --bg $(q "$id")") ||
     die "the session $id runs without its supervisor, so nothing ends it on its result: close it with scripts/close_worker.sh $name once it is finished"
   printf '%s\n' "spawn_worker: '$name' started with $brief as background session $id"
   watch_line

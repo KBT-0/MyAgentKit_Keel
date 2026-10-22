@@ -45,7 +45,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   merge a `--commit` round continues the worker's `--uncommitted` round under the same label
   when every file that round reviewed is in the commit's diff; otherwise the refusal names the
   files the commit lacks. A pre-v0.13 record whose archive went with its removed worktree is
-  read from a copy with the same name in the main checkout. No ACTION: the sync brings it.
+  read from a copy with the same name in the main checkout.
+- **ACTION** (`scripts/review_dispatch.py`, `scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
+  `scripts/test_claude_bridge.py`, `docs/REVIEW_RUNNING.md`, project-owned): run
+  `sync-kit.sh . --merge`; a project that never edited them takes the kit's copies whole.
+- A finished worker tells the lead itself: `spawn_worker.sh` reads the lead's session name
+  (CLAUDE_PID's `sessions/PID.json`, checked against CLAUDE_CODE_SESSION_ID), prints
+  `lead session: NAME`, and its instruction has the worker send that session one SendMessage
+  after it publishes a result or a question (path, Kind, one line). No lead found: the
+  instruction says the published file is the signal. Best-effort: the printed disk watch stays
+  the done signal. Its supervisor now ends a finished worker 60 s after the result, not 10, so
+  the message is not cut off (delivered 21 and 27 s after the publish on a loaded host).
+- **ACTION** (`docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`,
+  or copy by hand the kit's new sentences: in `docs/HANDOFF.md`, after "before closing the
+  worker's process tree.", the paragraph from "A Claude worker first publishes, then messages the
+  lead" to "the lead's disk watch stays the done signal."; in `docs/WORKFLOW.md`, after "A worker
+  with `crossSessionInbound` set to `refuse` sends no notice.", the three lines from "The worker
+  also messages the lead's session itself" to "so the watch stays.".
 
 ## v0.12.1 — 2026-10-21
 

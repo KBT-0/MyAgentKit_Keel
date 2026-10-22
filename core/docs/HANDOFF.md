@@ -132,7 +132,12 @@ into place with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, as spawn
 names it: Windows refuses a rename over a file a poll holds open, and it retries for a moment.
 Publish the blocked result with this same protocol before publishing the question.
 End the turn immediately; the wrapper allows ten seconds to flush (overridden by
-`KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead
+`KIT_WORKER_GRACE`) before closing the worker's process tree. A Claude worker first
+publishes, then messages the lead: `spawn_worker.sh` names the lead's session in its
+instruction (one SendMessage with the published file's path, its Kind and one line; none
+after a progress result) and gives it sixty seconds, since a loaded host delivered that message
+21 and 27 seconds after the publish. The message is best-effort; the lead's disk watch stays the
+done signal. A question reaches the lead
 through its sidecar without a commit, and the recorded session is resumed with the answer.
 For Claude the lead uses SendMessage or records the separate session's id for
 `scripts/spawn_worker.sh NAME ANSWER_FILE ... --resume SESSION_ID`; the lead never opens a

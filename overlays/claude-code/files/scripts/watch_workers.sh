@@ -106,7 +106,7 @@
 # IDLE, a turn end the lead re-arms after, as the tab path's; stopped, failed, done with no
 # process and absent (no row, as after `claude rm`) are GONE; working says nothing. A published
 # question, completed or handoff result of this run ended the session by design (the supervisor
-# stops it on those alone, 10 s later): no IDLE or GONE then. Nor within a minute of the spawn or resume
+# stops it on those alone, 60 s later; a Codex worker 10 s): no IDLE or GONE then. Nor within a minute of the spawn or resume
 # (NAME.id or NAME.result-path that new): the spike saw no row at first, and a resumed row reads
 # done until it wakes. Each state (with what it waits for) is said once, in the file
 # NAME.watch-bg, cleared when the session works again. A worker spawned on the other host (native
@@ -696,7 +696,7 @@ while :; do
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
-      # A finished worker's session ends ten seconds after its result, mostly before the next
+      # A finished worker's session ends a minute after its result (Codex: ten seconds), often before the next
       # poll: a GONE session's result is read too (#294).
       if [ "$st" = GONE ]; then
         w=x

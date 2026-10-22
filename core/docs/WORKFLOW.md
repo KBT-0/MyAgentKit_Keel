@@ -1121,6 +1121,9 @@ also subscribe with SendMessage `notify_when_idle` when the spawn prints "is a p
 (a tmux worker always registers), but never relies on it alone: a supervised close often
 sends no notice. The subscription costs no tokens. It lapses after 12 hours without a
 notice (the lead is told). A worker with `crossSessionInbound` set to `refuse` sends no notice.
+The worker also messages the lead's session itself right after it publishes (the spawn prints
+`lead session: NAME`; 4 of 4 arrived in the 2026-10-22 spike), but a cross-session message is
+best-effort too, so the watch stays.
 The docs define idle as "finished a turn with nothing queued"
 (code.claude.com/docs/en/cross-session-messaging). In the lead's 2026-10-17 observation, one
 subscription on a `spawn_worker` worker that published its result and was then closed
