@@ -13,6 +13,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.13 (unreleased)
+
+- A finished worker tells the lead itself: `spawn_worker.sh` reads the lead's session name
+  (CLAUDE_PID's `sessions/PID.json`, checked against CLAUDE_CODE_SESSION_ID), prints
+  `lead session: NAME`, and its instruction has the worker send that session one SendMessage
+  after it publishes a result or a question (path, Kind, one line). No lead found: the
+  instruction says the published file is the signal. Best-effort: the printed disk watch stays
+  the done signal. Its supervisor now ends a finished worker 60 s after the result, not 10, so
+  the message is not cut off (delivered 21 and 27 s after the publish on a loaded host).
+  No ACTION: the sync brings it.
+
 ## v0.12.1 — 2026-10-21
 
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,

@@ -36,11 +36,19 @@ INSTRUCTION = ("Read {brief} and follow it. Your result file is {result}: its fi
                "Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as "
                "a temporary file beside it renamed over it with {python} {worker} --publish TEMPORARY_FILE "
                "DESTINATION: without them the supervisor never sees it. A published completed or handoff result "
-               "ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this "
+               "ends this session 60 seconds later, once no commit or gate runs. Do not ask questions in this "
                "pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the "
                "same way and with the same last line, to {question}, which ends this session for the lead's "
                "answer; until then go on with "
                "what does not depend on it.")
+# donemsg: the worker messages the lead session the spawn found, else is told the file is the signal.
+NO_LEAD = " No lead session was found to message, so send no message: the published file is the signal."
+LEAD_MESSAGE = (" Once a publish of a result or a question has succeeded (never in the same response as the "
+                "publish), tell the lead session {lead} with SendMessage "
+                "(load it with ToolSearch before that publish, as the session may end 60 seconds after it): one "
+                "message naming the published file's path, its Kind and one line on it; none after a Kind: "
+                "progress result, and if SendMessage is unavailable or fails, go on without it: the published "
+                "file is the signal.")
 
 TMUX = r'''#!/usr/bin/env python3
 import os, subprocess, sys
@@ -430,7 +438,7 @@ class SpawnWorkerTests(unittest.TestCase):
         spelled = lambda path: shq(self.spelled(path, tab))
         return INSTRUCTION.format(brief=spelled(brief), result=spelled(self.cwd / ('RESULT-%s.md' % name)),
                                   python='python3', worker=spelled(SCRIPT.with_name('codex_worker.py')),
-                                  question=spelled(self.cwd / ('QUESTION-%s.md' % name)))
+                                  question=spelled(self.cwd / ('QUESTION-%s.md' % name))) + NO_LEAD
 
     def launched(self):
         path = self.state / 'claude.json'
@@ -1161,7 +1169,7 @@ exit 0
         # quick end of any status.
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
         # Its exit record is the workers folder's w5.exit, which the watcher reads (#185).
-        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_EXIT='.*/\.myagentkit/workers/w5\.exit' KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
+        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_EXIT='.*/\.myagentkit/workers/w5\.exit' KIT_WORKER_GRACE='60' KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
         self.assertIn("-c 'exec env -u CLAUDE_CODE_CHILD_SESSION ", tab)
         self.assertIn('press Enter to close', tab)
 
@@ -2383,6 +2391,36 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertTrue(stops)
         self.assertFalse([cwd for cwd in stops if cwd == worktree.resolve() or worktree.resolve() in cwd.parents])
         self.assertNotIn('an earlier run', (self.workers / 'w1.supervisor.log').read_text())
+
+    def test_the_worker_is_told_to_message_the_lead_session_its_spawner_runs_in(self):
+        # donemsg: 5 of 5 finished --bg workers told the lead nothing (2026-10-21/22). The lead's
+        # shell names its session by CLAUDE_PID and CLAUDE_CODE_SESSION_ID; Claude Code's peer
+        # record sessions/PID.json gives the name SendMessage takes, derived when the lead has no -n.
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        record = {'pid': 4242, 'sessionId': 'lead-sid', 'name': 'keel-lead-d9', 'nameSource': 'derived'}
+        (config / 'sessions/4242.json').write_text(json.dumps(record), encoding='utf-8')
+        lead = dict(CLAUDE_CONFIG_DIR=str(config), CLAUDE_PID='4242')
+        for case, extra, told in (('found', dict(CLAUDE_CODE_SESSION_ID='lead-sid'), "'keel-lead-d9'"),
+                                  # a reused pid: the record is another session's
+                                  ('another session', dict(CLAUDE_CODE_SESSION_ID='other'), None),
+                                  ('no lead shell', dict(CLAUDE_CODE_SESSION_ID='', CLAUDE_PID=''), None)):
+            with self.subTest(case):
+                result = self.spawn(**dict(lead, SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'),
+                                           **extra))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                prompt = self.launch()['argv'][0]
+                if told:
+                    self.assertTrue(prompt.endswith(LEAD_MESSAGE.format(lead=told)), prompt)
+                    self.assertIn('spawn_worker: lead session: keel-lead-d9 (the worker messages it once it '
+                                  'has published; best-effort: the watch below is the done signal)', result.stdout)
+                else:
+                    self.assertTrue(prompt.endswith(NO_LEAD), prompt)
+                    self.assertIn('spawn_worker: lead session: none found (CLAUDE_PID and CLAUDE_CODE_SESSION_ID '
+                                  'name no Claude Code session record): the watch below is the only done signal',
+                                  result.stdout)
+                self.ended()
+                (self.workers / 'w1.exit').unlink()
 
     def briefed(self):
         """The path the worker is told to read: its first prompt is "Read 'PATH' and follow it." """
