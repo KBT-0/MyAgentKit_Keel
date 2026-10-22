@@ -13,6 +13,33 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.13
+
+- `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
+  placeholder stay in the project-owned file (1,741 lines to 1,565), the worker-cost rules 1-9
+  whole among them; the reasons, the sources, the measurements and the long examples move,
+  verbatim, to the new kit-owned `docs/WORKFLOW_RATIONALE.md`, which the sync adds and from then
+  on replaces without a merge. It uses `docs/WORKFLOW.md`'s headings; a section whose reasons
+  moved ends with `Why: docs/WORKFLOW_RATIONALE.md, "<heading>".` No rule changed.
+- **ACTION** (`docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`. The kit's change
+  to `WORKFLOW.md` is deletions, nine `Why:` lines and three re-pointed lines, so text the
+  project never edited leaves cleanly (a filled-in copy of v0.12.1 merged with no conflict). A
+  conflict means the project edited text that moved: take the kit side, and put a project rule
+  it held back into its section of `docs/WORKFLOW.md`. Without `--merge`, delete these from the
+  project's copy and add the `Why:` lines (the kit's `core/docs/WORKFLOW.md` shows the result):
+  in "Task ids", the opening paragraph; in "The state, backlog and phase files", the paragraph
+  "The order is `docs/AGENTS.md`'s ...", the bullets from "`docs/STATE.md` is read at the start
+  of every session" to "Completed work is deleted, not marked DONE", the bullet "No size limit
+  applies to STATE.md" and the paragraph "The non-goals are the useful half", and point its
+  opening lines at the rationale; in "Decay early-warning system", the "Sources:" paragraph; in
+  "Working modes, by name", the paragraph "Without names, ..."; in "The measurements and the
+  full rules", the paragraph "Measured in the kit's founding project" and its five bullets; in
+  "Review rounds", the paragraph "In one project a feature took five fix rounds", the paragraph
+  "In the kit's own two observed cases" and the "Sources:" bullet of "Review inside the
+  worker"; in "MCP hygiene", the opening paragraph; the whole section "Where the constitution's
+  rules come from"; and in "Documentation maintenance contract", point the sources line at
+  `docs/WORKFLOW_RATIONALE.md`.
+
 ## v0.12.1 — 2026-10-21
 
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,

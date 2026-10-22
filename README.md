@@ -108,6 +108,7 @@ That adds the `$myagentkit-init`, `$myagentkit-sync`, `$myagentkit-review`,
 | `docs/STATE.md` | Cross-session work state. A commit's `Done: <id>` trailer closes a task; the gate refuses a commit that leaves a closed task open. |
 | `docs/ARCHITECTURE.md`, `docs/GOTCHAS.md` | The module map with its boundaries; the traps the project already paid for. |
 | `docs/WORKFLOW.md` | How a task runs: the cheapest proof, when a worker is worth its cost, review rounds, the lead's steps, the worker lifecycle. |
+| `docs/WORKFLOW_RATIONALE.md` | Kit-owned: the sources, measurements and long examples behind `docs/WORKFLOW.md`'s rules, by the same headings. |
 | `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` | What a review must attack first and how a verdict is reached; how a review is run. |
 | `docs/HANDOFF.md` | One self-contained brief for another tool, model or session, and the result file it writes back. |
 | `scripts/check.sh` | The gate. CI runs the same script. Each check has a fixture test that proves it goes red. A documentation-only commit skips the build. |

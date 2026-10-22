@@ -87,11 +87,6 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
 
 ## Task ids
 
-Finished work that nobody deleted is how `docs/STATE.md` rots: a project's state file held
-lines like "Committed: K4" and "merged after three review rounds" long after the work was in
-git, and a size limit could not tell those lines from live ones. A task id makes the
-deletion checkable.
-
 - A task id is a short token that starts with a letter and holds at least one digit:
   letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
   `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to. Ids are
@@ -120,6 +115,8 @@ deletion checkable.
   git history as `Done: K4`; reusing it would make the old commit look like it closed the new
   work (issue trackers keep retired keys reserved for the same reason: GitLab issue 4068,
   Jira JRACLOUD-78272).
+
+Why: docs/WORKFLOW_RATIONALE.md, "Task ids".
 
 ## Task sizing
 
@@ -155,50 +152,11 @@ beside a new one (findings 2 and 9).
 
 ## The state, backlog and phase files
 
-The rules for `docs/STATE.md` are in `docs/AGENTS.md`, "STATE.md discipline". This section keeps
-their reasons, so that the always-loaded files carry only the rules.
+The rules for `docs/STATE.md` are in `docs/AGENTS.md`, "STATE.md discipline"; their reasons are
+in `docs/WORKFLOW_RATIONALE.md`, so that the always-loaded files carry only the rules.
 
-The order is `docs/AGENTS.md`'s; these are its reasons. The hash and the bytes come from one
-read: a hash read apart from the bytes it names let a copy read at the session's start pass
-over an edit published in between. The helper compares under the same lock as a mode switch and
-replaces the file atomically, keeping a successor at the supplied path, because publication and
-rollback could otherwise erase another writer's work. A snapshot lives only in `.myagentkit/`
-(ignored by Git) or the temporary folder, because `/myagentkit:mode` runs the helper unprompted
-and a snapshot elsewhere can land where `git add -A` commits it; OUT is a name prefix and FILE a
-regular file, because OUT naming `.myagentkit` put the snapshot in the project root and FILE
-naming a folder moved it whole. The "Working mode:" line is the mode switch's, which writes it
-together with `.myagentkit/mode`. Sources: HTTP If-Match (the lost update,
-developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match), anthropics/claude-code#24130
-(an auto-memory file is not safe for concurrent agents), Python `tempfile.mkstemp` (an exclusively
-created snapshot; CWE-377).
-The branch and worktree policy below still decides which session may edit STATE.md.
+The branch and worktree policy below decides which session may edit STATE.md.
 
-- `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
-  bill paid every session. What is planned next, and what was parked on purpose, is a
-  backlog, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
-  A backlog only grows, and in STATE.md it is read every session for nothing. STATE.md holds
-  current state only, and traps live in `docs/GOTCHAS.md`: every line read at session start
-  costs on every session (code.claude.com/docs/en/memory), and a working list is rewritten,
-  not appended to (Manus, "Context Engineering for AI Agents"). An empty Active work section
-  means nothing is in flight, a contract the gate does not check.
-- **Why the tool+model trace.** Record which tool and model did the work, so a later session
-  can tell who wrote a change (the author never reviews it) and where the cost went. The
-  trace is kept in STATE.md, not in git, because git carries no AI attribution; the Linux
-  kernel's `Assisted-by:` trailer (docs.kernel.org/process/coding-assistants.html) is the
-  opposite placement, which the owner's no-attribution rule rules out.
-- Updating STATE.md at the end of a session is the agent's job: a long-running agent leaves
-  its progress file for the next session, which starts with no memory (Anthropic,
-  "Effective harnesses for long-running agents").
-- A `[LESSON]` or `[GOTCHA]` tag makes harvesting a grep, not a re-read. Deleting a tagged
-  line before it has a home is caught only as a NOTE (`scripts/check.sh`); the rest is
-  discipline.
-- Pruning without harvesting buries the lesson in the git history, and nobody looks there —
-  git is an audit trail, not a knowledge base. A context that is rewritten whole loses detail
-  ("context collapse", Zhang et al., arXiv:2510.04618), so a lesson is moved, not summarised away.
-- Completed work is deleted, not marked DONE: the dates live in git
-  (`git log -p -- docs/STATE.md`). The state templates name no example task id, because
-  those files are the ones checked ("Task ids"). No outside kit enforces the deletion; the
-  check is the kit's own lesson (its RESEARCH_LOG, 2026-10-03).
 - **A living file never keeps a closed item.** Every file that collects items deletes an item
   in the step that closes it. The `Done:` check enforces it mechanically for STATE.md,
   BACKLOG.md and the strong review files; for an operation file (its last acceptance item)
@@ -218,11 +176,6 @@ The branch and worktree policy below still decides which session may edit STATE.
   in git). Without this rule every integration folds more into STATE.md, and it only grows:
   one project's state file reached 38 KB. Spec tools keep a task list in its own file the same
   way (Kiro's `tasks.md`, kiro.dev/docs/specs); they archive it when done, the kit deletes it.
-- No size limit applies to STATE.md. A limit cannot tell a live line from a finished one,
-  and a project that added one hit it again and again while half the file was backlog and
-  much of the rest narrated work already in git. What keeps an always-read file useful is
-  what it holds, not a line count: a long or conflicting file is followed less
-  (code.claude.com/docs/en/memory; IFScale, arxiv.org/abs/2507.11538).
 - Compressed chat styles do not apply to STATE.md: the next tool reading it knows nothing
   about your plugins.
 
@@ -231,12 +184,6 @@ everything after it in one line each. Detail arrives when a phase becomes curren
 for a phase three steps away is mostly aspiration, and aspiration in an always-loaded file
 is a bill with nothing behind it. Project managers call this rolling-wave planning; GitHub
 Spec Kit's `spec-driven.md` likewise steers away from speculative features.
-
-**The non-goals are the useful half.** "Build the inventory system" gives an agent no edge
-to stop at, so it invents scope: it adds persistence, a UI, an event system, and returns one
-monolithic file touching five modules. "Build the grid placement rules; do NOT add
-persistence, do NOT write UI" is the same task with a fence around it. Scope invention is
-the most expensive habit an agent has, and `docs/PHASES.md` is the cheapest cure.
 
 The reasoning behind phase-shaped work — ordering by risk rather than by dependency, why
 each phase should be independently useful — is in `patterns/staged-prototype.md` if the
@@ -266,6 +213,8 @@ A multi-item operation with checkboxes is NOT a phase. It gets a throwaway file 
 `docs/CHANGE_ORDER.md`, or whatever the operation is called — which is deleted when the
 operation closes; the rule is in `docs/AGENTS.md`, "STATE.md discipline". Phases are standing; operations are
 disposable, and neither one is ever tracked inside the other.
+
+Why: docs/WORKFLOW_RATIONALE.md, "The state, backlog and phase files".
 
 ## Writing a gate
 
@@ -363,12 +312,7 @@ audit's list ("Periodic architecture audit"):
   everything (`AGENTS.md`, "Language & style"). The kit sets no line count; a project that
   wants a number writes one NOTE into `scripts/check.sh`.
 
-Sources: a weakened or deleted test is how agents game a task (Kent Beck, "Augmented Coding:
-Beyond the Vibes"; METR, "Recent Frontier Models Are Reward Hacking", 2025), so it stops the
-work; the rest is drift that an audit removes in batches (Thoughtworks Technology Radar,
-"Architecture drift reduction with LLMs"; GitClear's 2025 code-quality report). File size
-predicts defects without a clean threshold
-(Yamashita et al., QRS 2016), so the rule names the symptom, not a number.
+Why: docs/WORKFLOW_RATIONALE.md, "Decay early-warning system".
 
 ## Periodic architecture audit (critical ritual)
 
@@ -726,14 +670,6 @@ name the mode in force.
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
 them. A project without either record works in **solo**, the main mode.
 
-Without names, the owner explained the same situation in a long prompt at the start of every
-session ("Claude is low today, let Codex write and fix"), and a lead that was not told routed
-by habit. A name is one word, and a lesson one project learns improves the mode for every
-project through the kit. A few named modes the user switches are common practice (Aider's
-chat modes, aider.chat/docs/usage/modes.html; Roo Code's modes,
-roocodeinc.github.io/Roo-Code/basic-usage/using-modes); what each mode here decides is the
-kit's own.
-
 A mode decides who writes, who reviews and who fixes the findings. It never removes a
 review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"): the longer agents
 work unattended, the more an independent check matters (code.claude.com/docs/en/best-practices).
@@ -758,6 +694,8 @@ side it runs on.
 | `solo` | one model family's workers, by tier | a fresh session of a stronger tier of the same family; the top tier's own work, that tier in a fresh session | the author's side ("Worker cost", rule 2) |
 | `cross` | both families, each task by fit | the other family by the direction rule, in a fresh session | the author's side ("Worker cost", rule 2) |
 | `saver` | the side that is not low | the low side, within a small budget, at low and medium tier; a high or critical change as in cross | the side that is not low |
+
+Why: docs/WORKFLOW_RATIONALE.md, "Working modes, by name".
 
 #### solo, the main mode
 
@@ -913,7 +851,8 @@ cut any line whose removal would not cause a mistake), so a lesson that became a
 ### The rules in brief
 
 The lead reads this block before it briefs, spawns, merges or closes a worker and after a
-compaction; the full rule below, with its measurements and sources, when one is in doubt.
+compaction; the full rule below, with its sources, when one is in doubt (the measurements:
+`docs/WORKFLOW_RATIONALE.md`).
 
 1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.
 2. A gate finding goes back to the author's side while its context is under the band and the
@@ -938,28 +877,6 @@ finding the dispositions claim fixed, a Medium included, and reports new Critica
 only; one final review per release (`docs/REVIEW_GATE.md`, "Rounds").
 
 ### The measurements and the full rules
-
-Measured in the kit's founding project (one lead session with background workers: 336 USD in
-eleven hours, 87 percent of it the workers; the transcripts were then counted request by
-request, and a controlled experiment ran the same task in six setups). What the numbers say:
-
-- **Within a subscription's included usage, the default cache lifetime is five minutes for
-  a sub-agent and one hour for the main conversation.** A worker that waits longer than its
-  cache re-writes its whole context on the next request, at
-  more than ten times the price of reading it. 87 percent of all cache-write tokens followed
-  such a gap: poll loops, a ten-minute job, a wait on a lock, a resume after a handback.
-- **Every request re-reads the whole context**, and context grows by about 2k tokens per
-  request whatever the tool output size. One worker resumed for three review rounds (377
-  requests, context 36k to 711k) was 38 percent of all cache read and 48 percent of all
-  cache write.
-- **Polling is paid twice**: each poll turn re-reads the context, and the wait then expires
-  the cache. Fifteen percent of all cache read went to turns that only waited.
-- **A background job alone saves nothing** (+12 percent in the experiment): the wait still
-  outlives the five-minute cache. A one-hour cache with background jobs and no polling saved
-  36 to 38 percent; splitting every wait under five minutes saved more on a small context but
-  pays a full context read per poll, so it loses at real worker sizes.
-- **Tool output was not the problem**: all tool results of all agents together were about one
-  million tokens. Trimming output is hygiene, a small lever.
 
 Rules, binding for whoever routes workers:
 
@@ -1432,6 +1349,8 @@ A worker whose worktree directory is missing STOPS and reports. It never recreat
 directory and never runs a git command from where it used to be: that folder lies inside the
 main checkout, so git there acts on the owner's main worktree.
 
+Why: docs/WORKFLOW_RATIONALE.md, "The measurements and the full rules".
+
 ## Review rounds — early, inside the worker, in parallel
 
 **Prevention over detection.** Quality goes in before the code is written: every task
@@ -1446,14 +1365,7 @@ reviewing itself fails at its purpose, which is the product.
 "In parallel" means the review inside the worker and the acceptance gate run beside a review; the gate's
 reviewers run one after the other unless {{OWNER_NAME}} allows parallel ("Worker cost", rule 6).
 
-In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
-worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute gate run, reviews of
-5 to 15 minutes and a merge with another gate run. Most findings of rounds 2 to 5 sat in code
-the previous fix had added, in classes the reviewers had already shown once. A fix is new,
-unreviewed code: 15 to 24 percent of fixes in large systems were themselves wrong (Yin et al.
-2011). The rules below
-move the review into the worker's warm context and run together what can run together. They
-remove no review.
+Why: docs/WORKFLOW_RATIONALE.md, "Review rounds — early, inside the worker, in parallel".
 
 ### Design before code
 
@@ -1471,8 +1383,7 @@ remove no review.
 - The kit repository's `docs/worker-lifecycle-options.md` shows the shape: the facts, the
   options with their costs, and what a second model should attack.
 
-In the kit's own two observed cases a one-page design round took about fifteen minutes where
-the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
+Why: docs/WORKFLOW_RATIONALE.md, "Design before code".
 
 ### Review inside the worker
 
@@ -1498,15 +1409,13 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
 - Where `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` is 1, the worker cannot start a sub-agent and
   says so in its report. The lead then starts the review the moment the worker's branch
   exists. The launch sequence follows "Worker cost", rule 6.
-- Sources: a fresh reviewer step finds what the author missed (code.claude.com/docs/en/best-practices,
-  "Add an adversarial review step"); a model correcting its own reasoning without outside
-  feedback does not improve (Huang et al., ICLR 2024, arxiv.org/abs/2310.01798), which is why
-  the reviewer is new each round.
 
 A fix in the worker's warm context, in an inner round, costs minutes while the cache is warm.
 The same finding left
 for the gate's review goes to a fresh worker, which pays the whole re-read. The brief states which of the two cases it expects (`docs/HANDOFF.md`,
 "The brief").
+
+Why: docs/WORKFLOW_RATIONALE.md, "Review inside the worker".
 
 ### Before you report
 
@@ -1611,14 +1520,6 @@ its logs, and cannot be recalled.
 
 ## MCP hygiene
 
-An enabled MCP server costs little by default in Claude Code: it defers the tool definitions
-and loads only the tool names and the server's instructions until a tool is needed. The full
-catalogue is paid on every request only where tool search is off (a non-Anthropic
-`ANTHROPIC_BASE_URL`, `ENABLE_TOOL_SEARCH=false`, an older model) and on hosts that inline
-schemas, such as API gateways (code.claude.com/docs/en/mcp, "Scale with MCP tool
-search"; the kit's `docs/research/token-optimization.md`, 1.7). Most custom servers duplicate
-what a plain CLI already does more reliably.
-
 - Enable a server only for the work that needs it, and turn it off afterwards anyway: a
   server is a trust boundary, and changing servers mid-session breaks the prompt cache.
   Overlay setup files point here instead of repeating this rule.
@@ -1628,6 +1529,8 @@ what a plain CLI already does more reliably.
   feeds the model text), not only cost (code.claude.com/docs/en/security, "MCP security").
   Workers do not run with `--strict-mcp-config`, because Unity work needs the project's
   server; the reviewer already runs with MCP off. That choice is the owner's.
+
+Why: docs/WORKFLOW_RATIONALE.md, "MCP hygiene".
 
 ## Evaluated and rejected — do not re-litigate
 
@@ -1656,86 +1559,7 @@ one names what would have to change before it is worth reopening.
   a lesson this project paid for (a `[LESSON]` line, a `docs/GOTCHAS.md` entry). A rule
   without one is the first a later session deletes (code.claude.com/docs/en/best-practices:
   cut a line whose removal would cause no mistake). The source line lives in the rationale
-  page, not in `AGENTS.md`: "Where the constitution's rules come from" below holds them.
+  page, not in `AGENTS.md`: `docs/WORKFLOW_RATIONALE.md`, "Where the constitution's rules come from", holds them.
   When nothing covers the point, research it first; when the research settles nothing,
   {{OWNER_NAME}} decides. The kit works this way itself (its `CONTRIBUTING.md` and
   `docs/research/`).
-
-## Where the constitution's rules come from
-
-`AGENTS.md` is read every session, so its rules carry no source lines; their sources live
-here, by rule. A rule with no source below is the owner's choice or a lesson named beside it.
-A citation of `KARARLAR` (Turkish for "decisions"; an item such as `B03 inv2#31` or `D06`)
-names an entry of the kit maintainer's decision log, which the kit does not ship: it records
-that the rule is an owner decision, and the reason stands beside the citation.
-
-- **Reading order.** The constitution is loaded at session start, so opening it again adds a
-  second copy (code.claude.com/docs/en/memory). `docs/ARCHITECTURE.md` is read only when the
-  task crosses a module boundary: every always-read line is paid every session, and context
-  files that grow lower task success (Gloaguen et al., arxiv.org/abs/2602.11988; matklad,
-  "ARCHITECTURE.md"). A reviewer still reads it every time: it is on both bridges' one
-  reading list (`REVIEW_DOCS` in `scripts/claude_bridge.py`).
-- **Design authority** (DECIDED, OPEN, agents propose, phase scope, a code-versus-PROJECT
-  conflict): Anthropic, "Building effective agents" and "Measuring AI agent autonomy in
-  practice"; code.claude.com/docs/en/best-practices ("Let Claude interview you", plan mode);
-  Nygard, "Documenting Architecture Decisions"; GitHub Spec Kit, `spec-driven.md` (an open
-  question is marked, never guessed); Anthropic's prompting guide on overeagerness.
-- **Cross-module access through contracts:** OpenAI's harness team enforces architecture
-  with linters and structural tests (the kit's `docs/research/agent-kits-in-practice.md`,
-  2.2); code.claude.com/docs/en/best-practices.
-- **Third-party dependency approval:** models invent package names that attackers then
-  register (Spracklen et al., USENIX Security 2025, arxiv.org/abs/2406.10279). The STOP
-  for a new dependency or MCP server rests on the same source; a permission `ask` rule on a
-  manifest file would make it mechanical (code.claude.com/docs/en/permissions).
-- **One task, one module, its `Owns:` paths; no drive-by refactors:** Google Engineering
-  Practices, "Small CLs"; Anthropic's prompting guide, "Overeagerness"; tangled refactoring
-  in an agent's patch is linked to patches that do not compile
-  (Tian et al., "Refactoring Runaway", arxiv.org/abs/2605.22526).
-- **No push without the owner's word:** code.claude.com/docs/en/permission-modes and
-  /permissions (a push leaves the machine and cannot be recalled); the kit's
-  `docs/research/communication-style.md`, recommendation 9.
-- **Commit or stash before a destructive git command:** reported agent sessions destroyed
-  uncommitted work with `git reset --hard` and `git checkout -- .` (claudeissues.com, issue
-  34327); git keeps only committed or staged content (git-scm.com/docs/git-fsck). A recursive
-  delete proves ownership by a marker the tool wrote, as `CACHEDIR.TAG` does
-  (bford.info/cachedir), because an empty variable once turned `rm -rf "$STEAMROOT/"*` into a
-  wipe of a user's files (Steam for Linux, 2015).
-- **Never end running work; end the whole tree:** a stopped parent leaves its children
-  running (anthropics/claude-code#19045, #27959), and Claude Code's own team and worktree
-  docs close a teammate and clean a worktree as one step (code.claude.com/docs/en/agent-teams,
-  /worktrees).
-- **The gate is wired into git and never skipped:** git-scm.com/docs/githooks; agents were
-  seen skipping it with `--no-verify` despite deny rules (anthropics/claude-code#40117), so a
-  hook refuses the flag and CI runs the same gate (pre-commit.com).
-- **No AI attribution in git:** the owner's policy; the tool's `attribution` setting turns
-  the trailer off at its source (code.claude.com/docs/en/settings). Why the trace lives in
-  STATE.md: "The state, backlog and phase files".
-- **A test in the same change; red proof for gate checks only:** Software Engineering at
-  Google, ch. 11 (every change includes its tests); DORA, "Test automation"; the only study
-  that measured test-first ordering found no effect (Fucci et al., IEEE TSE, arxiv.org/abs/1611.05994);
-  a red proof of every ordinary test is practitioner convention only, and the evidence-backed
-  question is whether the test breaks when the code is reverted or mutated (Petrović et al.,
-  "Practical Mutation Testing at Scale"); studios validate generated content on its output
-  (the kit's `docs/research/test-rules.md`, findings 1 to 11; owner decision 2026-10-18; the content-pipeline part is the leeway
-  project's decision, a recommendation here).
-- **Search before writing a system:** code.claude.com/docs/en/best-practices; duplicated
-  code rose with AI assistants (GitClear's 2025 code-quality report).
-- **A changed public API updates its README:** Google Engineering Practices, "What to look
-  for in a code review" (documentation).
-- **Language & style:** one job per file (Google's review guide; size predicts defects
-  without a clean threshold, Yamashita et al., QRS 2016); no hidden global state (Hevery,
-  "Singletons are Pathological Liars", Google Testing Blog, 2008); short doc comments
-  (Google Python Style Guide, "Comments and Docstrings").
-- **Duties: default silence, never repeat:** repeated alerts are ignored (Ancker et al.,
-  BMC Medical Informatics and Decision Making 17:36, 2017); Anthropic's prompting guides for
-  Sonnet 5.5 ("Steer initiative and scope") and Opus 5 ("Response length and verbosity").
-- **A one-off decision writes its end condition:** agent memory fails when a temporary state
-  overwrites a lasting one (Zhao et al., "LifeFuse-Mem", arxiv.org/abs/2609.12436).
-- **MENTION ONCE items:** "Small CLs" (split by module); code.claude.com/docs/en/skills (a
-  repeated procedure becomes a skill; the third time is the rule of three);
-  code.claude.com/docs/en/costs (a saving needs a number). Decay findings: "Decay
-  early-warning system" above.
-- **Tone:** Anthropic, "Prompting Claude Opus 5"; the kit's
-  `docs/research/communication-style.md`, findings 1 to 3, recommendations 1 and 16.
-- **Task completion checklist:** the Scrum Guide's Definition of Done;
-  code.claude.com/docs/en/best-practices ("Give Claude a way to verify its work").
