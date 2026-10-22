@@ -55,9 +55,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 280, 'test_agent_usage': 39, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 283, 'test_agent_usage': 39, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 253, 'test_agent_usage': 35, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 256, 'test_agent_usage': 35, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3450,12 +3450,13 @@ class BridgeTests(unittest.TestCase):
                     self.assertEqual(chain['failure_kind'], 'invalid_evidence')
                     self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
-    def run_bridge(self, case="accept", mode="review", extra=(), env_extra=None):
+    def run_bridge(self, case="accept", mode="review", extra=(), env_extra=None, repo=None):
         env = dict(os.environ, CLAUDE_CLI_BIN=str(self.fixture), FIXTURE_CASE=case,
                    MYAGENTKIT_DELEGATION_DEPTH="0")
         env.update(env_extra or {})
-        result = subprocess.run([sys.executable, "-B", str(BRIDGE), mode, "--repo", str(self.repo),
+        result = subprocess.run([sys.executable, "-B", str(BRIDGE), mode, "--repo", str(repo or self.repo),
                                  *extra], env=env, capture_output=True, text=True)
+        self.stderr = result.stderr
         return result.returncode, json.loads(result.stdout)
 
     def test_completed_reviews_keep_verdict_separate_from_process_success(self):
@@ -5832,6 +5833,108 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('new task label', refused['error'])
 
+    def linked_worktree(self):
+        # A worker's worktree as spawn_worker.sh makes it: inside the main checkout, ignored there.
+        self.git('checkout', '--', 'file.py')
+        linked = self.repo / '.claude/worktrees/worker'
+        self.git('worktree', 'add', '-q', str(linked), '-b', 'worktree-worker')
+        return linked
+
+    def commit_in(self, tree, *args):
+        subprocess.run(['git', '-C', str(tree), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                        '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-q', *args],
+                       check=True, capture_output=True)
+
+    def test_a_round_in_a_linked_worktree_is_recorded_in_the_main_checkout(self):
+        # #293: a worker's round in its worktree left its records there, where the lead's
+        # checkout never read them and `git worktree remove` deleted them.
+        linked = self.linked_worktree()
+        (linked / 'file.py').write_text('worker change\n')
+        main = self.repo.resolve()
+        code, result = self.run_bridge('reject', env_extra={'MYAGENTKIT_TASK_ID': 'linked-task'}, repo=linked)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(Path(result['evidence']).parent, main / 'docs/reviews')
+        self.assertEqual(Path(result['usage_record']).parent, main / '.myagentkit/usage')
+        record = json.loads(Path(result['usage_record']).read_text(encoding='utf-8'))
+        self.assertEqual(record['task']['tree'], str(linked.resolve()))
+        self.assertEqual(record['task']['files'], ['file.py'])
+        self.assertFalse((linked / '.myagentkit').exists())
+        self.assertFalse((linked / 'docs/reviews').exists())
+        dispatched = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'review_dispatch.py'), '--repo', str(linked), '--reviewer', 'claude',
+             '--claude-model', 'claude-opus-5', '--uncommitted'],
+            env=self.review_env(CLAUDE_CLI_BIN=str(self.fixture), MYAGENTKIT_TASK_ID='linked-dispatch'),
+            capture_output=True, text=True)
+        self.assertEqual(dispatched.returncode, 0, dispatched.stdout + dispatched.stderr)
+        chain = json.loads(next(line.removeprefix('review dispatch: ') for line in dispatched.stdout.splitlines()
+                                if line.startswith('review dispatch: ')))
+        self.assertEqual(Path(chain['chain_record']).parent, main / '.myagentkit/usage/chains')
+        self.assertEqual(chain['tree'], str(linked.resolve()))
+        self.assertFalse((linked / '.myagentkit').exists())
+
+    def test_a_commit_round_continues_an_uncommitted_round_once_its_files_are_committed(self):
+        # #293: round 1 --uncommitted in the worker's worktree, the fix merged, round 2 --commit of
+        # the merge in the main checkout under the same label was refused ("use a new task label").
+        # It continues when every file round 1 reviewed is in the commit's diff; else it is refused
+        # with the files that are not.
+        linked = self.linked_worktree()
+        merge = lambda message: subprocess.run(
+            ['git', '-C', str(self.repo), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+             '-c', 'core.hooksPath=/dev/null', 'merge', '-q', '--no-ff', '-m', message, 'worktree-worker'],
+            check=True, capture_output=True)
+        partial = {'MYAGENTKIT_TASK_ID': 'partial-task'}
+        (linked / 'file.py').write_text('first\n')
+        (linked / 'other.py').write_text('left out\n')
+        code, first = self.run_bridge('reject', env_extra=partial, repo=linked)
+        self.assertEqual(code, 0, first)
+        subprocess.run(['git', '-C', str(linked), 'add', 'file.py'], check=True, capture_output=True)
+        self.commit_in(linked, '-m', 'file only')
+        merge('merge file only')
+        code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=partial)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('other.py', refused['error'])
+        self.assertIn('new task label', refused['error'])
+        (linked / 'other.py').unlink()
+        task = {'MYAGENTKIT_TASK_ID': 'merged-task'}
+        (linked / 'file.py').write_text('second\n')
+        code, first = self.run_bridge('reject', env_extra=task, repo=linked)
+        self.assertEqual(code, 0, first)
+        round_one = json.loads(Path(first['usage_record']).read_text(encoding='utf-8'))['task']['head']
+        (linked / 'file.py').write_text('second, fixed\n')
+        self.commit_in(linked, '-am', 'fix')
+        merge('merge fix')
+        merged = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        code, second = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 0, second)
+        record = json.loads(Path(second['usage_record']).read_text(encoding='utf-8'))
+        self.assertEqual(record['task']['continues'], {'scope': 'uncommitted', 'tree': str(linked.resolve()),
+                                                       'head': round_one, 'commit': merged})
+        self.assertIn('continues its --uncommitted round', self.stderr)
+
+    def test_evidence_left_in_a_removed_worktree_is_read_from_its_copy_in_the_main_checkout(self):
+        # #293: a record written before v0.13 in a worktree names its archive there; after the
+        # worktree is removed, the copy under the main checkout is read, by its name.
+        task = {'MYAGENTKIT_TASK_ID': 'removed-task', 'REVIEW_ROUND_EXCEPTION': 'fixture: several reads'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        archive = Path(first['evidence'])
+        record = Path(first['usage_record'])
+        value = json.loads(record.read_text(encoding='utf-8'))
+        value['evidence'] = str(self.root / 'removed-worktree/docs/reviews' / archive.name)
+        record.write_text(json.dumps(value), encoding='utf-8')
+        code, result = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 0, result)
+        self.assertIn('using its copy %s' % archive.resolve(), self.stderr)
+        usage_copy = record.parent / archive.name
+        archive.rename(usage_copy)
+        code, result = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 0, result)
+        self.assertIn('using its copy %s' % usage_copy.resolve(), self.stderr)
+        usage_copy.unlink()
+        code, refused = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('is missing', refused['error'])
+
     def test_a_carried_base_round_must_be_an_ancestor_of_head(self):
         # A --base round is carried while the branch grows on top of it; after a rebase or an
         # amend its head is no ancestor of HEAD, and its findings are about another change.
@@ -7232,7 +7335,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
         os.environ.update(REVIEW_SHADOW='1', REVIEW_FOCUS='logic')
         carried, measured = bridge.prior_rounds(self.repo, 'measured-task', 'uncommitted', None, head, 'x')
-        self.assertEqual((carried, measured), ('', {'shadow': 'yes', 'focus': 'logic'}))
+        # The tree read and the diff's files ride along since #293.
+        self.assertEqual((carried, measured), ('', {'shadow': 'yes', 'focus': 'logic', 'tree': str(self.repo.resolve()),
+                                                    'files': []}))
         self.assertFalse(hasattr(bridge, 'MEASURED'))
 
     def test_a_shadow_review_is_marked_in_the_chain_and_on_the_console(self):

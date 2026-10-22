@@ -17,7 +17,7 @@ import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
-                           prior_rounds, stricter_verdict,
+                           prior_rounds, records_root, stricter_verdict,
                            review_context, review_parts, recheck, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
@@ -105,8 +105,9 @@ def main(argv=None, result_sink=None, claims=None):
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
-    report = repo / "docs/reviews" / (stamp + "-codex-review.md")
-    agent_usage.require_private_storage(repo, report)
+    store = records_root(repo)  # the main checkout's records, also from a linked worktree (#293)
+    report = store / "docs/reviews" / (stamp + "-codex-review.md")
+    agent_usage.require_private_storage(store, report)
     report.parent.mkdir(parents=True, exist_ok=True)
     # Held from here to the last line printed: with the default handlers back after the
     # review, a cancel during the closing quota read ended the adapter before a paid,
@@ -287,12 +288,12 @@ def main(argv=None, result_sink=None, claims=None):
             final + failure or "No final message. Inspect the local usage record for diagnostics.")
         archived = None
         try:
-            agent_usage.write_evidence(repo, report, report_text, private=True)
+            agent_usage.write_evidence(store, report, report_text, private=True)
             archived = str(report)
         except (OSError, ValueError) as error:
             status, reason = "failed", "evidence_write_failed"
             print("FAIL [review]: could not archive evidence: " + str(error))
-        path, usage = agent_usage.record(repo, "codex", metadata["model"],
+        path, usage = agent_usage.record(store, "codex", metadata["model"],
             os.environ.get("MYAGENTKIT_REQUESTER", "claude/unknown" if os.environ.get("CLAUDECODE") == "1" else "unspecified"),
             # An empty label is no label: recorded as "", every later labelled round refused it.
             {"id": os.environ.get("MYAGENTKIT_TASK_ID") or "review-" + scope, "kind": "review",
@@ -306,7 +307,7 @@ def main(argv=None, result_sink=None, claims=None):
             text = agent_usage.report(stamp, header, None,
                 final + failure or "No final message. Inspect the local usage record for diagnostics.")
             try:
-                return agent_usage.relabel_cancelled(repo, path, archived, text), text
+                return agent_usage.relabel_cancelled(store, path, archived, text), text
             except (OSError, ValueError) as error:
                 # Still a cancel, delivered as one: raising here lost the structured result.
                 print("FAIL [review]: cancellation could not be persisted: " + str(error))

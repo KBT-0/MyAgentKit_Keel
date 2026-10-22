@@ -39,6 +39,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   worker"; in "MCP hygiene", the opening paragraph; the whole section "Where the constitution's
   rules come from"; and in "Documentation maintenance contract", point the sources line at
   `docs/WORKFLOW_RATIONALE.md`.
+- Review records live in the main checkout (#293): a `review.sh` round run in a linked worktree
+  writes its usage record, chain file and archive to the main checkout's `.myagentkit/usage/`
+  and `docs/reviews/`, and names the tree it read (`task.tree`, the chain's `tree`). After the
+  merge a `--commit` round continues the worker's `--uncommitted` round under the same label
+  when every file that round reviewed is in the commit's diff; otherwise the refusal names the
+  files the commit lacks. A pre-v0.13 record whose archive went with its removed worktree is
+  read from a copy with the same name in the main checkout. No ACTION: the sync brings it.
 
 ## v0.12.1 — 2026-10-21
 
