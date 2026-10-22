@@ -46,6 +46,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   one-sentence pointer at the end of "Working modes, by name"'s opening paragraph, rule 8's "With the owner away (...)" sentence, and COMMUNICATION's "While the
   owner is away" bullet.
 
+- Kit upgrades are verified before their ACTION items (#305): `review.sh --kit-verified` takes
+  `--kit-commit <sha>`, the kit commit the sync copied (still on a release tag, no downgrade), and
+  `--base <ref>` for an upgrade of several commits. `sync-kit.sh` prints the review line with it,
+  in `docs/kit/UPGRADE.md` too: `docs/kit/.kit-commit` is written only by a run that records the
+  version, so not while ACTION items are pending.
+- The Claude reviewer is told that a clean review returns empty findings and manual-check lists
+  (#305); a "No qualifying findings." line followed by prose stays a check, never a hidden finding.
+- A `--commit` round continues an `--uncommitted` round of a moved file or a non-ASCII file name
+  correctly, from the newest such round, and a rebased worker head is named in the refusal;
+  `agent_usage.py` and `usage_summary.py` read the main checkout's records from a linked worktree.
+- `review.sh` and the review records find the main checkout without `git rev-parse
+  --path-format` (Git 2.31+): with older Git the script reviewed its own checkout, not the
+  worktree it ran in.
 - `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
   placeholder stay in the project-owned file (1,741 lines to 1,565), the worker-cost rules 1-9
   whole among them; the reasons, the sources, the measurements and the long examples move,
@@ -78,7 +91,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   files the commit lacks. A pre-v0.13 record whose archive went with its removed worktree is
   read from a copy with the same name in the main checkout.
 - **ACTION** (`scripts/review_dispatch.py`, `scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
-  `scripts/test_claude_bridge.py`, `docs/REVIEW_RUNNING.md`, project-owned): run
+  `scripts/test_claude_bridge.py`, `scripts/review.sh`, `scripts/agent_usage.py`,
+  `scripts/test_agent_usage.py`, `docs/REVIEW_RUNNING.md`, project-owned): run
   `sync-kit.sh . --merge`; a project that never edited them takes the kit's copies whole.
 - A finished worker tells the lead itself: `spawn_worker.sh` reads the lead's session name
   (CLAUDE_PID's `sessions/PID.json`, checked against CLAUDE_CODE_SESSION_ID), prints

@@ -347,6 +347,35 @@ class UsageTests(unittest.TestCase):
             self.assertNotIn(names[5], message)
             self.assertNotIn('summary', message.split(';')[0])
 
+    def test_the_usage_readers_read_the_main_checkout_from_a_linked_worktree(self):
+        # chainmain review: since #293 a round in a linked worktree is recorded in the main
+        # checkout, but both readers run with --repo <worktree> read that worktree and saw no
+        # round; the summary also called an archive copied into .myagentkit/usage/ missing.
+        with tempfile.TemporaryDirectory() as tmp:
+            main, linked = Path(tmp) / 'main', Path(tmp) / 'linked'
+            git = lambda *args: subprocess.run(['git', '-C', str(main), '-c', 'user.name=F', '-c',
+                                                'user.email=f@example.invalid', *args], check=True, capture_output=True)
+            subprocess.run(['git', 'init', '-q', str(main)], check=True)
+            (main / '.gitignore').write_text('/.myagentkit/\n')
+            git('add', '.')
+            git('commit', '-qm', 'base')
+            git('worktree', 'add', '-q', str(linked))
+            report = b'VERDICT: Accept\n'
+            copy = main / '.myagentkit/usage/20261022T000000Z-aaaaaaaaaaaa-claude-review.md'
+            copy.parent.mkdir(parents=True)
+            copy.write_bytes(report)
+            path, value = agent_usage.record(main, 'claude', 'fixture', 'tester', {'id': 'linked-round', 'kind': 'review'},
+                                             {'stdout': ''}, 'completed', None, str(copy), report)
+            value['evidence'] = str(Path(tmp) / 'removed-worktree/docs/reviews' / copy.name)
+            path.write_text(json.dumps(value), encoding='utf-8')
+            for script in (agent_usage.__file__, str(Path(agent_usage.__file__).with_name('usage_summary.py'))):
+                with self.subTest(script=Path(script).name):
+                    run = subprocess.run([sys.executable, script, '--repo', str(linked)],
+                                         capture_output=True, text=True, timeout=60)
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    self.assertIn('linked-round', run.stdout)
+                    self.assertNotIn('evidence missing', run.stdout)
+
     def test_a_unicode_task_label_prints_on_a_legacy_stdout(self):
         # A Windows pipe is cp1252 unless UTF-8 mode is on: a task labelled `İstanbul` raised there.
         import os

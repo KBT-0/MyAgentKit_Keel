@@ -414,6 +414,13 @@ def main():
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--task-id")
     args = parser.parse_args()
+    # The main checkout's records, also from a linked worktree (#293); outside Git, --repo's own.
+    # Imported here: claude_bridge imports this module.
+    import claude_bridge
+    try:
+        args.repo = claude_bridge.records_root(args.repo)
+    except claude_bridge.BridgeError:
+        pass
     rows, unreadable = [], 0
     for path in sorted((args.repo / ".myagentkit/usage").glob("*.json")):
         # One damaged record is skipped and counted, as usage_summary.py does, not a traceback

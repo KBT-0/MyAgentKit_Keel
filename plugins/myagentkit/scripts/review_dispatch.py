@@ -381,11 +381,13 @@ def main(argv=None):
     # A kit upgrade commit (#114): its files that are the kit's own by hash are left out of the diff.
     parser.add_argument("--kit-verified", action="store_true")
     parser.add_argument("--kit", type=Path)
+    # #305: the kit commit an upgrade copied, before --actions-applied records it.
+    parser.add_argument("--kit-commit")
     args = parser.parse_args(argv)
-    if args.kit_verified and not args.commit:
-        raise ValueError("--kit-verified reviews a --commit only")
-    if args.kit is not None and not args.kit_verified:
-        raise ValueError("--kit names the kit clone for --kit-verified only")
+    if args.kit_verified and not (args.commit or args.base):
+        raise ValueError("--kit-verified reviews a --commit or a --base only")
+    if (args.kit is not None or args.kit_commit is not None) and not args.kit_verified:
+        raise ValueError("--kit and --kit-commit name the kit clone and commit for --kit-verified only")
     if args.kit_verified and args.reviewer != "claude":
         raise ValueError("--kit-verified needs --reviewer claude: the Codex adapter has no kit-verified diff")
     os.environ.pop(claude_bridge.ALLOW_SECRETS_ENV, None)  # only this run's flags count
@@ -451,8 +453,7 @@ def main(argv=None):
     past_ok = args.reviewer == "claude"
     kit = args.kit or claude_bridge.DEFAULT_KIT
     # Made once: every attempt and every look at the checkout use the same list.
-    verified = (claude_bridge.kit_verified(repo, claude_bridge.resolve(repo, scope, ref), kit)
-                if args.kit_verified else None)
+    verified = claude_bridge.verify_kit(repo, scope, ref, kit, args.kit_commit) if args.kit_verified else None
     original = claude_bridge.snapshot(repo, scope, ref, past_ok, verified)
     past = past_ok and scope == "commit" and original[3] != original[0]  # decided once, kept by each recheck
     if not original[2].strip():
@@ -568,7 +569,8 @@ def main(argv=None):
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command]
                                                + (["--backend", args.backend] if backend else [])
-                                               + (["--kit-verified", str(kit)] if args.kit_verified else []),
+                                               + (["--kit-verified", str(kit)] if args.kit_verified else [])
+                                               + (["--kit-commit", args.kit_commit] if args.kit_commit else []),
                                                received.append, claims=claims,
                                                **({"verified": verified} if args.kit_verified else {}))
             else:

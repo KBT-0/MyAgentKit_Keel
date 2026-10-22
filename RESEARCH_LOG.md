@@ -21,6 +21,34 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-22 — v0.13 kitverify: verify a kit upgrade by the commit it copied; a clean review is empty lists
+
+Backflow (#305), both items paid for in a project's upgrade. 1. `--kit-verified` read the kit
+commit only from `docs/kit/.kit-commit`, which `sync-kit.sh` writes only with the version (not while ACTION items are pending), so
+an upgrade reviewed before its owner-only ACTION items verified nothing and its diff passed the
+400 KB limit; it also took `--commit` only, and an upgrade spans commits. Recording the commit
+at copy time was rejected: `.kit-commit` means "the base the version came from" to the ACTION
+scan and `--merge`, and moving it early would drop pending items from the next sync. So the
+sync prints `--kit-commit <sha>` and the bridge checks it as before (release tag, hash per
+file, no downgrade against the diff's start and the commit's own record), with `--base`. 2. A
+clean Accept carried "No qualifying findings. ..." as a findings item, which an older bridge
+refused as invalid_evidence; the re-run with `findings: []` passed. The prompt now asks for empty
+lists. A looser placeholder match was rejected: prose after the sentence can name a defect
+(`No qualifying findings. High x.py:1 ...`), so such an item stays a manual check (#120).
+
+### 2026-10-22 — v0.13 chainmain: a lead's --commit round continues the worker's --uncommitted round
+
+Backflow (#293): a worker's round ran in its worktree, its records stayed there, and
+`git worktree remove` deleted them; the lead's `--commit` round of the merge under the same label
+was refused ("use a new task label"), and a new label restarts the two-round count, which the
+owner's rule forbids (docs/REVIEW_GATE.md, "Rounds"). So records go to the main checkout and a
+`--commit` round continues an `--uncommitted` one when every file that round reviewed is in the
+commit's diff and its HEAD is an ancestor; anything less is another change. Its review
+(docs/reviews/20261022T141101Z-a3d2cc44cc7c-claude-review.md) found the file comparison broken
+for a move (two names unstaged, one rename committed) and for a name Git quotes
+(core.quotePath), which dropped the file and let a commit without it continue: both sides now
+count a rename by both names and undo the quoting.
+
 ### 2026-10-21 — v0.12.1 issues300: a gate step is unsafe for what it does, not how it is spelled
 
 Backflow from labricore-web (#300): its only check of the Wrangler config was `wrangler deploy

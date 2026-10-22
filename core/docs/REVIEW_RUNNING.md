@@ -91,12 +91,15 @@ Automation never authorizes a commit or push.
   tree the round read. The worker's report lists the round (`docs/WORKFLOW.md`, "Review inside
   the worker"). After the merge, the lead continues the worker's label in the main checkout
   with `--commit <merge or fix commit>`. That round continues an `--uncommitted` round when
-  every file the earlier round reviewed is in the commit's diff and the earlier HEAD is the
-  commit's ancestor; the chain records the step as `continues`. Both rounds count toward the
-  label's two. Otherwise the round is refused, and the message names the files the commit
-  lacks. Nothing is copied between checkouts (#293). A record written before v0.13 inside a
-  worktree that is removed since is read from a copy of its archive with the same name in the
-  main checkout's `docs/reviews/` or `.myagentkit/usage/`; one line names the copy.
+  every file the earlier round reviewed is in the commit's diff (a moved file by its old and its
+  new name) and the earlier HEAD is the commit's ancestor on HEAD's line; the chain records the
+  step, from the newest such round, as `continues`. Both rounds count toward the label's two.
+  Otherwise the round is refused, and the message names the files the commit lacks or the
+  earlier HEAD it does not descend from. Nothing is copied between checkouts (#293). A record
+  written before v0.13 inside a worktree that is removed since is read from a copy of its
+  archive with the same name in the main checkout's `docs/reviews/` or `.myagentkit/usage/`;
+  one line names the copy. `agent_usage.py` and `usage_summary.py` read the main checkout's
+  records too when `--repo` names a linked worktree, and find such a copy.
 - Nobody edits a tree under review; one run per reviewer per tree. Source: KARARLAR D06
   inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
   sessions.
