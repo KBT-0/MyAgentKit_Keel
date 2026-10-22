@@ -100,7 +100,16 @@ if cmd == 'capture-pane':
     if 'SPAWN_PANE' in os.environ:
         sys.stdout.write(read(os.environ['SPAWN_PANE']))
     else:
-        print('\n❯ ' + read(typed))
+        # SPAWN_SLOW: the TUI is still receiving the typed line, so the first look after it
+        # was typed shows all but its last 40 characters; Enter sends what has arrived so far.
+        text = read(typed)
+        lag = os.path.join(state, 'lag')
+        if os.path.exists(lag):
+            os.remove(lag)
+            text = text[:-40]
+        with open(os.path.join(state, 'shown'), 'w') as f:
+            f.write(text)
+        print('\n❯ ' + text)
 elif cmd == 'load-buffer':
     with open(os.path.join(state, 'buffer'), 'w') as f:
         f.write(read(args[-1]))
@@ -117,12 +126,15 @@ elif cmd == 'send-keys':
     for key in keys:
         if key == 'Enter' and not literal:
             with open(os.path.join(state, 'submitted'), 'a') as f:
-                f.write(read(os.path.join(state, 'pasted')) or read(typed))
+                f.write(read(os.path.join(state, 'pasted')) or
+                        read(os.path.join(state, 'shown' if 'SPAWN_SLOW' in os.environ else 'typed')))
                 f.write('\n')
             open(typed, 'w').close()
             open(os.path.join(state, 'pasted'), 'w').close()
         else:
             append(key)
+            if literal and 'SPAWN_SLOW' in os.environ:
+                open(os.path.join(state, 'lag'), 'w').close()
 '''
 
 CLAUDE = r'''#!/usr/bin/env python3
@@ -996,6 +1008,13 @@ exit 0
         submitted = (self.state / 'submitted').read_text().splitlines()
         self.assertEqual(submitted, [self.instruction(self.brief)])
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
+
+    def test_enter_waits_for_the_end_of_the_typed_instruction(self):
+        # donemsgfix: a sentence appended after "does not depend on it." was still being typed
+        # when that phrase matched, so Enter sent a cut line. The match is the instruction's end.
+        result = self.spawn('w1', str(self.brief), SPAWN_SLOW='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.state / 'submitted').read_text().splitlines(), [self.instruction(self.brief)])
 
     def test_help_on_missing_arguments_shows_the_usage(self):
         # #239: the printed header range stopped before the Usage block.
@@ -2263,6 +2282,13 @@ if args == ['--help']:
     if os.environ.get('SPAWN_HELP_HANGS'):
         time.sleep(90)
 elif args[:1] == ['agents']:
+    # SPAWN_ENDS_AFTER=N: the running rows end after N listings, as a session in its closing grace.
+    count = os.path.join(state, 'agents-count')
+    n = int(open(count).read()) + 1 if os.path.exists(count) else 1
+    open(count, 'w').write(str(n))
+    if n > int(os.environ.get('SPAWN_ENDS_AFTER', n)):
+        rows = [dict(r, pid=None, state='done') for r in rows]
+        save()
     print(json.dumps(rows))
 elif args[:1] in (['stop'], ['rm']):
     rows = [dict(r, pid=None, state='done') if r['id'] == args[1] else r for r in rows
@@ -2530,6 +2556,66 @@ class BackgroundHostTests(unittest.TestCase):
         if session:
             (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
         (self.state / 'rows.json').write_text(json.dumps([dict({'id': '1a2b3c4d', 'pid': None, 'state': 'done'}, **(row or {}))]))
+        # The earlier run's record, written at its start (record_result) before anything it published.
+        record = self.workers / 'w1.result-path'
+        record.write_text(str(self.cwd / 'RESULT-w1.md') + '\n')
+        os.utime(record, (time.time() - 60, time.time() - 60))
+
+    def test_a_resume_waits_for_a_published_session_in_its_closing_grace(self):
+        # donemsgfix: the worker messages the lead ~20 s after it publishes, inside the 60 s grace,
+        # so the lead's --resume met "still runs". With a published question it waits for the end.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_ENDS_AFTER='2')
+        self.assertNotEqual(result.returncode, 0, 'nothing was published: the session is not in its grace')
+        self.assertIn('still runs', result.stderr)
+        (self.state / 'agents-count').unlink()
+        (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_ENDS_AFTER='2', SPAWN_PUBLISH=DONE,
+                            SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('closing grace', result.stdout)
+        self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.ended()
+
+    def test_a_resume_with_only_an_earlier_runs_result_is_refused_at_once(self):
+        # donemsgfix round 1: a resumed worker's result from its previous task keeps its marker;
+        # only a file newer than NAME.result-path (this run's record) shows the closing grace.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        old = self.cwd / 'RESULT-w1.md'
+        old.write_text(DONE)
+        os.utime(old, (time.time() - 600, time.time() - 600))
+        (self.workers / 'w1.result-path').write_text(str(old) + '\n')
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertNotIn('closing grace', result.stdout)
+
+    def test_a_resume_with_no_run_record_is_refused_at_once(self):
+        # donemsgfix round 2: `-nt` against a missing file is true in bash and false in dash; with
+        # no NAME.result-path nothing shows the file is this run's, so no grace is waited for.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        (self.workers / 'w1.result-path').unlink()
+        (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertNotIn('closing grace', result.stdout)
+
+    def test_a_resume_waits_past_the_grace_while_a_lock_is_held_then_says_to_run_it_again(self):
+        # donemsgfix: the supervisor waits out a commit or gate however long it runs (codex_worker.py
+        # busy()); the resume waits past its grace + 15 s while a lock is held, but 100 s in all at
+        # most (lead decision: under Claude Code's 120 s Bash timeout), then names the lock.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
+        (self.cwd / '.git/index.lock').write_text('')
+        started = time.monotonic()
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertGreaterEqual(time.monotonic() - started, 100)
+        self.assertIn('a commit or gate', result.stdout)
+        self.assertIn('run this resume again in a few minutes', result.stderr)
+        self.assertIn('index.lock', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
 
     def test_a_resume_that_starts_a_copy_stops_and_removes_it_and_fails(self):
         # Spike trap 1: a copy under the same name answers nothing; the original is kept.

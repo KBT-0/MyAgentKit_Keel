@@ -778,10 +778,50 @@ for row in json.loads(sys.stdin.buffer.read()):
         live = row.get("pid") or row.get("state") in ("working", "blocked")
         print("live" if live else "-", row.get("sessionId") or "-")' "$1"
 }
+# A published result or question ends its session KIT_WORKER_GRACE (60) s later, and the worker's
+# message brings the lead's --resume inside that grace (donemsgfix): a resume waits for that end
+# instead of refusing it. Waiting, not stopping it as close_worker.sh does: the grace exists so the
+# worker's message and any commit finish. Only a file published in THIS run counts: newer than
+# NAME.result-path (a resumed worker's earlier result keeps its marker); no record, no grace
+# (`-nt` against a missing file is true in bash, false in dash). The wait mirrors the supervisor:
+# the grace and 15 s for its stop (close_worker.sh's wait), then on while a commit or gate holds
+# a lock in the worker's checkout (codex_worker.py busy(), which the supervisor waits out however
+# long it runs); 100 s in all at most, under Claude Code's 120 s Bash timeout (lead decision),
+# then the lead is told to run the resume again. Wall clock, not loops: a loop took ~6 s on a
+# loaded host. in_grace sleeps one second and succeeds while the wait goes on.
+grace_end=""
+in_grace() {
+  [ -n "$resume" ] || return 1
+  if [ -z "$grace_end" ]; then
+    [ -e "$wdir/$name.result-path" ] || return 1
+    for f in "$result" "$dir/QUESTION-$name.md" ""; do
+      [ -n "$f" ] || return 1
+      [ "$f" -nt "$wdir/$name.result-path" ] && grep -qsF -- '<!-- codex-worker: ready -->' "$f" && break
+    done
+    g=${KIT_WORKER_GRACE:-60}; g=${g%%.*}; waited_from=$(date +%s); grace_end=$((waited_from + ${g:-0} + 15)); held=""; said=""
+    printf '%s\n' "spawn_worker: the earlier session of '$name' has published and is in its closing grace: waiting up to $((grace_end - waited_from)) s for it to end, longer while a commit or gate runs in its checkout (100 s in all)"
+  fi
+  now=$(date +%s)
+  [ $((now - waited_from)) -lt 100 ] ||
+    die "the earlier session of '$name' still finishes${held:+ (a commit or gate holds its checkout: $held)}: run this resume again in a few minutes"
+  if [ "$now" -ge "$grace_end" ]; then
+    held=$(KIT_WORKER_CHECKOUT=$dir $kit_python -I -c 'import importlib.util, sys
+s = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])
+m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+print(" and ".join(p.name for p in m.locks() if m.busy([p])))' "$cworker" 2>/dev/null | tail -n 1) || held=""
+    [ -n "$held" ] || return 1
+    [ "$held" = "$said" ] || printf '%s\n' "spawn_worker: waiting on a commit or gate in its checkout ($held held)"
+    said=$held
+  fi
+  sleep 1
+}
 # The name is refused while a Claude Code session of it runs, on the bg host too: a tab worker
 # has no NAME.id, and a bg spawn of its name replaced its records (the bg check below is by id).
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
+  while [ -n "$running" ] && in_grace; do
+    running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
+  done
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
 fi
 if [ -n "$bg" ]; then
@@ -792,6 +832,9 @@ if [ -n "$bg" ]; then
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
   if [ -n "$old" ]; then
     row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
+    while case $row in [!-]*) in_grace ;; *) false ;; esac; do
+      row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
+    done
     case $row in [!-]*) die "the background session $old of '$name' still runs: close it first (scripts/close_worker.sh $name)" ;; esac
   fi
   sid=$resume
@@ -990,9 +1033,12 @@ tmux send-keys -t "$name" -l "$instruction"
 # input is swallowed and the line sits unsent at the prompt (seen on the first run of this
 # script). Fast input may show as the placeholder "[Pasted text", so both count. The END of
 # the line is what must have landed, and the TUI wraps a long line at a blank: blanks and
-# line ends are squeezed to one space before the match.
+# line ends are squeezed to one space before the match. The end is the instruction's own last
+# 40 characters, so a sentence appended to it moves the match with it (a fixed phrase, left
+# behind by one, let Enter arrive while the new tail was still being typed).
 # Then confirm the prompt line emptied; if not, press Enter once more.
-landed() { tmux capture-pane -p -t "$name" -J | tr -s ' \n' '  ' | grep -qF -e "does not depend on it." -e "[Pasted text"; }
+line_end=$(printf '%s' "$instruction" | tr -s ' \n' '  ' | tail -c 40)
+landed() { tmux capture-pane -p -t "$name" -J | tr -s ' \n' '  ' | grep -qF -e "$line_end" -e "[Pasted text"; }
 i=0
 until landed; do
   i=$((i + 1)); [ "$i" -lt 30 ] || die "the instruction did not appear in session '$name' (tmux attach -t $name)"

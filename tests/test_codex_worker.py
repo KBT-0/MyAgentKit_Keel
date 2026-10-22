@@ -1,5 +1,6 @@
 """A decision sidecar ends the interactive worker without losing its session."""
 from pathlib import Path
+import errno
 import hashlib
 import importlib.util
 import io
@@ -1399,6 +1400,20 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertIn('its last line is not ' + READY, published.stderr)
             self.assertTrue(fresh.exists())
             self.assertEqual(module().result_kind(result)[0], 'DONE')
+
+    def test_a_publish_across_drives_says_to_put_the_temporary_file_beside_the_destination(self):
+        # donemsg spike 3: a temporary file in %TEMP% (C:) for a result on D: failed with a bare
+        # [WinError 17]; the worker must read the fix, not the code.
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            fresh, result = Path(tmp) / 'fresh.md', Path(tmp) / 'RESULT-w.md'
+            fresh.write_text('Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\n' + READY)
+            drives = OSError(errno.EXDEV, 'The system cannot move the file to a different disk drive')
+            with mock.patch.object(worker.os, 'replace', side_effect=drives), \
+                    mock.patch.object(sys, 'argv', ['codex_worker.py', '--publish', str(fresh), str(result)]):
+                with self.assertRaisesRegex(ValueError, 'beside the destination'):
+                    worker.main()
+            self.assertTrue(fresh.exists())
 
     def test_an_unchanged_new_question_is_read_once_and_a_changed_one_again(self):
         worker = module()
