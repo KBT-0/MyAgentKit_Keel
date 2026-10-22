@@ -77,7 +77,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the session set (a venv's interpreter) reaches the pre-commit gate; a malformed line fails
   `FAIL [env]` with its number.
 - A clean merge whose result differs from a gated HEAD only in documentation skips the build, as
-  a documentation-only commit does: pre-merge-commit runs `check.sh --for-merge` (project_leeway:
+  a documentation-only commit does (#306): pre-merge-commit runs `check.sh --for-merge` (project_leeway:
   docs-only merges each built and tested for 10-15 minutes). Every other check still runs.
 - **ACTION** (`scripts/check.sh`, `docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, `docs/GOTCHAS.md`,
   `docs/DEV_SETUP.md`, `docs/HANDOFF.md`, project-owned): run `sync-kit.sh . --merge`, or copy by
