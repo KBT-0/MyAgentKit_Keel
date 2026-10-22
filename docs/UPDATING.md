@@ -12,7 +12,8 @@ They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today 
 short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 `post-merge`), `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/agent_cost.py`,
 `scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
-`BEHAVIOUR.md`, the module-rules template, and the two setup documents
+`BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons behind the project-owned
+`docs/WORKFLOW.md`, by the same headings), the module-rules template, and the two setup documents
 (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
 A project's own machine checks, once in its own `scripts/doctor.sh`, move to
 `scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
@@ -125,7 +126,11 @@ markers. Read each merged
 file's `git diff`, resolve the listed conflicts, then rerun with `--actions-applied`. One
 upgrade that instead merged five docs whole, one agent per doc, read 8.3M cache tokens (#184).
 On the kit's own history, v0.8 to v0.12, the conflict regions of the same docs and `check.sh`
-come to about 14% of one read of the whole files.
+come to about 14% of one read of the whole files. Text the kit moves out of a project-owned
+file into a kit-owned one (v0.13's `docs/WORKFLOW.md` to `docs/WORKFLOW_RATIONALE.md`, #296)
+merges as a deletion: it leaves cleanly where the project never edited it, and a conflict
+there means the project did. Take the kit side, and put a project rule the edit held back into
+its section of the project-owned file.
 
 Then run `./scripts/check.sh`. The project's own fixture tests for its boundary checks run
 inside it, in the build command (WORKFLOW, "Writing a gate"). A sync that leaves the gate red,

@@ -13,6 +13,37 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.13 (unreleased)
+
+- `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
+  placeholder stay in the project-owned file (1,741 lines to 1,186); the reasons, the sources,
+  the measurements, the long examples and the full text of the kit's worker mechanics move,
+  verbatim, to the new kit-owned `docs/WORKFLOW_RATIONALE.md`, which the sync adds and from then
+  on replaces without a merge. It uses `docs/WORKFLOW.md`'s headings; a section whose reasons
+  moved ends with `Why: docs/WORKFLOW_RATIONALE.md, "<heading>".` No rule changed.
+- **ACTION** (`docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`. The kit's change
+  to `WORKFLOW.md` is deletions plus eleven `Why:` lines, so text the project never edited
+  leaves cleanly (a filled-in copy of v0.12.1 merged with no conflict). A conflict means the
+  project edited text that moved: take the kit side, and put a project rule it held back into
+  its section of `docs/WORKFLOW.md`. Without `--merge`, delete these from the project's copy and
+  add the `Why:` lines (the kit's `core/docs/WORKFLOW.md` shows the result): in "How we work —
+  roles", the paragraph "Every review's usage record notes ..."; in "Task ids", the opening
+  paragraph; in "The state, backlog and phase files", the paragraph "The order is
+  `docs/AGENTS.md`'s ...", the bullets from "`docs/STATE.md` is read at the start of every
+  session" to "Completed work is deleted, not marked DONE", the bullet "No size limit applies to
+  STATE.md" and the paragraph "The non-goals are the useful half"; in "Decay early-warning
+  system", the "Sources:" paragraph; in "Model routing", the paragraph "The review row is ...";
+  in "Working modes, by name", the paragraph "Without names, ..."; in "The measurements and the
+  full rules", everything but the line "Rules, binding for whoever routes workers:", rule 6,
+  rule 8's three lines "A worktree worker carries the project's hooks ...", "The shape follows a
+  threshold" and the paragraph after it, "The disk is the done signal" up to "A worker session
+  does not end with its task.", "A stopped worker is answered in its own session" with its
+  Claude bullet, and the last two paragraphs; in "Review rounds", the paragraph "In one project
+  a feature took five fix rounds", the paragraph "In the kit's own two observed cases" and the
+  "Sources:" bullet of "Review inside the worker"; in "MCP hygiene", the opening paragraph; the
+  whole section "Where the constitution's rules come from"; and in "Documentation maintenance
+  contract", point the sources line at `docs/WORKFLOW_RATIONALE.md`.
+
 ## v0.12.1 — 2026-10-21
 
 CI fixes for the v0.12 push (run 39571614846: every Linux and macOS job, and Windows py3.11 slow,

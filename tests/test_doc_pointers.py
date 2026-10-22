@@ -21,6 +21,12 @@ def headings(path):
             if re.match(r'#{2,3} ', line)]
 
 
+def workflow_rules_and_reasons():
+    """WORKFLOW.md and its kit-owned rationale (#296): a rule's full text may live in either."""
+    return '\n'.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8')
+                     for name in ('WORKFLOW.md', 'WORKFLOW_RATIONALE.md'))
+
+
 def reviewer_doc_lists():
     """Every default list of documents a reviewer is told to read, by where it is set."""
     lists = {}
@@ -70,7 +76,7 @@ class ReviewerDocumentTests(unittest.TestCase):
 
 class SectionPointerTests(unittest.TestCase):
     def test_routing_and_closure_rules_agree(self):
-        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        workflow = workflow_rules_and_reasons()
         self.assertIn('python3 scripts/usage_summary.py', workflow)
         flat = ' '.join(workflow.split())
         for rule in ('two at a time until the lead has measured its host', '4 GB reserve',
@@ -78,7 +84,7 @@ class SectionPointerTests(unittest.TestCase):
                      'conflict resolution is a part authored by whoever resolved it',
                      'rebuilding the integration branch without it', 'kills the background jobs started from its tool shell'):
             self.assertIn(rule, flat)
-        budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('7. **Worker reports are short**')[0].split())
+        budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('\n\n')[0].split())
         # Paid reviews run one after the other unless the owner allows parallel (v0.11 close-out
         # decision 9, BACKLOG B14); a tier's floor is its own reviewer count (KARARLAR B01 (3), B15).
         for rule in ('Paid reviews run one after the other (rule 1)',
@@ -449,7 +455,7 @@ class SectionPointerTests(unittest.TestCase):
         # #142: rule 1 restated the tier table as "the cheaper model (Sonnet)" while the table
         # said Haiku or Sonnet, and the inheritance rule was copied into four places.
         docs = {name: ' '.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8').split())
-                for name in ('WORKFLOW.md', 'HANDOFF.md')}
+                for name in ('WORKFLOW.md', 'WORKFLOW_RATIONALE.md', 'HANDOFF.md')}
         self.assertNotIn('cheaper model (Sonnet)', docs['WORKFLOW.md'])
         self.assertEqual(sum(text.count('omitted sub-agent model') for text in docs.values()), 1)
 
@@ -516,7 +522,7 @@ class SectionPointerTests(unittest.TestCase):
         for path in [*ROOT.glob('core/**/*'), *ROOT.glob('plugins/**/*')]:
             if path.is_file() and path.suffix in ('.md', '.py', '.sh'):
                 self.assertNotIn('decisions.md', path.read_text(encoding='utf-8'), path)
-        workflow = ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split())
+        workflow = ' '.join(workflow_rules_and_reasons().split())
         self.assertIn("names an entry of the kit maintainer's decision log, which the kit does not ship", workflow)
         # rsel3: the top tier reviews itself in a fresh session (Invariant), so WORKFLOW never sends
         # a review to "another tier" or "the tier that did not write the change"; the effort rule
@@ -570,7 +576,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('review gate applies before commit', agents)
         self.assertIn('This is the one place the timing is written', read('core/docs/REVIEW_GATE.md'))
         # #286: a commit is a long job because its hooks run the gate.
-        self.assertIn('`git commit` and `git merge` are long jobs too', read('core/docs/WORKFLOW.md'))
+        self.assertIn('`git commit` and `git merge` are long jobs too', ' '.join(workflow_rules_and_reasons().split()))
         self.assertIn('default foreground timeout is 120 seconds',
                       read('overlays/claude-code/files/.claude/agents/worker.md'))
 
@@ -612,6 +618,31 @@ class SectionPointerTests(unittest.TestCase):
         for name in reports:
             with self.subTest(report=name):
                 self.assertIn('](%s)' % name, index)
+
+    def test_the_workflow_keeps_the_rules_and_the_kit_owns_the_rationale(self):
+        # #296: rules and reasons in one 1,741-line project-owned file gave seven conflicts in one
+        # three-way merge. The reasons live in a kit-owned file the sync replaces, by heading.
+        path = ROOT / 'core/docs/WORKFLOW_RATIONALE.md'
+        rationale = path.read_text(encoding='utf-8')
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        self.assertTrue(rationale.startswith('<!-- KIT-OWNED: do not edit locally; change it in the kit and re-sync. -->\n'))
+        # A sync copies the file unfilled, and the project's gate fails on a placeholder.
+        self.assertIsNone(re.search(r'\{\{[A-Z0-9_]+\}\}', rationale))
+        self.assertNotIn("## Where the constitution's rules come from", workflow)
+        self.assertLess(len(workflow.splitlines()), 1200)
+        whys = list(re.finditer(r'^Why: docs/WORKFLOW_RATIONALE\.md, "([^"]+)"\.$', workflow, re.M))
+        self.assertGreater(len(whys), 8)
+        for why in whys:
+            with self.subTest(section=why[1]):
+                self.assertIn(why[1], headings(path))
+                # The pointer ends the section of the same name.
+                before = workflow[:why.start()].rstrip('\n')
+                section = re.findall(r'^#{2,4} (.+)$', before, re.M)[-1]
+                self.assertEqual(section, why[1])
+                self.assertRegex(workflow[why.end():], r'^\n*(#|\Z)')
+        # The rationale has no heading of its own: a reader finds the why under the rule's name.
+        self.assertEqual([h for h in headings(path) if h not in headings(ROOT / 'core/docs/WORKFLOW.md')],
+                         ["Where the constitution's rules come from"])
 
     def test_the_interview_placeholder_scan_finds_what_the_gate_fails_on(self):
         # #271: the interview's `grep -rn` listed the exempt files, ignored .gitignore and
