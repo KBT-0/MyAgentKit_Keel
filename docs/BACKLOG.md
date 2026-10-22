@@ -129,3 +129,10 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   kit with no `maintenance.auto false`; a detached `git maintenance run --auto` can still write .git/objects at cleanup
   (the CI red bootgc fixed). Not exposed today (more work follows each commit); set the key there too, or once in a helper.
 - limitwatch (2026-10-23, owner's call): the tmux `limit` rule in waiting_patterns.txt ships UNVERIFIED (its pane fixtures are made up); capture a real limit-stopped tmux pane on macOS (`tmux capture-pane -p -J -t =NAME:`) and mark the rule VERIFIED.
+
+## Filed from the v0.13 lead fixes (leadfix review, Low)
+
+- close_worker.sh still keeps a worker worktree for `scripts/__pycache__` or `core/scripts/__pycache__`
+  (a test that loads `scripts/check_kit.py` or `core/scripts/*.py` writes them): the audit refuses every
+  disposable entry below `scripts/` by design. Options: tests set `sys.dont_write_bytecode`, or the audit
+  treats `__pycache__/*.pyc` as disposable anywhere (a change to the removal rules: owner's call).

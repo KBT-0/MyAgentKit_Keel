@@ -169,6 +169,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - `docs/GOTCHAS_KIT.md` has its own Contents: a project's `docs/GOTCHAS.md` is not synced, so its
   Contents never named an entry the kit added after the install; the kit's list arrives with
   every sync, and the `GOTCHAS.md` Contents points at it.
+- **ACTION** (`docs/GOTCHAS.md`, project-owned): under "## Contents", after "A new entry adds its
+  heading to this list.", add: "An entry the kit added after this file was installed is listed in
+  `docs/GOTCHAS_KIT.md`, "Contents"." (or run `sync-kit.sh . --merge`).
 - **ACTION** (`docs/USAGE.md`, now kit-owned): before the sync, move any rule of your own from
   `docs/USAGE.md` to `docs/WORKFLOW.md`, then copy the kit's `core/docs/USAGE.md` over yours;
   without that, the sync stops on it with `conflict:` (a file without the KIT-OWNED header is
