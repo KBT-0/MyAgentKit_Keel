@@ -95,7 +95,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **ACTION** (`docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`, or by hand: in
   "The measurements and the full rules", the paragraph "**The disk is the done signal, on every
   platform.**", replace "(its result file, GONE or WAITING)" with "(its result file, GONE,
-  WAITING, or LIMIT: its usage limit stopped it, resume it after the reset)".
+  WAITING, or LIMIT: its usage limit stopped it, resume it after the reset)". The same words in
+  the kit's `overlays/claude-code/README.md` need nothing: that README is not copied.
 - Worker fixes: a `--resume` of a worker that published and sits in that closing grace waits for it to end instead of refusing "still runs"; the tmux host submits the instruction only once its real end has landed; `codex_worker.py --publish` across drives says to put the temporary file beside the destination.
 - **ACTION** (`docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`,
   or copy by hand the kit's new sentences: in `docs/HANDOFF.md`, after "before closing the
