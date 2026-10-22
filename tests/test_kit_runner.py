@@ -99,6 +99,9 @@ class Probe(unittest.TestCase):
 
 if __name__ == '__main__':
     if sys.argv[1:2] == ['--review-shard']:
+        # The runner checks its deadline after each 0.1 s wait, so a shard that ends in that first
+        # wait beat a .01 s timeout on a fast host (macOS py3.14 CI): a timed-out shard outlives it.
+        if os.environ['PROBE_MODE'] == 'timeout': time.sleep(5)
         code = run_review_shard(*sys.argv[2:])
         path = Path(sys.argv[3])
         report = json.loads(path.read_text(encoding='utf-8'))
