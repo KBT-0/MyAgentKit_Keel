@@ -63,8 +63,9 @@ A worker session is not reminded: the lead reads its result, not its chat.
 
 In a Claude Code lead session, a side check now and then (every ten tool calls, at once on
 the same call or error three times, and at the end of a long turn) reads a small window of the
-work, never the whole conversation: the last ten tool calls with their results cut short, the
-first lines of the current prompt, and the earlier notes' topics. It costs a few thousand
+work, never the whole conversation: the first lines of the current prompt (always kept), the
+last ten tool calls with their results cut short (the oldest drop when the window is full),
+and the 20 most recent notes' topics. It costs a few thousand
 tokens however long the session is, and it abstains unless it can quote evidence. A note shows
 as a dim line, `● myagentkit: myagentkit-suggestion #ID: <claim>`, and reaches the agent beside
 its next tool result, or with {{OWNER_NAME}}'s next prompt when the session is idle. It is a
@@ -75,7 +76,7 @@ never get one. {{OWNER_NAME}} switches it with `/myagentkit:suggestions on | off
 model turn), or from the shell with `sh .claude/hooks/py.sh .claude/hooks/suggestions.py off`;
 the switch is kept per project in `.myagentkit/suggestions.json`, and off means no side check,
 no delivery, no cost. `status` prints the notes, the verdicts, the precision over the last 20
-judged notes and the side checks' tokens; below 50% the checks run half as often, below 25%
+judged notes, the side checks (notes, abstains and dropped notes apart) and their tokens; below 50% the checks run half as often, below 25%
 delivery stops and the chat says so. `on` then lifts the stop: the judged window starts afresh,
 and `status` says when the stop was lifted (the kit's `docs/research/side-agent-suggestions.md`,
 7).

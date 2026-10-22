@@ -199,6 +199,22 @@ class LedgerTests(unittest.TestCase):
         said = self.context(self.run_hook('post-tool', self.event()))
         self.assertEqual(len(said.splitlines()), 7)
 
+    def test_the_gate_hands_only_the_20_most_recent_topics(self):
+        self.write(*(note(n, topic='topic %d %s' % (n, 'x' * 40)) for n in range(1, 201)))
+        known = json.loads(self.run_hook('gate').stdout)['known']
+        self.assertEqual(len(known), 20)
+        self.assertEqual(known[-1], 'topic 200 ' + 'x' * 40)
+        self.assertLessEqual(len('; '.join(known)), 20 * 62)
+
+    def test_a_note_the_mod_dropped_is_counted_apart_from_an_abstain(self):
+        self.run_hook('add-note', None, json.dumps({'session': 's1', 'abstain': True}))
+        self.run_hook('add-note', None, json.dumps({'session': 's1', 'dropped': 'low confidence'}))
+        self.run_hook('add-note', None, json.dumps({'session': 's1', 'claim': 'K', 'evidence': '', 'check': 'ls',
+                                                    'topic': 'k'}))
+        self.assertEqual([(r['outcome'], r.get('reason')) for r in self.rows('check')],
+                         [('abstain', None), ('dropped', 'low confidence'), ('dropped', 'missing field')])
+        self.assertIn('3 side checks: 0 notes, 1 abstained, 2 dropped', self.run_hook('report').stdout)
+
     def test_concurrent_hooks_deliver_once_and_number_notes_apart(self):
         spec = importlib.util.spec_from_file_location('suggestions_under_test', HOOK)
         hook = importlib.util.module_from_spec(spec)

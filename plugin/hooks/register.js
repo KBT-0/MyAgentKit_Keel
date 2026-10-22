@@ -14,8 +14,9 @@
 
 // Starting values (7.2): a check every 10 main-loop tool calls, or at once on a rule trigger
 // (the same call or the same error 3 times); 3 calls of quiet after a note; at most 5 notes a
-// session; none while a plan limit is 80% used. The window holds the last 10 calls, at most 6000
-// characters, and the reply at most 400 tokens.
+// session; none while a plan limit is 80% used. The window holds the request's first lines, the last
+// 10 calls, the 20 most recent known topics and the recent notes, at most 6000 characters, and the
+// reply at most 400 tokens.
 const EVERY = 10
 const REPEAT = 3
 const IMMUNE = 3
@@ -23,6 +24,7 @@ const SESSION_NOTES = 5
 const LIMIT_PERCENT = 80
 const WINDOW_CALLS = 10
 const WINDOW_CHARS = 6000
+const KNOWN_TOPICS = 20
 const REPLY_TOKENS = 400
 
 // A note field's length cap; a field is one line, and one that carries the delivery frame's own
@@ -66,23 +68,23 @@ function count(map, key) {
 
 const oneLine = (text, cap) => String(text).replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').trim().slice(0, cap)
 
-// The note the side check returned, each field one line under its cap, or null for an abstain, a
-// low confidence, a field carrying the frame's markers, or anything malformed.
+// The note the side check returned, each field one line under its cap; { abstain: true }; or
+// { dropped: reason } for a low confidence, a field carrying the frame's markers, or anything malformed.
 export function parseNote(text) {
   const json = /\{[\s\S]*\}/.exec(text ?? '')
-  if (json === null) return null
   let note
   try {
     note = JSON.parse(json[0])
   } catch {
-    return null
+    return { dropped: 'malformed' }
   }
-  if (note.abstain || !['high', 'medium'].includes(note.confidence)) return null
+  if (note?.abstain) return { abstain: true }
+  if (!['high', 'medium'].includes(note?.confidence)) return { dropped: 'low confidence' }
   const clean = { confidence: note.confidence }
   for (const [key, cap] of Object.entries(CAPS)) {
-    if (typeof note[key] !== 'string') return null
-    clean[key] = oneLine(note[key], cap)
-    if (!clean[key] || MARKERS.some((marker) => clean[key].includes(marker))) return null
+    clean[key] = typeof note[key] === 'string' ? oneLine(note[key], cap) : ''
+    if (!clean[key]) return { dropped: 'missing ' + key }
+    if (MARKERS.some((marker) => clean[key].includes(marker))) return { dropped: 'frame markers in ' + key }
   }
   return clean
 }
@@ -103,12 +105,16 @@ function head(result) {
   return oneLine(typeof value === 'string' ? value : JSON.stringify(value) ?? '', 300)
 }
 
-// The window the side check reads, newest last, cut from the front to WINDOW_CHARS.
-export function windowText(prompt, calls) {
-  const lines = calls.map((c, i) => (i + 1) + '. ' + c.tool + ' ' + c.args + (c.isError ? '\n   ERROR: ' : '\n   -> ') + c.head)
-  const text = 'The user\'s current request (first lines):\n' + (prompt || '(none seen)') +
-    '\n\nThe agent\'s last ' + calls.length + ' tool calls, oldest first:\n' + (lines.join('\n') || '(none)')
-  return text.length > WINDOW_CHARS ? '...' + text.slice(-WINDOW_CHARS) : text
+// The window the side check reads, newest call last. The request's lines (capped at 600) and the
+// tail (known topics, recent notes, the trigger) stay whole; the oldest calls drop until it fits WINDOW_CHARS.
+export function windowText(prompt, calls, tail = '') {
+  const lines = calls.map((c) => c.tool + ' ' + c.args + (c.isError ? '\n   ERROR: ' : '\n   -> ') + c.head)
+  const text = (kept) => 'The user\'s current request (first lines):\n' + (prompt || '(none seen)') +
+    '\n\nThe agent\'s last ' + kept.length + ' tool calls, oldest first:\n' +
+    (kept.map((line, i) => (i + 1) + '. ' + line).join('\n') || '(none)') + tail
+  let kept = lines
+  while (kept.length > 0 && text(kept).length > WINDOW_CHARS) kept = kept.slice(1)
+  return text(kept)
 }
 
 async function ledger($, args, stdin) {
@@ -134,18 +140,17 @@ async function check($, trigger) {
       return
     }
     run.sinceCheck = 0
-    const prompt = windowText(run.prompt, run.window) +
-      '\n\nKnown topics (do not repeat): ' + (gate.known.join('; ') || 'none') +
-      '\nRecent notes: ' + (gate.recent.join(' | ') || 'none') + '\nWhy this check runs now: ' + trigger
+    const prompt = windowText(run.prompt, run.window,
+      '\n\nKnown topics (do not repeat): ' + (gate.known.slice(-KNOWN_TOPICS).join('; ') || 'none') +
+      '\nRecent notes: ' + (gate.recent.join(' | ') || 'none') + '\nWhy this check runs now: ' + trigger)
     const reply = await $.model.complete({ model: await $.session.model(), system: PROMPT, prompt,
       maxTokens: REPLY_TOKENS, timeoutMs: 60000 })
     if (!reply?.isAnswered) return // an API error or a timeout: fail open (7.6)
     const note = parseNote(reply.text)
     const session = await $.session.id()
-    const row = { session, trigger, usage: reply.usage, ...(note ?? { abstain: true }) }
-    const added = await ledger($, ['add-note'], JSON.stringify(row))
+    const added = await ledger($, ['add-note'], JSON.stringify({ session, trigger, usage: reply.usage, ...note }))
     const id = added.stdout.trim()
-    if (note !== null && id) {
+    if (note.claim && id) {
       run.notes += 1
       run.immune = IMMUNE
       $.ui.log('myagentkit-suggestion #' + id + ': ' + note.claim)
