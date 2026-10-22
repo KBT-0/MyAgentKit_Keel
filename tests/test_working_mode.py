@@ -1,5 +1,6 @@
 """Exercise the mode command against disposable project documents."""
 import os
+import re
 import hashlib
 import importlib.util
 import io
@@ -769,6 +770,63 @@ class WorkingModeTests(unittest.TestCase):
                 self.assertIn('mode switch', result.stderr)
                 self.assertEqual(self.state.read_bytes(), before)
         self.assertIn('Current mode: solo', self.run_mode().stdout)
+
+    def test_autopilot_records_the_owner_away_beside_the_mode_and_present_ends_it(self):
+        # v0.13: a presence switch beside the mode, never a fourth mode (owner, 2026-10-22).
+        self.state.write_text('# State\n---\n**Working mode:** cross\nActive work.\n', encoding='utf-8')
+        presence = self.project / '.myagentkit/presence'
+        self.assertIn('Owner: present', self.run_mode().stdout)  # no record is present
+        result = self.run_mode('Autopilot')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = self.state.read_text(encoding='utf-8').splitlines()
+        self.assertEqual(lines[2], '**Working mode:** cross')
+        self.assertRegex(lines[3], r'^\*\*Owner:\*\* away \(autopilot since \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\)$')
+        stamp = lines[3].split('since ')[1].rstrip(')')
+        self.assertEqual(presence.read_text(encoding='utf-8'), 'away ' + stamp + '\n')
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
+        self.assertIn('#### autopilot', result.stdout)  # the contract, from WORKFLOW.md
+        self.assertIn('/goal every item', result.stdout)
+        self.assertIn('.myagentkit/autopilot/' + stamp[:10] + '.md', result.stdout)
+        self.assertIn('Owner: away (autopilot since ' + stamp + ')', self.run_mode().stdout)
+        # A second switch keeps the first stamp: the report covers the whole absence.
+        self.assertEqual(self.run_mode('autopilot').returncode, 0)
+        self.assertEqual(presence.read_text(encoding='utf-8'), 'away ' + stamp + '\n')
+        # A mode switch keeps the Owner line.
+        self.assertEqual(self.run_mode('solo').returncode, 0)
+        self.assertIn('**Owner:** away (autopilot since ' + stamp + ')', self.state.read_text(encoding='utf-8'))
+        result = self.run_mode('present')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('\n**Owner:** present\n', self.state.read_text(encoding='utf-8'))
+        self.assertRegex(presence.read_text(encoding='utf-8'), '^present ' + re.escape(stamp) + r' \S+\n$')
+        self.assertIn('AskUserQuestion', result.stdout)
+        self.assertIn('autopilot_report.py', result.stdout)
+        self.assertIn('Owner: present', self.run_mode().stdout)
+
+    def test_presence_takes_no_note_and_disagreeing_or_unknown_owner_lines_are_refused(self):
+        presence = self.project / '.myagentkit/presence'
+        self.assertNotEqual(self.run_mode('autopilot', 'until 09:00').returncode, 0)
+        self.assertFalse(presence.exists())
+        self.assertEqual(self.run_mode('autopilot').returncode, 0)
+        presence.write_text('present\n', encoding='utf-8')
+        result = self.run_mode()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('disagree', result.stderr)
+        presence.unlink()
+        self.assertNotEqual(self.run_mode().returncode, 0)  # STATE away, the hooks' record gone
+        self.assertEqual(self.run_mode('present').returncode, 0)  # an explicit switch repairs
+        for body in ('**Owner:** present\n**Owner:** present\n', '**Owner:** maybe\n'):
+            with self.subTest(body=body):
+                self.state.write_text(body, encoding='utf-8')
+                self.assertNotEqual(self.run_mode('autopilot').returncode, 0)
+                self.assertEqual(self.state.read_text(encoding='utf-8'), body)
+        # Only the switch changes the line: a STATE edit that does is refused.
+        self.state.write_text('**Owner:** present\n', encoding='utf-8')
+        snapshot, sha = self.snapshot()
+        snapshot.write_bytes(b'**Owner:** away (autopilot since 2026-10-22T23:00:00+03:00)\n')
+        result = self.run_mode('--replace-state', str(snapshot), '--expect', sha)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Owner line', result.stderr)
+        self.assertEqual(self.state.read_text(encoding='utf-8'), '**Owner:** present\n')
 
     def test_state_operations_stay_in_the_project_and_its_private_folder(self):
         before = self.state.read_bytes()

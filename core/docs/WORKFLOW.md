@@ -668,7 +668,8 @@ line of `docs/STATE.md` and the small `.myagentkit/mode` file (ignored by Git, n
 name the mode in force.
 `/myagentkit:mode` uses `scripts/working_mode.py` to show or set both records, preserving
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
-them. A project without either record works in **solo**, the main mode.
+them. A project without either record works in **solo**, the main mode. Beside the mode,
+`autopilot` and `present` switch the owner's presence ("autopilot, the owner-away switch").
 
 A mode decides who writes, who reviews and who fixes the findings. It never removes a
 review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"): the longer agents
@@ -832,6 +833,73 @@ critical Claude change.
   the same way, unasked (code.claude.com/docs/en/interactive-mode).
 - **Lessons:** every Claude worker counts against the low side: a sub-agent spends the same
   allowance as a spawned session.
+
+#### autopilot, the owner-away switch
+
+Not a mode: a presence switch beside the mode in force, which keeps deciding who writes and
+reviews. `**Owner:** away (autopilot since <time>)` or `**Owner:** present` in
+`docs/STATE.md`, under the "Working mode:" line, and `.myagentkit/presence` (ignored by Git,
+read by the hooks) record it; `scripts/working_mode.py autopilot` and `present` write both
+under the mode switch's rules, and nothing else changes the line. No record is present.
+
+- **Starts:** `/myagentkit:mode autopilot`, or {{OWNER_NAME}} saying so in plain words
+  ("autopilot'a al", "gece moduna alalım", "I'm off, keep going"): the lead runs
+  `python scripts/working_mode.py autopilot` itself and shows what it prints, this subsection
+  and the `/goal` line. A second run keeps the first stamp.
+- **Before {{OWNER_NAME}} leaves** (the lead checks each and says what is missing):
+  1. `docs/STATE.md` lists the work for the absence, each item with its done criterion, and
+     what comes next when the list is done; nothing outside the list starts.
+  2. This lead session stays open, interactive and in the foreground, never `--bg` or `-p`:
+     only there does a usage-limit stop wait and resume (`autoContinueAtUsageLimit`, on by
+     default).
+  3. Auto mode, or allow rules for the actions the list needs, written now: a permission
+     prompt nobody answers waits until morning.
+  4. The machine stays awake: plugged in, lid open, sleep off (Windows: PowerToys Awake or
+     `powercfg /change standby-timeout-ac 0`; macOS: `caffeinate -i`).
+  5. Every running worker's disk watch is armed (rule 4).
+  6. {{OWNER_NAME}} types the printed `/goal` line; the lead cannot run a slash command.
+- **Stops** only when: the list is done and the report written; the end time {{OWNER_NAME}}
+  gave has come (the lead reads `date` at each checkpoint); a usage limit resets more than
+  24 hours away; every remaining item needs {{OWNER_NAME}} (the list below); an error the
+  lead cannot fix. A usage-limit note, the context band, a compaction (the second too), a
+  worker's hand-off, a parked question, one stuck item (three tries, then a WIP commit and the
+  next item) is no stop. No turn ends with nothing to wake it: every wait is a disk watch or
+  a `ScheduleWakeup`. No AskUserQuestion: a question goes to the report.
+- **Decides:**
+
+  | What | When | The lead |
+  |---|---|---|
+  | Alone | the rules settle it; reversible inside the tree or branch; equal options; order; routing | decides, records it (decision, options, reason, undo), goes on |
+  | Proxy, then act | critical or radical but reversible: a lasting design choice, reading the scope, a reading close to an owner rule | consults (below), does the work so the owner's answer changes one named spot, records "the proxy's call, not the owner's approval" |
+  | Park | a scope change; a decision the owner kept; the proxy unsure or against the evidence | queues it with a recommendation, takes other work |
+  | Never | the list below | does not do it, queues it, skips what depends on it |
+
+  **Never without {{OWNER_NAME}}:** a force push or history rewrite; deleting files that
+  existed before the session (`git reset --hard`, `clean`, `stash drop`); an issue, comment
+  or message (written as an Issue draft in the report, title and body ready); usage credits
+  or spend beyond the plan; changing the owner's rules (`BEHAVIOUR.md`, the owner's
+  decisions here, memory); moving an owner item to a later version; ending running work
+  without a valid reason; credentials, permissions or a security boundary; skipping a review
+  or lowering a risk tier. **Allowed:** local merges into the main branch; push and tag once
+  every check and CI are green.
+- **Proxy consult:** a sub-agent with model and effort stated: Fable 5.1 first; when it is
+  unavailable or asks to bill usage credits, never approve them: Opus 5.5 at high. First the
+  question, why now, the binding rules and the owner's words verbatim, the evidence and the
+  options in neutral order; the lead's own view only after the answer, for the proxy to
+  refute.
+- **Checkpoints:** each finished item is committed; STATE and the hand-off file are current
+  after each; at red (300k) the hand-off file is written and the session goes on (rule 8).
+  Reviews run by tier; only Critical and High block.
+- **The report:** `.myagentkit/autopilot/<date of the stamp>.md` (ignored by Git), from
+  `docs/AUTOPILOT.md`; `python scripts/autopilot_report.py` prints its Done section from git.
+- **Ends:** {{OWNER_NAME}}'s first message. Before anything else the lead runs
+  `python scripts/working_mode.py present`, gives the report in two layers
+  (`docs/COMMUNICATION.md`, "Handoff"), then asks its Questions one by one with
+  AskUserQuestion, the recommended option first; an Issue draft is posted only on
+  {{OWNER_NAME}}'s yes. The Claude Code overlay's `context_size.py` names this at each prompt
+  while away.
+
+Why: docs/WORKFLOW_RATIONALE.md, "autopilot, the owner-away switch".
 
 #### How a mode improves
 
@@ -1043,9 +1111,11 @@ Rules, binding for whoever routes workers:
    line. At red the lead stops at the next clean point and proposes a hand-off or `/compact`,
    because a session end kills the background jobs started from its tool shell (survivors:
    `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
-   decides at that stop, never mid-flow. With the owner away, the lead writes the hand-off
-   file, runs `/compact` when jobs are in flight, and continues; it does not wait for an
-   answer (`docs/COMMUNICATION.md`).
+   decides at that stop, never mid-flow. With the owner away (`**Owner:** away` in
+   `docs/STATE.md`, "autopilot, the owner-away switch"; without that record,
+   `docs/COMMUNICATION.md`'s 45 minutes), the lead writes the hand-off file, runs `/compact`
+   when jobs are in flight, and continues, after a second compaction too; it does not wait
+   for an answer.
    A worker session uses the same absolute band: `scripts/watch_workers.sh --context-warn`
    warns at the smaller of 200k and 50% of the window (`NNNk` or `NN%` changes it).
    A sub-agent compacts near 168k, before the red band (rule 3), and its compactions never end
