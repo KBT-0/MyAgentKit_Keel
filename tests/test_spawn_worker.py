@@ -2286,9 +2286,12 @@ elif args[:1] == ['agents']:
     count = os.path.join(state, 'agents-count')
     n = int(open(count).read()) + 1 if os.path.exists(count) else 1
     open(count, 'w').write(str(n))
+    # SPAWN_UNLOCK names a lock file of its commit, gone when the session ends.
     if n > int(os.environ.get('SPAWN_ENDS_AFTER', n)):
         rows = [dict(r, pid=None, state='done') for r in rows]
         save()
+        if os.environ.get('SPAWN_UNLOCK') and os.path.exists(os.environ['SPAWN_UNLOCK']):
+            os.remove(os.environ['SPAWN_UNLOCK'])
     print(json.dumps(rows))
 elif args[:1] in (['stop'], ['rm']):
     rows = [dict(r, pid=None, state='done') if r['id'] == args[1] else r for r in rows
@@ -2571,6 +2574,32 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('closing grace', result.stdout)
         self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.ended()
+
+    def test_a_resume_with_only_an_earlier_runs_result_is_refused_at_once(self):
+        # donemsgfix round 1: a resumed worker's result from its previous task keeps its marker;
+        # only a file newer than NAME.result-path (this run's record) shows the closing grace.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        old = self.cwd / 'RESULT-w1.md'
+        old.write_text(DONE)
+        os.utime(old, (time.time() - 600, time.time() - 600))
+        (self.workers / 'w1.result-path').write_text(str(old) + '\n')
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertNotIn('closing grace', result.stdout)
+
+    def test_a_resume_waits_past_the_grace_while_the_workers_commit_holds_its_lock(self):
+        # donemsgfix round 1: the supervisor waits out a commit or gate however long it runs
+        # (codex_worker.py busy()); past the resume's grace + 15 s it waits on while a lock is held.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
+        lock = self.cwd / '.git/index.lock'
+        lock.write_text('')
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_ENDS_AFTER='17', SPAWN_UNLOCK=str(lock),
+                            SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('a commit or gate', result.stdout)
         self.ended()
 
     def test_a_resume_that_starts_a_copy_stops_and_removes_it_and_fails(self):
