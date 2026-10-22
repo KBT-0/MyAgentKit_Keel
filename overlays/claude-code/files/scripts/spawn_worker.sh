@@ -782,35 +782,38 @@ for row in json.loads(sys.stdin.buffer.read()):
 # message brings the lead's --resume inside that grace (donemsgfix): a resume waits for that end
 # instead of refusing it. Waiting, not stopping it as close_worker.sh does: the grace exists so the
 # worker's message and any commit finish. Only a file published in THIS run counts: newer than
-# NAME.result-path, as the printed watch tests it (a resumed worker's earlier result keeps its
-# marker). The bound mirrors the supervisor: the grace and 15 s for its stop (close_worker.sh's
-# wait), then on while a commit or gate holds a lock in the worker's checkout
-# (codex_worker.py busy(), which the supervisor waits out however long it runs), and a 15 min
-# ceiling over all. in_grace sleeps one second and succeeds while that wait may go on.
-grace_left=""
+# NAME.result-path (a resumed worker's earlier result keeps its marker); no record, no grace
+# (`-nt` against a missing file is true in bash, false in dash). The wait mirrors the supervisor:
+# the grace and 15 s for its stop (close_worker.sh's wait), then on while a commit or gate holds
+# a lock in the worker's checkout (codex_worker.py busy(), which the supervisor waits out however
+# long it runs); 100 s in all at most, under Claude Code's 120 s Bash timeout (lead decision),
+# then the lead is told to run the resume again. Wall clock, not loops: a loop took ~6 s on a
+# loaded host. in_grace sleeps one second and succeeds while the wait goes on.
+grace_end=""
 in_grace() {
   [ -n "$resume" ] || return 1
-  if [ -z "$grace_left" ]; then
+  if [ -z "$grace_end" ]; then
+    [ -e "$wdir/$name.result-path" ] || return 1
     for f in "$result" "$dir/QUESTION-$name.md" ""; do
       [ -n "$f" ] || return 1
       [ "$f" -nt "$wdir/$name.result-path" ] && grep -qsF -- '<!-- codex-worker: ready -->' "$f" && break
     done
-    g=${KIT_WORKER_GRACE:-60}; g=${g%%.*}; grace_left=$((${g:-0} + 15)); ceiling=900; held=""
-    printf '%s\n' "spawn_worker: the earlier session of '$name' has published and is in its closing grace: waiting up to $grace_left s for it to end, longer while a commit or gate runs in its checkout (at most 15 min)"
+    g=${KIT_WORKER_GRACE:-60}; g=${g%%.*}; waited_from=$(date +%s); grace_end=$((waited_from + ${g:-0} + 15)); held=""; said=""
+    printf '%s\n' "spawn_worker: the earlier session of '$name' has published and is in its closing grace: waiting up to $((grace_end - waited_from)) s for it to end, longer while a commit or gate runs in its checkout (100 s in all)"
   fi
-  [ "$ceiling" -gt 0 ] || return 1
-  if [ "$grace_left" -gt 0 ]; then
-    grace_left=$((grace_left - 1))
-  elif KIT_WORKER_CHECKOUT=$dir $kit_python -I -c 'import importlib.util, sys
+  now=$(date +%s)
+  [ $((now - waited_from)) -lt 100 ] ||
+    die "the earlier session of '$name' still finishes${held:+ (a commit or gate holds its checkout: $held)}: run this resume again in a few minutes"
+  if [ "$now" -ge "$grace_end" ]; then
+    held=$(KIT_WORKER_CHECKOUT=$dir $kit_python -I -c 'import importlib.util, sys
 s = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])
 m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
-sys.exit(0 if m.busy(m.locks()) else 1)' "$cworker"; then
-    [ -n "$held" ] || printf '%s\n' "spawn_worker: waiting on a commit or gate in its checkout (index.lock or check.lock held)"
-    held=1
-  else
-    return 1
+print(" and ".join(p.name for p in m.locks() if m.busy([p])))' "$cworker" 2>/dev/null | tail -n 1) || held=""
+    [ -n "$held" ] || return 1
+    [ "$held" = "$said" ] || printf '%s\n' "spawn_worker: waiting on a commit or gate in its checkout ($held held)"
+    said=$held
   fi
-  ceiling=$((ceiling - 1)); sleep 1
+  sleep 1
 }
 # The name is refused while a Claude Code session of it runs, on the bg host too: a tab worker
 # has no NAME.id, and a bg spawn of its name replaced its records (the bg check below is by id).

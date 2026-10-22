@@ -2286,12 +2286,9 @@ elif args[:1] == ['agents']:
     count = os.path.join(state, 'agents-count')
     n = int(open(count).read()) + 1 if os.path.exists(count) else 1
     open(count, 'w').write(str(n))
-    # SPAWN_UNLOCK names a lock file of its commit, gone when the session ends.
     if n > int(os.environ.get('SPAWN_ENDS_AFTER', n)):
         rows = [dict(r, pid=None, state='done') for r in rows]
         save()
-        if os.environ.get('SPAWN_UNLOCK') and os.path.exists(os.environ['SPAWN_UNLOCK']):
-            os.remove(os.environ['SPAWN_UNLOCK'])
     print(json.dumps(rows))
 elif args[:1] in (['stop'], ['rm']):
     rows = [dict(r, pid=None, state='done') if r['id'] == args[1] else r for r in rows
@@ -2559,6 +2556,10 @@ class BackgroundHostTests(unittest.TestCase):
         if session:
             (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
         (self.state / 'rows.json').write_text(json.dumps([dict({'id': '1a2b3c4d', 'pid': None, 'state': 'done'}, **(row or {}))]))
+        # The earlier run's record, written at its start (record_result) before anything it published.
+        record = self.workers / 'w1.result-path'
+        record.write_text(str(self.cwd / 'RESULT-w1.md') + '\n')
+        os.utime(record, (time.time() - 60, time.time() - 60))
 
     def test_a_resume_waits_for_a_published_session_in_its_closing_grace(self):
         # donemsgfix: the worker messages the lead ~20 s after it publishes, inside the 60 s grace,
@@ -2589,18 +2590,32 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertIn('still runs', result.stderr)
         self.assertNotIn('closing grace', result.stdout)
 
-    def test_a_resume_waits_past_the_grace_while_the_workers_commit_holds_its_lock(self):
-        # donemsgfix round 1: the supervisor waits out a commit or gate however long it runs
-        # (codex_worker.py busy()); past the resume's grace + 15 s it waits on while a lock is held.
+    def test_a_resume_with_no_run_record_is_refused_at_once(self):
+        # donemsgfix round 2: `-nt` against a missing file is true in bash and false in dash; with
+        # no NAME.result-path nothing shows the file is this run's, so no grace is waited for.
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        (self.workers / 'w1.result-path').unlink()
+        (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still runs', result.stderr)
+        self.assertNotIn('closing grace', result.stdout)
+
+    def test_a_resume_waits_past_the_grace_while_a_lock_is_held_then_says_to_run_it_again(self):
+        # donemsgfix: the supervisor waits out a commit or gate however long it runs (codex_worker.py
+        # busy()); the resume waits past its grace + 15 s while a lock is held, but 100 s in all at
+        # most (lead decision: under Claude Code's 120 s Bash timeout), then names the lock.
         self.resumable(row={'pid': 99, 'state': 'working'})
         (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
-        lock = self.cwd / '.git/index.lock'
-        lock.write_text('')
-        result = self.spawn('--resume', '1a2b3c4d', SPAWN_ENDS_AFTER='17', SPAWN_UNLOCK=str(lock),
-                            SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (self.cwd / '.git/index.lock').write_text('')
+        started = time.monotonic()
+        result = self.spawn('--resume', '1a2b3c4d')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertGreaterEqual(time.monotonic() - started, 100)
         self.assertIn('a commit or gate', result.stdout)
-        self.ended()
+        self.assertIn('run this resume again in a few minutes', result.stderr)
+        self.assertIn('index.lock', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
 
     def test_a_resume_that_starts_a_copy_stops_and_removes_it_and_fails(self):
         # Spike trap 1: a copy under the same name answers nothing; the original is kept.
