@@ -13,8 +13,13 @@ short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
 `post-merge`), `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/agent_cost.py`,
 `scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
 `BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons behind the project-owned
-`docs/WORKFLOW.md`, by the same headings), the module-rules template, and the two setup documents
+`docs/WORKFLOW.md`, by the same headings), `docs/USAGE.md`, the kit's parts of four reference
+documents (`docs/DEV_SETUP_KIT.md`, `docs/GOTCHAS_KIT.md`, `docs/HANDOFF_KIT.md`,
+`docs/REVIEW_RUNNING_KIT.md`), the module-rules template, and the two setup documents
 (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
+A sync overwrites a kit-owned file, so an edit there is lost: a project that needs a different
+rule writes it in the project-owned file (`docs/<NAME>.md` beside `docs/<NAME>_KIT.md`;
+`docs/WORKFLOW.md` for `docs/USAGE.md`), and the project file wins over the kit's.
 A project's own machine checks, once in its own `scripts/doctor.sh`, move to
 `scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
 
@@ -35,6 +40,18 @@ workflow, the review gate, the architecture map, the check script, the boundary 
 their negative tests. All of them were customised during setup. Overwriting them would
 discard that work and re-introduce the placeholders — the gate would go red on a project
 that was fine a minute earlier.
+
+Some core documents are project-owned by design, whole (#94, owner decision 2026-10-22).
+`AGENTS.md` and `docs/AGENTS.md` are loaded by the tools themselves, and Codex reads an
+`AGENTS.md` without following a pointer or an import, so a rule moved out of them would stop
+being loaded. `docs/COMMUNICATION.md` names the owner in most of its rules, and
+`docs/REVIEW_GATE.md` carries an owner decision or a placeholder in nearly every section and is
+what the reviewer reads. `docs/GLOSSARY.md` and `docs/STRONG_REVIEW.md` are lists the project
+grows. `docs/WORKFLOW.md` keeps its rules by the owner's decision; only its reasons are
+kit-owned. In `docs/DEV_SETUP.md`, `docs/GOTCHAS.md`, `docs/HANDOFF.md` and
+`docs/REVIEW_RUNNING.md` the project file keeps its placeholders, its owner's decisions and
+every quoted heading, and a section whose generic text the kit owns ends with
+`Kit rules: docs/<NAME>_KIT.md, "<heading>".`
 
 This split is deliberately conservative. A tool that silently merged process rules into a
 working repository would be worse than no tool: you would stop reading what it did, which is

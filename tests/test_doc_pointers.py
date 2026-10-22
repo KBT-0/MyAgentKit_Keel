@@ -6,6 +6,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CALLER_HEADINGS = ('## Running it', '## Unavailable reviewer', '## Template to paste')
+# The reference docs whose generic text is kit-owned (#94): docs/<NAME>.md points into docs/<NAME>_KIT.md.
+KIT_SIBLINGS = ('DEV_SETUP', 'GOTCHAS', 'HANDOFF', 'REVIEW_RUNNING')
 
 
 def source(name):
@@ -25,6 +27,12 @@ def workflow_rules_and_reasons():
     """WORKFLOW.md and its kit-owned rationale (#296), for text that may live in either."""
     return '\n'.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8')
                      for name in ('WORKFLOW.md', 'WORKFLOW_RATIONALE.md'))
+
+
+def with_kit(name):
+    """A reference doc and its kit-owned part (#94), for text that may live in either."""
+    return '\n'.join((ROOT / 'core/docs' / (name + suffix)).read_text(encoding='utf-8')
+                     for suffix in ('.md', '_KIT.md'))
 
 
 def reviewer_doc_lists():
@@ -99,7 +107,7 @@ class SectionPointerTests(unittest.TestCase):
             self.assertNotIn(old, budget_rule)
         self.assertIn("the gate's reviewers run one after the other unless {{OWNER_NAME}} allows parallel", flat)
         self.assertIn('then gets ONE final review under a label never used before', flat)
-        gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
+        gotchas = ' '.join(with_kit('GOTCHAS').split())
         for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
                      '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
                      'Wait for the survivors by default', 'reason that holds',
@@ -335,7 +343,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('**Working mode:** solo', (ROOT / 'core/docs/STATE.md').read_text(encoding='utf-8'))
         for name in ('core/docs/WORKFLOW.md', 'setup/INTERVIEW.md'):
             self.assertNotIn('{{MODEL_ROUTING}}', (ROOT / name).read_text(encoding='utf-8'))
-        handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
+        handoff = with_kit('HANDOFF')
         for sidecar in ('.myagentkit/workers/NAME.session', 'QUESTION-NAME.md'):
             self.assertIn(sidecar, handoff)
         self.assertNotIn('`RESULT-NAME.session`', handoff)
@@ -355,7 +363,7 @@ class SectionPointerTests(unittest.TestCase):
     def test_incremental_build_briefs_name_both_shared_dependencies(self):
         text = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8').split('## The brief')[1].split('4. **Acceptance:**')[0]
         self.assertIn('A task that writes an incremental-build planner quotes `docs/GOTCHAS.md`, "An incremental\n   build misses its always-run inputs"', text)
-        gotcha = (ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split('## An incremental build misses its always-run inputs')[1]
+        gotcha = (ROOT / 'core/docs/GOTCHAS_KIT.md').read_text(encoding='utf-8').split('## An incremental build misses its always-run inputs')[1]
         self.assertIn("always-run steps in every stage's dependency set", gotcha)
         self.assertIn('make the driver script invalidate\nevery stage when it changes', gotcha)
         # Decision 10: ARCHITECTURE.md is read on condition by a worker, always by a reviewer.
@@ -455,7 +463,7 @@ class SectionPointerTests(unittest.TestCase):
         # #142: rule 1 restated the tier table as "the cheaper model (Sonnet)" while the table
         # said Haiku or Sonnet, and the inheritance rule was copied into four places.
         docs = {name: ' '.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8').split())
-                for name in ('WORKFLOW.md', 'WORKFLOW_RATIONALE.md', 'HANDOFF.md')}
+                for name in ('WORKFLOW.md', 'WORKFLOW_RATIONALE.md', 'HANDOFF.md', 'HANDOFF_KIT.md')}
         self.assertNotIn('cheaper model (Sonnet)', docs['WORKFLOW.md'])
         self.assertEqual(sum(text.count('omitted sub-agent model') for text in docs.values()), 1)
 
@@ -567,7 +575,7 @@ class SectionPointerTests(unittest.TestCase):
     def test_branch_workers_and_the_gate_timing_have_one_rule(self):
         read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
         # #178: a branch or worktree worker writes its note, never STATE.md.
-        for name in ('core/docs/HANDOFF.md', 'core/docs/AGENTS.md'):
+        for name in ('core/docs/HANDOFF.md', 'core/docs/HANDOFF_KIT.md', 'core/docs/AGENTS.md'):
             self.assertIn('docs/worktree-notes/<branch>.md', read(name), name)
         self.assertIn('`git merge --no-commit <branch>`', read('core/docs/WORKFLOW.md'))
         # #220: the timing is written once, in the gate; AGENTS.md no longer says "before commit".
@@ -655,6 +663,41 @@ class SectionPointerTests(unittest.TestCase):
         # The rationale has no heading of its own: a reader finds the why under the rule's name.
         self.assertEqual([h for h in headings(path) if h not in headings(ROOT / 'core/docs/WORKFLOW.md')],
                          ["Where the constitution's rules come from"])
+
+    def test_the_reference_docs_keep_project_lines_and_the_kit_owns_the_rest(self):
+        # #94: generic text in a project-owned file reached a project only by a hand merge. In
+        # the on-demand reference docs it moves to a kit-owned <NAME>_KIT.md; the project file
+        # keeps every placeholder, owner decision and quoted heading (owner decision 2026-10-22,
+        # docsowned question 1). The tool-loaded and owner-centred docs stay whole.
+        header = '<!-- KIT-OWNED: do not edit locally; change it in the kit and re-sync. -->\n'
+        self.assertTrue((ROOT / 'core/docs/USAGE.md').read_text(encoding='utf-8').startswith(header))
+        for name in KIT_SIBLINGS:
+            with self.subTest(doc=name):
+                project = (ROOT / 'core/docs' / (name + '.md')).read_text(encoding='utf-8')
+                path = ROOT / 'core/docs' / (name + '_KIT.md')
+                kit = path.read_text(encoding='utf-8')
+                self.assertTrue(kit.startswith(header))
+                # A sync overwrites the file, so an edit there is lost: the project's rule goes in
+                # its own file, which wins (lead, 2026-10-22).
+                self.assertIn('Do not edit it: a project that needs a different rule writes it in `docs/%s.md`, the '
+                              'project-owned file, and the project file wins over this one.' % name, ' '.join(kit.split()))
+                self.assertIn('A project that needs a different rule writes it here, and this file wins over '
+                              '`docs/%s_KIT.md`.' % name, ' '.join(project.split()))
+                self.assertIsNone(re.search(r'\{\{[A-Z0-9_]+\}\}', kit))
+                body = kit.split('\n## ', 1)[1]
+                for decision in ("owner's choice", 'owner decision', 'KARARLAR', '{{OWNER_NAME}}'):
+                    self.assertNotIn(decision, body)
+                pointers = list(re.finditer(r'^Kit rules: docs/%s_KIT\.md, "([^"]+)"\.$' % name, project, re.M))
+                self.assertTrue(pointers)
+                for pointer in pointers:
+                    self.assertIn(pointer[1], headings(path))
+                    # The pointer sits in the project's section of the same name.
+                    self.assertEqual(re.findall(r'^#{2,4} (.+)$', project[:pointer.start()], re.M)[-1], pointer[1])
+                # A quote of a heading still finds it in the file it names.
+                self.assertEqual([h for h in headings(path) if h not in headings(ROOT / 'core/docs' / (name + '.md'))], [])
+        for name in ('REVIEW_GATE', 'COMMUNICATION', 'GLOSSARY', 'STRONG_REVIEW', 'AGENTS'):
+            self.assertFalse((ROOT / 'core/docs' / (name + '_KIT.md')).exists(), name)
+        self.assertFalse((ROOT / 'core/AGENTS_KIT.md').exists())
 
     def test_the_interview_placeholder_scan_finds_what_the_gate_fails_on(self):
         # #271: the interview's `grep -rn` listed the exempt files, ignored .gitignore and
