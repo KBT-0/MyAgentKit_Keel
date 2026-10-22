@@ -103,9 +103,11 @@ script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 repo_root="${REVIEW_REPO_ROOT:-$script_dir/..}"
 # Run from another checkout of the same repository (the main checkout's script in a worker's
 # linked worktree), the review and its Owns: check are of the checkout it runs in (#302).
+# The common Git directory is made absolute by cd, not by rev-parse's path-format option: Git
+# before 2.31 refused that, and the script's own checkout was reviewed.
 if [ -z "${REVIEW_REPO_ROOT:-}" ] && here=$(git rev-parse --show-toplevel 2>/dev/null) &&
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
-  [ "$common" = "$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]; then
+  common=$(CDPATH= cd -- "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd -P) &&
+  [ "$common" = "$(CDPATH= cd -- "$repo_root" && CDPATH= cd -- "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd -P)" ]; then
   repo_root=$here
 fi
 # CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.

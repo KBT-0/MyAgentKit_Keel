@@ -5969,6 +5969,21 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                                        'head': round_one, 'commit': merged})
         self.assertIn('continues its --uncommitted round', self.stderr)
 
+    def test_the_main_checkout_is_found_without_git_2_31(self):
+        # project_leeway's v0.12.1 review: `rev-parse --path-format` needs Git 2.31; older Git
+        # failed records_root() with a bare git error and made review.sh review the wrong checkout.
+        from unittest.mock import patch
+        linked = self.linked_worktree()
+        real = bridge.git
+        def old_git(repo, *args, **kwargs):
+            if any(arg.startswith('--path-format') for arg in args):
+                raise bridge.GitFailed("git rev-parse failed: unknown option --path-format")
+            return real(repo, *args, **kwargs)
+        with patch.object(bridge, 'git', old_git):
+            self.assertEqual(bridge.records_root(linked), self.repo.resolve())
+            self.assertEqual(bridge.records_root(self.repo), self.repo.resolve())
+        self.assertNotIn('--path-format', (ROOT / 'review.sh').read_text(encoding='utf-8'))
+
     def test_a_moved_or_non_ascii_file_continues_only_when_the_commit_has_it(self):
         # chainmain review: a file moved without staging is a deletion and an addition in the
         # --uncommitted round and one rename in the commit, so the --commit round was refused; a

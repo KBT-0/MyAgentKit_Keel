@@ -24,6 +24,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - A `--commit` round continues an `--uncommitted` round of a moved file or a non-ASCII file name
   correctly, from the newest such round, and a rebased worker head is named in the refusal;
   `agent_usage.py` and `usage_summary.py` read the main checkout's records from a linked worktree.
+- `review.sh` and the review records find the main checkout without `git rev-parse
+  --path-format` (Git 2.31+): with older Git the script reviewed its own checkout, not the
+  worktree it ran in.
 - `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
   placeholder stay in the project-owned file (1,741 lines to 1,565), the worker-cost rules 1-9
   whole among them; the reasons, the sources, the measurements and the long examples move,

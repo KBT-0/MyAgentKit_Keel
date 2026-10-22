@@ -1150,7 +1150,8 @@ def records_root(repo: Path) -> Path:
     worker's rounds and `git worktree remove` takes none of them (#293). A checkout whose common
     Git directory is not its main checkout's `.git` folder (a submodule, a bare repository's
     worktree) keeps its own."""
-    common = Path(os.fsdecode(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip())
+    # Made absolute here, not with --path-format (Git 2.31+): relative output is relative to `repo`.
+    common = (repo / os.fsdecode(git(repo, "rev-parse", "--git-common-dir")).strip()).resolve()
     return common.parent.resolve() if common.name == ".git" and common.is_dir() else repo
 
 
