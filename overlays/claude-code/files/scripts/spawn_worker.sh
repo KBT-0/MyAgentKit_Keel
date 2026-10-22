@@ -818,8 +818,8 @@ print(" and ".join(p.name for p in m.locks() if m.busy([p])))' "$cworker" 2>/dev
   fi
   sleep 1
 }
-# The name is refused while a Claude Code session of it runs, on the bg host too: a tab worker
-# has no NAME.id, and a bg spawn of its name replaced its records (the bg check below is by id).
+# The name is refused while a Claude Code session of it runs, on the bg host too: a tab worker's
+# NAME.id (a full sessionId) names no bg row, and a bg spawn of its name replaced its records (the bg check below is by id).
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   while [ -n "$running" ] && in_grace; do
@@ -967,6 +967,8 @@ if [ -n "$windows" ]; then
   sid=""; [ -z "$peer" ] || sid=$($kit_python -I -c 'import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8")).get("sessionId", ""))' "$reg/$peer.json" 2>/dev/null) || sid=""
   ctl "session id" "$sid"
+  # Its transcript is how watch_workers.sh sees a usage-limit stop (LIMIT); close_worker.sh removes it.
+  [ -z "$sid" ] || printf '%s\n' "$sid" > "$wdir/$name.id" || die "cannot record the session id $sid in $wdir"
   printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${sid:-SESSION_ID}"
   if [ -n "$peer" ]; then
     printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; you may also subscribe with SendMessage notify_when_idle, but a supervised close often sends no notice: never rely on it alone"

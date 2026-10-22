@@ -15,6 +15,7 @@ these files.
 | `working-auto.txt` | the bottom of a working pane in auto mode | real pane text from a project using the kit, 2.1.285 |
 | `quoted-output.txt` | a worker's OUTPUT quoting a prompt above an idle input box | made up from the lines above, to keep the watcher from a false alarm |
 | `limit.txt` | a session stopped by its usage limit (the `limit` rule, UNVERIFIED) | made up: `idle.txt`'s input box under the limit line a 2.1.308 transcript held (2026-10-22); no pane was captured |
+| `limit-summary.txt` | `limit.txt` with a turn-summary line (`✻ ... for ...`, as `idle.txt` shows after a turn) between the limit line and the box | made up from the lines above |
 | `limit-quoted.txt` | the same line quoted mid-session, ordinary text below it | made up from the lines above, to keep the watcher from a false LIMIT |
 
 Scrubbed: the question's text and options were translated into English; the session and

@@ -1907,6 +1907,8 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         # The spawn names the id a resume needs.
         self.assertRegex(result.stdout, r'scripts/spawn_worker.sh rw ANSWER_FILE --model .* --worktree --resume sid-1\n')
+        # limitwatch: recorded, so watch_workers.sh finds its transcript when a usage limit stops it.
+        self.assertEqual((self.cwd / '.myagentkit/workers/rw.id').read_text(), 'sid-1\n')
         tree = self.cwd / '.claude/worktrees/rw'
         git('worktree', 'unlock', str(tree))
         (self.state / 'claude.json').unlink()

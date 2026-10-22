@@ -190,6 +190,13 @@ class Base(unittest.TestCase):
         if exclude.exists() and '.myagentkit/' not in exclude.read_text():
             exclude.write_text(exclude.read_text() + '\n.myagentkit/\n')
 
+    def transcript(self, *entries):
+        """Session aaaa0001's transcript, as Claude Code writes it: one compact JSON entry a line."""
+        folder = self.tmp / 'config/projects/D---p--claude-worktrees-w1'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'aaaa0001-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
+            ''.join(json.dumps(e, ensure_ascii=False, separators=(',', ':')) + '\n' for e in entries), encoding='utf-8')
+
     def log(self, name):
         path = self.state / (name + '.log')
         return path.read_text(encoding='utf-8') if path.exists() else ''
@@ -461,6 +468,26 @@ class WatchTests(Base):
             with self.subTest(pane=pane):
                 result = self.watch('--limit', 'w1', pane=pane)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
+        # Round 1: the turn-summary line the idle capture shows above the box may sit between them.
+        result = self.watch('--limit', 'w1', pane='limit-summary.txt')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+
+    def test_a_tab_worker_stopped_by_its_usage_limit_is_limit_once(self):
+        # A Windows Terminal tab worker: its NAME.id is the sessionId spawn_worker.sh recorded.
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        (workers / 'w1.host').write_text('tab\n')
+        (workers / 'w1.id').write_text('aaaa0001-5137-4293-88d5-c4339d1ce56c\n')
+        self.transcript(said('Running the next suite.'), LIMITED, TURN)
+        tab = dict(VIS_UNAME='MINGW64_NT-10.0', CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
+        result = self.watch('--once', 'w1', **tab)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        self.assertEqual(self.watch('--once', 'w1', **tab).stdout, '')
+        result = self.watch('--limit', 'w1', **tab)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        self.transcript(LIMITED, TURN, WOKEN)
+        result = self.watch('--limit', 'w1', **tab)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
 
     def test_a_failed_capture_is_an_observation_failure_never_idle(self):
         # The session exists but its pane cannot be read: the empty capture read as idle, and
@@ -1403,12 +1430,20 @@ class BackgroundTests(Base):
     def watch(self, *args, **extra):
         return self.run_bg(WATCH, '--once', '--result', 'w1=RESULT-w1.md', *args, 'w1', **extra)
 
-    def transcript(self, *entries):
-        """Session aaaa0001's transcript, as Claude Code writes it: one compact JSON entry a line."""
-        folder = self.tmp / 'config/projects/D---p--claude-worktrees-w1'
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / 'aaaa0001-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
-            ''.join(json.dumps(e, ensure_ascii=False, separators=(',', ':')) + '\n' for e in entries), encoding='utf-8')
+    def test_a_limit_stopped_session_that_ends_is_gone(self):
+        # Round 1: once LIMIT was said, an ended session is still GONE; one ended at the first poll is
+        # GONE, not LIMIT (its transcript still ends on the limit entry).
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
+        self.transcript(said('Running the next suite.'), LIMITED, TURN)
+        self.assertEqual(self.watch().stdout, LIMIT % 'w1')
+        gone = ('watch_workers: GONE: w1, its background session aaaa0001 is stopped with no new result report: '
+                'read its result file\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        self.assertEqual(self.watch().stdout, gone)
+        for marker in self.workers.glob('w1.watch-*'):
+            marker.unlink()
+        self.assertEqual(self.watch().stdout, gone)
 
     def test_a_session_stopped_by_its_usage_limit_is_limit_once_and_no_wait(self):
         self.spawned('w1')

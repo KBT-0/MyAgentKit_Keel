@@ -90,7 +90,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - A worker its usage limit stopped is reported, not waited on: `watch_workers.sh` ends with
   `LIMIT: NAME, ... (You've hit your session limit · resets ...): resume it after the reset`
   (a background worker's transcript, a tmux pane's line above the input box), and the until-loop
-  `spawn_worker.sh` prints ends on it too (`watch_workers.sh --limit NAME`).
+  `spawn_worker.sh` prints ends on it too (`watch_workers.sh --limit NAME`). A Windows Terminal
+  tab worker now records its sessionId in `NAME.id` for it.
+- **ACTION** (`docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`, or by hand: in
+  "The measurements and the full rules", the paragraph "**The disk is the done signal, on every
+  platform.**", replace "(its result file, GONE or WAITING)" with "(its result file, GONE,
+  WAITING, or LIMIT: its usage limit stopped it, resume it after the reset)".
 - Worker fixes: a `--resume` of a worker that published and sits in that closing grace waits for it to end instead of refusing "still runs"; the tmux host submits the instruction only once its real end has landed; `codex_worker.py --publish` across drives says to put the temporary file beside the destination.
 - **ACTION** (`docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`,
   or copy by hand the kit's new sentences: in `docs/HANDOFF.md`, after "before closing the

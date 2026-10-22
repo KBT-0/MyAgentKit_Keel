@@ -117,13 +117,15 @@
 #
 # LIMIT: a worker its usage limit stopped sits idle until the reset, and no result, state hook or
 # row says why (2026-10-22: two sat ~1 h, their rows blocked). The `limit` rule in
-# waiting_patterns.txt finds it: on tmux in the pane's line right above the input box; on a
-# background session in its transcript, ${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/ID*.jsonl (ID
-# its NAME.id), whose last user or assistant entry is the API-error entry Claude Code writes then.
-# It is said once per stop, before the row's state, which says nothing while it lasts; a message
-# or a resume adds a user entry, and that ends it. --limit NAME checks that alone, with no
-# once-marker: it prints the same line and exits 0, else exits 1 and prints nothing
-# (spawn_worker.sh's printed until-loop runs it). A tab worker records no session id: not covered.
+# waiting_patterns.txt finds it: on tmux in the pane's last line above the input box but for
+# turn-summary lines (`✻ ... for ...`); on a background or a Windows Terminal tab worker in its
+# transcript, ${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/ID*.jsonl (ID its NAME.id, the sessionId
+# a tab spawn recorded), whose last user or assistant entry is the API-error entry Claude Code
+# writes then. It is said once per stop while the session lives (a background row working,
+# blocked, or done with its process; an ended one is GONE as before), and then the row's state
+# and a tab's IDLE say nothing while it lasts; a message or a resume adds a user entry, and that
+# ends it. --limit NAME checks that alone, with no once-marker and no row: it prints the same
+# line and exits 0, else exits 1 and prints nothing (spawn_worker.sh's printed until-loop runs it).
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -299,11 +301,14 @@ classify() {
   echo LIMIT
 }
 
-# The pane's line right above the input box ($win; the line over the second rule from the
-# bottom), when the limit rule matches it.
+# The pane's last line above the input box ($win; over the second rule from the bottom) that is
+# no turn summary (`✻ Crunched for 2m · done 8:16 PM`, as idle.txt shows after a turn), when the
+# limit rule matches it.
 pane_limit() {
   LC_ALL=C awk '{ l[NR] = $0 }
-    END { for (i = NR; i > 1; i--) if (l[i] ~ /^ *(─)+$/ && ++r == 2) { print l[i - 1]; exit } }' "$win" |
+    END { for (i = NR; i > 1; i--) if (l[i] ~ /^ *(─)+$/ && ++r == 2) {
+            for (i--; i > 0 && l[i] ~ /^ *✻ .* for /; i--) ;
+            if (i > 0) print l[i]; exit } }' "$win" |
     LC_ALL=C grep -E -- "$limit_re"
 }
 
@@ -322,6 +327,15 @@ limited() {
     return 0
   done
   return 1
+}
+
+# limit_report NAME: say LIMIT once per stop of the session NAME.id names. Return 0 when said,
+# 1 when it is not stopped so, 2 when the report could not be written, 4 when this stop was said.
+limit_report() {
+  limited "$(cat -- "$wdir/$1.id" 2>/dev/null)" || return 1
+  [ "$(mark "$1" limit)" != "$limkey" ] || return 4
+  limit_say "$1" "$lim" || return 2
+  setmark "$1" limit "$limkey"
 }
 
 limit_say() {
@@ -577,12 +591,12 @@ EOF
   # Not the main loop's w: a report here returns 0, and the caller keeps w as bg() left it.
   rw=0; result "$1" || rw=$?
   [ "$rw" -eq 1 ] || return "$rw"
-  # A usage-limit stop before the row's state, which says nothing while it lasts (LIMIT above).
-  if limited "$(cat -- "$wdir/$1.id" 2>/dev/null)"; then
-    [ "$(mark "$1" limit)" != "$limkey" ] || return 1
-    limit_say "$1" "$lim" || return 2
-    setmark "$1" limit "$limkey"; return 0
-  fi
+  # A usage-limit stop of a live session before the row's state, which says nothing while it
+  # lasts; an ended session is GONE below, whatever its transcript says (LIMIT above).
+  case $bstate in working|blocked|done)
+    [ "$bstate:$bpid" = done:- ] || { rw=0; limit_report "$1" || rw=$?
+      case $rw in 1) ;; 4) return 1 ;; *) return "$rw" ;; esac; } ;;
+  esac
   case $bstate in
     working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""; return 1 ;;
     blocked)
@@ -728,7 +742,7 @@ context() {
 }
 
 if [ -n "$limit_only" ]; then
-  if isbg "$1"; then limited "$(cat -- "$wdir/$1.id" 2>/dev/null)" || exit 1; t=$lim
+  if isbg "$1" || [ -n "$windows" ]; then limited "$(cat -- "$wdir/$1.id" 2>/dev/null)" || exit 1; t=$lim
   elif [ -n "$tmuxok" ] && [ "$(classify "$1")" = LIMIT ]; then t=$(pane_limit)
   else exit 1; fi
   limit_say "$1" "$t"; exit 0
@@ -786,6 +800,8 @@ while :; do
         [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
         [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; gone_tab "$n" || w=$?; }
+        # 4, this stop said before: no IDLE for it either.
+        [ -z "$windows" ] || [ "$w" -ne 1 ] || { w=0; limit_report "$n" || w=$?; }
         [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }
       fi; } >>"$out" || :
       case $w in
