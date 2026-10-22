@@ -183,6 +183,10 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   `.claude/hooks/context_size.py`, start the compacted advice with "The lead session was
   compacted already" and end it with "never a second /compact; a worker follows its own rule:
   docs/HANDOFF.md" (or re-copy it from the overlay).
+- **ACTION:** in `docs/GOTCHAS.md`, add the entry "PowerShell from the Microsoft Store leaves
+  suspended processes behind" and its Contents line from the kit's (#304: a Store `pwsh` run
+  by a status line every 3 s left 377 suspended processes; install the MSI and name it by
+  full path).
 
 ---
 
