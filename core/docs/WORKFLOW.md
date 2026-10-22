@@ -905,12 +905,16 @@ under the mode switch's rules, and nothing else changes the line. No record is p
   Reviews run by tier; only Critical and High block.
 - **The report:** `.myagentkit/autopilot/<date of the stamp>.md` (ignored by Git), from
   `docs/AUTOPILOT.md`; `python3 scripts/autopilot_report.py` prints its Done section from git.
-- **Ends:** {{OWNER_NAME}}'s first message. Before anything else the lead runs
+- **Ends:** only by `working_mode.py present` (`/myagentkit:mode present`), or by a message
+  from {{OWNER_NAME}} that says or implies being back or wanting autopilot ended; the lead
+  judges the message. Any other message (a farewell, the `/goal` line, a late instruction)
+  is an instruction: the lead acts on it and stays in autopilot. When it ends, before
+  anything else the lead runs
   `python3 scripts/working_mode.py present`, gives the report in two layers
   (`docs/COMMUNICATION.md`, "Handoff"), then asks its Questions one by one with
   AskUserQuestion, the recommended option first; an Issue draft is posted only on
-  {{OWNER_NAME}}'s yes. The Claude Code overlay's `context_size.py` names this at each prompt
-  while away.
+  {{OWNER_NAME}}'s yes. The Claude Code overlay's `context_size.py` repeats this rule at each
+  prompt while away.
 
 Why: docs/WORKFLOW_RATIONALE.md, "autopilot, the owner-away switch".
 

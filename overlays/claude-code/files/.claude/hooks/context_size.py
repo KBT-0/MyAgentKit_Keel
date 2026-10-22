@@ -23,8 +23,9 @@ so; after a compaction it can only be a hand-off, since a second summary drifts.
 While the owner is away (`.myagentkit/presence` says `away`, written by `working_mode.py
 autopilot`; `away()` is the one reader the hooks share), the band line says to update the
 hand-off file and keep going instead, since nobody is there to take a recommendation and a
-second compaction is no stop then; and each prompt names the owner's return, since the
-owner's first message ends the autopilot (docs/WORKFLOW.md, "autopilot, the owner-away switch").
+second compaction is no stop then; and each prompt tells the lead how to judge it, since only
+an owner message that says or implies the return ends the autopilot (docs/WORKFLOW.md,
+"autopilot, the owner-away switch").
 """
 import json
 import os
@@ -45,10 +46,14 @@ BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE,
 COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
            "and the owner's words verbatim")
 AUTOPILOT = 'docs/WORKFLOW.md, "autopilot, the owner-away switch"'
-BACK = ("Autopilot is on (.myagentkit/presence says away). If this prompt is the owner's own message, not a "
-        "worker's message, a task notification or a /goal check-in, the owner is back: before anything else run "
-        "`python scripts/working_mode.py present`, give the report in two layers, then ask its questions one "
-        f'by one with AskUserQuestion ({AUTOPILOT}, Ends).')
+# A hook cannot read meaning, so the lead judges (owner, 2026-10-22: what the owner says or
+# implies about being back or ending autopilot ends it; nothing else does).
+BACK = ("Autopilot is on (.myagentkit/presence says away). Judge this prompt: when it is the owner's own "
+        "message and it says or implies that the owner is back or wants autopilot ended, run "
+        "`python3 scripts/working_mode.py present` (`python` on native Windows) before anything else, give "
+        "the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
+        "(a farewell, the /goal line, a late instruction, a worker's message, a task notification) does not "
+        f'end it: act on it and stay in autopilot ({AUTOPILOT}, Ends).')
 
 
 def away() -> bool:

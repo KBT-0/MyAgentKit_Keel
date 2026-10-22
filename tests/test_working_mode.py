@@ -814,11 +814,10 @@ class WorkingModeTests(unittest.TestCase):
         presence.unlink()
         self.assertNotEqual(self.run_mode().returncode, 0)  # STATE away, the hooks' record gone
         self.assertEqual(self.run_mode('present').returncode, 0)  # an explicit switch repairs
-        for body in ('**Owner:** present\n**Owner:** present\n', '**Owner:** maybe\n'):
-            with self.subTest(body=body):
-                self.state.write_text(body, encoding='utf-8')
-                self.assertNotEqual(self.run_mode('autopilot').returncode, 0)
-                self.assertEqual(self.state.read_text(encoding='utf-8'), body)
+        body = '**Owner:** present\n**Owner:** present\n'
+        self.state.write_text(body, encoding='utf-8')
+        self.assertNotEqual(self.run_mode('autopilot').returncode, 0)
+        self.assertEqual(self.state.read_text(encoding='utf-8'), body)
         # Only the switch changes the line: a STATE edit that does is refused.
         self.state.write_text('**Owner:** present\n', encoding='utf-8')
         snapshot, sha = self.snapshot()
@@ -827,6 +826,52 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Owner line', result.stderr)
         self.assertEqual(self.state.read_text(encoding='utf-8'), '**Owner:** present\n')
+
+    def test_a_projects_own_owner_line_is_kept_and_never_read_as_presence(self):
+        # Review round 1: a STATE.md naming its owner (**Owner:** <name>) broke the show path.
+        self.state.write_text('**Working mode:** solo\n**Owner:** Ayşe (product)\nActive.\n', encoding='utf-8')
+        result = self.run_mode()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Owner: present', result.stdout)
+        self.assertEqual(self.run_mode('autopilot').returncode, 0)
+        text = self.state.read_text(encoding='utf-8')
+        self.assertIn('**Owner:** Ayşe (product)\n', text)
+        self.assertIn('**Owner:** away (autopilot since ', text)
+        self.assertIn('Owner: away', self.run_mode().stdout)
+        self.assertEqual(self.run_mode('present').returncode, 0)
+        self.assertIn('**Owner:** Ayşe (product)\n', self.state.read_text(encoding='utf-8'))
+        self.assertIn('**Owner:** present\n', self.state.read_text(encoding='utf-8'))
+
+    def test_an_empty_presence_record_gets_the_repair_message_and_a_repair_keeps_the_first_stamp(self):
+        presence = self.project / '.myagentkit/presence'
+        presence.parent.mkdir()
+        presence.write_text('', encoding='utf-8')
+        result = self.run_mode()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('disagree', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(self.run_mode('present').returncode, 0)
+        # The hooks' record says away and STATE lost its line: the repair keeps the recorded start.
+        presence.write_text('away 2026-10-21T22:00:00+03:00\n', encoding='utf-8')
+        self.state.write_text('# State\n---\nActive.\n', encoding='utf-8')
+        self.assertEqual(self.run_mode('autopilot').returncode, 0)
+        self.assertIn('**Owner:** away (autopilot since 2026-10-21T22:00:00+03:00)', self.state.read_text(encoding='utf-8'))
+        self.assertEqual(presence.read_text(encoding='utf-8'), 'away 2026-10-21T22:00:00+03:00\n')
+
+    def test_a_modes_rules_end_at_the_autopilot_section_whatever_its_level(self):
+        # Review round 1: with the autopilot section right after saver, saver printed it as its own.
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        start, end = workflow.index('#### How a mode improves'), workflow.index('### autopilot, the owner-away switch')
+        for level in ('###', '####'):
+            with self.subTest(level=level):
+                (self.project / 'docs/WORKFLOW.md').write_text(
+                    workflow[:start] + workflow[end:].replace('### autopilot', level + ' autopilot', 1), encoding='utf-8')
+                result = self.run_mode('saver')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('#### saver', result.stdout)
+                self.assertNotIn('autopilot', result.stdout)
+                self.assertIn(level + ' autopilot', self.run_mode('autopilot').stdout)
+                self.assertEqual(self.run_mode('present').returncode, 0)
 
     def test_state_operations_stay_in_the_project_and_its_private_folder(self):
         before = self.state.read_bytes()

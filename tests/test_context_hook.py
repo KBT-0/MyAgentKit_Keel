@@ -250,6 +250,11 @@ class ContextHookTests(unittest.TestCase):
         said = self.run_hook([request(10_000)])
         self.assertIn('working_mode.py present', said)
         self.assertIn('AskUserQuestion', said)
+        # Owner, 2026-10-22: only a message that says or implies the return or the exit ends it;
+        # a farewell, the /goal line or a late instruction is acted on and autopilot stays.
+        self.assertIn('says or implies', said)
+        self.assertIn('/goal line', said)
+        self.assertIn('stay in autopilot', said)
         self.assertEqual(self.run_hook([request(10_000)], env=dict(self.env, MYAGENTKIT_ROLE='worker')), '')
         (self.tmp / '.myagentkit/presence').write_text('present 2026-10-22T23:00:00+03:00 x\n', encoding='utf-8')
         self.assertEqual(self.run_hook([request(10_000)]), '')

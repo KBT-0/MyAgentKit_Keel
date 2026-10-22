@@ -23,20 +23,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   compare-and-swap rule, and prints the contract (`docs/WORKFLOW.md`, "autopilot, the
   owner-away switch": the checklist before leaving, the valid stops, the decision table, the
   never-without-the-owner list with push and tag allowed once every check and CI are green,
-  the proxy consult) and the `/goal` line the owner types. The owner's first message ends it:
-  `working_mode.py present`, the report (the new `docs/AUTOPILOT.md` template; the new
+  the proxy consult) and the `/goal` line the owner types. It ends only by
+  `working_mode.py present` or an owner message that says or implies the return or the end of
+  autopilot (the lead judges; a farewell, the `/goal` line or a late instruction is acted on
+  and autopilot stays): `working_mode.py present`, the report (the new `docs/AUTOPILOT.md` template; the new
   `scripts/autopilot_report.py` prints its Done section from git, the worker results and
   `agent_cost.py --latest`), then the queued questions one by one. While away, the Claude
   Code hooks say so: the context band says keep going (a second compaction too), each prompt
-  names the owner's return, and a question left in a final message is queued in the report.
+  repeats the judged end rule, and a question left in a final message is queued in the report.
   Rule 8's owner-away arm points to the switch; COMMUNICATION's 45 minutes stay for a
   project without the record. A STATE edit through `--replace-state` that changes the Owner
-  line is refused.
+  presence line is refused; a project's own `**Owner:** <name>` line is kept and never read
+  as presence.
 - **ACTION** (`docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, project-owned): run
-  `sync-kit.sh . --merge`; without it, copy the kit's "#### autopilot, the owner-away switch"
-  subsection into "Working modes, by name" before "#### How a mode improves" (the switch
-  refuses to run without it), its one-sentence pointer at the end of that section's opening
-  paragraph, rule 8's "With the owner away (...)" sentence, and COMMUNICATION's "While the
+  `sync-kit.sh . --merge`; without it, copy the kit's "### autopilot, the owner-away switch"
+  section, with its `Why:` line, to the end of "Working modes, by name": after "#### How a
+  mode improves", before "## Worker cost" (the switch refuses to run without it), its
+  one-sentence pointer at the end of "Working modes, by name"'s opening paragraph, rule 8's "With the owner away (...)" sentence, and COMMUNICATION's "While the
   owner is away" bullet.
 
 - `docs/WORKFLOW.md` is split (#296): the rules, the tables, the owner's decisions and every
