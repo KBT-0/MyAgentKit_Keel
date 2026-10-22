@@ -9,7 +9,7 @@ only then acts or drops it. Every row lives in `.myagentkit/suggestions.jsonl`, 
 per line, append only:
 
   note       a side check's note (`add-note`): id, session, topic, claim, evidence, check, usage
-  check      a side check that abstained or whose note was dropped, with its usage
+  check      a side check that abstained or whose note was dropped (with the reason), with its usage
   delivered  the note went to the agent: next to a tool result (`post-tool`) or the next prompt (`prompt`)
   verdict    the agent's verdict line, read from the transcript at `stop`
   reminded   `stop` asked once for a missing verdict; a second missing one stays verdictless
@@ -35,7 +35,7 @@ nothing. Silent on any error (fail open, 7.6: a review gate that blocked on its 
                                              no delivery, no reminder; on also lifts a precision
                                              stop (the mod's /myagentkit:suggestions runs these)
   suggestions.py gate                        JSON for the mod: enabled, stopped, interval,
-                                             known topics, the last notes' claims
+                                             the 20 most recent topics, the last notes' claims
 """
 import contextlib
 import json
@@ -46,6 +46,7 @@ import sys
 import time
 
 WINDOW, MIN_JUDGED = 20, 5  # ponytail: fixed thresholds; make them settings when a project asks
+KNOWN = 20  # the topics the gate hands the side check: the most recent, so its prompt stays bounded
 VERDICT = re.compile(r'myagentkit-suggestion #(\d+): (correct|wrong|partly|not useful)\b', re.I)
 FIELDS = ('claim', 'evidence', 'check', 'topic')
 CAPS = {'claim': 200, 'evidence': 300, 'check': 200, 'topic': 60}
@@ -237,13 +238,18 @@ def add_note(text: str) -> None:
     path = ledger_path()
     with locked(path):
         s = state(read_rows(path))
-        if (note.get('abstain') or not all(fields.values()) or fields['topic'].lower() in s['known']
-                or any(marker in value for value in fields.values() for marker in MARKERS)):
-            # The deterministic second filter (7.5): no evidence or check, a known topic, or a field
-            # that forges the frame. The check still cost tokens, so it is kept as a check row the
-            # report counts.
+        # The mod's own reason (low confidence, malformed, the frame's markers), then the deterministic
+        # second filter (7.5): no evidence or check, a known topic, or a field that forges the frame.
+        reason = None if note.get('abstain') else (
+            one_line(note.get('dropped'), 60) or ('missing field' if not all(fields.values()) else
+                                                  'known topic' if fields['topic'].lower() in s['known'] else
+                                                  'frame markers' if any(marker in value for value in fields.values()
+                                                                         for marker in MARKERS) else None))
+        if note.get('abstain') or reason:
+            # The check still cost tokens, so it is kept as a check row the report counts.
             append(path, {'kind': 'check', 'session': note.get('session'), 'trigger': note.get('trigger'),
-                          'usage': note.get('usage'), 'outcome': 'abstain' if note.get('abstain') else 'dropped'})
+                          'usage': note.get('usage'), 'outcome': 'dropped' if reason else 'abstain',
+                          **({'reason': reason} if reason else {})})
             return
         n = max(s['notes'], default=0) + 1
         append(path, dict(note, **fields, kind='note', id=n))
@@ -252,7 +258,8 @@ def add_note(text: str) -> None:
 
 def gate() -> dict:
     s = state(read_rows(ledger_path()))
-    return {'enabled': enabled(), 'stopped': s['stopped'], 'interval': s['interval'], 'known': sorted(s['known']),
+    topics = dict.fromkeys(str(r.get('topic', '')).strip().lower() for _, r in sorted(s['notes'].items()))
+    return {'enabled': enabled(), 'stopped': s['stopped'], 'interval': s['interval'], 'known': list(topics)[-KNOWN:],
             'recent': [r.get('claim') for _, r in sorted(s['notes'].items())][-5:]}
 
 
@@ -286,13 +293,16 @@ def report() -> str:
     if s['lifted']:
         lines.append('precision stop lifted %s; judged afresh since' % time.strftime(
             '%Y-%m-%d %H:%M', time.localtime(s['lifted'])))
-    tokens, checks = {}, [r for r in rows if r.get('kind') == 'check'] + list(s['notes'].values())
+    skipped = [r for r in rows if r.get('kind') == 'check']
+    tokens, checks = {}, skipped + list(s['notes'].values())
     for row in checks:
         for key, value in (row.get('usage') or {}).items():
             if isinstance(value, int):
                 tokens[key] = tokens.get(key, 0) + value
-    lines.append('%d side checks, tokens: %s' % (len(checks), ', '.join('%s %d' % kv for kv in sorted(tokens.items()))
-                                                 or 'none recorded'))
+    dropped = sum(r.get('outcome') == 'dropped' for r in skipped)
+    lines.append('%d side checks: %d notes, %d abstained, %d dropped; tokens: %s' % (
+        len(checks), len(s['notes']), len(skipped) - dropped, dropped,
+        ', '.join('%s %d' % kv for kv in sorted(tokens.items())) or 'none recorded'))
     return '\n'.join(lines)
 
 

@@ -38,11 +38,16 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   the precision. Each note field is one line under a cap, a note that forges the delivery frame
   is dropped, and the note's check reaches the agent as text, not an instruction; one lock file
   keeps parallel tool calls' hooks from delivering a note twice or giving two notes one id.
+  A check whose note was rejected (by the mod: low confidence, malformed, the frame's markers;
+  by the ledger: no evidence or check, a known topic) is recorded as `dropped` with its reason,
+  apart from an abstain, and `report` counts the two apart; `gate` hands the side check only the
+  20 most recent topics.
 - The myagentkit plugin gains a mod (`plugin/hooks/register.js`): a `$.model.complete` side
   check over a window of the lead's work, not the whole conversation (owner, 2026-10-22: a fork
   rereads the session on every check, so its cost grows with the session): the last 10
   main-loop tool calls with trimmed arguments and result heads, the prompt's first lines, the
-  known topics and recent notes, at most 6000 characters, a reply of at most 400 tokens. It runs
+  20 most recent known topics and the recent notes, at most 6000 characters all told (the
+  request's lines always stay; the oldest calls drop to fit), a reply of at most 400 tokens. It runs
   every 10 main-loop tool calls, at once on the same call (tool and arguments) or error 3 times,
   and at the end of a long turn; it abstains unless it can quote evidence, shows a note as a dim
   `myagentkit-suggestion #ID` line and hands it to `suggestions.py`; never in a worker, a
