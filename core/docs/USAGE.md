@@ -1,3 +1,5 @@
+<!-- KIT-OWNED: do not edit locally; change it in the kit and re-sync. -->
+<!-- Do not edit it: a project that needs a different rule writes it in `docs/WORKFLOW.md`, the project-owned file, and the project file wins over this one. -->
 # Cross-model usage and recovery
 
 Both supported CLI adapters write one local JSON record per launched invocation under

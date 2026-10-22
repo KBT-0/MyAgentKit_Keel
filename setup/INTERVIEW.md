@@ -218,7 +218,7 @@ One topic per turn. Suggested order, because each answer informs the next:
      The repository is `openai/codex-plugin-cc`, but its declared marketplace name is
      `openai-codex`; installation uses the marketplace name after `@`, which is the `name`
      in its `marketplace.json` (code.claude.com/docs/en/plugin-marketplaces). Do not derive
-     it from the repository name. `docs/DEV_SETUP.md` has the same pair and the cautions about
+     it from the repository name. `docs/DEV_SETUP_KIT.md` has the same pair and the cautions about
      model-invocable commands and automatic review gates.
    - For a Codex host, offer the kit's Codex plugin and its Claude review/delegation skills
      (`docs/CODEX.md` in the kit). `--reviewer claude` selects the Claude adapter from any
