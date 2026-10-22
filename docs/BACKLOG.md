@@ -125,6 +125,10 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - After v0.12.1, once usage tests and fixes are in (owner's wish, 2026-10-22): publish the side-check as a standalone
   skill/plugin outside the kit repo.
 
+- bootgc review L (2026-10-22): tests/test_bootstrap.py, the hook-name test (~line 871) commits and merges a bootstrapped
+  kit with no `maintenance.auto false`; a detached `git maintenance run --auto` can still write .git/objects at cleanup
+  (the CI red bootgc fixed). Not exposed today (more work follows each commit); set the key there too, or once in a helper.
+
 ## Filed from v0.12.1 masterwriter (project_leeway, 2026-10-22)
 
 - v0.13: the enforcing hook/gate refusal for the master-writer rule: a `.myagentkit/master-writer` marker, and a commit
