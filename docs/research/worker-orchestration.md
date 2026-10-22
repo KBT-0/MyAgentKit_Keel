@@ -259,8 +259,9 @@ Linux with one CLI [1][2]. That changes the question from "which tmux" to "keep 
   fixed 60 s delay (#12048) [14] (B; fixed state at 2.1.304 UNVERIFIED).
 - **The kit's 4-of-5 miss (inference, not reproduced).** On Windows `codex_worker.py` owns the worker
   in a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and ends it by closing the job
-  (`codex_worker.py`, `windows_job()` and `stop()`), 10 s (`KIT_WORKER_GRACE`) after the result is
-  published. A worker that publishes and then writes its closing reply is still mid-turn when the
+  (`codex_worker.py`, `windows_job()` and `stop()`), after the result is
+  published: 60 s for `spawn_worker.sh` from v0.13 (`KIT_WORKER_GRACE`),
+  10 s for `spawn_codex.sh`. A worker that publishes and then writes its closing reply is still mid-turn when the
   kill comes: it never goes idle, and a killed process cannot send the "exited" notice. The docs'
   hold rule is a second candidate only if the lead and the workers sit in different permission
   classes (the kit's settings set no `defaultMode`, so normally they do not). Either way the notice

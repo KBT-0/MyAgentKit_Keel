@@ -6,6 +6,7 @@ supervisor was killed (its lock on the .live record dropped). --publish TEMPORAR
 DESTINATION is the worker's own last step: the rename, retried while Windows refuses it.
 QUESTION [RESULT] --bg ID supervises a `claude --bg` session and ends it with `claude stop ID`;
 --detach LOG ARGUMENTS... runs this script with ARGUMENTS outside the caller's session or job."""
+import errno
 import hashlib
 import json
 import os
@@ -495,7 +496,15 @@ def main():
         if not decoded(Path(sys.argv[2]).read_bytes()).strip().endswith(READY):
             raise ValueError('%s: its last line is not %s; add it and publish again: without it the supervisor '
                              'never sees it' % (sys.argv[2], READY))
-        renamed(sys.argv[2], sys.argv[3])
+        try:
+            renamed(sys.argv[2], sys.argv[3])
+        except OSError as error:
+            # A temporary file in %TEMP% (C:) for a result on D: (donemsg spike 3): [WinError 17].
+            if error.errno != errno.EXDEV:
+                raise
+            raise ValueError('%s: it is on another drive than %s, and a rename cannot cross drives; put the '
+                             'temporary file beside the destination (same drive) and publish again'
+                             % (sys.argv[2], sys.argv[3])) from None
         return 0
     if sys.argv[1:2] == ['--detach']:
         # The bg host's supervisor (spawn_worker.sh) outlives the lead's shell call that started

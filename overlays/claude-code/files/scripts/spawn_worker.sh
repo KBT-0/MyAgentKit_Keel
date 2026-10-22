@@ -778,10 +778,29 @@ for row in json.loads(sys.stdin.buffer.read()):
         live = row.get("pid") or row.get("state") in ("working", "blocked")
         print("live" if live else "-", row.get("sessionId") or "-")' "$1"
 }
+# A published result or question ends its session KIT_WORKER_GRACE (60) s later, and the worker's
+# message brings the lead's --resume inside that grace (donemsgfix): a resume waits for that end
+# instead of refusing it, bounded by the grace and 30 s for a commit or gate the supervisor waits
+# out. Waiting, not stopping it as close_worker.sh does: the grace exists so the worker's message
+# and any commit finish. in_grace sleeps one second and succeeds while that wait may go on.
+grace_left=""
+in_grace() {
+  [ -n "$resume" ] || return 1
+  if [ -z "$grace_left" ]; then
+    grep -qsF -- '<!-- codex-worker: ready -->' "$result" "$dir/QUESTION-$name.md" || return 1
+    g=${KIT_WORKER_GRACE:-60}; g=${g%%.*}; grace_left=$((${g:-0} + 30))
+    printf '%s\n' "spawn_worker: the earlier session of '$name' has published and is in its closing grace: waiting up to $grace_left s for it to end"
+  fi
+  [ "$grace_left" -gt 0 ] || return 1
+  grace_left=$((grace_left - 1)); sleep 1
+}
 # The name is refused while a Claude Code session of it runs, on the bg host too: a tab worker
 # has no NAME.id, and a bg spawn of its name replaced its records (the bg check below is by id).
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
+  while [ -n "$running" ] && in_grace; do
+    running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
+  done
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
 fi
 if [ -n "$bg" ]; then
@@ -792,6 +811,9 @@ if [ -n "$bg" ]; then
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
   if [ -n "$old" ]; then
     row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
+    while case $row in [!-]*) in_grace ;; *) false ;; esac; do
+      row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
+    done
     case $row in [!-]*) die "the background session $old of '$name' still runs: close it first (scripts/close_worker.sh $name)" ;; esac
   fi
   sid=$resume
@@ -990,9 +1012,12 @@ tmux send-keys -t "$name" -l "$instruction"
 # input is swallowed and the line sits unsent at the prompt (seen on the first run of this
 # script). Fast input may show as the placeholder "[Pasted text", so both count. The END of
 # the line is what must have landed, and the TUI wraps a long line at a blank: blanks and
-# line ends are squeezed to one space before the match.
+# line ends are squeezed to one space before the match. The end is the instruction's own last
+# 40 characters, so a sentence appended to it moves the match with it (a fixed phrase, left
+# behind by one, let Enter arrive while the new tail was still being typed).
 # Then confirm the prompt line emptied; if not, press Enter once more.
-landed() { tmux capture-pane -p -t "$name" -J | tr -s ' \n' '  ' | grep -qF -e "does not depend on it." -e "[Pasted text"; }
+line_end=$(printf '%s' "$instruction" | tr -s ' \n' '  ' | tail -c 40)
+landed() { tmux capture-pane -p -t "$name" -J | tr -s ' \n' '  ' | grep -qF -e "$line_end" -e "[Pasted text"; }
 i=0
 until landed; do
   i=$((i + 1)); [ "$i" -lt 30 ] || die "the instruction did not appear in session '$name' (tmux attach -t $name)"
