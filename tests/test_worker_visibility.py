@@ -30,7 +30,11 @@ SHOW, WATCH, LIST = SCRIPTS / 'show_workers.sh', SCRIPTS / 'watch_workers.sh', S
 PANES = ROOT / 'tests/fixtures/panes'
 DIALOGS = {'trust.txt': 'the folder-trust dialog', 'permission.txt': 'a permission prompt',
            'question.txt': 'a question'}
-WORKING = ('idle.txt', 'working.txt', 'working-auto.txt', 'quoted-output.txt')
+WORKING = ('idle.txt', 'working.txt', 'working-auto.txt', 'quoted-output.txt', 'limit-quoted.txt')
+# A worker stopped by its usage limit (2026-10-22: two sat ~1 h on it, and no watch said so).
+LIMIT = ("watch_workers: LIMIT: %s, its session stopped on a usage limit (You've hit your session limit \u00b7 resets "
+         "8:40pm (Europe/Istanbul)): resume it after the reset (SendMessage 'limit reset, continue', or "
+         "spawn_worker.sh --resume)\n")
 
 # Every target must be exact (`=NAME`): a prefix match reached another project's session.
 TMUX = r'''#!/usr/bin/env python3
@@ -445,6 +449,19 @@ class WatchTests(Base):
                 result = self.watch('--once', 'w1', pane=pane)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
 
+    def test_a_pane_stopped_by_its_usage_limit_is_limit_once(self):
+        # The limit line right above the input box; limit-quoted.txt (in WORKING) quotes it higher up.
+        result = self.watch('--once', 'w1', pane='limit.txt')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        self.assertEqual(self.watch('--once', 'w1', pane='limit.txt').stdout, '', 'the same stop was reported twice')
+        # spawn_worker.sh's printed until-loop asks with --limit, which keeps no once-marker.
+        result = self.watch('--limit', 'w1', pane='limit.txt')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        for pane in ('limit-quoted.txt', 'idle.txt', 'permission.txt'):
+            with self.subTest(pane=pane):
+                result = self.watch('--limit', 'w1', pane=pane)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
+
     def test_a_failed_capture_is_an_observation_failure_never_idle(self):
         # The session exists but its pane cannot be read: the empty capture read as idle, and
         # a permission prompt nobody could see was reported as nothing waiting.
@@ -621,6 +638,26 @@ READY = '\n<!-- codex-worker: ready -->\n'
 IDLE = ('watch_workers: IDLE: w1, its background session aaaa0001 is done with no new result report and its '
         'process still idles: a question in its view, a usage limit or an error, or a park on its own background '
         'job (it goes on by itself when the job ends): claude attach aaaa0001\n')
+
+
+def said(text):
+    """A model's assistant entry in a transcript."""
+    return dict(parentUuid='p1', isSidechain=False, type='assistant', uuid='u1', timestamp='2026-10-22T17:26:36.220Z',
+                message=dict(model='claude-opus-5-5', role='assistant', type='message',
+                             content=[dict(type='text', text=text)]))
+
+
+# The entry Claude Code 2.1.308 wrote when a worker hit its limit (the kitowned transcript, 2026-10-22, trimmed).
+LIMITED = dict(parentUuid='34828d51', isSidechain=False, type='assistant', uuid='8efce0ab',
+               timestamp='2026-10-22T17:28:36.220Z',
+               message=dict(id='8f2278dd', model='<synthetic>', role='assistant', stop_reason='stop_sequence',
+                            type='message', content=[dict(type='text', text="You've hit your session limit \u00b7 resets "
+                                                                             "8:40pm (Europe/Istanbul)")]),
+               requestId='req_011CgHfq', apiError='usage_limit_reached', error='rate_limit', isApiErrorMessage=True,
+               apiErrorStatus=429)
+TURN = dict(parentUuid='8efce0ab', isSidechain=False, type='system', subtype='turn_duration', durationMs=118828)
+WOKEN = dict(parentUuid='385659fe', isSidechain=False, type='user', isMeta=True,
+             message=dict(role='user', content='Another Claude session sent a message: limit reset, continue'))
 STATUS = '58k/1.0M'  # in the real status line of working-auto.txt
 
 
@@ -1360,10 +1397,53 @@ class BackgroundTests(Base):
 
     def run_bg(self, script, *args, **extra):
         extra.setdefault('VIS_SESSIONS', '')
+        extra.setdefault('CLAUDE_CONFIG_DIR', str(self.tmp / 'config'))
         return self.run_script(script, *args, AGENTS_FILE=str(self.state / 'agents.json'), **extra)
 
     def watch(self, *args, **extra):
         return self.run_bg(WATCH, '--once', '--result', 'w1=RESULT-w1.md', *args, 'w1', **extra)
+
+    def transcript(self, *entries):
+        """Session aaaa0001's transcript, as Claude Code writes it: one compact JSON entry a line."""
+        folder = self.tmp / 'config/projects/D---p--claude-worktrees-w1'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'aaaa0001-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
+            ''.join(json.dumps(e, ensure_ascii=False, separators=(',', ':')) + '\n' for e in entries), encoding='utf-8')
+
+    def test_a_session_stopped_by_its_usage_limit_is_limit_once_and_no_wait(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
+        self.transcript(said('Running the next suite.'), LIMITED, TURN)
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        self.assertEqual(self.watch().stdout, '', 'the stop was reported twice, or its blocked row as a wait')
+        result = self.run_bg(WATCH, '--limit', 'w1')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        # Woken (a peer message, or a resume's prompt): a user entry follows, and the row speaks again.
+        self.transcript(said('Running the next suite.'), LIMITED, TURN, WOKEN)
+        self.assertIn('WAITING: w1, waiting for: no reason given', self.watch().stdout)
+        self.assertEqual(self.run_bg(WATCH, '--limit', 'w1').returncode, 1)
+
+    def test_ordinary_text_or_a_quote_of_the_limit_line_is_no_limit(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=1, status='busy'))
+        line = LIMITED['message']['content'][0]['text']
+        for case, entries in (('ordinary text', (said('All suites pass.'), TURN)),
+                              ('a model quoting it', (said(line), TURN)),
+                              ('a quote mid-text', (said('The log says: %s, then it went on.' % line),)),
+                              ('woken and working', (LIMITED, TURN, WOKEN, said('Continuing after the reset.'))),
+                              ('no transcript', ())):
+            with self.subTest(case):
+                if entries:
+                    self.transcript(*entries)
+                else:
+                    shutil.rmtree(self.tmp / 'config')
+                self.assertEqual(self.watch().stdout, '')
+                result = self.run_bg(WATCH, '--limit', 'w1')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
+        # A name with no record here says nothing either: the until-loop goes on.
+        result = self.run_bg(WATCH, '--limit', 'nobody')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
 
     def test_a_blocked_session_is_waiting_with_what_it_waits_for_once_per_wait(self):
         self.spawned('w1')

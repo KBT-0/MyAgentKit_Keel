@@ -16,7 +16,7 @@
 #            for cost-sensitive learning"). Claude Code's Notification hook (permission_prompt,
 #            idle_prompt) has no matcher for the folder-trust dialog, which is why panes are read.
 #   WHERE    last | near (above), or status: the context rule below, which never makes a
-#            session WAITING.
+#            session WAITING, or above: the limit rule below.
 #   ERE      grep -E, matched byte by byte (LC_ALL=C) on the line with control bytes removed
 #            and trailing blanks stripped.
 #
@@ -51,6 +51,15 @@ question    UNVERIFIED  2.1.302  last  ^ *Enter to select · .* · Esc to cancel
 # Any other numbered choice that ends in a cancel hint (an edit prompt, a plan approval).
 dialog      UNVERIFIED  -        last  Esc to cancel
 dialog      UNVERIFIED  -        near  ^ *❯ [0-9]+\. [^ ]
+
+# A session its usage limit stopped: LIMIT, not WAITING (nothing to answer: it waits for the
+# reset, then a message or a resume wakes it). On a pane it is the last line right above the
+# input box (the line over the box's top rule): a quote higher up is output. A background
+# session has no pane: the text of the last user or assistant entry of its transcript is
+# matched, when Claude Code wrote that entry as an API error (2.1.308, 2026-10-22: "You've hit
+# your session limit · resets 8:40pm (Europe/Istanbul)"). The pane form is a guess: no limited
+# pane was captured, so the fixtures limit*.txt are made up.
+limit       UNVERIFIED  2.1.308  above  ^ *(⎿ +|⏺ +|● +)?You've hit your [A-Za-z ]*limit( · .+)?$
 
 # The context figure in the status line, <used>/<window> with a k or M on each ("Opus 5.5
 # 58k/1.0M high", between `│` separators). The watcher reports it past --context-warn; a

@@ -1,0 +1,21 @@
+
+ ▐▛███▛█   Claude Code v2.1.308
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   /tmp/tmp.XIzO8PExfN
+
+
+❯ What stopped the last worker?
+
+⏺ Its transcript ends on this line:
+
+  You've hit your session limit · resets 8:40pm (Europe/Istanbul)
+
+  The lead woke it after the reset and it finished.
+
+✻ Crunched for 1s · done 9:12 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  📁tmp.XIzO8PExfN │ 💰$0.03 │ 5h ██░░░░░░░░22% ⏰2h36m │ 7d ███░░░░░░░34% ⏰5d04h │ Haiku 4.5 36k/200k
+  ⏸ manual mode on · ← for agents

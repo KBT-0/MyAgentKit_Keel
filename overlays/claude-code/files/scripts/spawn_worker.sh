@@ -72,8 +72,8 @@
 # (plain_report.py) steps aside (docs/COMMUNICATION.md, "Workers").
 #
 # The lead then starts the printed `sh scripts/watch_workers.sh --result NAME=PATH NAME` as ONE
-# background command, on every platform: its exit is the done signal (the result file, GONE or
-# WAITING), and the lead starts it again after every report but DONE and GONE. It may also
+# background command, on every platform: its exit is the done signal (the result file, GONE,
+# WAITING or LIMIT), and the lead starts it again after every report but DONE and GONE. It may also
 # subscribe with SendMessage `notify_when_idle` (a peer session; a tmux worker registers), but
 # never relies on it alone: the supervisor's close of a finished worker often sends no idle
 # notice (4 of 5 closes on 2026-10-20). The worker also messages the lead's own session once it
@@ -753,12 +753,15 @@ sessions() {
 # (4 of 5 on 2026-10-20), so the watch comes first, before the optional subscription.
 # The watch reads the records in the checkout that holds them (this one): run from another, it
 # saw none and said nothing, forever (2026-10-21). So the line cds there and names the script by
-# its absolute path: it works pasted in any folder. The until-loop needs no records at all.
+# its absolute path: it works pasted in any folder. The until-loop needs no records for the
+# result; it also ends on a worker its usage limit stopped (watch_workers.sh --limit, run in that
+# checkout), which writes no result and sat ~1 h unseen (2026-10-22).
 watch_line() {
   ctop=${wdir%/.myagentkit/workers}
   [ -z "$windows" ] || ctop=$(cygpath -m "$ctop") || ctop=${wdir%/.myagentkit/workers}
-  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): cd $(q "$ctop") && sh $(q "${cworker%/*}/watch_workers.sh") --result $name=$(q "$cresult") $name"
-  printf '%s\n' "spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: completed is done): until [ $(q "$cresult") -nt $(q "$ctop/.myagentkit/workers/$name.result-path") ] && grep -qF '<!-- codex-worker: ready -->' $(q "$cresult"); do sleep 30; done; head -n 4 $(q "$cresult")"
+  wsh=$(q "${cworker%/*}/watch_workers.sh") rq=$(q "$cresult") rp=$(q "$ctop/.myagentkit/workers/$name.result-path")
+  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): cd $(q "$ctop") && sh $wsh --result $name=$rq $name"
+  printf '%s\n' "spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: completed is done; a LIMIT line instead: its usage limit stopped it): until [ $rq -nt $rp ] && grep -qF '<!-- codex-worker: ready -->' $rq || (cd $(q "$ctop") && sh $wsh --limit $name); do sleep 30; done; [ ! $rq -nt $rp ] || head -n 4 $rq"
 }
 # The bg host: a Claude Code background session, on every platform. It starts in the worker's
 # folder, which must sit under a repo root the owner trusted in Claude Code (a trusted root

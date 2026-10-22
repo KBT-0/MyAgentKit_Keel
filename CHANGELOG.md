@@ -87,6 +87,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   instruction says the published file is the signal. Best-effort: the printed disk watch stays
   the done signal. Its supervisor now ends a finished worker 60 s after the result, not 10, so
   the message is not cut off (delivered 21 and 27 s after the publish on a loaded host).
+- A worker its usage limit stopped is reported, not waited on: `watch_workers.sh` ends with
+  `LIMIT: NAME, ... (You've hit your session limit · resets ...): resume it after the reset`
+  (a background worker's transcript, a tmux pane's line above the input box), and the until-loop
+  `spawn_worker.sh` prints ends on it too (`watch_workers.sh --limit NAME`).
 - Worker fixes: a `--resume` of a worker that published and sits in that closing grace waits for it to end instead of refusing "still runs"; the tmux host submits the instruction only once its real end has landed; `codex_worker.py --publish` across drives says to put the temporary file beside the destination.
 - **ACTION** (`docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`,
   or copy by hand the kit's new sentences: in `docs/HANDOFF.md`, after "before closing the

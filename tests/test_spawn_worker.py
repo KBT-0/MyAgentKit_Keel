@@ -1066,11 +1066,15 @@ exit 0
                                  'cd %s && sh %s --result w1=%s w1'
                                  % (shq(top), shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))),
                                     report))
+                # limitwatch: it also ends on a worker its usage limit stopped (2026-10-22: two sat ~1 h).
                 self.assertEqual(lines[started + 2],
                                  'spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: '
-                                 "completed is done): until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' "
-                                 '%s; do sleep 30; done; head -n 4 %s'
-                                 % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, report))
+                                 'completed is done; a LIMIT line instead: its usage limit stopped it): '
+                                 "until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' %s || "
+                                 '(cd %s && sh %s --limit w1); do sleep 30; done; [ ! %s -nt %s ] || head -n 4 %s'
+                                 % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, shq(top),
+                                    shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))), report,
+                                    shq(top + '/.myagentkit/workers/w1.result-path'), report))
                 for line in lines:
                     if 'notify_when_idle' in line:
                         self.assertIn('never rely on it alone', line)
@@ -2690,6 +2694,38 @@ class BackgroundHostTests(unittest.TestCase):
                 self.assertIn('host: bg', result.stdout)
                 self.ended()
                 shutil.rmtree(self.workers)
+
+    def test_the_printed_until_loop_ends_on_the_result_or_on_a_usage_limit_stop(self):
+        # limitwatch (2026-10-22): two workers sat ~1 h on "You've hit your session limit", and
+        # the until-loop, the plainest done signal, waited on with them.
+        config = self.tmp / 'config'
+        result = self.spawn(SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'),
+                            CLAUDE_CONFIG_DIR=str(config))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.ended()
+        line = next(l for l in result.stdout.splitlines() if 'the plainest done signal' in l)
+        loop = line[line.index('until '):]
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=str(config))
+
+        def run():
+            return subprocess.run(['sh'], input=loop, cwd=self.tmp, env=env, capture_output=True, text=True,
+                                  encoding='utf-8', timeout=60 * SCALE)
+        done = run()
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, DONE.rsplit('<', 1)[0], ''))
+        (self.cwd / 'RESULT-w1.md').unlink()
+        folder = config / 'projects/D---p-lead'
+        folder.mkdir(parents=True)
+        entry = {'parentUuid': 'a', 'isSidechain': False, 'type': 'assistant', 'uuid': 'b',
+                 'message': {'model': '<synthetic>', 'role': 'assistant', 'type': 'message', 'content': [
+                     {'type': 'text', 'text': "You've hit your session limit \u00b7 resets 8:40pm (Europe/Istanbul)"}]},
+                 'apiError': 'usage_limit_reached', 'isApiErrorMessage': True}
+        (folder / '1a2b3c4d-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
+            json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
+        stopped = run()
+        self.assertEqual((stopped.returncode, stopped.stderr), (0, ''), stopped.stdout)
+        self.assertEqual(stopped.stdout, "watch_workers: LIMIT: w1, its session stopped on a usage limit (You've hit "
+                         "your session limit \u00b7 resets 8:40pm (Europe/Istanbul)): resume it after the reset "
+                         "(SendMessage 'limit reset, continue', or spawn_worker.sh --resume)\n")
 
     def test_the_bg_host_needs_no_tmux_script(self):
         spaced = self.tmp / 'a b'
