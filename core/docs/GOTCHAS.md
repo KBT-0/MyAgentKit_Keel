@@ -309,11 +309,15 @@ Claude Code status line, a `pwsh` command set to refresh every 3 s (#304, 2026-1
 `pwsh` was the Microsoft Store package, started through its app execution alias in
 `%LOCALAPPDATA%\Microsoft\WindowsApps`. Diagnosis on that host, not a documented mechanism:
 a run that is cancelled or abandoned while the packaged app is still being activated stays
-suspended for good, and closing a session or a worker never reaches it. Install PowerShell 7
-from the MSI (`winget install --id Microsoft.PowerShell --source winget --installer-type wix`;
+suspended for good, and closing a session or a worker never reaches it. Claude Code's PowerShell
+tool started the same Store `pwsh`; no stuck process from it was seen, but it can be cut off the
+same way. Expected remedy, observed for minutes only (no new suspended process after the switch):
+install PowerShell 7 from the MSI (`winget install --id Microsoft.PowerShell --source winget --installer-type wix`;
 add `--force` when winget reports the Store package as already installed; it lands in
 `C:\Program Files\PowerShell\7`), and name `"C:/Program Files/PowerShell/7/pwsh.exe"` by its
-full path in every command Claude Code runs often (`statusLine`, hooks). A status line has no
-reason to refresh faster than every 10 s. To count the stuck processes: `Get-Process pwsh |
-Where-Object { $_.Threads.Count -eq 1 -and $_.Threads[0].WaitReason -eq 'Suspended' }`. Ending
-them is the owner's call.
+full path in every command Claude Code runs often (`statusLine`, hooks). The MSI adds its folder to
+the machine PATH, which comes before the user PATH, so sessions started after the install pick it
+for the PowerShell tool as well. A status line has no reason to refresh faster than every 10 s.
+To count the stuck processes: `@(Get-Process pwsh | Where-Object { $_.Threads.Count -eq 1 -and
+$_.Threads[0].ThreadState -eq 'Wait' -and $_.Threads[0].WaitReason -eq 'Suspended' }).Count`.
+Ending them is the owner's call.
