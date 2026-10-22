@@ -10,7 +10,8 @@ reminder, because a hook runs every time and an instruction is advice (Claude Co
 practices, https://code.claude.com/docs/en/best-practices, "Set up hooks").
 
 The cycle runs at least every `STRONG_REVIEW_DAYS` days (10) or after `STRONG_REVIEW_TASKS`
-closed tasks (20), whichever comes first; `./scripts/check.sh` reminds when either is passed.
+closed tasks (20), whichever comes first (both set in `scripts/gate_config.sh`);
+`./scripts/check.sh` reminds when either is passed.
 The numbers are an owner's choice, not a measured cadence (`docs/WORKFLOW.md`, "The strong
 review cycle").
 

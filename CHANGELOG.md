@@ -59,8 +59,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   project's copy without the header that is the kit's own, unmodified (`adopted:`): equal, line
   endings aside, to the kit's copy at the project's base commit (`docs/kit/.kit-commit`, else
   the tag of its version), for `check.sh` and `review.sh` once their values are set aside, which
-  it writes into `scripts/gate_config.sh`. An edited copy stays a conflict, and its line names
-  the command that shows the edit.
+  it writes into `scripts/gate_config.sh` before it replaces either script. An edited copy stays
+  a conflict, and its line names the command that shows the edit; so does a `check.sh` or
+  `review.sh` with an uncommitted edit, which git holds no copy of.
 - **ACTION** (`scripts/gate_config.sh`, project-owned, new): run `sync-kit.sh .`. It adopts the
   kit scripts the project never edited and writes `scripts/gate_config.sh` from the values of
   the old `check.sh` and `review.sh`; compare its values with the old lines in the upgrade's
@@ -71,9 +72,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   into `scripts/project_validation.py`, anything else upstream (`/myagentkit:kit-feedback`).
   When `check.sh` was such a conflict, copy the kit's `core/scripts/gate_config.sh` to
   `scripts/gate_config.sh` and set the project's values in it before the gate runs again.
+- **ACTION** (`docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`, `docs/WORKFLOW.md`,
+  `.claude/hooks/gate_on_stop.sh`, project-owned): where they name a value that moved, name
+  `scripts/gate_config.sh` instead of `scripts/check.sh` or `scripts/review.sh`: the build cache
+  inputs (WORKFLOW, "The build cache is opt-in", and the hook's comment), the strong review
+  cadence (WORKFLOW, "The strong review cycle"; STRONG_REVIEW), the module roots (WORKFLOW,
+  `docs/ARCHITECTURE.md` bullet) and the reviewer pins (WORKFLOW, "Model versions are kept
+  current"; DEV_SETUP's companion list, whose "reapply the pins" becomes: the pins live in
+  `scripts/gate_config.sh`, copied once from the kit's template when the project has none).
 - A project's own check of a reviewer's final report has a seam (#87): both adapters call
   `validate_final_message(text)` of `scripts/project_validation.py` when the file sits beside
-  them. A reason it returns, or an exception it raises, fails the review as
+  them or in the reviewed repository's `scripts/` (the Codex plugin's bundled adapters). A
+  reason it returns, or an exception it raises (`sys.exit` included), fails the review as
   `invalid_evidence:<reason>`; the verdict is not used.
 - **ACTION** (`scripts/project_validation.py`, project-owned, new, optional): a project whose
   `claude_bridge.py` or `codex_bridge.py` carried a check of its own copies the kit's

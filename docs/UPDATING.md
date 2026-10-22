@@ -26,9 +26,10 @@ Three scripts stay the project's, and they are where its own content lives (#94)
   reviewer pins. `check.sh` and `review.sh` refuse to run without it.
 - `scripts/boundary_checks.sh`, the project's boundary checks.
 - `scripts/project_validation.py`, the project's own check of a reviewer's final report
-  (#87). Both adapters call its `validate_final_message(text)` when the file sits beside them;
-  a reason it returns fails the review as `invalid_evidence:<reason>`. A check like this once
-  lived as a patch inside the adapters, and every sync dropped it; it never goes there now.
+  (#87). Both adapters call its `validate_final_message(text)` when the file sits beside them or
+  in the reviewed repository's `scripts/` (the Codex plugin's bundled adapters); a reason it
+  returns fails the review as `invalid_evidence:<reason>`. A check like this once lived as a
+  patch inside the adapters, and every sync dropped it; it never goes there now.
 
 A kit script that became kit-owned meets the project's copy without the header once. The sync
 adopts that copy when it is the kit's own, unmodified: equal, line endings aside, to the kit's
@@ -68,17 +69,18 @@ exactly the habit the review gate exists to prevent.
    and script it writes also gets mode 100755 in the git index, since `core.fileMode=false`
    (native Windows) never carries the disk's bit there: a tracked one keeps its staged bytes,
    a new one is staged (from a subfolder install the command is printed instead). A file at a
-   kit-owned path WITHOUT the KIT-OWNED header is the project's own (a hook the project
-   wrote before the kit owned that path), unless it is the kit's own unmodified copy, which is
-   listed as `adopted:` and replaced ("Two tiers of ownership" above): it is listed as
-   `conflict:`, and the sync stops
+   kit-owned path WITHOUT the KIT-OWNED header that is the kit's own unmodified copy is listed
+   as `adopted:` and replaced like any kit-owned file ("Two tiers of ownership" above). Any
+   other such file is the project's own (a hook the project wrote before the kit owned that
+   path, or a kit script it edited): it is listed as `conflict:`, and the sync stops
    before it copies anything or records a version. Move yours aside, sync again, then carry
    what yours did into the project by hand (`docs/RETROFIT.md`). A hook of yours under
    `.githooks` (a Git LFS `post-merge`) only needs a new name: as `.githooks/<same name>.project`
    (executable, with a `#!` line) it keeps running, since the kit's hook runs it first with
    git's arguments. A kit-owned file with an edit git does not hold (unstaged, or an untracked
-   file) is a `conflict:` too, since the copy keeps no backup: commit the edit or restore the
-   file, then sync again. Template and package tools
+   file) is a `conflict:` too, since the copy keeps no backup, and so is a `check.sh` or
+   `review.sh` about to be adopted with such an edit: commit the edit or restore the file, then
+   sync again. Template and package tools
    leave that call to a person too (Copier marks conflicts for review before the commit;
    dpkg asks about a changed configuration file); the sync is stricter and writes nothing,
    because a half-merged hook can be a gate that silently does not run.

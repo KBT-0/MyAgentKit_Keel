@@ -1620,24 +1620,29 @@ def validate(envelope: object, mode: str, model: str) -> dict:
     return value
 
 
-def project_check(text: str) -> str | None:
+def project_check(text: str, repo: Path) -> str | None:
     """The project's own check of a reviewer's final report (#87): validate_final_message(text)
-    of the project-owned project_validation.py beside this file, loaded from that path alone (a
-    stray module of that name on sys.path is not it). None passes; a reason fails the review as
-    invalid_evidence:<reason>. No file, nothing more is checked. A check that cannot run fails
+    of the project-owned project_validation.py beside this file and in the reviewed repository's
+    scripts/ (the Codex plugin's bundled adapters sit elsewhere), each loaded from its path alone
+    (a stray module of that name on sys.path is not it). None passes; a reason fails the review
+    as invalid_evidence:<reason>. No file, nothing more is checked. A check that cannot run fails
     the review too: a broken check is no pass."""
-    path = Path(__file__).with_name("project_validation.py")
-    if not path.is_file():
-        return None
-    try:
-        spec = importlib.util.spec_from_file_location("project_validation", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        reason = module.validate_final_message(text)
-    except Exception as error:  # the project's code: whatever it raises fails the check
-        return "project_validation.py failed (%s)" % type(error).__name__
-    # One line, bounded: it becomes the failure kind every record and summary prints.
-    return None if reason is None else " ".join(str(reason).split())[:200] or "project_validation.py"
+    paths = {Path(__file__).resolve().with_name("project_validation.py"),
+             (repo / "scripts/project_validation.py").resolve()}
+    for path in sorted(path for path in paths if path.is_file()):
+        try:
+            spec = importlib.util.spec_from_file_location("project_validation", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            reason = module.validate_final_message(text)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as error:  # the project's code: whatever it raises, sys.exit too, fails the check
+            return "project_validation.py failed (%s)" % type(error).__name__
+        # One line, bounded: it becomes the failure kind every record and summary prints.
+        if reason is not None:
+            return " ".join(str(reason).split())[:200] or "project_validation.py"
+    return None
 
 
 def render(stamp: str, evidence: dict, args) -> str:
@@ -2140,7 +2145,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
                 raise BridgeError("checkout changed during review; result is stale")
             value = validate(json.loads(execution["stdout"]), args.mode, args.model)
             refused = project_check("\n".join(line for item in value.values()
-                                              for line in (item if isinstance(item, list) else [item])))
+                                              for line in (item if isinstance(item, list) else [item])), repo)
             if refused:
                 reason = reason or "invalid_evidence:" + refused
                 raise BridgeError("the project's check (scripts/project_validation.py) refused the final report: " + refused)

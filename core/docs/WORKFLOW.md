@@ -238,7 +238,7 @@ breaks, everything keeps looking green.
   `scripts/boundary_checks.sh` shows the test for its example check; the build command runs
   it. The kit tests the shipped `scripts/check.sh` checks the same way.
 - **The build cache is opt-in: declare what the build reads outside the tree.** Set
-  `build_cache_inputs` in `scripts/check.sh` to a command printing those inputs; its key also
+  `build_cache_inputs` in `scripts/gate_config.sh` to a command printing those inputs; its key also
   covers every file `git ls-files --cached --others --exclude-standard` names, read from disk,
   and the gate script itself. Starters: `cmake --version`, the MSVC banner (`cl 2>&1 | head -n 1`),
   `ninja --version`, `python --version` and a hash of `python -m pip freeze`, `blender --version`,
@@ -359,7 +359,7 @@ invisibly.**
 
 The audit above looks for decay; this cycle asks the strongest models what everyone working
 day to day has stopped seeing. It runs at least every ten days or after 20 closed tasks,
-whichever comes first (`STRONG_REVIEW_DAYS` and `STRONG_REVIEW_TASKS` in `scripts/check.sh`),
+whichever comes first (`STRONG_REVIEW_DAYS` and `STRONG_REVIEW_TASKS` in `scripts/gate_config.sh`),
 and the gate prints a NOTE when no strong review report was added in that span, so it does
 not depend on anyone remembering it. The numbers are the owner's choice, not a measured
 cadence (ten days came from a project's request, kit issue #61).
@@ -611,7 +611,7 @@ Rules for whoever routes work, binding with any table:
    stronger model's lower effort comes before its higher one. Carrying an effort along
    (a cheaper model's xhigh to the top model's xhigh) is the costliest step there is.
 4. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
-   switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
+   switches to it: the reviewer pins in `scripts/gate_config.sh` and the machine's Codex
    configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so
    that the kit and every project built from it follow. A pin is a fixed snapshot with its
    own retirement date, and an alias such as `opus` moves between versions
@@ -1550,8 +1550,8 @@ one names what would have to change before it is worth reopening.
   promotion is every future session treating a musing as law.
 - Update `docs/ARCHITECTURE.md` in the same task only when the task adds or removes a module
   or moves a boundary (the map is coarse on purpose, matklad's "ARCHITECTURE.md"). Prefer a
-  check to a promise: `scripts/check.sh` fails when a folder under `module_roots` is missing
-  from the module map. The agent finds code with grep and glob; the map orients, it does not
+  check to a promise: `scripts/check.sh` fails when a folder under `module_roots` (in
+  `scripts/gate_config.sh`) is missing from the module map. The agent finds code with grep and glob; the map orients, it does not
   replace search. If agents keep failing to orient, ask first whether the file is too long
   or stale.
 - These files hold what the code cannot tell you: why a decision was made, what was tried

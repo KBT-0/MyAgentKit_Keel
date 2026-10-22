@@ -867,7 +867,7 @@ class SyncKitTests(unittest.TestCase):
                     '# read-only: npm run build writes dist/ only\n# read-only: wrangler deploy --dry-run\n'
                     'build_test_cmd="make test"\ndocs_only_skip_build=1\nmodule_roots="src lib"\n'
                     'DEFAULT_REVIEWER="codex"\nCODEX_MODEL="gpt-5.5"\nCLAUDE_MODEL=""\n').encode()
-        for case in ('adopted', 'crlf', 'template config', 'own config', 'edited'):
+        for case in ('adopted', 'crlf', 'template config', 'own config', 'edited', 'uncommitted value'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 kit, project, base, env = self.merge_kit(tmp, ACTION, {
                     'scripts/check.sh': (base_gate, b'#!/bin/sh\n# KIT-OWNED: x\n. ./scripts/gate_config.sh\n'),
@@ -883,9 +883,24 @@ class SyncKitTests(unittest.TestCase):
                 if case in ('template config', 'own config'):
                     (project / 'scripts/gate_config.sh').write_bytes(config if case == 'template config' else own)
                 (project / 'docs/kit/.kit-commit').write_bytes(base.encode() + b'\n')
+                if case == 'uncommitted value':
+                    # A value edit git holds no copy of is refused, as at a kit-owned file.
+                    for args in (['init', '-q'], ['add', '-A'],
+                                 ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'p']):
+                        subprocess.run(['git', '-C', str(project), *args], check=True, env=env, capture_output=True)
+                    gate = gate.replace(b'make test', b'make check')
+                    (project / 'scripts/check.sh').write_bytes(gate)
                 result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
                                         capture_output=True, text=True, timeout=60)
                 out = result.stdout + result.stderr
+                if case == 'uncommitted value':
+                    self.assertEqual(result.returncode, 1, out)
+                    self.assertIn('  conflict: scripts/check.sh (uncommitted edits, which the copy would overwrite)',
+                                  result.stdout)
+                    self.assertIn('A kit-owned file listed holds uncommitted edits', result.stdout)
+                    self.assertEqual((project / 'scripts/check.sh').read_bytes(), gate)
+                    self.assertFalse((project / 'scripts/gate_config.sh').exists(), out)
+                    continue
                 if case == 'edited':
                     self.assertEqual(result.returncode, 1, out)
                     self.assertIn('conflict: scripts/check.sh', result.stdout)

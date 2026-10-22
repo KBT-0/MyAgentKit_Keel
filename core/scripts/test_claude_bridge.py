@@ -56,9 +56,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 283, 'test_agent_usage': 39, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 285, 'test_agent_usage': 39, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 256, 'test_agent_usage': 35, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 258, 'test_agent_usage': 35, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -6578,6 +6578,23 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                         failed.stdout.splitlines() if s.startswith('review dispatch: ')))
                 self.assertEqual(chain['failure_kind'], 'invalid_evidence:non-Latin letters', failed.stdout)
                 self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
+
+    def test_an_adapter_outside_the_project_runs_the_reviewed_repositorys_validation_seam(self):
+        # The Codex plugin's bundled adapters sit outside the project: they load the reviewed
+        # repository's scripts/project_validation.py, by path. A check that exits instead of
+        # returning (sys.exit) fails the review as well; it once unwound the adapter unrecorded.
+        seam = self.repo / 'scripts/project_validation.py'
+        seam.parent.mkdir(exist_ok=True)
+        for body, kind in (('    return "non-Latin letters"\n', 'invalid_evidence:non-Latin letters'),
+                           ('    import sys\n    sys.exit(3)\n', 'invalid_evidence:project_validation.py failed (SystemExit)')):
+            with self.subTest(kind=kind):
+                seam.write_text('def validate_final_message(text):\n' + body)
+                code, result = self.run_bridge('accept')
+                self.assertNotEqual(code, 0, result)
+                self.assertEqual(result['failure_kind'], kind, result)
+                self.assertEqual(verdicts_of(result['evidence']), [])
+                usage = json.loads(Path(result['usage_record']).read_text())
+                self.assertEqual(usage['status'], 'failed')
 
     BACKEND = {'ANTHROPIC_BASE_URL': 'https://backend.invalid/api', 'ANTHROPIC_AUTH_TOKEN': 'tok=en',
                'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-fixture'}

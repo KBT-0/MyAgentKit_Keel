@@ -163,7 +163,9 @@ Codex is the only reviewing CLI.
 Both live adapters now require Python as well, to bound the child process and preserve usage
 on failure. The following is the canonical companion list for an existing-project upgrade.
 Copy every listed file from the kit's `core/scripts/` into your project's `scripts/`
-alongside the updated `review.sh`; reapply the project's default reviewer and model pins.
+alongside the updated `review.sh`. The project's default reviewer and model pins live in its
+own `scripts/gate_config.sh`, which `review.sh` sources (#94): a project without one copies the
+kit's `core/scripts/gate_config.sh` there once and sets them in it.
 
 <!-- REVIEW_COMPANIONS_START -->
 

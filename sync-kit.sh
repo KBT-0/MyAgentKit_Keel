@@ -383,6 +383,16 @@ while IFS= read -r src; do
     # base once line endings and, for check.sh and review.sh, the project's values are set
     # aside. It is adopted, and those values go to scripts/gate_config.sh.
     kpath=${src#"$kit/"} names=$(value_names "$rel")
+    # An uncommitted value edit in check.sh or review.sh is refused as at a kit-owned file: git
+    # holds no copy of it, should the values not reach scripts/gate_config.sh.
+    if [ -n "$names" ] && [ -n "$repo" ] &&
+      git -C "$target" --literal-pathspecs status --porcelain -- "$rel" 2>/dev/null | grep -q '^.[^ ]'; then
+      printf '%s
+' "  conflict: $rel (uncommitted edits, which the copy would overwrite)"
+      conflict=1
+      dirty=1
+      continue
+    fi
     if [ -n "$adopt_base" ] && git -C "$kit" show "$adopt_base:$kpath" > "$copies.base" 2>/dev/null; then
       line2=$(sed -n 2p "$copies.base" | tr -d '\r')
       : > "$copies.v"
@@ -512,14 +522,16 @@ index_exe() {
   fi
 }
 if [ "$dry" -eq 0 ]; then
+  # The values first: a run cut off in the copy loop below leaves the kit's check.sh beside
+  # them, never without them (a rerun finds that check.sh the kit's and records no values).
+  [ -z "$config" ] || put "$target/scripts/gate_config.sh" "$copies.config" ||
+    die "could not write scripts/gate_config.sh; version left at v$have"
   while IFS= read -r src; do
     relpath "$src"
     { cmp -s "$src" "$target/$rel" || { mkdir -p "$target/$(dirname "$rel")" && put "$target/$rel" "$src"; }; } &&
       exe "$target/$rel" && { [ -z "$repo" ] || ! executable || index_exe; } ||
       die "could not write $rel; version left at v$have"
   done < "$copies"
-  [ -z "$config" ] || put "$target/scripts/gate_config.sh" "$copies.config" ||
-    die "could not write scripts/gate_config.sh; version left at v$have"
 fi
 
 # --- tier 2: the checklist of what has to be applied by hand -------------------------
