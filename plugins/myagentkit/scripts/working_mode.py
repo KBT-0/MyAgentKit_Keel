@@ -43,7 +43,8 @@ EXAMPLES = {'solo': 'family: codex', 'saver': 'low: claude'}
 PRESENCE = ('autopilot', 'present')
 OWNER_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
 AWAY = re.compile(r'away \(autopilot since (\S+)\)')
-BACK = ('The owner is back. Before anything else: run `python scripts/autopilot_report.py` and finish the '
+BACK = ('The owner is back. Before anything else: run `python3 scripts/autopilot_report.py` (`python` on native '
+        'Windows) and finish the '
         'report from it (docs/AUTOPILOT.md); give it in two layers (docs/COMMUNICATION.md, "Handoff"); then '
         'ask its Questions one by one with AskUserQuestion, the recommended option first. An Issue draft is '
         'posted only on the owner\'s yes.')
@@ -215,8 +216,8 @@ def replace_state(project, source, expected):
                                  'mode switch (working_mode.py NAME) changes it, together with .myagentkit/mode '
                                  '(the one exception: a mode name from before v0.11 may become solo, cross or '
                                  'saver)' % (numbered(data.decode('utf-8')) or 'none'))
-            if [m[0] for m in OWNER_LINE.finditer(current.decode('utf-8'))] != \
-                    [m[0] for m in OWNER_LINE.finditer(data.decode('utf-8'))]:
+            if [m[0] for m in presence_lines(current.decode('utf-8'))] != \
+                    [m[0] for m in presence_lines(data.decode('utf-8'))]:
                 raise ValueError('the edit changes the Owner line of STATE.md; only working_mode.py autopilot '
                                  'or present changes it, together with .myagentkit/presence')
             pending = prepared(project, state, data)
@@ -283,18 +284,20 @@ def mode(project, choice=None, sides=None):
 def owner(project, state):
     """(stamp, line, record words): the autopilot stamp of STATE's one Owner line (None for
     present or no line), its match, and the words of .myagentkit/presence (none: present)."""
-    found = list(OWNER_LINE.finditer(state))
+    found = presence_lines(state)
     if len(found) > 1:
         raise ValueError('STATE.md has more than one Owner line: ' + '; '.join(m[0].strip() for m in found))
     line = found[0] if found else None
-    value = line[2].strip().rstrip('.') if line else 'present'
-    away = AWAY.fullmatch(value)
-    if away is None and value != 'present':
-        raise ValueError('unrecognized STATE.md Owner line (only working_mode.py autopilot or present writes it): '
-                         + line[0].strip())
+    away = AWAY.fullmatch(line[2].strip().rstrip('.')) if line else None
     record = checked(project, '.myagentkit/presence')
     words = record.read_text(encoding='utf-8').split() if record.exists() else ['present']
     return (away[1] if away else None), line, words
+
+
+def presence_lines(state):
+    """STATE's Owner lines that hold a presence; a project's own `**Owner:** <name>` is no record."""
+    return [m for m in OWNER_LINE.finditer(state)
+            if m[2].strip().rstrip('.') == 'present' or AWAY.fullmatch(m[2].strip().rstrip('.'))]
 
 
 def switch_presence(project, section, choice):
@@ -311,9 +314,9 @@ def switch_presence(project, section, choice):
     now = datetime.now().astimezone().isoformat(timespec='seconds')
     # A second switch keeps the first stamp, so the report covers the whole absence; the return
     # keeps it too, with the time of the return, for scripts/autopilot_report.py.
-    since = stamp or (words[1] if words[0] == 'away' and len(words) > 1 else None)
+    since = stamp or (words[1] if words[:1] == ['away'] and len(words) > 1 else None)
     if choice == 'autopilot':
-        since = stamp or now
+        since = since or now
         value, text = 'away (autopilot since %s)' % since, 'away %s\n' % since
     else:
         value, text = 'present', 'present%s\n' % (' %s %s' % (since, now) if since else '')
@@ -370,7 +373,7 @@ def working_mode(project, section, rows, choice=None, sides=None):
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
             raise ValueError('.myagentkit/mode and STATE.md disagree; choose a mode explicitly to repair them')
         stamp, _, words = owner(project, state)
-        if (words[:2] != ['away', stamp]) if stamp else (words[0] != 'present'):
+        if (words[:2] != ['away', stamp]) if stamp else (words[:1] != ['present']):
             raise ValueError('.myagentkit/presence and the STATE.md Owner line disagree; switch autopilot or '
                              'present explicitly to repair them')
         back = AFTER.search(note.strip(' ().')) if current == 'saver' else None
@@ -385,7 +388,7 @@ def working_mode(project, section, rows, choice=None, sides=None):
         raise ValueError('unknown mode; choose ' + ', '.join(name for name, _ in rows))
     # Validate and extract the rules before making either edit.
     def rules(name):
-        match = re.search(r'^#### ' + re.escape(name) + r'(?![\w-])[^\n]*\n.*?(?=^#### |\Z)', section, re.M | re.S)
+        match = re.search(r'^#### ' + re.escape(name) + r'(?![\w-])[^\n]*\n.*?(?=^#{2,4} |\Z)', section, re.M | re.S)
         if match is None:
             raise ValueError('missing mode rules: ' + name)
         return match[0].strip()

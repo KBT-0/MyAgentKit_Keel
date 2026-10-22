@@ -95,7 +95,9 @@ def locked(path: Path):
         try:
             os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             break
-        except FileExistsError:
+        # Windows answers PermissionError while another holder's lock file is being deleted:
+        # the same wait, never a dropped note.
+        except (FileExistsError, PermissionError):
             try:
                 # ponytail: a holder killed mid-write leaves its lock; 10 s old counts as stale
                 if time.time() - lock.stat().st_mtime > 10:

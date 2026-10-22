@@ -1,6 +1,6 @@
 ---
 name: myagentkit-mode
-description: Show the working mode in force and the three MyAgentKit working modes, or switch to one by name (solo, cross, saver) and print its rules for the lead. Use only when the user asks for the mode or names one.
+description: Show the working mode in force and the three MyAgentKit working modes, or switch to one by name (solo, cross, saver) and print its rules for the lead; autopilot and present switch the user's presence. Use only when the user asks for the mode or names one.
 ---
 
 # Show or switch the working mode
@@ -33,8 +33,8 @@ mode is solo, the main mode; say that the line is missing. Print the mode in for
 the three modes from the section's table, one line each: the name and who writes, reviews
 and fixes the findings.
 
-**A mode named.** Accept `solo`, `cross` or `saver`, in any case. Refuse any other name and
-list the three. The user switches modes: switch only when the user asks, never on your own
+**A mode named.** Accept `solo`, `cross` or `saver`, or the presence switch `autopilot` or
+`present`, in any case. Refuse any other name and list the five. The user switches modes: switch only when the user asks, never on your own
 initiative. One standing exception, given by the user when choosing saver: when the low
 side's allowance has reset, return to the mode the note's `after:` names (`docs/WORKFLOW.md`,
 "saver", Ends), in this session or a later one.
@@ -48,3 +48,9 @@ side's allowance has reset, return to the mode the note's `after:` names (`docs/
    lead from now on.
 3. For saver, add one line: it ends when the low side's allowance resets or the user
    says otherwise, and then the mode its note's `after:` names returns without being asked.
+
+**autopilot / present.** Not a mode: the user's presence beside the mode in force
+(`docs/WORKFLOW.md`, "autopilot, the owner-away switch"). Run the helper with the name and
+no note. For `autopilot`, print its output whole: the rules, the checklist to go through
+before leaving, and the `/goal` line the user types (you cannot run it). For `present`, do
+what its output says: the report, then the questions one by one.

@@ -241,6 +241,24 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(sorted(r['id'] for r in self.rows('note')), [1, 2, 3])
         self.assertFalse((self.project / '.myagentkit/suggestions.jsonl.lock').exists())
 
+    def test_a_windows_access_denied_on_the_lock_is_retried_and_the_note_kept(self):
+        # project_leeway: Windows answers O_EXCL with PermissionError while another holder's lock
+        # file is being deleted, and locked() let it escape, so the note was dropped.
+        spec = importlib.util.spec_from_file_location('suggestions_lock_under_test', HOOK)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        real, calls = os.open, []
+        def opening(path, flags, *args):
+            calls.append(path)
+            if len(calls) < 3:
+                raise PermissionError(13, 'Access is denied', str(path))
+            return real(path, flags, *args)
+        entered = False
+        with mock.patch.object(hook.os, 'open', opening), hook.locked(self.ledger):
+            entered = True
+        self.assertTrue(entered)
+        self.assertEqual(len(calls), 3)
+
     def test_on_lifts_a_precision_stop_and_judges_afresh(self):
         self.judged('wrong', 'wrong', 'wrong', 'wrong', 'partly')
         self.run_hook('stop', self.event())
