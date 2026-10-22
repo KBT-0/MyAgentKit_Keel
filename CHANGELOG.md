@@ -56,6 +56,7 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   entries the overlay's settings now carry, `post-tool` after `progress_reminder.py` in
   PostToolUse, `prompt` after `context_size.py` in UserPromptSubmit and `stop` after
   `plain_report.py` in Stop; then update the plugin (`claude plugin update myagentkit@myagentkit`), which brings the mod.
+  A copy of the overlay's `README.md` takes its new `suggestions.py` row.
 - **ACTION** (`docs/COMMUNICATION.md`, project-owned): add the section "Side-check notes
   (myagentkit-suggestion)" from the kit's `core/docs/COMMUNICATION.md`.
 
@@ -116,7 +117,8 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   script's own. `test_owns_check` is 10.
 - **ACTION:** in `scripts/review.sh` (project-owned), replace the `cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}"`
   line with the kit's `core/scripts/review.sh` block that sets `repo_root` from the checkout it
-  runs in, and re-copy `scripts/test_owns_check.py`.
+  runs in, and re-copy `scripts/test_owns_check.py`; in `docs/REVIEW_RUNNING.md`, take the
+  kit's `REVIEW_TASK_FILE` row (the brief may live in any checkout, #302).
 - The gate's build command rule names what makes a step unsafe: a remote write, a deploy
   credential, a change users see. A read-only validation spelled like a deploy (`wrangler deploy
   --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command records it and
@@ -156,10 +158,19 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   (replacing "After one compaction of your context, finish only if ..."), keeping your pins;
   copy `.claude/hooks/after_compact.txt` whole from the overlay; in `docs/HANDOFF.md`, replace
   the "A worker whose context was compacted once" bullet and extend **Design:** with the
-  kit's; in `docs/WORKFLOW.md`, "Worker cost", take the kit's rule 3 paragraph "A sub-agent
+  kit's (a worker hands off on its own near the backstop or on a multi-task brief, and when
+  the lead tells it to at red, its code committed or named first); in `docs/WORKFLOW.md`,
+  "Worker cost", rule 8's red-band line "finish the item, commit, Kind: handoff" takes the
+  kit's pointer to `docs/HANDOFF.md`; take the kit's rule 3 paragraph "A sub-agent
   compacts far below the band", the line in "The rules in brief" item 3, the sentence ending
   rule 7 and the sub-agent line after rule 8's `--context-warn`; in `docs/COMMUNICATION.md`,
   "Workers", add the failed-attempt paragraph. Re-copy `scripts/test_agent_cost.py`.
+- **ACTION:** in `AGENTS.md`, end the context bullet of "MENTION ONCE" with "Neither is the
+  default; the lead session compacted once hands off, while a worker follows its own rule
+  (`docs/HANDOFF.md`)." (it said "a session compacted once hands off"); in
+  `.claude/hooks/context_size.py`, start the compacted advice with "The lead session was
+  compacted already" and end it with "never a second /compact; a worker follows its own rule:
+  docs/HANDOFF.md" (or re-copy it from the overlay).
 
 ---
 

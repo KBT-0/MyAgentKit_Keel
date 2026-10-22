@@ -1026,6 +1026,8 @@ def main():
         # with a 3D export busy on 16 of 20 CPUs, ten units at once ran three times as long.
         self.assertEqual([check_kit.degree(20, 60, busy) for busy in (0, 0.4, 10, 16, 19.5)], [10, 10, 5, 2, 1])
         self.assertEqual(check_kit.degree(4, 60, 3), 1)
+        # Under one busy CPU is the run's own setup, not other work: a 4-CPU runner keeps two.
+        self.assertEqual(check_kit.degree(4, 60, 0.6), 2)
         with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '1.5'}):
             self.assertEqual(check_kit.limit(300), 450)
 

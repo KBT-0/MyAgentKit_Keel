@@ -195,16 +195,16 @@ fixed" follow as always.
   is provably finished or hung" (`AGENTS.md`). Two workers that handed off at their second
   compaction had written no code, and the next one paid their reading again (#303,
   2026-10-22). A
-  worker writes `Kind: handoff` only when the task truly cannot finish in its session (the
+  worker writes `Kind: handoff` on its own only when the task truly cannot finish in its session (the
   turn backstop is near with work left, or the brief turns out to be more than one task),
-  with a handoff section in the shape of this file. The code it wrote is never discarded: a
+  and when the lead tells it to (the red band, below); either way with a handoff section in the shape of this file. The code it wrote is never discarded: a
   Claude worker commits it on its branch when the brief and host permit it, a Codex worker
   leaves it uncommitted in its worktree and names the changed files; either names the exact
   next step. "Nothing is edited" is never a hand-off body. The `SessionStart` (compact) hook reminds it. The lead's own session
   follows a different rule, the context band and one compaction at most (`docs/WORKFLOW.md`,
   "Worker cost", rule 8).
   A worktree worker carries the project's hooks, and at red the lead sends
-  "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
+  "finish the item, commit, Kind: handoff", the code committed or named first as above (owner decision 23, 2026-10-16; Claude Code project settings:
   https://code.claude.com/docs/en/settings, checked 2026-10-16).
 - `Task:` and `Attempt:` name the work the file reports on, so a result left by an earlier
   task of a reused session is never taken for the current one.

@@ -7,6 +7,8 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parent / 'owns_check.py'
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run side by side.
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
 
 class OwnsCheckTests(unittest.TestCase):
@@ -39,7 +41,7 @@ class OwnsCheckTests(unittest.TestCase):
     def check(self, owns, *scope):
         self.brief.write_text('Task: fixture.\n' + owns + '\n', encoding='utf-8')
         result = subprocess.run([sys.executable, str(SCRIPT), str(self.brief), *scope], cwd=self.repo,
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, timeout=30 * SCALE)
         return result.returncode, result.stderr
 
     def test_uncommitted_counts_untracked_and_renamed_paths_and_allows_state(self):
@@ -184,7 +186,7 @@ class OwnsCheckTests(unittest.TestCase):
                 self.brief.write_text('Task: fixture.\nOwns: %s\n' % owns, encoding='utf-8')
                 result = subprocess.run(['sh', str(scripts / 'review.sh'), '--base', base], cwd=cwd,
                                         env=dict(env, REVIEW_REPO_ROOT=str(root)) if root else env,
-                                        capture_output=True, text=True, timeout=60)
+                                        capture_output=True, text=True, timeout=60 * SCALE)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(Path(result.stdout.split('dispatched in ', 1)[1].strip()).resolve(),
                                  reviewed.resolve())

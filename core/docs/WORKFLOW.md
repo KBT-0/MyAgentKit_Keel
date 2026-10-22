@@ -1117,7 +1117,7 @@ Rules, binding for whoever routes workers:
    A sub-agent compacts near 168k, before the red band (rule 3), and its compactions never end
    its task.
    A worktree worker carries the project's hooks, and at red the lead sends
-   "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
+   "finish the item, commit, Kind: handoff", the worker's one hand-off besides its own (`docs/HANDOFF.md`) (owner decision 23, 2026-10-16; Claude Code project settings:
    https://code.claude.com/docs/en/settings, checked 2026-10-16).
    The lead keeps big output out of its own context: logs, diffs and images go to
    files and it reads the summary line; long reads go to a worker that returns conclusions;
