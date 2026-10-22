@@ -22,7 +22,7 @@ def headings(path):
 
 
 def workflow_rules_and_reasons():
-    """WORKFLOW.md and its kit-owned rationale (#296): a rule's full text may live in either."""
+    """WORKFLOW.md and its kit-owned rationale (#296), for text that may live in either."""
     return '\n'.join((ROOT / 'core/docs' / name).read_text(encoding='utf-8')
                      for name in ('WORKFLOW.md', 'WORKFLOW_RATIONALE.md'))
 
@@ -76,7 +76,7 @@ class ReviewerDocumentTests(unittest.TestCase):
 
 class SectionPointerTests(unittest.TestCase):
     def test_routing_and_closure_rules_agree(self):
-        workflow = workflow_rules_and_reasons()
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         self.assertIn('python3 scripts/usage_summary.py', workflow)
         flat = ' '.join(workflow.split())
         for rule in ('two at a time until the lead has measured its host', '4 GB reserve',
@@ -84,7 +84,7 @@ class SectionPointerTests(unittest.TestCase):
                      'conflict resolution is a part authored by whoever resolved it',
                      'rebuilding the integration branch without it', 'kills the background jobs started from its tool shell'):
             self.assertIn(rule, flat)
-        budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('\n\n')[0].split())
+        budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('7. **Worker reports are short**')[0].split())
         # Paid reviews run one after the other unless the owner allows parallel (v0.11 close-out
         # decision 9, BACKLOG B14); a tier's floor is its own reviewer count (KARARLAR B01 (3), B15).
         for rule in ('Paid reviews run one after the other (rule 1)',
@@ -576,7 +576,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('review gate applies before commit', agents)
         self.assertIn('This is the one place the timing is written', read('core/docs/REVIEW_GATE.md'))
         # #286: a commit is a long job because its hooks run the gate.
-        self.assertIn('`git commit` and `git merge` are long jobs too', ' '.join(workflow_rules_and_reasons().split()))
+        self.assertIn('`git commit` and `git merge` are long jobs too', read('core/docs/WORKFLOW.md'))
         self.assertIn('default foreground timeout is 120 seconds',
                       read('overlays/claude-code/files/.claude/agents/worker.md'))
 
@@ -629,9 +629,21 @@ class SectionPointerTests(unittest.TestCase):
         # A sync copies the file unfilled, and the project's gate fails on a placeholder.
         self.assertIsNone(re.search(r'\{\{[A-Z0-9_]+\}\}', rationale))
         self.assertNotIn("## Where the constitution's rules come from", workflow)
-        self.assertLess(len(workflow.splitlines()), 1200)
+        # wfsplit review: a rule or an owner decision in the kit-owned file is overwritten by the
+        # next sync, so the worker-cost rules 1-9 stay whole in WORKFLOW.md and only reasons move.
+        reasons = rationale.split("## Where the constitution's rules come from")[0]
+        for n, rule in enumerate(("A worker's cache must outlive its waits", "Gate findings go to the author's side",
+                                  'One small task per worker.', 'The lead does not poll either.',
+                                  'Mechanical work goes to the cheaper model', 'Parallel workers only for independent modules',
+                                  'Worker reports are short', 'The lead session is compacted or handed over',
+                                  'A worker runs the cheapest check'), 1):
+            with self.subTest(rule=n):
+                self.assertIn('\n%d. **%s' % (n, rule), workflow)
+                self.assertNotIn(rule, reasons)
+        for decision in ("owner's choice", 'owner decision', 'KARARLAR B', '{{OWNER_NAME}}'):
+            self.assertNotIn(decision, reasons)
         whys = list(re.finditer(r'^Why: docs/WORKFLOW_RATIONALE\.md, "([^"]+)"\.$', workflow, re.M))
-        self.assertGreater(len(whys), 8)
+        self.assertTrue(whys)
         for why in whys:
             with self.subTest(section=why[1]):
                 self.assertIn(why[1], headings(path))
