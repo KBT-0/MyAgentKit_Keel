@@ -46,9 +46,39 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   when every file that round reviewed is in the commit's diff; otherwise the refusal names the
   files the commit lacks. A pre-v0.13 record whose archive went with its removed worktree is
   read from a copy with the same name in the main checkout.
-- **ACTION** (`scripts/review_dispatch.py`, `scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
-  `scripts/test_claude_bridge.py`, `docs/REVIEW_RUNNING.md`, project-owned): run
-  `sync-kit.sh . --merge`; a project that never edited them takes the kit's copies whole.
+- **ACTION** (`docs/REVIEW_RUNNING.md`, project-owned): run `sync-kit.sh . --merge`. The
+  scripts behind it (`review_dispatch.py`, `claude_bridge.py`, `codex_bridge.py`,
+  `test_claude_bridge.py`) are kit-owned from v0.13, and the sync replaces them (below).
+- The kit's scripts are kit-owned (#94, #285): `check.sh`, `review.sh`, the review adapters and
+  every other script in `scripts/` but three carry the KIT-OWNED header, and every sync replaces
+  them. The project's values leave `check.sh` and `review.sh` for the new project-owned
+  `scripts/gate_config.sh`, which both source and without which both refuse to run: the
+  build/test command and its `# read-only:` lines, the toolchain path, the module roots, the
+  documentation build switches, the build cache inputs, the strong review cadence and the
+  reviewer pins. `doctor.sh` reads the toolchain path and the reviewer there. The sync adopts a
+  project's copy without the header that is the kit's own, unmodified (`adopted:`): equal, line
+  endings aside, to the kit's copy at the project's base commit (`docs/kit/.kit-commit`, else
+  the tag of its version), for `check.sh` and `review.sh` once their values are set aside, which
+  it writes into `scripts/gate_config.sh`. An edited copy stays a conflict, and its line names
+  the command that shows the edit.
+- **ACTION** (`scripts/gate_config.sh`, project-owned, new): run `sync-kit.sh .`. It adopts the
+  kit scripts the project never edited and writes `scripts/gate_config.sh` from the values of
+  the old `check.sh` and `review.sh`; compare its values with the old lines in the upgrade's
+  `git diff`. A project `scripts/gate_config.sh` already set up is kept, and the values are
+  printed beside it to compare. For each script listed as `conflict:` (one the project edited),
+  read the edit with the command on its line, move the copy aside and sync again, then carry
+  the edit over: a value into `scripts/gate_config.sh`, a check of a reviewer's final report
+  into `scripts/project_validation.py`, anything else upstream (`/myagentkit:kit-feedback`).
+  When `check.sh` was such a conflict, copy the kit's `core/scripts/gate_config.sh` to
+  `scripts/gate_config.sh` and set the project's values in it before the gate runs again.
+- A project's own check of a reviewer's final report has a seam (#87): both adapters call
+  `validate_final_message(text)` of `scripts/project_validation.py` when the file sits beside
+  them. A reason it returns, or an exception it raises, fails the review as
+  `invalid_evidence:<reason>`; the verdict is not used.
+- **ACTION** (`scripts/project_validation.py`, project-owned, new, optional): a project whose
+  `claude_bridge.py` or `codex_bridge.py` carried a check of its own copies the kit's
+  `core/scripts/project_validation.py` to `scripts/` and moves the check into
+  `validate_final_message`; the sync's kit-owned adapters no longer hold it.
 - A finished worker tells the lead itself: `spawn_worker.sh` reads the lead's session name
   (CLAUDE_PID's `sessions/PID.json`, checked against CLAUDE_CODE_SESSION_ID), prints
   `lead session: NAME`, and its instruction has the worker send that session one SendMessage

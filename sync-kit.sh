@@ -9,11 +9,11 @@
 # Two tiers of ownership, and the line between them is drawn in the files themselves:
 #
 #   KIT-OWNED    the file carries a "KIT-OWNED" marker in its header. It holds no project
-#                content, so this script overwrites it wholesale. A file at that path in the
-#                project WITHOUT the marker is the project's own: listed as a conflict, and
-#                the sync stops before it copies anything or records a version.
+#                content, so this script overwrites it wholesale. A file there WITHOUT the
+#                marker is the project's own, a conflict that stops the sync before it copies
+#                anything, unless it is the kit's unmodified copy, adopted (docs/UPDATING.md).
 #   PROJECT-OWNED  everything else. Never touched. Most of the kit is project-owned by
-#                design — the constitution, the workflow, the gate and the boundary checks
+#                design — the constitution, the workflow, the gate's values, the boundary checks
 #                are all customised during setup, and overwriting them would throw that away
 #                (and re-introduce the placeholders).
 #
@@ -639,6 +639,8 @@ if [ "$merge" -eq 1 ]; then
   printf '%s\n' "PROJECT-OWNED files, the kit's changes since ${base%"${base#???????}"} merged in:"
   open=0
   while IFS= read -r rel; do
+    # Written by tier 1 from the adopted scripts' values: the project's, with nothing to merge.
+    [ "$rel" != scripts/gate_config.sh ] || [ -z "$config" ] || continue
     why=$(blocked "$rel")
     if [ -n "$why" ]; then
       printf '%s\n' "  skipped:  $rel ($why); merge it by hand"; open=1; continue
