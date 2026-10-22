@@ -106,6 +106,13 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   row only from a measured run), and in "Worker cost" the "(into "Task sizing"'s rows)" note; in
   `docs/COMMUNICATION.md`, "Questions and approvals", change "how long" to "how long in agent time
   (`docs/WORKFLOW.md`, "Task sizing")". `BEHAVIOUR.md` comes with the sync.
+- One master writer per main checkout (project_leeway field data, 2026-10-22): `docs/WORKFLOW.md`,
+  "Parallel work — worktree policy" says only one session writes to the main branch in the main
+  checkout and every other lead merges through it; `docs/COMMUNICATION.md` gets the MERGE REQUEST
+  and MAIN CHECKOUT IDLE messages. The enforcing hook is v0.13.
+- **ACTION:** in `docs/WORKFLOW.md`, "Parallel work — worktree policy", add the paragraph "One
+  master writer per main checkout", and in `docs/COMMUNICATION.md`, "Workers", add the two
+  messages, both from the kit's `core/docs/` (project-owned files).
 - **ACTION:** re-copy `scripts/claude_bridge.py`, `scripts/review_dispatch.py` and
   `scripts/test_claude_bridge.py` from the kit (project-owned, so the sync does not bring them):
   the macOS archive, `CLAUDE_CLI_BIN` probe and backend-folder fixes above, with their tests.
