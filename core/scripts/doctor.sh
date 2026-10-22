@@ -32,7 +32,7 @@ probe_seconds=10
 
 miss() { printf '%s\n' "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 
-# The same PATH preamble as scripts/check.sh, read from it so it is configured once: a check
+# The same PATH preamble as scripts/check.sh, read from scripts/gate_config.sh so it is configured once: a check
 # here that saw a different PATH from the hook would prove nothing about the hook. The line
 # is READ, never run: evaluating it executed whatever a project wrote there, so a read-only
 # check ran `$(...)` from a configuration line. $NAME and ${NAME} are expanded from the
@@ -40,18 +40,18 @@ miss() { printf '%s\n' "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 # (a configuration value run as code is command injection: CWE-78).
 # An UNSET variable is reported too: check.sh's `set -u` stops on it, so expanding it to
 # nothing reported a ready machine whose gate could not start.
-# Only the form check.sh ships is read: a line in any other form (a comment after it, single
+# Only the form gate_config.sh ships is read: a line in any other form (a comment after it, single
 # quotes, no quotes) was read as empty, and doctor probed a PATH the gate never uses.
-toolchain_line=$(sed -n '/^[[:space:]]*toolchain_path=/{p;q;}' scripts/check.sh 2>/dev/null)
+toolchain_line=$(sed -n '/^[[:space:]]*toolchain_path=/{p;q;}' scripts/gate_config.sh 2>/dev/null)
 toolchain_line=${toolchain_line%"$(printf '\r')"}  # CRLF is reported once, below
 toolchain_path=""
 case "$toolchain_line" in
-  "") [ -f scripts/check.sh ] && echo "NOTE: scripts/check.sh has no toolchain_path line; doctor probes the PATH it was started with" ;;
+  "") [ -f scripts/gate_config.sh ] && echo "NOTE: scripts/gate_config.sh has no toolchain_path line; doctor probes the PATH it was started with" ;;
   toolchain_path=\"*\"*\") ;;
   toolchain_path=\"*\") toolchain_path=${toolchain_line#toolchain_path=\"}; toolchain_path=${toolchain_path%\"} ;;
 esac
 if [ -n "$toolchain_line" ] && [ -z "$toolchain_path" ] && [ "$toolchain_line" != 'toolchain_path=""' ]; then
-  miss "toolchain_path line not in the supported form toolchain_path=\"...\"; doctor cannot see the gate's PATH" "write it in scripts/check.sh on a line of its own, exactly toolchain_path=\"<path>\", with no comment after it"
+  miss "toolchain_path line not in the supported form toolchain_path=\"...\"; doctor cannot see the gate's PATH" "write it in scripts/gate_config.sh on a line of its own, exactly toolchain_path=\"<path>\", with no comment after it"
 fi
 unsupported=""
 case "$toolchain_path" in
@@ -69,14 +69,14 @@ case "$toolchain_path" in
        print out s }')
      case $? in
        0) ;;
-       2) miss "toolchain_path refers to \$$expanded, which is not set" "export $expanded in the environment the gate runs in, or write the path in scripts/check.sh"
+       2) miss "toolchain_path refers to \$$expanded, which is not set" "export $expanded in the environment the gate runs in, or write the path in scripts/gate_config.sh"
           expanded="" ;;
        *) unsupported=1 ;;
      esac ;;
 esac
 if [ -n "$unsupported" ]; then
   expanded=""
-  miss "toolchain_path uses shell syntax doctor does not evaluate; set a plain path" "write it in scripts/check.sh as a path, using only \$HOME or \${HOME}-style variables"
+  miss "toolchain_path uses shell syntax doctor does not evaluate; set a plain path" "write it in scripts/gate_config.sh as a path, using only \$HOME or \${HOME}-style variables"
 fi
 toolchain_path=$expanded
 case "$toolchain_path" in
@@ -113,7 +113,7 @@ esac
 # The .py files cover every review import and the mode command's helper: one deleted left
 # doctor ready and a kit command unable to start. A project has no other list to read them
 # from, so the kit's tests require exactly those modules in this list and the plugin package.
-for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg \
+for f in scripts/check.sh scripts/gate_config.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg \
          scripts/doctor.sh scripts/review.sh \
          scripts/review_dispatch.py scripts/claude_bridge.py scripts/codex_bridge.py scripts/agent_process.py \
          scripts/agent_usage.py scripts/codex_quota.py; do
@@ -206,9 +206,9 @@ fi
 # reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and
 # PATH first, then ~/.local/bin when codex is there. A configured reviewer doctor cannot read
 # skipped this check, and a checkout without its review entry point was reported ready.
-configured=$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/dev/null)
-if [ -f scripts/review.sh ] && [ -z "$configured" ]; then
-  miss "scripts/review.sh names no reviewer doctor can read (a DEFAULT_REVIEWER=\"claude\" or \"codex\" line)" "set DEFAULT_REVIEWER=\"claude\" or DEFAULT_REVIEWER=\"codex\" on a line of its own in scripts/review.sh"
+configured=$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/gate_config.sh 2>/dev/null)
+if [ -f scripts/gate_config.sh ] && [ -z "$configured" ]; then
+  miss "scripts/gate_config.sh names no reviewer doctor can read (a DEFAULT_REVIEWER=\"claude\" or \"codex\" line)" "set DEFAULT_REVIEWER=\"claude\" or DEFAULT_REVIEWER=\"codex\" on a line of its own in scripts/gate_config.sh"
 fi
 # An override set to empty is not unset: the adapters read it with os.environ.get and run
 # an empty command, so it is MISSING here, never read as the default.
@@ -412,15 +412,15 @@ if [ -f .nvmrc ] || [ -f package.json ]; then
   hook_node=$(node --version 2>/dev/null)
   have=$(printf '%s' "$hook_node" | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
   if [ -z "$hook_node" ]; then
-    miss "node is not resolvable on the PATH a git hook inherits from this shell" "set toolchain_path in scripts/check.sh to the directory of the right node (docs/DEV_SETUP.md §2)"
+    miss "node is not resolvable on the PATH a git hook inherits from this shell" "set toolchain_path in scripts/gate_config.sh to the directory of the right node (docs/DEV_SETUP.md §2)"
   elif [ -n "$want" ] && [ "$have" != "$want" ]; then
-    miss "a git hook resolves node $hook_node, .nvmrc wants $want" "set toolchain_path in scripts/check.sh to the directory of node $want (docs/DEV_SETUP.md §2)"
+    miss "a git hook resolves node $hook_node, .nvmrc wants $want" "set toolchain_path in scripts/gate_config.sh to the directory of node $want (docs/DEV_SETUP.md §2)"
   fi
   base="$(getconf PATH 2>/dev/null || echo /usr/bin:/bin):/usr/local/bin:/opt/homebrew/bin"
   [ -n "$toolchain_path" ] && base="$toolchain_path:$base"
   bare_node=$(env -i HOME="$HOME" PATH="$base" sh -c 'node --version' 2>/dev/null)
   [ "$bare_node" = "$hook_node" ] ||
-    printf '%s\n' "NOTE: a hook started from a login-less shell would see node ${bare_node:-none} (set toolchain_path in scripts/check.sh if hooks start that way)"
+    printf '%s\n' "NOTE: a hook started from a login-less shell would see node ${bare_node:-none} (set toolchain_path in scripts/gate_config.sh if hooks start that way)"
 fi
 
 # --- an npm cache this user cannot write ---------------------------------------------

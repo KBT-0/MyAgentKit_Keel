@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """context_buckets.py must bucket by the last request's context, count only real refusals, and window compactions."""
 import contextlib
 import io

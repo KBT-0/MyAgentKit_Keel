@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Offline end-to-end evidence and permission regressions; never calls a paid CLI."""
 import hashlib
 import importlib.util
@@ -366,6 +367,7 @@ class ReviewPreflightTests(unittest.TestCase):
         repo = Path(tmp)
         (repo / 'scripts').mkdir()
         shutil.copyfile(ROOT / 'review.sh', repo / 'scripts/review.sh')
+        shutil.copyfile(ROOT / 'gate_config.sh', repo / 'scripts/gate_config.sh')
         shutil.copyfile(ROOT / 'owns_check.py', repo / 'scripts/owns_check.py')
         (repo / '.gitignore').write_bytes(IGNORE_RULES)
         # Only the paid adapter boundary is replaced. The wrapper, dispatcher, snapshot,
@@ -4516,15 +4518,16 @@ class BridgeTests(unittest.TestCase):
         scripts = self.repo / "scripts"
         if not scripts.exists():
             scripts.mkdir()
-            # Installed projects own these three defaults. Exercise the template's
-            # empty-pin cases in an explicit fixture without overwriting project config.
-            wrapper = (ROOT / "review.sh").read_text()
+            # Installed projects own these three defaults, in gate_config.sh (#94). Exercise the
+            # template's empty-pin cases in an explicit fixture without overwriting project config.
+            config = (ROOT / "gate_config.sh").read_text()
             for name, value in (("DEFAULT_REVIEWER", "claude"),
                                 ("CODEX_MODEL", ""), ("CLAUDE_MODEL", "")):
-                wrapper, count = re.subn(r"^" + name + r"=.*$",
-                                         name + '="' + value + '"', wrapper, flags=re.M)
+                config, count = re.subn(r"^" + name + r"=.*$",
+                                        name + '="' + value + '"', config, flags=re.M)
                 self.assertEqual(count, 1, "missing project configuration: " + name)
-            (scripts / "review.sh").write_text(wrapper)
+            (scripts / "gate_config.sh").write_bytes(config.encode())
+            (scripts / "review.sh").write_bytes((ROOT / "review.sh").read_bytes())
             for name in ["codex_bridge.py", "claude_bridge.py", "agent_process.py",
                          "agent_usage.py", "codex_quota.py", "review_dispatch.py"]:
                 (scripts / name).write_bytes((ROOT / name).read_bytes())
@@ -6552,6 +6555,29 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                     REVIEW_CODEX_MODEL='fixture-codex-model')
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
         self.assertEqual(len(list((self.repo / 'docs/reviews').glob('*-codex-review.md'))), 1)
+
+    def test_the_projects_validation_seam_fails_a_final_report_in_each_adapter(self):
+        # #87: a project's own check of the final report lived as a patch inside the adapters,
+        # and every sync dropped it. scripts/project_validation.py beside them is the seam:
+        # absent, the review passes as before; a reason fails it as invalid_evidence:<reason>.
+        runs = {'claude': dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5'),
+                'codex': dict(REVIEW_CLI_BIN=str(self.build_fake_codex()), REVIEW_CODEX_MODEL='fixture-codex-model')}
+        for provider, env in runs.items():
+            with self.subTest(provider=provider):
+                seam = self.install_wrapper() / 'project_validation.py'
+                if seam.exists():
+                    seam.unlink()
+                passed = self.run_wrapper('--reviewer', provider, '--uncommitted', MYAGENTKIT_TASK_ID='seam-' + provider, **env)
+                self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+                seam.write_text('def validate_final_message(text):\n'
+                                '    assert "VERDICT" in text or "Accept" in text, text\n'
+                                '    return "non-Latin letters"\n')
+                failed = self.run_wrapper('--reviewer', provider, '--uncommitted', MYAGENTKIT_TASK_ID='seam2-' + provider, **env)
+                self.assertNotEqual(failed.returncode, 0, failed.stdout)
+                chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
+                                        failed.stdout.splitlines() if s.startswith('review dispatch: ')))
+                self.assertEqual(chain['failure_kind'], 'invalid_evidence:non-Latin letters', failed.stdout)
+                self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
     BACKEND = {'ANTHROPIC_BASE_URL': 'https://backend.invalid/api', 'ANTHROPIC_AUTH_TOKEN': 'tok=en',
                'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-fixture'}

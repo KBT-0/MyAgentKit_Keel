@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Quota reads are optional, bounded, non-billing, and never a per-call debit estimate."""
 import json
 from pathlib import Path

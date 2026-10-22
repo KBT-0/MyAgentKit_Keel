@@ -796,7 +796,8 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((project / 'docs/kit/.kit-commit').read_text().strip(), git('rev-parse', 'HEAD'))
 
     def merge_kit(self, tmp, entry, files):
-        """A kit whose commits hold `files` {rel: (at base, at HEAD)}; returns (kit, project, base, env)."""
+        """A kit whose commits hold `files` {rel: (at base, at HEAD)}, None for no such file at
+        the base; returns (kit, project, base, env)."""
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
         self.sync(tmp, entry, '--dry-run')
@@ -807,11 +808,101 @@ class SyncKitTests(unittest.TestCase):
         for side in (0, 1):
             for rel, bodies in files.items():
                 (kit / 'core' / rel).parent.mkdir(parents=True, exist_ok=True)
-                (kit / 'core' / rel).write_bytes(bodies[side])
+                if bodies[side] is not None:
+                    (kit / 'core' / rel).write_bytes(bodies[side])
             git('add', '-A')
             git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.%d' % (side + 1))
             base = base or git('rev-parse', 'HEAD')
         return kit, project, base, env
+
+    def test_an_unmodified_copy_of_a_script_that_became_kit_owned_is_adopted(self):
+        # #94/#285: a kit script that turns KIT-OWNED had a byte-identical project copy without
+        # the header, and the sync stopped on it as the project's own file. A copy equal to the
+        # kit's at the project's base commit is adopted (line endings aside); an edited one is
+        # still a conflict, named with the command that shows the project's edit.
+        tool = 'scripts/tool.py'
+        for case in ('lf', 'crlf', 'edited', 'no base'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project, base, env = self.merge_kit(tmp, ACTION, {
+                    tool: (b'print(1)\n', b'#!/usr/bin/env python3\n# KIT-OWNED: x\nprint(2)\n')})
+                body = {'lf': b'print(1)\n', 'crlf': b'print(1)\r\n', 'edited': b'print(1)\nmine\n',
+                        'no base': b'print(1)\n'}[case]
+                (project / 'scripts').mkdir()
+                (project / tool).write_bytes(body)
+                if case != 'no base':
+                    (project / 'docs/kit/.kit-commit').write_bytes(base.encode() + b'\n')
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
+                                        capture_output=True, text=True, timeout=60)
+                if case in ('lf', 'crlf'):
+                    # Recorded: the base's changelog holds every ACTION item already.
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('  adopted: %s (unmodified copy)' % tool, result.stdout)
+                    self.assertEqual((project / tool).read_bytes(), (kit / 'core' / tool).read_bytes())
+                else:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('conflict: ' + tool, result.stdout)
+                    self.assertEqual((project / tool).read_bytes(), body)
+                    if case == 'edited':
+                        self.assertIn("show %s:core/%s | diff - %s" % (base[:7], tool, tool), result.stdout)
+
+    def test_check_and_review_scripts_are_adopted_with_their_values_moved_to_gate_config(self):
+        # check.sh and review.sh held the project's values in place (the name, the toolchain
+        # path, the build command, the reviewer pins): a copy that differs from the kit's only
+        # there is adopted, and the values go to the new project-owned scripts/gate_config.sh.
+        base_gate = ('#!/bin/sh\n# {{PROJECT_NAME}} quality gate — every agent runs it.\nset -u\n'
+                     'toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"\nmodule_roots=""\n# read-only: (none)\n'
+                     'build_test_cmd="{{BUILD_TEST_COMMAND}}"\necho gate\n').encode()
+        base_review = ('#!/bin/sh\n# {{PROJECT_NAME}} cross-model review wrapper.\nDEFAULT_REVIEWER="claude"\n'
+                       'CODEX_MODEL=""\nCLAUDE_MODEL=""\necho review\n').encode()
+        config = ('# {{PROJECT_NAME}} gate configuration\ntoolchain_path="{{TOOLCHAIN_PATH_SETUP}}"\n'
+                  '# read-only: (none)\nbuild_test_cmd="{{BUILD_TEST_COMMAND}}"\ndocs_only_skip_build=1\n'
+                  'module_roots=""\nDEFAULT_REVIEWER="claude"\nCODEX_MODEL=""\nCLAUDE_MODEL=""\n').encode()
+        project_gate = ('#!/bin/sh\n# Acme quality gate — every agent runs it.\nset -u\n'
+                        'toolchain_path="$HOME/tc"\nmodule_roots="src lib"\n'
+                        '# read-only: npm run build writes dist/ only\n# read-only: wrangler deploy --dry-run\n'
+                        'build_test_cmd="make test"\necho gate\n').encode()
+        project_review = base_review.replace(b'{{PROJECT_NAME}}', b'Acme').replace(
+            b'DEFAULT_REVIEWER="claude"', b'DEFAULT_REVIEWER="codex"').replace(b'CODEX_MODEL=""', b'CODEX_MODEL="gpt-5.5"')
+        expected = ('# Acme gate configuration\ntoolchain_path="$HOME/tc"\n'
+                    '# read-only: npm run build writes dist/ only\n# read-only: wrangler deploy --dry-run\n'
+                    'build_test_cmd="make test"\ndocs_only_skip_build=1\nmodule_roots="src lib"\n'
+                    'DEFAULT_REVIEWER="codex"\nCODEX_MODEL="gpt-5.5"\nCLAUDE_MODEL=""\n').encode()
+        for case in ('adopted', 'crlf', 'template config', 'own config', 'edited'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project, base, env = self.merge_kit(tmp, ACTION, {
+                    'scripts/check.sh': (base_gate, b'#!/bin/sh\n# KIT-OWNED: x\n. ./scripts/gate_config.sh\n'),
+                    'scripts/review.sh': (base_review, b'#!/bin/sh\n# KIT-OWNED: x\n. scripts/gate_config.sh\n'),
+                    'scripts/gate_config.sh': (None, config)})
+                (project / 'scripts').mkdir()
+                gate = project_gate.replace(b'echo gate', b'echo mine') if case == 'edited' else project_gate
+                if case == 'crlf':
+                    gate = gate.replace(b'\n', b'\r\n')
+                (project / 'scripts/check.sh').write_bytes(gate)
+                (project / 'scripts/review.sh').write_bytes(project_review)
+                own = b'build_test_cmd="ninja test"\n'
+                if case in ('template config', 'own config'):
+                    (project / 'scripts/gate_config.sh').write_bytes(config if case == 'template config' else own)
+                (project / 'docs/kit/.kit-commit').write_bytes(base.encode() + b'\n')
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
+                                        capture_output=True, text=True, timeout=60)
+                out = result.stdout + result.stderr
+                if case == 'edited':
+                    self.assertEqual(result.returncode, 1, out)
+                    self.assertIn('conflict: scripts/check.sh', result.stdout)
+                    self.assertEqual((project / 'scripts/check.sh').read_bytes(), gate)
+                    self.assertFalse((project / 'scripts/gate_config.sh').exists(), out)
+                    continue
+                self.assertEqual(result.returncode, 0, out)
+                for rel in ('scripts/check.sh', 'scripts/review.sh'):
+                    self.assertIn('  adopted: %s (unmodified copy; its values go to scripts/gate_config.sh)' % rel,
+                                  result.stdout)
+                    self.assertEqual((project / rel).read_bytes(), (kit / 'core' / rel).read_bytes())
+                if case == 'own config':
+                    self.assertEqual((project / 'scripts/gate_config.sh').read_bytes(), own)
+                    self.assertIn('NOTE: scripts/gate_config.sh is the project\'s own and was kept', result.stdout)
+                    self.assertIn('build_test_cmd="make test"', result.stdout)
+                else:
+                    self.assertEqual((project / 'scripts/gate_config.sh').read_bytes(), expected)
 
     def test_merge_reads_kit_blobs_and_keeps_a_crlf_project_copy_crlf(self):
         # With autocrlf the kit's working-tree docs are CRLF over LF blobs: compared with the base

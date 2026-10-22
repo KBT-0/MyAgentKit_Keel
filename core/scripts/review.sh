@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
-# {{PROJECT_NAME}} cross-model review wrapper.
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
+# The cross-model review wrapper. This project's reviewer and model pins live in
+# scripts/gate_config.sh, which it sources.
 #
 # Runs a SECOND model over the current change set in a throwaway copy of the checkout, archives
 # the raw output under docs/reviews/ together with the configuration that produced it, and
@@ -110,30 +112,14 @@ fi
 # CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.
 CDPATH= cd -- "$repo_root" || exit 2
 
-# ---------------------------------------------------------------------------------------
-# PROJECT-OWNED CONFIGURATION. Set during setup; sync-kit.sh never overwrites this file.
-#
-# Pins are fixed snapshots and per reviewer: Codex's JSONL names no model, so the pin is the only
-# record, and the vendors' id formats differ (platform.claude.com/docs/en/about-claude/models/model-ids-and-versions;
-# learn.chatgpt.com/docs/non-interactive-mode). Critical work (WORKFLOW rule 7): set
-# REVIEW_CLAUDE_MODEL to the strongest tier for that run.
-#
-# Both models are PINNED BY NAME, in both directions. An unpinned run records the reviewing
-# CLI's own default, which is a moving target: two records made a month apart then claim the
-# same provenance while naming no model that can be compared or reproduced. Codex emits no
-# model identity in its JSON output, so there is nothing to fall back on and nothing to
-# attest against — the pin is the only record there is, and an empty pin is a hard stop.
-#
-# BOTH ship empty on purpose. A kit that pre-filled one side would be quietly naming which
-# vendor it expected in that role, and the setup interview would stop asking.
-#
-# The pins are per-reviewer rather than one shared REVIEW_MODEL: a single override would
-# hand a Codex model id to Claude the moment the roles swapped, which is the exact failure
-# this role-neutral wrapper exists to prevent.
-DEFAULT_REVIEWER="claude"
-CODEX_MODEL=""
-CLAUDE_MODEL=""
-# ---------------------------------------------------------------------------------------
+# The project's reviewer and pins, from the project-owned gate_config.sh beside this script
+# (#94); that file says why both pins ship empty. The defaults come first, so a gate_config.sh
+# written for an older kit still runs.
+DEFAULT_REVIEWER="claude" CODEX_MODEL="" CLAUDE_MODEL=""
+[ -f "$script_dir/gate_config.sh" ] || {
+  echo "FAIL [review]: scripts/gate_config.sh is missing; copy the kit's core/scripts/gate_config.sh there and set this project's values in it."
+  exit 2; }
+. "$script_dir/gate_config.sh"
 
 usage() {
   echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]... [--kit-verified [--kit DIR]]"

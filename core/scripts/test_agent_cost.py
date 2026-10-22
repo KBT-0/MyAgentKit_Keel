@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """agent_cost.py must dedupe streamed records, attribute gap re-writes and count poll turns."""
 import json
 from pathlib import Path

@@ -160,6 +160,30 @@ owned_list() {
     grep -vxF -f "$copies.k" "$work_list" | sed 's|^core/||' > "$copies.k2" && mv -f "$copies.k2" "$work_list" ||
     die "cannot list the kit's project-owned files"
 }
+# value_names REL — the project values a script held in place before it was kit-owned (#94),
+# which scripts/gate_config.sh holds now: an alternation for awk, empty for any other file.
+value_names() {
+  case "$1" in
+    scripts/check.sh) echo 'toolchain_path|build_test_cmd|docs_only_skip_build|docs_always_build|build_cache_inputs|cache_days|module_roots|STRONG_REVIEW_DAYS|STRONG_REVIEW_TASKS' ;;
+    scripts/review.sh) echo 'DEFAULT_REVIEWER|CODEX_MODEL|CLAUDE_MODEL' ;;
+  esac
+}
+# plain FILE NAMES LINE2 VALUES — FILE as the kit's copy reads without a project's values, to
+# compare: its CRs dropped, each NAME=... line cut to NAME=, each `# read-only:` line left out
+# (both with NAMES only), and a line 2 that is LINE2 with a name where LINE2 holds
+# {{PROJECT_NAME}} read as LINE2. What it sets aside is appended to VALUES, the name as "@name X".
+# ponytail: a value continued over several lines reads as an edit, so that copy stays a conflict.
+plain() {
+  tr -d '\r' < "$1" | awk -v names="$2" -v base="$3" -v values="$4" '
+    BEGIN { i = index(base, "{{PROJECT_NAME}}"); pre = substr(base, 1, i - 1); suf = substr(base, i + 16)
+            if (names != "") names = "^(" names ")=" }
+    NR == 2 && i && index($0, pre) == 1 && length($0) >= length(pre suf) &&
+      substr($0, length($0) - length(suf) + 1) == suf {
+      print "@name " substr($0, length(pre) + 1, length($0) - length(pre suf)) >> values; print base; next }
+    names != "" && $0 ~ names { print >> values; sub(/=.*/, "="); print; next }
+    names != "" && /^# read-only:/ { print >> values; next }
+    { print }'
+}
 
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
@@ -257,6 +281,20 @@ if [ "$merge" -eq 1 ]; then
   fi
 fi
 
+# The kit commit the project's copies came from, to adopt a copy made before its file was
+# kit-owned (#94): the base --merge reads (docs/kit/.kit-commit, or --base), else the release
+# tag the stamp names. None found, such a copy stays a conflict.
+adopt_base=""
+if own_repo; then
+  recorded_base=""
+  [ -n "$(blocked docs/kit/.kit-commit)" ] || [ ! -f "$target/docs/kit/.kit-commit" ] ||
+    recorded_base=$(tr -d '[:space:]' < "$target/docs/kit/.kit-commit")
+  for c in ${base:-} $recorded_base "v$have"; do
+    adopt_base=$(git -C "$kit" rev-parse -q --verify "$c^{commit}" 2>/dev/null) && break || adopt_base=""
+  done
+fi
+: > "$copies.values"
+
 # --- tier 1: overwrite the kit-owned files ------------------------------------------
 echo
 echo "KIT-OWNED files (overwritten):"
@@ -341,14 +379,69 @@ while IFS= read -r src; do
     # No KIT-OWNED header: the project's own file at a path the kit now owns (a project's
     # own commit-msg hook once, replaced by the kit's that passed every message). Listed,
     # never overwritten; nothing else is copied either, so the sync is all or nothing.
-    printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
-    conflict=1
-    kit_conflict=1
-    continue
+    # Unless it is the kit's own copy from before the header (#94): equal to the kit's at the
+    # base once line endings and, for check.sh and review.sh, the project's values are set
+    # aside. It is adopted, and those values go to scripts/gate_config.sh.
+    kpath=${src#"$kit/"} names=$(value_names "$rel")
+    if [ -n "$adopt_base" ] && git -C "$kit" show "$adopt_base:$kpath" > "$copies.base" 2>/dev/null; then
+      line2=$(sed -n 2p "$copies.base" | tr -d '\r')
+      : > "$copies.v"
+      plain "$copies.base" "$names" "$line2" /dev/null > "$copies.b" &&
+        plain "$target/$rel" "$names" "$line2" "$copies.v" > "$copies.p" ||
+        die "cannot compare $rel with the kit's copy; version left at v$have"
+      if cmp -s "$copies.b" "$copies.p"; then
+        if [ -s "$copies.v" ]; then
+          cat "$copies.v" >> "$copies.values" || die "cannot record the values of $rel; version left at v$have"
+          printf '%s\n' "  adopted: $rel (unmodified copy; its values go to scripts/gate_config.sh)"
+        else
+          printf '%s\n' "  adopted: $rel (unmodified copy)"
+        fi
+      else
+        short=${adopt_base%"${adopt_base#???????}"}
+        printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header and differs from the kit's copy at $short, so it holds the project's edits; see them: git -C '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")' show $short:$kpath | diff - $rel)"
+        conflict=1
+        kit_conflict=1
+        continue
+      fi
+    else
+      printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
+      conflict=1
+      kit_conflict=1
+      continue
+    fi
   fi
   printf '%s\n' "$src" >> "$copies" || die "cannot record $rel for copying; version left at v$have"
 done < "$work_list"
 [ "$found" -eq 1 ] || echo "  (none)"
+# The values of the adopted check.sh and review.sh, written into the kit's gate_config.sh
+# template, become the project's scripts/gate_config.sh: where there is none, or where it is
+# still that template, unfilled. One of the project's own is kept, and the values are printed
+# for the owner to compare.
+config=""
+if [ -s "$copies.values" ]; then
+  awk -v values="$copies.values" '
+    BEGIN { while ((getline l < values) > 0) {
+              if (l ~ /^@name /) name = substr(l, 7)
+              else if (l ~ /^# read-only:/) ro = ro l "\n"
+              else { k = l; sub(/=.*/, "", k); val[k] = l } } }
+    NR == 1 && name != "" && (i = index($0, "{{PROJECT_NAME}}")) { $0 = substr($0, 1, i - 1) name substr($0, i + 16) }
+    /^# read-only:/ && ro != "" { if (!shown) printf "%s", ro; shown = 1; next }
+    { k = $0; if (sub(/=.*/, "", k) && k in val) { print val[k]; next }; print }
+  ' "$kit/core/scripts/gate_config.sh" > "$copies.config" || die "cannot write the project's values; version left at v$have"
+  why=$(blocked scripts/gate_config.sh)
+  if [ -n "$why" ]; then
+    printf '%s\n' "  conflict: scripts/gate_config.sh ($why; the adopted scripts' values go there)"
+    conflict=1
+    kit_conflict=1
+  elif [ ! -e "$target/scripts/gate_config.sh" ] || grep -qE '\{\{[A-Z0-9_]+\}\}' "$target/scripts/gate_config.sh"; then
+    printf '%s\n' "  new:     scripts/gate_config.sh (project-owned: the values the adopted scripts held)"
+    config=1
+  else
+    printf '%s\n' "  NOTE: scripts/gate_config.sh is the project's own and was kept; the adopted scripts held these" \
+      "        values, compare them with it:"
+    grep -v '^@name ' "$copies.values" | sed 's/^/          /'
+  fi
+fi
 listed=$(reviewers)
 [ -z "$listed" ] || printf '\nReviewer agents (listed, not a stop):\n%s\n' "$listed"
 if [ "$conflict" -eq 1 ] && [ "$dry" -eq 0 ]; then
@@ -364,7 +457,10 @@ EOF
   the kit's file, then carry what yours did into the project's own files by hand (the kit's
   docs/RETROFIT.md). A hook of yours under .githooks only needs a new name: as
   .githooks/<same name>.project (executable, with a #! line) it keeps running, since the
-  kit's hook runs it first with git's arguments.
+  kit's hook runs it first with git's arguments. A kit script you edited (its line shows the
+  edit) keeps no edit of yours: a value of check.sh or review.sh goes into
+  scripts/gate_config.sh, a check of a reviewer's final report into scripts/project_validation.py
+  (the kit's docs/UPDATING.md), anything else upstream (/myagentkit:kit-feedback).
 EOF
   [ "$dirty" -eq 0 ] || cat <<EOF
 
@@ -422,6 +518,8 @@ if [ "$dry" -eq 0 ]; then
       exe "$target/$rel" && { [ -z "$repo" ] || ! executable || index_exe; } ||
       die "could not write $rel; version left at v$have"
   done < "$copies"
+  [ -z "$config" ] || put "$target/scripts/gate_config.sh" "$copies.config" ||
+    die "could not write scripts/gate_config.sh; version left at v$have"
 fi
 
 # --- tier 2: the checklist of what has to be applied by hand -------------------------

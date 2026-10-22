@@ -920,9 +920,9 @@ def acceptance():
         with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
             side = Path(side)
             # The lock cases set the build command the way a project does, in the copy's
-            # check.sh: it runs side/build.sh, which each case rewrites. Restored below.
+            # gate_config.sh: it runs side/build.sh, which each case rewrites. Restored below.
             build = side / "build.sh"
-            gate = project / "scripts/check.sh"
+            gate = project / "scripts/gate_config.sh"
             original_gate = gate.read_text(encoding='utf-8')
             configured = 'build_test_cmd="test -f scripts/claude_bridge.py"'
             if configured not in original_gate:
@@ -1030,7 +1030,7 @@ def acceptance():
                 run(["git", "rm", "-q", "--cached", "--", name], project)
                 (project / name).unlink()
         # The build/test command alone gets the caller's locale back, set or unset.
-        gate = project / "scripts/check.sh"
+        gate = project / "scripts/gate_config.sh"
         original_gate = gate.read_text(encoding='utf-8')
         gate.write_text(original_gate.replace('build_test_cmd="test -f scripts/claude_bridge.py"',
                                               'build_test_cmd=\'[ "${LC_ALL-unset}" = "$EXPECT_LC" ]\''), encoding='utf-8')

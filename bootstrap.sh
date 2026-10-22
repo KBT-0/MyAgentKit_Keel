@@ -507,7 +507,7 @@ if [ -n "$gates" ]; then
   .githooks/<same name>.project (executable, with a #! line): the kit's hook runs it first,
   with git's arguments (docs/DEV_SETUP.md once installed). Kit-owned files are overwritten by
   the next sync, so never carry your hook's logic into them. A check.sh of yours: carry its
-  commands into the kit's check.sh by hand.
+  build command into scripts/gate_config.sh and its checks into scripts/boundary_checks.sh.
   --force instead overwrites EVERY differing regular file listed above, not only these;
   a symlink, folder or special file at such a path, or a symlink or a file in its path,
   is never replaced: move it aside.

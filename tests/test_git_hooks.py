@@ -185,7 +185,7 @@ class GitHookTests(unittest.TestCase):
             cwd=root, env=env, capture_output=True, text=True, check=check, encoding='utf-8')
         git('checkout', '-q', '-b', 'main')
         # A document the build reads is listed in docs_always_build (#97).
-        gate = root / 'scripts/check.sh'
+        gate = root / 'scripts/gate_config.sh'
         self.assertIn('docs_always_build=""', gate.read_text(encoding='utf-8').splitlines())
         gate.write_bytes(gate.read_bytes().replace(b'docs_always_build=""',
                                                    b'docs_always_build="docs/*.md README.md"', 1))
@@ -803,6 +803,7 @@ class GitHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             shutil.copyfile(ROOT / 'core/scripts/check.sh', root / 'scripts/check.sh')
+            (root / 'scripts/gate_config.sh').write_bytes(b'')
             # The lock is a kernel lock: hold it the way the gate does, through fcntl.flock.
             # Native Windows takes it another way; tests/test_check_gate_windows holds it there.
             if os.name == 'nt':

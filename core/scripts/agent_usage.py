@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Local cross-model usage records and reporting; no inferred subscription percentages."""
 from __future__ import annotations
 import argparse

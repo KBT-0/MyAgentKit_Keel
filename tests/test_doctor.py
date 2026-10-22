@@ -114,7 +114,7 @@ class DoctorTests(unittest.TestCase):
             modern, old = root / 'modern', root / 'old'
             modern.mkdir(); old.mkdir()
             shutil.copyfile(ROOT / 'core/scripts/doctor.sh', root / 'scripts/doctor.sh')
-            for name in ('check.sh', 'review.sh'):
+            for name in ('check.sh', 'review.sh', 'gate_config.sh'):
                 (root / 'scripts' / name).write_text('#!/bin/sh\ntoolchain_path=""\nDEFAULT_REVIEWER="claude"\n')
             for name in review_runtime() | {'working_mode.py'}:
                 (root / 'scripts' / name).write_text('')
@@ -257,7 +257,7 @@ class DoctorTests(unittest.TestCase):
             for folder in ('scripts', '.githooks', 'home', 'tools', '.claude'):
                 (root / folder).mkdir()
             shutil.copyfile(ROOT / 'core/scripts/doctor.sh', root / 'scripts/doctor.sh')
-            for name in ('check.sh', 'review.sh'):
+            for name in ('check.sh', 'review.sh', 'gate_config.sh'):
                 (root / 'scripts' / name).write_text('#!/bin/sh\ntoolchain_path=""\nDEFAULT_REVIEWER="claude"\n')
             for name in review_runtime() | {'working_mode.py'}:
                 (root / 'scripts' / name).write_text('')
@@ -877,7 +877,9 @@ class DoctorTests(unittest.TestCase):
             # doctor must find it the same way.
             review = project / 'scripts/review.sh'
             review_before = review.read_text()
-            review.write_text(review_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"'))
+            config = project / 'scripts/gate_config.sh'
+            config_before = config.read_text()
+            config.write_text(config_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"'))
             (bin_dir / 'codex').rename(tmp / 'codex')
             env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep)
                                           if d and not os.path.exists(os.path.join(d, 'codex')))
@@ -888,7 +890,7 @@ class DoctorTests(unittest.TestCase):
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             env['PATH'] = full_path
-            review.write_text(review_before)
+            config.write_text(config_before)
 
             # An explicit executable, as the wrapper and adapters take it: REVIEW_REVIEWER
             # picks the reviewer, REVIEW_CLI_BIN or CLAUDE_CLI_BIN names its binary off PATH.
@@ -926,7 +928,7 @@ class DoctorTests(unittest.TestCase):
             (home / 'tc').mkdir()
             (home / 'tc' / 'node').write_text('#!/bin/sh\necho v97.1.0\n')
             (home / 'tc' / 'node').chmod(0o755)
-            check = project / 'scripts/check.sh'
+            check = project / 'scripts/gate_config.sh'
             check.write_text(check.read_text().replace(
                 'toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"', 'toolchain_path="$HOME/tc"'))
             (project / '.nvmrc').write_text('97\n')
@@ -989,8 +991,8 @@ class DoctorTests(unittest.TestCase):
             check.write_text(check.read_text().replace('toolchain_path=""\n', ''))
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
-            self.assertIn('NOTE: scripts/check.sh has no toolchain_path line', ready.stdout)
-            check.write_text(check.read_text().replace('case "$toolchain_path" in', line + '\ncase "$toolchain_path" in', 1))
+            self.assertIn('NOTE: scripts/gate_config.sh has no toolchain_path line', ready.stdout)
+            check.write_text(check.read_text() + line + '\n')
             self.assertIn(line, check.read_text())
 
             # The review entry point: a deleted review.sh, or one whose reviewer doctor cannot
@@ -1000,15 +1002,16 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: scripts/review.sh does not exist', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
-            for broken in (review_before.replace('DEFAULT_REVIEWER="claude"\n', ''),
-                           review_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER=claude')):
-                review.write_text(broken)
-                review.chmod(0o755)
+            review.write_text(review_before)
+            review.chmod(0o755)
+            for broken in (config_before.replace('DEFAULT_REVIEWER="claude"\n', ''),
+                           config_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER=claude')):
+                config.write_text(broken)
                 red = doctor()
                 self.assertEqual(red.returncode, 1, red.stdout)
-                self.assertIn('MISSING: scripts/review.sh names no reviewer doctor can read', red.stdout)
+                self.assertIn('MISSING: scripts/gate_config.sh names no reviewer doctor can read', red.stdout)
                 self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
-            review.write_text(review_before)
+            config.write_text(config_before)
 
             # Missing review modules or the mode helper must each make doctor red.
             for name in sorted(review_runtime() | {'working_mode.py'}):
