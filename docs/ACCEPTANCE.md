@@ -177,7 +177,7 @@ old code, fixed, then merged to master.
     a credit quoted in a `commit -v` diff (rejected since the third round: nothing below a scissors line is cut), the owner's opt-out); a build failure named with its chain, full
     log and CI output.
   - G6, G7: each doctor trap injected (exec bit, hooks path, reviewer CLI, `.nvmrc` mismatch,
-    `$HOME` in `toolchain_path`, grep shadowing, WSL `/mnt` checkout, CRLF script, unignored
+    `$HOME` in `toolchain_path` (`scripts/gate_config.sh`), grep shadowing, WSL `/mnt` checkout, CRLF script, unignored
     `node_modules` symlink); the rot-gate message naming `docs/<OPERATION>.md`.
   - G8: every self-test seam exported into a normal run, a top-level `--self-test` and a run
     with a copied marker fails by name.

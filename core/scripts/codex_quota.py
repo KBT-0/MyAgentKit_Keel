@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Read an account quota snapshot through the existing Codex CLI, without starting a turn."""
 from datetime import datetime, timezone
 import json

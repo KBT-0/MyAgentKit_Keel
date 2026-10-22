@@ -179,7 +179,7 @@ One topic per turn. Suggested order, because each answer informs the next:
      exhausted plan makes a better reviewer than an author (`saver`).
 
    Record the answers where the tooling reads them: the `DEFAULT_REVIEWER`, `CODEX_MODEL`
-   and `CLAUDE_MODEL` values at the top of `scripts/review.sh`. **The reviewer must be
+   and `CLAUDE_MODEL` values in `scripts/gate_config.sh`. **The reviewer must be
    pinned by its FULL model ID, not an alias such as `opus` or `sonnet`:** an alias moves
    with the vendor's recommended version (code.claude.com/docs/en/model-config), so an
    archived review could not be compared with a later one. An unpinned reviewer archives
@@ -425,7 +425,7 @@ when they become current, never now.
 | `{{TESTED_AREA}}` | Which part of the tree may not receive untested code |
 
 One value sits beside them, not a placeholder: ask "Which top-level folders hold modules?"
-and write the answer into `module_roots` in `scripts/check.sh` (space-separated). The gate
+and write the answer into `module_roots` in `scripts/gate_config.sh` (space-separated). The gate
 then fails when a subfolder of one is not named in a table row or list entry of the
 `## Module map` of `docs/ARCHITECTURE.md`, by its bare name (`app`) or its path (`src/app/`); empty, it prints a NOTE and checks nothing (a single-module project).
 
@@ -433,7 +433,7 @@ then fails when a subfolder of one is not named in a table row or list entry of 
 
 | Placeholder | What goes in |
 |---|---|
-| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast: seconds, not minutes; put anything slower in CI (a client hook can be skipped, so CI is the last line anyway). No step that writes to a remote, needs a deploy credential or changes what users see. A read-only validation spelled like a deploy (`wrangler deploy --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command in `scripts/check.sh` names it and why it writes nothing remote; an agent's permission layer may still refuse the whole gate over its shape (it did once: the kit's `RESEARCH_LOG.md`, "Gates that did not gate"), so give it an allow rule for that exact command or move the step to CI (#300). No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
+| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast: seconds, not minutes; put anything slower in CI (a client hook can be skipped, so CI is the last line anyway). No step that writes to a remote, needs a deploy credential or changes what users see. A read-only validation spelled like a deploy (`wrangler deploy --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command in `scripts/gate_config.sh` names it and why it writes nothing remote; an agent's permission layer may still refuse the whole gate over its shape (it did once: the kit's `RESEARCH_LOG.md`, "Gates that did not gate"), so give it an allow rule for that exact command or move the step to CI (#300). No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
 | `{{BOUNDARY_CHECKS}}` | **Replace the whole of `scripts/boundary_checks.sh`**: one grep per enforceable boundary, each setting `fail=1`, and a fixture test per check in the project's test suite. Not optional — see below |
 | `{{TOOLCHAIN}}` / `{{TOOLCHAIN_PATH_SETUP}}` / `{{TOOLCHAIN_SETUP_NOTES}}` / `{{TOOLCHAIN_SETUP_STEP}}` | What the gate needs on PATH, how to find it in a non-login shell, how CI installs it. `{{TOOLCHAIN_PATH_SETUP}}` is a directory to prepend, not a line of code |
 | `{{DEFAULT_BRANCH}}` | The branch CI runs on |
@@ -448,7 +448,7 @@ which is how a check ends up enforcing nothing while everything still reports gr
 mistake has already been made twice in this kit's history, which is why every other
 placeholder is either a quoted value or a whole file.
 
-Two values sit beside `{{BUILD_TEST_COMMAND}}` in `scripts/check.sh`, not placeholders: a commit
+Two values sit beside `{{BUILD_TEST_COMMAND}}` in `scripts/gate_config.sh`, not placeholders: a commit
 that changes only `.md` files skips the build. Ask "Does the build or a test read a markdown
 file? Which?" A build that reads them all (a documentation site) sets `docs_only_skip_build=0`;
 a few named ones (a doc test, a generated page) go into `docs_always_build`, space-separated

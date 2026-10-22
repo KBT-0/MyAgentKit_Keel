@@ -69,7 +69,8 @@ class ReviewUpgradeTests(unittest.TestCase):
             with self.subTest(code=code), tempfile.TemporaryDirectory() as tmp:
                 scripts = Path(tmp) / 'scripts'
                 scripts.mkdir()
-                shutil.copyfile(ROOT / 'core/scripts/review.sh', scripts / 'review.sh')
+                for name in ('review.sh', 'gate_config.sh'):
+                    shutil.copyfile(ROOT / 'core/scripts' / name, scripts / name)
                 (scripts / 'test_claude_bridge.py').write_text(body)
                 result = subprocess.run(['sh', str(scripts / 'review.sh'), '--self-test'],
                                         capture_output=True, text=True, timeout=60)
@@ -78,19 +79,22 @@ class ReviewUpgradeTests(unittest.TestCase):
                     self.assertIn('FAIL [review]: review self-tests produced no completion evidence', result.stdout)
 
     def test_contract_suite_survives_project_owned_defaults(self):
-        # Reproduce an installed project's Codex default and named pins. The shared
-        # fixture must isolate empty-pin/template cases without rewriting this wrapper.
+        # Reproduce an installed project's Codex default and named pins, in its gate_config.sh
+        # (#94). The shared fixture must isolate empty-pin/template cases without rewriting it.
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             scripts = project / 'scripts'
             scripts.mkdir()
             for source in (ROOT / 'core/scripts').glob('*.py'):
                 shutil.copyfile(source, scripts / source.name)
-            wrapper = (ROOT / 'core/scripts/review.sh').read_text()
-            wrapper = wrapper.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"')
-            wrapper = wrapper.replace('CODEX_MODEL=""', 'CODEX_MODEL="project-codex-model"')
-            wrapper = wrapper.replace('CLAUDE_MODEL=""', 'CLAUDE_MODEL="project-claude-model"')
-            (scripts / 'review.sh').write_text(wrapper)
+            shutil.copyfile(ROOT / 'core/scripts/review.sh', scripts / 'review.sh')
+            config = (ROOT / 'core/scripts/gate_config.sh').read_bytes().decode()
+            for old, new in (('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"'),
+                             ('CODEX_MODEL=""', 'CODEX_MODEL="project-codex-model"'),
+                             ('CLAUDE_MODEL=""', 'CLAUDE_MODEL="project-claude-model"')):
+                self.assertIn(old, config)
+                config = config.replace(old, new)
+            (scripts / 'gate_config.sh').write_bytes(config.encode())
             shutil.copyfile(ROOT / 'core/.gitignore', project / '.gitignore')
             cases = ('test_an_unpinned_model_is_refused_in_both_directions',
                      'test_default_reviewer_is_claude_and_codex_remains_explicit',
@@ -101,7 +105,7 @@ class ReviewUpgradeTests(unittest.TestCase):
                                     cwd=scripts, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('Ran 4 tests', result.stderr)
-            self.assertEqual((scripts / 'review.sh').read_text(), wrapper)
+            self.assertEqual((scripts / 'gate_config.sh').read_bytes().decode(), config)
 
     def test_documented_upgrade_supplies_runtime_and_test_imports(self):
         # Extract the actual docs, so an incomplete upgrade list cannot pass this test.
@@ -124,6 +128,10 @@ class ReviewUpgradeTests(unittest.TestCase):
             project = Path(tmp)
             (scripts / 'review.sh').write_text('# Previous project-owned wrapper.\nexit 2\n')
             shutil.copyfile(ROOT / 'core/scripts/review.sh', scripts / 'review.sh')
+            # The project's values file, which the kit-owned wrapper sources (#94); the docs say
+            # to copy the kit's template once when the project has none.
+            self.assertIn('`scripts/gate_config.sh`', docs.split('<!-- REVIEW_COMPANIONS_START -->')[0][-1200:])
+            shutil.copyfile(ROOT / 'core/scripts/gate_config.sh', scripts / 'gate_config.sh')
             (project / '.gitignore').write_bytes((ROOT / 'core/.gitignore').read_bytes())
             for name in ('AGENTS.md', 'docs/ARCHITECTURE.md', 'docs/REVIEW_GATE.md'):
                 path = project / name

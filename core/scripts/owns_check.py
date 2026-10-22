@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Refuse a diff that changes a path outside the brief's Owns: line (docs/HANDOFF.md, "The brief").
 
 usage: owns_check.py BRIEF [--uncommitted | --base REF | --commit SHA]

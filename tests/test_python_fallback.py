@@ -128,7 +128,7 @@ class PythonFallbackTests(unittest.TestCase):
         # The gate, doctor and review entry points, each beside stand-ins for what they start.
         scripts = project / 'scripts'
         scripts.mkdir()
-        for name in ('check.sh', 'doctor.sh', 'review.sh'):
+        for name in ('check.sh', 'gate_config.sh', 'doctor.sh', 'review.sh'):
             shutil.copy(ROOT / 'core/scripts' / name, scripts / name)
         (scripts / 'review_dispatch.py').write_text('import sys; print("dispatched", sys.argv[1])\n', encoding='utf-8')
         (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n', encoding='utf-8')

@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Bounded child execution shared by both CLI adapters; preserve partial diagnostics.
 
 Sources (D01 inv2#66): docs.python.org/3/library/subprocess.html (timeout, start_new_session);

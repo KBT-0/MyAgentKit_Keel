@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Usage accounting and bounded-process regressions with no paid CLI calls."""
 import json
 from pathlib import Path

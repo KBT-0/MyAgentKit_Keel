@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Collect a fresh Claude review (run in a throwaway copy) or read-only proposal. Python 3.11+.
 
 The result is one JSON line on stdout. A cancel that lands while that line is printed is
@@ -13,6 +14,7 @@ import errno
 import functools
 import getpass
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -1679,6 +1681,31 @@ def validate(envelope: object, mode: str, model: str) -> dict:
     return value
 
 
+def project_check(text: str, repo: Path) -> str | None:
+    """The project's own check of a reviewer's final report (#87): validate_final_message(text)
+    of the project-owned project_validation.py beside this file and in the reviewed repository's
+    scripts/ (the Codex plugin's bundled adapters sit elsewhere), each loaded from its path alone
+    (a stray module of that name on sys.path is not it). None passes; a reason fails the review
+    as invalid_evidence:<reason>. No file, nothing more is checked. A check that cannot run fails
+    the review too: a broken check is no pass."""
+    paths = {Path(__file__).resolve().with_name("project_validation.py"),
+             (repo / "scripts/project_validation.py").resolve()}
+    for path in sorted(path for path in paths if path.is_file()):
+        try:
+            spec = importlib.util.spec_from_file_location("project_validation", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            reason = module.validate_final_message(text)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as error:  # the project's code: whatever it raises, sys.exit too, fails the check
+            return "project_validation.py failed (%s)" % type(error).__name__
+        # One line, bounded: it becomes the failure kind every record and summary prints.
+        if reason is not None:
+            return " ".join(str(reason).split())[:200] or "project_validation.py"
+    return None
+
+
 def render(stamp: str, evidence: dict, args) -> str:
     """Publish a Claude review in the ONE shared evidence format (agent_usage.REVIEW_FIELDS).
 
@@ -2182,6 +2209,11 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
                 reason = "stale_checkout"
                 raise BridgeError("checkout changed during review; result is stale")
             value = validate(json.loads(execution["stdout"]), args.mode, args.model)
+            refused = project_check("\n".join(line for item in value.values()
+                                              for line in (item if isinstance(item, list) else [item])), repo)
+            if refused:
+                reason = reason or "invalid_evidence:" + refused
+                raise BridgeError("the project's check (scripts/project_validation.py) refused the final report: " + refused)
             evidence.update(status="completed", result=value)
         except (BridgeError, ValueError, OSError) as error:
             evidence["error"] = str(error)

@@ -261,10 +261,11 @@ def make_project(path):
     """A project the gate passes: every marker filled, the build is $GATE_TEST_BUILD."""
     (path / 'scripts').mkdir(parents=True)
     (path / 'docs').mkdir()
-    text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+    text = (ROOT / 'core/scripts/gate_config.sh').read_text(encoding='utf-8')
     text = text.replace('{{TOOLCHAIN_PATH_SETUP}}', '').replace('{{BUILD_TEST_COMMAND}}',
                                                                 'sh $GATE_TEST_BUILD')
-    files = {'scripts/check.sh': re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', text),
+    files = {'scripts/check.sh': (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8'),
+             'scripts/gate_config.sh': re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', text),
              'scripts/boundary_checks.sh': '# The fixture has no boundaries.\n',
              'docs/STATE.md': '# STATE\n\n## Active work\n',
              'docs/PROJECT.md': '# PROJECT\n\n## Contents\n'}
@@ -663,6 +664,7 @@ class WindowsGateLockTests(unittest.TestCase):
             ' os.replace(sys.argv[1] + chr(46) + chr(116), sys.argv[1]); time.sleep(60)" "$LOCKCASE_BUILD"; exit 0; }'
             '\necho "lockcase: the copy of the gate got past the lock"; exit 0')
         copy = case / 'scripts/check.sh'
+        (case / 'scripts/gate_config.sh').write_bytes(b'')
         copy.write_text(text.replace(anchor, inserted + anchor, 1), encoding='utf-8', newline='\n')
         lock = subprocess.run(['sh', '-c', 'cygpath -m "$(pwd -P)/.git/check.lock"'], cwd=case,
                               capture_output=True, text=True, check=True).stdout.strip()
@@ -824,7 +826,7 @@ class GateRuleTests(unittest.TestCase):
 
     def test_the_strong_review_reminder_counts_closed_tasks_as_well_as_days(self):
         # KARARLAR B11 inv1#119 + inv2#152: N days or M tasks, whichever comes first.
-        source = (self.project / 'scripts/check.sh').read_text(encoding='utf-8')
+        source = (self.project / 'scripts/gate_config.sh').read_text(encoding='utf-8')
         tasks = int(re.search(r'^STRONG_REVIEW_TASKS=(\d+)$', source, re.M).group(1))
         self.write('docs/STRONG_REVIEW.md', '# STRONG_REVIEW\n')
         self.write('docs/reviews/strong-2026-01-01-model.md', 'report\n')
@@ -849,7 +851,7 @@ class GateRuleTests(unittest.TestCase):
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
         self.assertIn('NOTE [architecture]: module_roots is empty', out)
-        gate_file = self.project / 'scripts/check.sh'
+        gate_file = self.project / 'scripts/gate_config.sh'
         source = gate_file.read_text(encoding='utf-8')
         self.assertIn('\nmodule_roots=""\n', source)
         gate_file.write_text(source.replace('\nmodule_roots=""\n', '\nmodule_roots="src"\n', 1),
@@ -878,10 +880,10 @@ class GateRuleTests(unittest.TestCase):
                              encoding='utf-8', newline='\n')
         code, out = self.run_gate()
         self.assertEqual(code, 1, out)
-        self.assertIn('FAIL [architecture]: the module root lib in scripts/check.sh holds no file', out)
+        self.assertIn('FAIL [architecture]: the module root lib in scripts/gate_config.sh holds no file', out)
 
     def module_root(self, root):
-        gate_file = self.project / 'scripts/check.sh'
+        gate_file = self.project / 'scripts/gate_config.sh'
         source = gate_file.read_text(encoding='utf-8')
         gate_file.write_text(source.replace('\nmodule_roots=""\n', '\nmodule_roots="%s"\n' % root, 1),
                              encoding='utf-8', newline='\n')
@@ -891,7 +893,7 @@ class GateRuleTests(unittest.TestCase):
         self.write('docs/ARCHITECTURE.md', '## Module map\n- docs: documents\n- scripts: checks\n')
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
-        self.assertNotIn('the module root . in scripts/check.sh holds no file', out)
+        self.assertNotIn('the module root . in scripts/gate_config.sh holds no file', out)
         self.write('extra/file.txt', 'module\n')
         code, out = self.run_gate()
         self.assertEqual(code, 1, out)

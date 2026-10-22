@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Collect bounded Codex review evidence before recording completion and usage."""
 import argparse
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ import agent_process
 import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
-                           BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
+                           BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder, project_check,
                            prior_rounds, records_root, stricter_verdict,
                            review_context, review_parts, recheck, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
@@ -257,6 +258,11 @@ def main(argv=None, result_sink=None, claims=None):
             if not reason and (verdict_refused(final)
                                or not any(v.get("type") == "turn.completed" for v in values)):
                 reason = "invalid_evidence"
+            refused = None if reason else project_check(final, repo)
+            if refused:
+                reason = "invalid_evidence:" + refused
+                failure = ("\n\n## Failure\n\nThe project's check (scripts/project_validation.py) refused the "
+                           "final report: " + refused)
             # A failed attempt that was cancelled is cancelled: its eligible failure once let
             # --fallback launch the other paid reviewer after the owner had stopped the review.
             if (cancelled or guard.noted) and reason:

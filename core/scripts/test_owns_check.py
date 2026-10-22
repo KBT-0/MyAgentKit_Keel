@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """owns_check.py must refuse every changed path outside the brief's Owns: line, in each review scope."""
 import os
 from pathlib import Path

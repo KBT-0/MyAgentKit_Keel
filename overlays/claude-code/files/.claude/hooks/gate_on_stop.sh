@@ -82,7 +82,7 @@ fi
 
 gate_wait="${GATE_LOCK_WAIT:-500}"
 
-# The gate's opt-in build cache (build_cache_inputs in scripts/check.sh) can also skip the
+# The gate's opt-in build cache (build_cache_inputs in scripts/gate_config.sh) can also skip the
 # build of a run, only one that passed on the same inputs, and the gate then says "cached PASS".
 # The gate waits for another gate run in this checkout. The wait is bounded below the hook's
 # timeout (600 s in settings.json): a killed hook returns nothing, and its gate would still

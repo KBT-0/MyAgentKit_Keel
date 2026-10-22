@@ -56,6 +56,7 @@ class GateCheckTests(unittest.TestCase):
         self.tmp = Path(tmp.name)
         self.project = self.tmp / 'project'
         make_project(self.project)
+        self.config = (self.project / 'scripts/gate_config.sh').read_text(encoding='utf-8')
         self.build = self.tmp / 'build.sh'
         write(self.build, 'true\n')
 
@@ -78,7 +79,7 @@ class GateCheckTests(unittest.TestCase):
         return out
 
     def set_gate_line(self, old, new):
-        script = self.project / 'scripts/check.sh'
+        script = self.project / 'scripts/gate_config.sh'
         text = script.read_text(encoding='utf-8')
         self.assertIn(old, text)
         write(script, text.replace(old, new, 1))
@@ -125,17 +126,17 @@ class GateCheckTests(unittest.TestCase):
         write(self.project / 'docs/AGENTS.md', 'd' * 8000 + '\n')
         self.assertNotIn('[agents-size]', self.assert_green())
         write(self.project / 'docs/game/AGENTS.md', 'g' * 600 + '\n')  # 16001 + 8001 + 601 bytes
-        out = self.assert_green()  # no Codex named in scripts/review.sh
+        out = self.assert_green()  # no Codex named in scripts/gate_config.sh
         self.assertIn('NOTE [agents-size]', out)
-        write(self.project / 'scripts/review.sh', 'DEFAULT_REVIEWER="claude"\nCODEX_MODEL="gpt-5.5"\n')
+        write(self.project / 'scripts/gate_config.sh', self.config + 'DEFAULT_REVIEWER="claude"\nCODEX_MODEL="gpt-5.5"\n')
         out = self.assert_red('FAIL [agents-size]')
         self.assertIn('  - docs/game/AGENTS.md: 24603 bytes', out)
         self.assertNotIn('  - docs/AGENTS.md:', out)
         # Round-1 review: Codex as the default reviewer is in use without a model pin; Claude as
         # the reviewer with no Codex pin is not (lead decision: a NOTE).
-        write(self.project / 'scripts/review.sh', 'DEFAULT_REVIEWER="codex"\nCODEX_MODEL=""\n')
+        write(self.project / 'scripts/gate_config.sh', self.config + 'DEFAULT_REVIEWER="codex"\nCODEX_MODEL=""\n')
         self.assert_red('FAIL [agents-size]')
-        write(self.project / 'scripts/review.sh', 'DEFAULT_REVIEWER="claude"\nCODEX_MODEL=""\n')
+        write(self.project / 'scripts/gate_config.sh', self.config + 'DEFAULT_REVIEWER="claude"\nCODEX_MODEL=""\n')
         self.assertIn('NOTE [agents-size]', self.assert_green())
         (self.project / 'docs/game/AGENTS.md').unlink()
         self.assert_green()
@@ -143,7 +144,7 @@ class GateCheckTests(unittest.TestCase):
     def test_an_agents_chain_under_a_folder_that_starts_with_a_dash_counts_the_root_once(self):
         # Round-1 review of #143: the file list's ./ before `-notes` read as a folder, and the
         # root AGENTS.md counted twice.
-        write(self.project / 'scripts/review.sh', 'CODEX_MODEL="x"\n')
+        write(self.project / 'scripts/gate_config.sh', self.config + 'CODEX_MODEL="x"\n')
         write(self.project / 'AGENTS.md', 'r' * 13000 + '\n')
         write(self.project / '-notes/AGENTS.md', 'n' * 99 + '\n')
         self.assertNotIn('[agents-size]', self.assert_green())
@@ -270,7 +271,7 @@ class BuildCacheTests(unittest.TestCase):
     def test_the_build_cache_skips_only_a_build_that_passed_on_the_same_inputs(self):
         # #82: the worker, the Stop hook and the commit hook each built the same files.
         builds = self.counting_build()
-        script = self.project / 'scripts/check.sh'
+        script = self.project / 'scripts/gate_config.sh'
         text = script.read_text(encoding='utf-8')
 
         def gate(**extra):
@@ -336,7 +337,7 @@ class BuildCacheTests(unittest.TestCase):
         # The key read the gate by the caller's $0, which a nested run from the parent folder
         # spells relative to it, and a listed file the build deleted raised FileNotFoundError:
         # each left a Python traceback on the gate's stderr (the run was only uncached).
-        script = self.project / 'scripts/check.sh'
+        script = self.project / 'scripts/gate_config.sh'
         write(script, script.read_text(encoding='utf-8').replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=true\n'))
         nested = self.tmp / 'nested.out'
         # The deleted file first: the nested run's outer gate records its key, which a later
@@ -365,7 +366,7 @@ class BuildCacheTests(unittest.TestCase):
         # there that broke the build left the key unchanged and the next run passed from cache.
         builds = self.counting_build()
         write(self.build, self.build.read_text(encoding='utf-8') + 'grep -q ok cfg.h\n')
-        script = self.project / 'scripts/check.sh'
+        script = self.project / 'scripts/gate_config.sh'
         write(script, script.read_text(encoding='utf-8').replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=true\n'))
         write(self.project / '.gitignore', 'out/\n')
         outside = self.tmp / 'outside.h'

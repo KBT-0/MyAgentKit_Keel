@@ -23,10 +23,11 @@ def make_project(path):
     """A project the gate passes: every marker filled, the build is $GATE_TEST_BUILD."""
     (path / 'scripts').mkdir(parents=True)
     (path / 'docs').mkdir()
-    text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+    (path / 'scripts/check.sh').write_bytes((ROOT / 'core/scripts/check.sh').read_bytes())
+    text = (ROOT / 'core/scripts/gate_config.sh').read_text(encoding='utf-8')
     text = text.replace('{{TOOLCHAIN_PATH_SETUP}}', '').replace('{{BUILD_TEST_COMMAND}}',
                                                                 'sh $GATE_TEST_BUILD')
-    (path / 'scripts/check.sh').write_text(re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', text), encoding='utf-8')
+    (path / 'scripts/gate_config.sh').write_text(re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', text), encoding='utf-8')
     (path / 'scripts/boundary_checks.sh').write_text('# The fixture has no boundaries.\n', encoding='utf-8')
     (path / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n', encoding='utf-8')
     (path / 'docs/PROJECT.md').write_text('# PROJECT\n\n## Contents\n', encoding='utf-8')
@@ -461,7 +462,7 @@ class CheckGateTests(unittest.TestCase):
 
     def test_the_off_switch_runs_the_build_on_a_documentation_only_commit(self):
         # A project whose build reads markdown (a documentation site) turns the path off.
-        script = self.project / 'scripts/check.sh'
+        script = self.project / 'scripts/gate_config.sh'
         text = script.read_text()
         self.assertIn('\ndocs_only_skip_build=1\n', text)
         script.write_text(text.replace('\ndocs_only_skip_build=1\n', '\ndocs_only_skip_build=0\n'))
@@ -508,9 +509,9 @@ class CheckGateTests(unittest.TestCase):
             tc = Path(tmp) / 'tc'
             tc.mkdir()
             os.symlink(shutil.which('python3'), tc / 'python3')
-            gate_text = (project / 'scripts/check.sh').read_text()
+            gate_text = (project / 'scripts/gate_config.sh').read_text()
             self.assertIn('toolchain_path=""', gate_text)
-            (project / 'scripts/check.sh').write_text(gate_text.replace('toolchain_path=""', 'toolchain_path="%s"' % tc))
+            (project / 'scripts/gate_config.sh').write_text(gate_text.replace('toolchain_path=""', 'toolchain_path="%s"' % tc))
             no_py = Path(tmp) / 'nopy'
             no_py.mkdir()
             for entry in bin_dir.iterdir():
@@ -520,7 +521,7 @@ class CheckGateTests(unittest.TestCase):
             doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env_tc, capture_output=True, text=True)
             self.assertNotIn('Python 3.11', doctor.stdout + doctor.stderr, doctor.stdout + doctor.stderr)
             # No python3 and no python at all: the launcher is told which Python (`py -3`).
-            (project / 'scripts/check.sh').write_text(gate_text)
+            (project / 'scripts/gate_config.sh').write_text(gate_text)
             seen = Path(tmp) / 'py-args'
             (no_py / 'py').write_text('#!/bin/sh\nprintf "%%s\\n" "$1" > "%s"\nshift\nexec "%s" "$@"\n' % (seen, shutil.which('python3')))
             (no_py / 'py').chmod(0o755)

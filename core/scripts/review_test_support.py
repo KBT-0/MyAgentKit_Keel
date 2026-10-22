@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Portable offline CLI fixtures and explicit platform exclusions for review tests."""
 import io
 import os

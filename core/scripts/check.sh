@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
-# {{PROJECT_NAME}} quality gate — EVERY agent runs this before finishing a task.
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
+# The quality gate — EVERY agent runs this before finishing a task. This project's values (its
+# build command, toolchain path, module roots, ...) live in scripts/gate_config.sh, which it sources.
 # CI runs the SAME script. There is one definition of "green" in this repository, and it is
 # here — which is NOT the same as a promise that local and CI always agree. Same script,
 # different machine: file modes, installed tools and locale can all differ (docs/GOTCHAS.md
@@ -80,14 +82,20 @@ if [ -f "$env_file" ]; then
   done < "$env_file"
 fi
 
-# Toolchains are commonly installed per-user and then missing from the PATH of git hooks
-# and other non-login shells; without this the gate fails for the wrong reason. A VALUE, not
-# a line of code — a placeholder that has to be replaced INSIDE a comment is a trap, because
-# a half-finished edit leaves the code commented out and the gate silently toothless.
-# Applied FIRST, before the lock below resolves python3: a python3 installed only here was
-# not found, and a hook failed on a machine doctor.sh, which prepends it first, called ready.
-# Example: "$HOME/.dotnet". Leave empty if nothing extra is needed.
-toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"
+# The project's values, from the project-owned scripts/gate_config.sh (#94): this script is
+# kit-owned and a sync replaces it, so nothing of the project may live here. The defaults are
+# set first, so a gate_config.sh written for an older kit still runs; the build command has
+# none, and an unconfigured one FAILS below. A missing file stops the gate: deleting it must
+# not turn the configured build into "nothing configured".
+toolchain_path="" build_test_cmd="" docs_only_skip_build=1 docs_always_build=""
+build_cache_inputs="" cache_days=7 module_roots="" STRONG_REVIEW_DAYS=10 STRONG_REVIEW_TASKS=20
+[ -f scripts/gate_config.sh ] || {
+  echo "FAIL [config]: scripts/gate_config.sh is missing; copy the kit's core/scripts/gate_config.sh there and set this project's values in it."
+  exit 1; }
+. ./scripts/gate_config.sh
+# The toolchain is applied FIRST, before the lock below resolves python3: a python3 installed
+# only there was not found, and a hook failed on a machine doctor.sh, which prepends it first,
+# called ready.
 case "$toolchain_path" in
   ""|*"{{"*) ;;
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
@@ -369,10 +377,6 @@ if interrupted:
 sys.exit(status if 0 <= status < 256 else 128 + (status >> 8) if status & 255 == 0 and status < 32768 else 1)
 ' "$lock_path" "$gate" "$@"
 fi
-
-# The strong review cycle's cadence (section 2 says why): owner choices, not measured values.
-STRONG_REVIEW_DAYS=10
-STRONG_REVIEW_TASKS=20
 
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
 # The lock file itself stays: removing a flock file lets a waiter lock the removed file while
@@ -679,7 +683,7 @@ fi
 # docs/STRONG_REVIEW.md is told, never failed, when either is reached. The date is the commit
 # that added the newest docs/reviews/strong-*.md, so a report deleted once its last item closed
 # still counts; the tasks are the Done: trailers of the commits after it. A shallow clone may
-# not hold it. The two values are set near the top.
+# not hold it. The two values are set in scripts/gate_config.sh.
 strong_list=docs/STRONG_REVIEW.md
 strong_rule="at least every $STRONG_REVIEW_DAYS days or after $STRONG_REVIEW_TASKS closed tasks, whichever comes first"
 if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
@@ -766,14 +770,13 @@ fi
 # a check to a promise (KARARLAR B10 inv1#239): every direct subfolder of a module root that
 # holds a file in the scan list must be named, as a whole entry, in the "## Module map" section
 # of docs/ARCHITECTURE.md: its bare name (app) or its path from the top (src/app, src/app/), so a
-# multi-root map that names game/sim and engine/sim checks each (#88, #141). module_roots is a VALUE: the folders whose subfolders are modules,
-# space-separated, e.g. "src packages". Empty, nothing is checked and a NOTE says so: a
-# single-module project has no module folders. A root with no file at all FAILS: a check over a
-# missing folder finds nothing, which looks like a clean result.
-module_roots=""
+# multi-root map that names game/sim and engine/sim checks each (#88, #141). module_roots, in
+# scripts/gate_config.sh, names the folders whose subfolders are modules. Empty, nothing is
+# checked and a NOTE says so. A root with no file at all FAILS: a check over a missing folder
+# finds nothing, which looks like a clean result.
 architecture_file=docs/ARCHITECTURE.md
 if [ -z "$module_roots" ]; then
-  echo "NOTE [architecture]: module_roots is empty in scripts/check.sh; no module folder is checked against"
+  echo "NOTE [architecture]: module_roots is empty in scripts/gate_config.sh; no module folder is checked against"
   echo "                     the module map in docs/ARCHITECTURE.md."
 elif ! grep -q '^## Module map' "$architecture_file" 2>/dev/null; then
   printf '%s\n' "FAIL [architecture]: $architecture_file has no '## Module map' section, so module_roots cannot be checked."
@@ -800,7 +803,7 @@ else
       index($0, p) == 1 { rest = substr($0, length(p) + 1); j = index(rest, "/"); found = 1
                           if (j > 1) print substr(rest, 1, j - 1) }
       END { exit !found }' > "$work/modules" || {
-      printf '%s\n' "FAIL [architecture]: the module root $root in scripts/check.sh holds no file the gate sees."
+      printf '%s\n' "FAIL [architecture]: the module root $root in scripts/gate_config.sh holds no file the gate sees."
       fail=1; continue; }
     sort -u "$work/modules" | while IFS= read -r module; do
       grep -qxF -e "$module" -e "$prefix$module" -e "$prefix$module/" -- "$work/module-map" || {
@@ -820,11 +823,11 @@ fi
 # drops, without a word, what passes project_doc_max_bytes (32768 by default); the tail holds
 # the STOP list and the completion checklist (#143). Each chain, the root's alone included,
 # stays under 24 KiB, the kit's own margin (its tests/test_doc_pointers.py). Codex is in use
-# when scripts/review.sh names it, the record the setup interview writes (DEFAULT_REVIEWER or
+# when scripts/gate_config.sh names it, the record the setup interview writes (DEFAULT_REVIEWER or
 # CODEX_MODEL); without it a chain over the margin is a NOTE, not a failure.
 agents_limit=24576
 codex_in_use=""
-grep -Eq '^(DEFAULT_REVIEWER="codex"|CODEX_MODEL="[^"]+")' scripts/review.sh 2>/dev/null && codex_in_use=1
+grep -Eq '^(DEFAULT_REVIEWER="codex"|CODEX_MODEL="[^"]+")' scripts/gate_config.sh 2>/dev/null && codex_in_use=1
 tr '\0' '\n' < "$filelist" | grep -E '(^|/)AGENTS\.md$' | while IFS= read -r f; do
   f=${f#./}  # the file list's ./ before a name that starts with -, never a folder
   total=0 prefix="" rest=$f
@@ -840,7 +843,7 @@ if [ -s "$work/agents-over" ]; then
     printf '%s\n' "                    $agents_limit bytes (24 KiB), the margin under Codex's 32768-byte project_doc_max_bytes:"
     fail=1
   else
-    printf '%s\n' "NOTE [agents-size]: an AGENTS.md chain is not under $agents_limit bytes; Codex, once scripts/review.sh names it,"
+    printf '%s\n' "NOTE [agents-size]: an AGENTS.md chain is not under $agents_limit bytes; Codex, once scripts/gate_config.sh names it,"
     echo "                    drops what passes its 32768-byte project_doc_max_bytes:"
   fi
   cat "$work/agents-over"
@@ -913,8 +916,9 @@ fi
 # ---------------------------------------------------------------------------
 # 4) Build & tests
 # ---------------------------------------------------------------------------
-# An unconfigured command is a FAIL, not a warning. "No build or test command" is the
-# absent-evidence case: the gate would be reporting that nothing failed, having run nothing.
+# The command is build_test_cmd in scripts/gate_config.sh. An unconfigured command is a FAIL,
+# not a warning. "No build or test command" is the absent-evidence case: the gate would be
+# reporting that nothing failed, having run nothing.
 #
 # No step here may write to a remote (upload, publish, push, migrate a live database), need a
 # deploy credential (an API token, a login) or change what users see: the gate runs on every
@@ -922,22 +926,17 @@ fi
 # may stay even when it is spelled like a deploy (`wrangler deploy --dry-run --outdir <dir>`
 # compiles "without actually deploying", developers.cloudflare.com/workers/wrangler/commands/
 # workers/; `terraform validate` "does not validate remote services", developer.hashicorp.com/
-# terraform/cli/commands/validate), once it is recorded: one `# read-only:` line below names the
-# exact step and why it writes nothing remote, checked with the deploy credentials unset (#300).
+# terraform/cli/commands/validate), once it is recorded: one `# read-only:` line beside the
+# command in scripts/gate_config.sh names the exact step and why it writes nothing remote,
+# checked with the deploy credentials unset (#300).
 # An agent's permission layer may still read such a step as a production deploy and refuse the
 # whole gate (it did once); give it an allow rule for that exact command (a Claude Code
 # `permissions.allow` entry such as `Bash(npm run check)`, code.claude.com/docs/en/permissions),
 # or move the step to its own CI job.
-# read-only: (none)
-build_test_cmd="{{BUILD_TEST_COMMAND}}"
 # A commit that changes only documentation skips the build/test command, and nothing else:
 # every scan and check above has run. A project's gate built for minutes on every such commit.
-# 1: on. 0: off, for a project whose build reads markdown everywhere (a documentation site).
-docs_only_skip_build=1
-# The documents a build or a test does read (a doc test, a generated page): a commit that
-# changes one builds (#97). Space-separated paths or globs from the top of the repository,
-# matched as Python's fnmatch.fnmatchcase does (a * also crosses a /): "docs/api/*.md README.md".
-docs_always_build=""
+# docs_only_skip_build=0 turns that off, and docs_always_build names the documents a build
+# reads (#97); both are in scripts/gate_config.sh.
 # BUILD CACHE. One change ran the same build three or four times on the same files: the
 # worker, the Stop hook, the commit hook, the merge hook (#82). A build that passed is recorded
 # under a key, and a later run whose key matches skips the build and says so in its PASS line;
@@ -946,17 +945,8 @@ docs_always_build=""
 # read from disk, symlink text: uncommitted edits, a new untracked file, CMakeLists, tests and
 # documents all count, not only what a check scans), this gate script itself, the build
 # command, the caller's LC_ALL and the output of build_cache_inputs. An entry another version
-# of the gate wrote is deleted. build_cache_inputs is a VALUE: a command that prints whatever
-# else the build depends on, which the tree does not hold. Starters, keep the ones your build
-# uses (a missing tool fails the command, and a failing command means no cache):
-#   cmake --version; ninja --version
-#   cl 2>&1 | head -n 1                     # the MSVC banner (compiler version)
-#   python --version; python -m pip freeze | sha256sum
-#   blender --version
-#   git lfs ls-files -l                     # LFS objects by id
-#   echo "CC=$CC CXX=$CXX"                  # environment the build reads
-# Unity: ProjectSettings/ProjectVersion.txt and Packages/packages-lock.json are tracked, so
-# already in the key; Library/ is a cache Unity rebuilds and stays out.
+# of the gate wrote is deleted. build_cache_inputs, in scripts/gate_config.sh, is a command
+# that prints whatever else the build depends on, which the tree does not hold.
 # Ignored files (fetched dependencies, a build folder) and environment variables are NOT in the
 # key unless this command prints them. Empty, there is no cache: an input nobody fingerprinted
 # would otherwise pass on a stale result. Use "true" for a build that reads nothing but the
@@ -968,8 +958,6 @@ docs_always_build=""
 # report can never claim a build that did not run. Entries sit in the repository's common git
 # folder (shared by its worktrees: the key names content, not a checkout) and expire after
 # cache_days days.
-build_cache_inputs=""
-cache_days=7
 cache_dir="" cache_record=""
 if [ -n "${CI:-}" ] || [ "${GATE_CACHE:-}" = off ]; then
   :
@@ -1036,7 +1024,7 @@ print(found.split()[0], key, found.split()[1])
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.
 case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
   *"{{"*|"")
-    echo "FAIL [build]: no build/test command is configured in scripts/check.sh. Set one —"
+    echo "FAIL [build]: no build/test command is configured in scripts/gate_config.sh. Set one —"
     echo "              use 'true' explicitly if this project genuinely has nothing to run,"
     echo "              so that the choice is visible in the diff instead of implied."
     fail=1 ;;

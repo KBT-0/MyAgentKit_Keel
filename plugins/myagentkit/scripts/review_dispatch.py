@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Collect a review from the requested reviewer; fail over once only when explicitly allowed."""
 import argparse
 import json

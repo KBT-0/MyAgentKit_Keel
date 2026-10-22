@@ -8,31 +8,47 @@
 KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 ```
 
-They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today that is a
-short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
-`post-merge`), `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/agent_cost.py`,
-`scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
-`scripts/autopilot_report.py`, `scripts/master_writer.py`, `BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons
-behind the project-owned `docs/WORKFLOW.md`, by the same headings), `docs/AUTOPILOT.md` (the
-autopilot report template), `docs/USAGE.md`, the kit's parts of four reference documents
-(`docs/DEV_SETUP_KIT.md`, `docs/GOTCHAS_KIT.md`, `docs/HANDOFF_KIT.md`,
-`docs/REVIEW_RUNNING_KIT.md`), the module-rules template, and the two setup documents
-(`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
+They hold no project content, so `sync-kit.sh` overwrites them wholesale: the four git hooks
+(`pre-commit`, `pre-merge-commit`, `commit-msg`, `post-merge`), from v0.13 every script in
+`scripts/` but the three below (the gate `check.sh`, `review.sh`, the review adapters
+`claude_bridge.py`, `codex_bridge.py` and `review_dispatch.py` and what they import, `doctor.sh`,
+`working_mode.py`, `autopilot_report.py`, `master_writer.py` and the rest, with their tests),
+`BEHAVIOUR.md`, `docs/WORKFLOW_RATIONALE.md` (the reasons behind the project-owned
+`docs/WORKFLOW.md`, by the same headings), `docs/AUTOPILOT.md` (the autopilot report template),
+`docs/USAGE.md`, the kit's parts of four reference documents (`docs/DEV_SETUP_KIT.md`,
+`docs/GOTCHAS_KIT.md`, `docs/HANDOFF_KIT.md`, `docs/REVIEW_RUNNING_KIT.md`), the module-rules
+template, and the two setup documents (`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup`
+in the kit lists them).
 The hooks reach a project with the sync; the files they and the gate read beside them,
 `.myagentkit/master-writer` and `.myagentkit/env`, are local and Git-ignored, and no sync
 writes them.
 A sync overwrites a kit-owned file, so an edit there is lost: a project that needs a different
 rule writes it in the project-owned file (`docs/<NAME>.md` beside `docs/<NAME>_KIT.md`;
-`docs/WORKFLOW.md` for `docs/USAGE.md`), and the project file wins over the kit's.
+`docs/WORKFLOW.md` for `docs/USAGE.md`; `scripts/gate_config.sh` for a gate value), and the
+project file wins over the kit's.
 A project's own machine checks, once in its own `scripts/doctor.sh`, move to
 `scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
 
-The review adapters (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
-`scripts/review_dispatch.py` and the scripts they import) carry no marker yet, but each
-upgrade's checklist replaces them whole too. A line a project adds to them, such as its own
-check of a reviewer's final report, is lost at the next upgrade. The adapters have no
-project hook for such a check today: send it upstream (`/myagentkit:kit-feedback`) so it
-lands in the kit, and keep it as a marked patch with a `docs/STATE.md` line until then.
+Three scripts stay the project's, and they are where its own content lives (#94):
+
+- `scripts/gate_config.sh`, the project's values, which `check.sh` and `review.sh` source:
+  the build/test command and its `# read-only:` lines, the toolchain path, the module roots,
+  the documentation build switches, the build cache inputs, the strong review cadence and the
+  reviewer pins. `check.sh` and `review.sh` refuse to run without it.
+- `scripts/boundary_checks.sh`, the project's boundary checks.
+- `scripts/project_validation.py`, the project's own check of a reviewer's final report
+  (#87). Both adapters call its `validate_final_message(text)` when the file sits beside them or
+  in the reviewed repository's `scripts/` (the Codex plugin's bundled adapters); a reason it
+  returns fails the review as `invalid_evidence:<reason>`. A check like this once lived as a
+  patch inside the adapters, and every sync dropped it; it never goes there now.
+
+A kit script that became kit-owned meets the project's copy without the header once. The sync
+adopts that copy when it is the kit's own, unmodified: equal, line endings aside, to the kit's
+copy at the kit commit the project came from (`docs/kit/.kit-commit`, else the release tag of
+its version), and for `check.sh` and `review.sh` once their project values are set aside. Those
+values are written into a new `scripts/gate_config.sh` (one the project already set up is kept,
+and the values are printed to compare). An edited copy stays a conflict, and its line names
+the command that shows the edit.
 
 An upgrade that adds a Claude Code agent definition (`.claude/agents/*.md`) next to one the
 project already has for the same job, such as its own reviewer beside `diff-reviewer.md`,
@@ -40,8 +56,8 @@ keeps one of the two (the overlay's README says how). bootstrap.sh and sync-kit.
 a reviewer (front matter `name:` holding the word "review") as a conflict line; neither file is touched.
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
-workflow, the review gate, the architecture map, the check script, the boundary checks and
-their negative tests. All of them were customised during setup. Overwriting them would
+workflow, the review gate, the architecture map, the gate's values (`scripts/gate_config.sh`),
+the boundary checks and their negative tests. All of them were customised during setup. Overwriting them would
 discard that work and re-introduce the placeholders — the gate would go red on a project
 that was fine a minute earlier.
 
@@ -76,15 +92,18 @@ exactly the habit the review gate exists to prevent.
    and script it writes also gets mode 100755 in the git index, since `core.fileMode=false`
    (native Windows) never carries the disk's bit there: a tracked one keeps its staged bytes,
    a new one is staged (from a subfolder install the command is printed instead). A file at a
-   kit-owned path WITHOUT the KIT-OWNED header is the project's own (a hook the project
-   wrote before the kit owned that path): it is listed as `conflict:`, and the sync stops
+   kit-owned path WITHOUT the KIT-OWNED header that is the kit's own unmodified copy is listed
+   as `adopted:` and replaced like any kit-owned file ("Two tiers of ownership" above). Any
+   other such file is the project's own (a hook the project wrote before the kit owned that
+   path, or a kit script it edited): it is listed as `conflict:`, and the sync stops
    before it copies anything or records a version. Move yours aside, sync again, then carry
    what yours did into the project by hand (`docs/RETROFIT.md`). A hook of yours under
    `.githooks` (a Git LFS `post-merge`) only needs a new name: as `.githooks/<same name>.project`
    (executable, with a `#!` line) it keeps running, since the kit's hook runs it first with
    git's arguments. A kit-owned file with an edit git does not hold (unstaged, or an untracked
-   file) is a `conflict:` too, since the copy keeps no backup: commit the edit or restore the
-   file, then sync again. Template and package tools
+   file) is a `conflict:` too, since the copy keeps no backup, and so is a `check.sh` or
+   `review.sh` about to be adopted with such an edit: commit the edit or restore the file, then
+   sync again. Template and package tools
    leave that call to a person too (Copier marks conflicts for review before the commit;
    dpkg asks about a changed configuration file); the sync is stricter and writes nothing,
    because a half-merged hook can be a gate that silently does not run.

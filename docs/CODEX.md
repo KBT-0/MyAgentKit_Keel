@@ -110,7 +110,7 @@ rejects stale or missing generated content. Never hand-edit the packaged runtime
 
 Existing projects can use `./scripts/review.sh --uncommitted --reviewer claude` after
 updating the wrapper and copying its companion Python files. Which reviewer is the DEFAULT is
-a project setting at the top of `scripts/review.sh`, not a property of the kit: see
+a project setting in `scripts/gate_config.sh`, not a property of the kit: see
 [core/docs/REVIEW_GATE.md](../core/docs/REVIEW_GATE.md) on AUTHOR and REVIEWER as roles.
 The kit's own root wrapper delegates to the same core wrapper rather than carrying another
 implementation. `REVIEW_CLI_BIN` remains Codex-only; `CLAUDE_CLI_BIN` selects the Claude
