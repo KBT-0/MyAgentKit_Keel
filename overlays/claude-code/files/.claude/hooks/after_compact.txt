@@ -6,5 +6,7 @@ cost", its block "The rules in brief". Rules that still bind: a question from th
 stated model and effort; never report a verification you did not run; no AI attribution in
 git; never `git commit --no-verify`. As the lead: the context band still applies,
 and a second compaction in this session is a hand-off instead (docs/WORKFLOW.md, "Worker
-cost", rule 8). As a worker: a compaction never ends your task; note it in your report and
+cost", rule 8); but while docs/STATE.md says `**Owner:** away` (autopilot), no compaction
+is a stop, the second included: update the hand-off file and keep going (docs/WORKFLOW.md,
+"autopilot, the owner-away switch"). As a worker: a compaction never ends your task; note it in your report and
 go on (docs/HANDOFF.md, the result file).

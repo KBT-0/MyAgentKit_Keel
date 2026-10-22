@@ -97,13 +97,17 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
   This holds for a question at the end of a report or a progress line too: it is asked with
   the tool, never left in text or named as "an open question". The `plain_report.py` hook
   bounces a final message that ends with a question or names one as open.
-- While the owner is away, nothing waits on a question. Away means {{OWNER_NAME}} said so
+- While the owner is away, nothing waits on a question. Away means the autopilot switch is
+  on (`**Owner:** away` in `docs/STATE.md`; "autopilot, the owner-away switch" in
+  `docs/WORKFLOW.md`, which {{OWNER_NAME}} turns on with `/myagentkit:mode autopilot` or in plain words).
+  Without that record, away means {{OWNER_NAME}} said so
   (overnight, "I'm out"), or 45 minutes passed with no reply to an asked question; 45 is the
   kit owner's choice, not a measured value, and it is separate from a
   review's timeout (`REVIEW_TIMEOUT_SECONDS`). The agent
   decides what the rules already settle or what is reversible and reports it later; else it
   does the work so that the owner's answer in the morning changes one named spot; else it
-  parks the task with an issue or a `docs/STATE.md` line holding the question, and moves on to
+  parks the task with an issue or a `docs/STATE.md` line holding the question (under
+  autopilot, a Question in the report, and an issue only as a draft there), and moves on to
   other work. An agent that can go on alone still names when a human must step in (AWS
   Well-Architected Agentic AI Lens, AGENTSEC04-BP02).
 - An approval covers what was shown. Nothing the owner did not see is "approved"; the

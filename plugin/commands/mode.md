@@ -1,6 +1,6 @@
 ---
-description: Show the working mode in force and the three modes, or switch to one by name and print its rules for the lead
-argument-hint: "[solo [\"family: X\"] | cross | saver \"low: X\"]"
+description: Show the working mode in force and the three modes, or switch to one by name and print its rules for the lead; autopilot and present switch the owner's presence
+argument-hint: "[solo [\"family: X\"] | cross | saver \"low: X\" | autopilot | present]"
 allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 scripts/working_mode.py:*), Bash(py -3 scripts/working_mode.py:*)
 ---
 # /myagentkit:mode [name]
@@ -32,8 +32,8 @@ mode is solo, the main mode; say that the line is missing. Print the mode in for
 the three modes from the section's table, one line each: the name and who writes, reviews
 and fixes the findings.
 
-**A name.** Accept `solo`, `cross` or `saver`, in any case. Refuse any other name and list
-the three. The owner switches modes: switch only when the owner asks, never on your own
+**A name.** Accept `solo`, `cross` or `saver`, or the presence switch `autopilot` or
+`present`, in any case. Refuse any other name and list the five. The owner switches modes: switch only when the owner asks, never on your own
 initiative. One standing exception, given by the owner when choosing saver: when the low
 side's allowance has reset, return to the mode the note's `after:` names (`docs/WORKFLOW.md`,
 "saver", Ends), in this session or a later one.
@@ -49,5 +49,13 @@ side's allowance has reset, return to the mode the note's `after:` names (`docs/
    lead from now on.
 3. For saver, add one line: it ends when the low side's allowance resets or the owner
    says otherwise, and then the mode its note's `after:` names returns without being asked.
+
+**autopilot / present.** Not a mode: the owner's presence beside the mode in force
+(`docs/WORKFLOW.md`, "autopilot, the owner-away switch"). Run the helper with the name and
+no note. For `autopilot`, print its output whole: the rules, the checklist for the owner to
+go through before leaving, and the `/goal` line the owner types (you cannot run it). The
+owner may also turn it on in plain words; the lead then runs the same helper itself. For
+`present`, do what its output says: the report, then the questions one by one with the
+question tool.
 
 Raw arguments: `$ARGUMENTS`

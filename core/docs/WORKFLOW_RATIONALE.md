@@ -90,6 +90,35 @@ chat modes, aider.chat/docs/usage/modes.html; Roo Code's modes,
 roocodeinc.github.io/Roo-Code/basic-usage/using-modes); what each mode here decides is the
 kit's own.
 
+### autopilot, the owner-away switch
+
+The owner asked for a mode to start before leaving the lead overnight, with no stop on "a
+silly excuse", decisions taken and reported in the morning, questions saved for the morning
+(2026-10-22); the whole study is the kit's `docs/research/unattended-lead.md`. Every source it
+read rests unattended work on the same three legs: a scope with a done criterion written
+beforehand, stop conditions the machine enforces, and state kept in files with a report at the
+end (code.claude.com/docs/en/best-practices; the report's summary 1 names the OpenAI and
+Devin sources). Presence is a switch beside the mode, not a fourth mode, so a night in saver is
+still expressible; the explicit record replaces the 45-minute inference, which stays for a
+project without one. The keep-going engine is Claude Code's own `/goal` (a condition checked
+after every turn, paused and resumed at a usage limit) and the automatic continue at a usage
+limit, which works only in an open interactive session that stopped mid-task
+(code.claude.com/docs/en/goal, code.claude.com/docs/en/interactive-mode): hence the
+foreground lead and no turn without a wake-up. The decision table follows bounded-autonomy
+practice: reversible work inside the workspace is autonomous; irreversible, outward or
+credential-touching work stays with the human (AWS Well-Architected Agentic AI Lens; OWASP
+Least-Agency; Claude Code auto mode's default block list), with the owner's amendments of
+2026-10-22: push and tag once every check and CI are green, local merges, issues as drafts.
+A stronger-model consult is the vendors' advisor pattern (the advisor tool, Amp's Oracle,
+Aider's architect mode), where the advisor counsels and the executor decides; no source counts
+the advisor's word as a human approval, a same-family judge shares blind spots, and a question
+that carries the asker's answer anchors the reply, hence the two steps and the label. The
+report's Done section comes from git, never from the agent's own account. Left out: an own
+Stop hook (only if `/goal` shows a gap in use), a `-p` or Ralph loop as the lead (no usage-limit
+wait, no hooks with `--bare`, a fresh context loses the orchestration state), the lead in
+`--bg` (no limit wait, no question timeout), `--dangerously-skip-permissions` (no sandbox on
+native Windows), and blanket allow rules (auto mode is no guarantee).
+
 ## Worker cost — waits and long lives are what you pay for
 
 ### The measurements and the full rules

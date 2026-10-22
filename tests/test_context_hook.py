@@ -30,7 +30,10 @@ class ContextHookTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
         self.transcript = self.tmp / 'session-1.jsonl'
-        self.env = dict(os.environ)
+        # The project whose .myagentkit/presence the hooks read: never the kit checkout's own.
+        # A lead's session: a worker running these tests carries MYAGENTKIT_ROLE=worker.
+        self.env = {k: v for k, v in os.environ.items() if k != 'MYAGENTKIT_ROLE'}
+        self.env['CLAUDE_PROJECT_DIR'] = str(self.tmp)
 
     def run_hook(self, records, raw=None, command=None, env=None):
         self.transcript.write_text(raw if raw is not None else ''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
@@ -222,6 +225,39 @@ class ContextHookTests(unittest.TestCase):
         self.assertEqual(self.run_progress([request(250_000), request(260_000)]), '')  # same step
         self.assertEqual(self.run_hook([request(260_000)]), '')  # the prompt hook shares the step
         self.assertIn('Context is 310k tokens, red (300k)', self.run_progress([request(250_000), request(310_000)]))
+
+    def away(self):
+        (self.tmp / '.myagentkit').mkdir(exist_ok=True)
+        (self.tmp / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
+
+    def test_while_away_the_band_and_a_second_compaction_say_keep_going(self):
+        # v0.13 autopilot: the lead stopped at a band line overnight and the night was lost.
+        self.away()
+        for turns in ([request(410_000)], [request(410_000), {'type': 'system', 'subtype': 'compact_boundary'},
+                                          request(210_000)]):
+            said = self.run_progress(turns)
+            with self.subTest(said=said):
+                self.assertIn('Context is', said)
+                self.assertIn('autopilot', said)
+                self.assertIn('keep going', said)
+                self.assertNotIn('stop now', said)
+                self.assertNotIn('recommend', said)
+                self.assertNotIn('owner is back', said)  # a tool call is never the owner's message
+
+    def test_a_prompt_while_away_names_the_owners_return_and_present_is_silent(self):
+        self.assertEqual(self.run_hook([request(10_000)]), '')
+        self.away()
+        said = self.run_hook([request(10_000)])
+        self.assertIn('working_mode.py present', said)
+        self.assertIn('AskUserQuestion', said)
+        # Owner, 2026-10-22: only a message that says or implies the return or the exit ends it;
+        # a farewell, the /goal line or a late instruction is acted on and autopilot stays.
+        self.assertIn('says or implies', said)
+        self.assertIn('/goal line', said)
+        self.assertIn('stay in autopilot', said)
+        self.assertEqual(self.run_hook([request(10_000)], env=dict(self.env, MYAGENTKIT_ROLE='worker')), '')
+        (self.tmp / '.myagentkit/presence').write_text('present 2026-10-22T23:00:00+03:00 x\n', encoding='utf-8')
+        self.assertEqual(self.run_hook([request(10_000)]), '')
 
 
 if __name__ == '__main__':

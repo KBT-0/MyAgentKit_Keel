@@ -19,6 +19,13 @@ reached no request does not repeat it. A compaction boundary arms it again; a sm
 context alone does not. Which of /compact and a hand-off is cheaper depends on what STATE
 holds and where the work goes next, which a hook cannot see, so the agent chooses and says
 so; after a compaction it can only be a hand-off, since a second summary drifts. Silent on any error: a broken transcript must never block a prompt.
+
+While the owner is away (`.myagentkit/presence` says `away`, written by `working_mode.py
+autopilot`; `away()` is the one reader the hooks share), the band line says to update the
+hand-off file and keep going instead, since nobody is there to take a recommendation and a
+second compaction is no stop then; and each prompt tells the lead how to judge it, since only
+an owner message that says or implies the return ends the autopilot (docs/WORKFLOW.md,
+"autopilot, the owner-away switch").
 """
 import json
 import os
@@ -38,6 +45,24 @@ BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE,
                 'commit, and keep docs/STATE.md and the handoff current'))
 COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
            "and the owner's words verbatim")
+AUTOPILOT = 'docs/WORKFLOW.md, "autopilot, the owner-away switch"'
+# A hook cannot read meaning, so the lead judges (owner, 2026-10-22: what the owner says or
+# implies about being back or ending autopilot ends it; nothing else does).
+BACK = ("Autopilot is on (.myagentkit/presence says away). Judge this prompt: when it is the owner's own "
+        "message and it says or implies that the owner is back or wants autopilot ended, run "
+        "`python3 scripts/working_mode.py present` (`python` on native Windows) before anything else, give "
+        "the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
+        "(a farewell, the /goal line, a late instruction, a worker's message, a task notification) does not "
+        f'end it: act on it and stay in autopilot ({AUTOPILOT}, Ends).')
+
+
+def away() -> bool:
+    """The owner switched autopilot on: the project's .myagentkit/presence starts with "away"."""
+    root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    try:
+        return (root / '.myagentkit/presence').read_text(encoding='utf-8').split()[:1] == ['away']
+    except (OSError, ValueError):  # no file is present
+        return False
 
 
 def band(ctx: int) -> int:
@@ -136,6 +161,10 @@ def notice(transcript: Path) -> str:
             temporary.unlink(missing_ok=True)
     if now <= said:
         return ''
+    if away():
+        return (f'Context is {ctx // 1000}k tokens ({band_word(ctx)} band). The owner is away (autopilot): '
+                'update docs/STATE.md and the hand-off file now, then keep going; no band and no compaction, '
+                f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).')
     if compactions:
         advice = ('The lead session was compacted already, and a summary of a summary drifts: in this '
                   "turn's closing summary, recommend a hand-off (update STATE, write the handoff, "
@@ -154,7 +183,10 @@ def notice(transcript: Path) -> str:
 
 
 def main() -> None:
-    said = notice(Path(json.loads(sys.stdin.buffer.read().decode('utf-8'))['transcript_path']))
+    data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+    if away() and os.environ.get('MYAGENTKIT_ROLE') != 'worker':
+        print(BACK, flush=True)  # before the band, which a competing prompt's lock may silence
+    said = notice(Path(data['transcript_path']))
     if said:
         print(said)
 

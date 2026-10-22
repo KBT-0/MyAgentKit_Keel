@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-"""Show or record the owner's working mode, using WORKFLOW.md as the rule source."""
+"""Show or record the owner's working mode, or the owner's presence (autopilot, present),
+using WORKFLOW.md as the rule source."""
 import argparse
 from contextlib import contextmanager, suppress
+from datetime import datetime
 import hashlib
 import os
 from pathlib import Path
@@ -34,6 +36,18 @@ AFTER = re.compile(r', after: ((?:solo|cross)(?:, family: [^(),]+)?)$')
 SIDES = {'solo': re.compile(r'family: [^(),]+'), 'saver': re.compile(r'low: [^(),]+(?:' + AFTER.pattern[:-1] + ')?')}
 REQUIRED = {'saver'}
 EXAMPLES = {'solo': 'family: codex', 'saver': 'low: claude'}
+# The owner's presence (v0.13): a second switch beside the mode, never a fourth mode, since a
+# mode says who writes and reviews and presence says whether the owner can answer
+# (docs/WORKFLOW.md, "autopilot"). The STATE line and .myagentkit/presence, which the hooks
+# read, follow the mode's rules: only the switch writes them, a read refuses a disagreement.
+PRESENCE = ('autopilot', 'present')
+OWNER_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
+AWAY = re.compile(r'away \(autopilot since (\S+)\)')
+BACK = ('The owner is back. Before anything else: run `python3 scripts/autopilot_report.py` (`python` on native '
+        'Windows) and finish the '
+        'report from it (docs/AUTOPILOT.md); give it in two layers (docs/COMMUNICATION.md, "Handoff"); then '
+        'ask its Questions one by one with AskUserQuestion, the recommended option first. An Issue draft is '
+        'posted only on the owner\'s yes.')
 
 
 def repairs_old_mode(old_lines, new_lines):
@@ -202,6 +216,10 @@ def replace_state(project, source, expected):
                                  'mode switch (working_mode.py NAME) changes it, together with .myagentkit/mode '
                                  '(the one exception: a mode name from before v0.11 may become solo, cross or '
                                  'saver)' % (numbered(data.decode('utf-8')) or 'none'))
+            if [m[0] for m in presence_lines(current.decode('utf-8'))] != \
+                    [m[0] for m in presence_lines(data.decode('utf-8'))]:
+                raise ValueError('the edit changes the Owner line of STATE.md; only working_mode.py autopilot '
+                                 'or present changes it, together with .myagentkit/presence')
             pending = prepared(project, state, data)
             os.replace(pending, state)
             published = True
@@ -256,7 +274,70 @@ def mode(project, choice=None, sides=None):
     if choice is None:
         return working_mode(project, section, rows)
     with switch_lock(project):
+        if normalized(choice) in PRESENCE:
+            if sides is not None:
+                raise ValueError(normalized(choice) + ' takes no note')
+            return switch_presence(project, section, normalized(choice))
         return working_mode(project, section, rows, choice, sides)
+
+
+def owner(project, state):
+    """(stamp, line, record words): the autopilot stamp of STATE's one Owner line (None for
+    present or no line), its match, and the words of .myagentkit/presence (none: present)."""
+    found = presence_lines(state)
+    if len(found) > 1:
+        raise ValueError('STATE.md has more than one Owner line: ' + '; '.join(m[0].strip() for m in found))
+    line = found[0] if found else None
+    away = AWAY.fullmatch(line[2].strip().rstrip('.')) if line else None
+    record = checked(project, '.myagentkit/presence')
+    words = record.read_text(encoding='utf-8').split() if record.exists() else ['present']
+    return (away[1] if away else None), line, words
+
+
+def presence_lines(state):
+    """STATE's Owner lines that hold a presence; a project's own `**Owner:** <name>` is no record."""
+    return [m for m in OWNER_LINE.finditer(state)
+            if m[2].strip().rstrip('.') == 'present' or AWAY.fullmatch(m[2].strip().rstrip('.'))]
+
+
+def switch_presence(project, section, choice):
+    """Write STATE's Owner line and .myagentkit/presence together, as a mode switch writes its two."""
+    rules = re.search(r'^#{3,4} autopilot(?![\w-]).*?(?=^#{2,4} |\Z)', section, re.M | re.S)
+    if rules is None:
+        raise ValueError('WORKFLOW.md has no autopilot rules ("### autopilot, the owner-away switch" after '
+                         '"Working modes, by name"); sync the kit (v0.13) and run this again')
+    state_path = checked(project, 'docs/STATE.md')
+    state_bytes = state_path.read_bytes()
+    state = state_bytes.decode('utf-8')
+    stamp, line, words = owner(project, state)
+    record = checked(project, '.myagentkit/presence')
+    now = datetime.now().astimezone().isoformat(timespec='seconds')
+    # A second switch keeps the first stamp, so the report covers the whole absence; the return
+    # keeps it too, with the time of the return, for scripts/autopilot_report.py.
+    since = stamp or (words[1] if words[:1] == ['away'] and len(words) > 1 else None)
+    if choice == 'autopilot':
+        since = since or now
+        value, text = 'away (autopilot since %s)' % since, 'away %s\n' % since
+    else:
+        value, text = 'present', 'present%s\n' % (' %s %s' % (since, now) if since else '')
+    newline = '\r\n' if '\r\n' in state else '\n'
+    if line is not None:
+        updated = state[:line.start(2)] + value + state[line.end(2):]
+    else:
+        # Under the Working mode line, else where a mode switch adds its line.
+        after = STATE_LINE.search(state) or re.search(r'^---\r?$', state, re.M)
+        position = state.find('\n', after.end()) + 1 if after else len(state)
+        position = position or len(state)
+        updated = (state[:position] + ('' if position == 0 or state[:position].endswith('\n') else newline)
+                   + '**Owner:** ' + value + newline + state[position:])
+    publish(project, state_path, state_bytes, updated.encode('utf-8'), record, text)
+    print('Owner: ' + value + '\n')
+    if choice == 'present':
+        print(BACK)
+        return
+    print(rules[0].strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
+          'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '
+          'the report .myagentkit/autopilot/%s.md is written' % since[:10])
 
 
 def working_mode(project, section, rows, choice=None, sides=None):
@@ -291,9 +372,14 @@ def working_mode(project, section, rows, choice=None, sides=None):
     if choice is None:
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
             raise ValueError('.myagentkit/mode and STATE.md disagree; choose a mode explicitly to repair them')
+        stamp, _, words = owner(project, state)
+        if (words[:2] != ['away', stamp]) if stamp else (words[:1] != ['present']):
+            raise ValueError('.myagentkit/presence and the STATE.md Owner line disagree; switch autopilot or '
+                             'present explicitly to repair them')
         back = AFTER.search(note.strip(' ().')) if current == 'saver' else None
         print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)')
               + (' (returns to ' + back[1] + ')' if back else ''))
+        print('Owner: ' + ('away (autopilot since %s)' % stamp if stamp else 'present'))
         for name, cells in rows:
             print(name + ' |' + cells)
         return
@@ -302,7 +388,7 @@ def working_mode(project, section, rows, choice=None, sides=None):
         raise ValueError('unknown mode; choose ' + ', '.join(name for name, _ in rows))
     # Validate and extract the rules before making either edit.
     def rules(name):
-        match = re.search(r'^#### ' + re.escape(name) + r'(?![\w-])[^\n]*\n.*?(?=^#### |\Z)', section, re.M | re.S)
+        match = re.search(r'^#### ' + re.escape(name) + r'(?![\w-])[^\n]*\n.*?(?=^#{2,4} |\Z)', section, re.M | re.S)
         if match is None:
             raise ValueError('missing mode rules: ' + name)
         return match[0].strip()
@@ -347,12 +433,18 @@ def working_mode(project, section, rows, choice=None, sides=None):
         separator = re.search(r'^---\r?\n', state, re.M)
         position = separator.end() if separator else len(state)
         updated = state[:position] + ('' if position == 0 or state[:position].endswith('\n') else newline) + line + state[position:]
+    publish(project, state_path, state_bytes, updated.encode('utf-8'), record, selected + '\n')
+    print('Current mode: ' + selected + '\n\n' + output)
+
+
+def publish(project, state_path, state_bytes, updated_bytes, record, text):
+    """STATE.md as UPDATED_BYTES and RECORD as TEXT, both or neither: STATE must still be
+    STATE_BYTES, and a failed record write puts STATE back unless another writer changed it."""
     record.parent.mkdir(exist_ok=True)
-    updated_bytes = updated.encode('utf-8')
     pending = []
     try:
         pending.append(prepared(project, state_path, updated_bytes))
-        pending.append(prepared(project, record, (selected + '\n').encode('utf-8')))
+        pending.append(prepared(project, record, text.encode('utf-8')))
         pending.append(prepared(project, state_path, state_bytes))
         if state_path.read_bytes() != state_bytes:
             raise ValueError('STATE.md changed during the mode switch; retry with the current document')
@@ -366,13 +458,12 @@ def working_mode(project, section, rows, choice=None, sides=None):
     finally:
         for path in pending:
             path.unlink(missing_ok=True)
-    print('Current mode: ' + selected + '\n\n' + output)
 
 
 def main():
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('name', nargs='?')
+    parser.add_argument('name', nargs='?', help='solo, cross or saver; or autopilot or present (the presence switch)')
     parser.add_argument('sides', nargs='?', metavar='SIDES',
                         help='the note after the name: "family: X" for solo (default claude), "low: X" for saver')
     parser.add_argument('--project', type=Path, default=Path.cwd())
