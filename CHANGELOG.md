@@ -18,7 +18,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - Kit upgrades are verified before their ACTION items (#305): `review.sh --kit-verified` takes
   `--kit-commit <sha>`, the kit commit the sync copied (still on a release tag, no downgrade), and
   `--base <ref>` for an upgrade of several commits. `sync-kit.sh` prints the review line with it,
-  in `docs/kit/UPGRADE.md` too: `docs/kit/.kit-commit` is written only by `--actions-applied`.
+  in `docs/kit/UPGRADE.md` too: `docs/kit/.kit-commit` is written only by a run that records the
+  version, so not while ACTION items are pending.
 - The Claude reviewer is told that a clean review returns empty findings and manual-check lists
   (#305); a "No qualifying findings." line followed by prose stays a check, never a hidden finding.
 - A `--commit` round continues an `--uncommitted` round of a moved file or a non-ASCII file name

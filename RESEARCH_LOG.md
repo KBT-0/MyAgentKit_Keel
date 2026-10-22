@@ -24,7 +24,7 @@ which is the part that gets lost.
 ### 2026-10-22 — v0.13 kitverify: verify a kit upgrade by the commit it copied; a clean review is empty lists
 
 Backflow (#305), both items paid for in a project's upgrade. 1. `--kit-verified` read the kit
-commit only from `docs/kit/.kit-commit`, which `sync-kit.sh` writes with `--actions-applied`, so
+commit only from `docs/kit/.kit-commit`, which `sync-kit.sh` writes only with the version (not while ACTION items are pending), so
 an upgrade reviewed before its owner-only ACTION items verified nothing and its diff passed the
 400 KB limit; it also took `--commit` only, and an upgrade spans commits. Recording the commit
 at copy time was rejected: `.kit-commit` means "the base the version came from" to the ACTION

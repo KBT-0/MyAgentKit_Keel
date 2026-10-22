@@ -211,7 +211,11 @@ def diff_parts(diff: bytes):
         match = (re.search(rb"(?m)^\+\+\+ " + header_name(b"b/"), header)
                  or (re.search(rb"(?m)^\+\+\+ /dev/null$", header)
                      and re.search(rb"(?m)^--- " + header_name(b"a/"), header))
-                 or re.search(rb"(?m)^(?:rename|copy) to " + header_name(b""), header))
+                 or re.search(rb"(?m)^(?:rename|copy) to " + header_name(b""), header)
+                 # A binary patch or a mode change has neither: its two header names are equal,
+                 # which settles the " b/" ambiguity.
+                 or re.match(rb'diff --git (?:a/([^\n]*) b/\1|"a/((?:[^"\\\n]|\\.)*)" "b/\2")$',
+                             header.partition(b"\n")[0]))
         yield header_value(match) if match else b"", part
 
 

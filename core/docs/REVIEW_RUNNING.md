@@ -115,7 +115,7 @@ the kit's mode and no mode change, that is equal to the kit's file after git's l
 normalisation (`hash-object --path` in the kit clone) at the kit commit: `--kit-commit`'s full
 id, the one the sync copied, else the one `docs/kit/.kit-commit` records in the reviewed commit.
 `--kit-commit` is what lets an upgrade be reviewed while its ACTION items are pending: the sync
-writes `.kit-commit` only when `--actions-applied` records the version (#305). That kit commit
+writes `.kit-commit` only with the version, so not while an ACTION item is pending (#305). That kit commit
 must be on a release tag `v*` of the kit clone and descend from the one the diff's start (the
 parent, or the merge base for `--base`) records and the one the reviewed commit records (no
 downgrade). **Reviewed:** everything else, the project-owned files and merges and every

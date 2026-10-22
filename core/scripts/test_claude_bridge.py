@@ -6015,6 +6015,30 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('ü.py', refused['error'])
 
+    def test_a_binary_or_mode_only_file_continues_only_when_the_commit_has_it(self):
+        # kitverify round 1: a `GIT binary patch` part and a mode-only part have no +++ line, so
+        # their file was missing from task.files and a commit without it continued the label.
+        (self.repo / 'blob.bin').write_bytes(b'\0one\n')
+        self.commit_fixture('Base')
+        for label, change, undo in (
+                ('binary', lambda: (self.repo / 'blob.bin').write_bytes(b'\0two\n'),
+                 lambda: self.git('checkout', '--', 'blob.bin')),
+                ('mode', lambda: self.git('update-index', '--chmod=+x', 'blob.bin'),
+                 lambda: self.git('update-index', '--chmod=-x', 'blob.bin'))):
+            with self.subTest(label=label):
+                task = {'MYAGENTKIT_TASK_ID': label}
+                change()
+                code, first = self.run_bridge('reject', env_extra=task)
+                self.assertEqual(code, 0, first)
+                self.assertEqual(json.loads(Path(first['usage_record']).read_text(encoding='utf-8'))['task']['files'],
+                                 ['blob.bin'])
+                undo()
+                (self.repo / 'other.py').write_text(label + '\n')
+                self.commit_fixture('other.py ' + label)
+                code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+                self.assertEqual(code, 2, refused)
+                self.assertIn('blob.bin', refused['error'])
+
     def test_a_commit_round_continues_the_newest_uncommitted_round_and_names_a_rebased_head(self):
         # chainmain review: `continues` was the last record os.listdir returned, and a worker head
         # rebased away was refused as "reference None resolved to None".
