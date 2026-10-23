@@ -145,6 +145,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (a background worker's transcript, a tmux pane's line above the input box), and the until-loop
   `spawn_worker.sh` prints ends on it too (`watch_workers.sh --limit NAME`). A Windows Terminal
   tab worker now records its sessionId in `NAME.id` for it.
+- `watch_workers.sh` goes on through two failed background-session lists in a row and ends
+  exit 3 only at the third (an update rewriting the `claude` command left it missing for a
+  moment, and the watch ended on a working worker); `--once` still ends exit 3 at the first.
+- The review budget: a diff part that holds a hunk is never named from its `diff --git` header
+  alone, so a header-only vendored-looking name cannot take changed source out of the budget
+  (`scripts/claude_bridge.py`, core and packaged copies).
 - **ACTION** (`docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`, or by hand: in
   "The measurements and the full rules", the paragraph "**The disk is the done signal, on every
   platform.**", replace "(its result file, GONE or WAITING)" with "(its result file, GONE,

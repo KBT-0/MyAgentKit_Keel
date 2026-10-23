@@ -547,7 +547,8 @@ tab() {
 
 # A background session NAME (NAME.host bg), by its row in `claude agents --json --all`
 # (list_workers.sh --row). Return 0 when something was said, 1 when nothing, 2 when the report
-# could not be written, 3 when the sessions cannot be listed.
+# could not be written, 3 when the sessions cannot be listed (without --once, 1 on the first two
+# failed lists in a row, 3 at the third).
 bg() {
   if ! row=$(sh "$here/list_workers.sh" --row "$1" 2>"$err"); then
     say "watch_workers: $1: could not list the background sessions: $(tr '\n' ' ' <"$err")" >&2
