@@ -5322,7 +5322,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         bin_dir = self.root / 'slowbin'
         bin_dir.mkdir(exist_ok=True)
         pid_file = self.root / 'sleeper.pid'
-        (bin_dir / 'tar').write_text('#!/bin/sh\ncat > /dev/null\nsleep 30 &\necho $! > %s\nwait\n'
+        # The child writes its own pid before it becomes the sleeper: an immediate cancel can stop
+        # it first, and then an empty pid file means no sleeper was ever started.
+        (bin_dir / 'tar').write_text('#!/bin/sh\ncat > /dev/null\nsh -c \'echo $$ > "$0"; exec sleep 30\' %s &\nwait\n'
                                      % pid_file)
         (bin_dir / 'tar').chmod(0o755)
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
@@ -5338,7 +5340,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                                      cancelled=cancelled, timeout=timeout)
                     self.assertLess(time.monotonic() - started, 5)
                     self.assertIn('stopped', str(ctx.exception))
-                    sleeper = int(pid_file.read_text())
+                    text = pid_file.read_text()
+                    if not text:
+                        continue
+                    sleeper = int(text)
                     time.sleep(0.1)
                     with self.assertRaises(ProcessLookupError, msg='a child of the copy outlived it'):
                         os.kill(sleeper, 0)

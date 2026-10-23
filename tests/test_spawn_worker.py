@@ -2617,7 +2617,8 @@ class BackgroundHostTests(unittest.TestCase):
         started = time.monotonic()
         result = self.spawn('--resume', '1a2b3c4d')
         self.assertNotEqual(result.returncode, 0)
-        self.assertGreaterEqual(time.monotonic() - started, 100)
+        # The script's clock is `date +%s` (whole seconds): its 100 s can be 99.x s of real time.
+        self.assertGreaterEqual(time.monotonic() - started, 99)
         self.assertIn('a commit or gate', result.stdout)
         self.assertIn('run this resume again in a few minutes', result.stderr)
         self.assertIn('index.lock', result.stderr)
