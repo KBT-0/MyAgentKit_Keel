@@ -159,7 +159,7 @@ class OwnsCheckTests(unittest.TestCase):
         # main checkout, so an unrelated commit on main left the brief's Owns: line.
         scripts = self.repo / 'scripts'
         scripts.mkdir()
-        for name in ('review.sh', 'owns_check.py'):
+        for name in ('review.sh', 'gate_config.sh', 'owns_check.py'):
             (scripts / name).write_bytes((SCRIPT.parent / name).read_bytes())
         (scripts / 'review_dispatch.py').write_text('import os; print("dispatched in", os.getcwd())\n',
                                                     encoding='utf-8')
