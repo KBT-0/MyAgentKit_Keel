@@ -2712,6 +2712,10 @@ class BackgroundHostTests(unittest.TestCase):
         def run():
             return subprocess.run(['sh'], input=loop, cwd=self.tmp, env=env, capture_output=True, text=True,
                                   encoding='utf-8', timeout=60 * SCALE)
+        # A real result comes minutes after the spawn; here it is the same second, and macOS's
+        # sh (bash 3.2) compares -nt in whole seconds.
+        marker = self.workers / 'w1.result-path'
+        os.utime(marker, (marker.stat().st_mtime - 5,) * 2)
         done = run()
         self.assertEqual((done.returncode, done.stdout, done.stderr), (0, DONE.rsplit('<', 1)[0], ''))
         (self.cwd / 'RESULT-w1.md').unlink()

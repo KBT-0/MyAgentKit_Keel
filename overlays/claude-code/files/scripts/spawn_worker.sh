@@ -761,7 +761,7 @@ watch_line() {
   [ -z "$windows" ] || ctop=$(cygpath -m "$ctop") || ctop=${wdir%/.myagentkit/workers}
   wsh=$(q "${cworker%/*}/watch_workers.sh") rq=$(q "$cresult") rp=$(q "$ctop/.myagentkit/workers/$name.result-path")
   printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): cd $(q "$ctop") && sh $wsh --result $name=$rq $name"
-  printf '%s\n' "spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: completed is done; a LIMIT line instead: its usage limit stopped it): until [ $rq -nt $rp ] && grep -qF '<!-- codex-worker: ready -->' $rq || (cd $(q "$ctop") && sh $wsh --limit $name); do sleep 30; done; [ ! $rq -nt $rp ] || head -n 4 $rq"
+  printf '%s\n' "spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: completed is done; a LIMIT line instead: its usage limit stopped it): until [ $rq -nt $rp ] && grep -qF '<!-- codex-worker: ready -->' $rq || (CDPATH= cd $(q "$ctop") && sh $wsh --limit $name); do sleep 30; done; [ ! $rq -nt $rp ] || head -n 4 $rq"
 }
 # The bg host: a Claude Code background session, on every platform. It starts in the worker's
 # folder, which must sit under a repo root the owner trusted in Claude Code (a trusted root
@@ -799,7 +799,8 @@ in_grace() {
     [ -e "$wdir/$name.result-path" ] || return 1
     for f in "$result" "$dir/QUESTION-$name.md" ""; do
       [ -n "$f" ] || return 1
-      [ "$f" -nt "$wdir/$name.result-path" ] && grep -qsF -- '<!-- codex-worker: ready -->' "$f" && break
+      # find -newer: test's -nt is undefined in POSIX sh (SC3013), as in watch_workers.sh's newer().
+      [ -n "$(find "$f" -prune -newer "$wdir/$name.result-path" 2>/dev/null)" ] && grep -qsF -- '<!-- codex-worker: ready -->' "$f" && break
     done
     g=${KIT_WORKER_GRACE:-60}; g=${g%%.*}; waited_from=$(date +%s); grace_end=$((waited_from + ${g:-0} + 15)); held=""; said=""
     printf '%s\n' "spawn_worker: the earlier session of '$name' has published and is in its closing grace: waiting up to $((grace_end - waited_from)) s for it to end, longer while a commit or gate runs in its checkout (100 s in all)"

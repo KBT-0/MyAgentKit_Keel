@@ -6026,8 +6026,12 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         for label, change, undo in (
                 ('binary', lambda: (self.repo / 'blob.bin').write_bytes(b'\0two\n'),
                  lambda: self.git('checkout', '--', 'blob.bin')),
-                ('mode', lambda: self.git('update-index', '--chmod=+x', 'blob.bin'),
-                 lambda: self.git('update-index', '--chmod=-x', 'blob.bin'))):
+                # The file's own mode too: with core.fileMode (POSIX) the working tree's mode is
+                # what an --uncommitted diff reads, not the index's.
+                ('mode', lambda: (os.chmod(self.repo / 'blob.bin', 0o755),
+                                  self.git('update-index', '--chmod=+x', 'blob.bin')),
+                 lambda: (os.chmod(self.repo / 'blob.bin', 0o644),
+                          self.git('update-index', '--chmod=-x', 'blob.bin')))):
             with self.subTest(label=label):
                 task = {'MYAGENTKIT_TASK_ID': label}
                 change()
@@ -7538,7 +7542,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # prior_rounds() filled and the record read, so one review's fields could reach another.
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
         os.environ.update(REVIEW_SHADOW='1', REVIEW_FOCUS='logic')
-        carried, measured = bridge.prior_rounds(self.repo, 'measured-task', 'uncommitted', None, head, 'x')
+        # main() passes the resolved root (macOS: /var is /private/var).
+        carried, measured = bridge.prior_rounds(self.repo.resolve(), 'measured-task', 'uncommitted', None, head, 'x')
         # The tree read and the diff's files ride along since #293.
         self.assertEqual((carried, measured), ('', {'shadow': 'yes', 'focus': 'logic', 'tree': str(self.repo.resolve()),
                                                     'files': []}))
