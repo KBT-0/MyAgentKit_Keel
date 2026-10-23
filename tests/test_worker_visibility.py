@@ -1610,6 +1610,20 @@ class BackgroundTests(Base):
         self.assertIn('watch_workers: w1: could not list the background sessions: ', result.stderr)
         self.assertIn('connect ECONNREFUSED', result.stderr)
 
+    def test_a_watch_run_goes_on_through_two_lists_that_cannot_be_read(self):
+        # An update rewrote the claude command and left it missing for a moment: one failed list
+        # ended the watch exit 3 on a worker that was working.
+        self.spawned('w1')
+        self.rows()
+        args = ('--result', 'w1=RESULT-w1.md', '--interval', '10', '--max-minutes')
+        result = self.run_bg(WATCH, *args, '0', 'w1', AGENTS_ERROR='connect ECONNREFUSED')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('could not list the background sessions', result.stderr)
+        self.assertIn('nothing was waiting on a person', result.stdout)
+        result = self.run_bg(WATCH, *args, '1', 'w1', AGENTS_ERROR='connect ECONNREFUSED')
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertEqual(result.stderr.count('could not list the background sessions'), 3, result.stderr)
+
     def test_a_blocked_session_that_names_nothing_is_waiting_all_the_same(self):
         # POSIX spike: blocked may come with no waitingFor.
         self.spawned('w1')

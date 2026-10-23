@@ -113,7 +113,8 @@
 # done until it wakes. Each state (with what it waits for) is said once, in the file
 # NAME.watch-bg, cleared when the session works again. A worker spawned on the other host (native
 # Windows or WSL: their lists are disjoint) is ELSEWHERE, once. A list that cannot be read, or two
-# rows of the name and no NAME.id, is exit 3 (`watch_workers: NAME: could not list ...`).
+# rows of the name and no NAME.id, is exit 3 (`watch_workers: NAME: could not list ...`); without
+# --once, a list that cannot be read is exit 3 only at its third poll in a row.
 #
 # LIMIT: a worker its usage limit stopped sits idle until the reset, and no result, state hook or
 # row says why (2026-10-22: two sat ~1 h, their rows blocked). The `limit` rule in
@@ -550,6 +551,9 @@ tab() {
 bg() {
   if ! row=$(sh "$here/list_workers.sh" --row "$1" 2>"$err"); then
     say "watch_workers: $1: could not list the background sessions: $(tr '\n' ' ' <"$err")" >&2
+    # A watch run goes on through two failed polls in a row: an update rewriting the claude
+    # command left it missing for a moment, and the watch ended exit 3 on a working worker.
+    if [ -z "$once" ] && [ "$listfails" -lt 2 ]; then listfail=1; return 1; fi
     failed=1; return 3
   fi
   IFS='	' read -r bstate bwait bpid _ bid _ <<EOF
@@ -769,8 +773,9 @@ EOF
 done
 
 end=$(( $(date +%s) + max * 60 ))
+listfails=0
 while :; do
-  found="" failed="" pending=""
+  found="" failed="" pending="" listfail=""
   : >"$out"
   for n in "$@"; do
     tab_read=""; line=""
@@ -823,6 +828,7 @@ while :; do
     fi
     [ -n "$windows" ] || isbg "$n" || tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
   done
+  if [ -n "$listfail" ]; then listfails=$((listfails + 1)); else listfails=0; fi
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0
   [ $(( $(date +%s) + interval )) -le "$end" ] ||
