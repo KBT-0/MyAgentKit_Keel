@@ -1,6 +1,6 @@
 {
   "name": "myagentkit",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "The review gate, the handoff brief, the working modes, and a one-command path to send what you learned back upstream.",
   "author": {
     "name": "Kemal Berhan TAN",

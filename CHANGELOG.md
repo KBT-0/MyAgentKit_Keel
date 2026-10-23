@@ -13,7 +13,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## Unreleased — v0.13
+## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
   decisions of 2026-10-22): not a fourth mode but a presence switch beside the mode.

@@ -5,7 +5,7 @@ description: Request a fresh Claude review from Codex, fail over once to the con
 
 # Claude review from Codex
 
-**Kit version.** This plugin is kit v0.12.1. Before anything else, read the project's
+**Kit version.** This plugin is kit v0.13.0. Before anything else, read the project's
 `docs/kit/.kit-version` (such as `0.10` or `0.12.1`). When it is there and names another
 version, print one plain line and go on, never stop for it: both versions, which one is newer
 (compared part by part as numbers, a missing part counting as 0:

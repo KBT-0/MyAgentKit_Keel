@@ -5,7 +5,7 @@ script enforces, one memory file that every tool and session reads, a review gat
 second model runs, and a way to spawn, watch and close worker sessions without losing
 work. Every project of mine is built on it, and what a project learns can flow back.
 
-**v0.12.1.** The kit's own check (`./scripts/check.sh`) runs on Ubuntu, macOS and
+**v0.13.** The kit's own check (`./scripts/check.sh`) runs on Ubuntu, macOS and
 native Windows with Python 3.11 and 3.14 in CI, and every gate in it has a negative test that
 was watched going red. Each version was reviewed by two models that did not write it, and the
 raw reports are kept in [docs/reviews](docs/reviews/). [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
