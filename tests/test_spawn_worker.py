@@ -1071,7 +1071,7 @@ exit 0
                                  'spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: '
                                  'completed is done; a LIMIT line instead: its usage limit stopped it): '
                                  "until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' %s || "
-                                 '(cd %s && sh %s --limit w1); do sleep 30; done; [ ! %s -nt %s ] || head -n 4 %s'
+                                 '(CDPATH= cd %s && sh %s --limit w1); do sleep 30; done; [ ! %s -nt %s ] || head -n 4 %s'
                                  % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, shq(top),
                                     shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))), report,
                                     shq(top + '/.myagentkit/workers/w1.result-path'), report))
