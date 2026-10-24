@@ -144,6 +144,20 @@ if [ "${1:-}" = "--self-test" ]; then
   # No completion line = no pass: an empty run is a failure (pytest exit code 5,
   # docs.pytest.org/en/stable/reference/exit-codes.html; jest --passWithNoTests is opt-in, jestjs.io/docs/cli).
   grep -qx 'REVIEW SELF-TEST: PASS' "$test_log" || die "review self-tests produced no completion evidence"
+  # The project's own suites: scripts/review_selftest.project.sh, project-owned and never
+  # shipped (so a sync never writes it), run after the kit's, executed like doctor.project.sh.
+  # Its own file, not check.project.sh: the gate runs on every commit and must stay short.
+  # Absent, nothing runs; present, it must run and print its own completion line.
+  hook="$script_dir/review_selftest.project.sh"
+  if [ -e "$hook" ]; then
+    first=""; IFS= read -r first < "$hook" || true
+    case $first in '#!'*) [ -x "$hook" ] || first="" ;; *) first="" ;; esac
+    [ -n "$first" ] || die "scripts/review_selftest.project.sh cannot run: make #!/bin/sh its first line, then chmod +x it and git update-index --chmod=+x it"
+    "$hook" < /dev/null > "$test_log" 2>&1; hook_rc=$?
+    cat "$test_log"
+    [ "$hook_rc" -eq 0 ] || die "project self-tests failed (exit $hook_rc)"
+    grep -qx 'PROJECT SELF-TEST: PASS' "$test_log" || die "project self-tests produced no completion evidence (PROJECT SELF-TEST: PASS)"
+  fi
   exit 0
 fi
 

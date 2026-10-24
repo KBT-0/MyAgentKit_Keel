@@ -505,6 +505,16 @@ class DoctorTests(unittest.TestCase):
             self.assertNotIn('DOCTOR: ready', bare.stdout)
             git('rm', '-q', '-f', '--cached', 'scripts/doctor.project.sh')
             extra.unlink()
+            # The gate's and the self-test's project hooks refuse a file without a #! line too.
+            for name in ('check.project.sh', 'review_selftest.project.sh'):
+                hook = project / 'scripts' / name
+                hook.write_text('echo "project: step"\n', newline='\n')
+                hook.chmod(0o755)
+                git('add', *(['--chmod=+x'] if WINDOWS else []), 'scripts/' + name)
+                bare = doctor()
+                self.assertIn('MISSING: scripts/%s has no #! line' % name, bare.stdout)
+                git('rm', '-q', '-f', '--cached', 'scripts/' + name)
+                hook.unlink()
 
             # A fresh directory of links to the resolved executables: a dangling link or a
             # repeated PATH entry on the host must not break the fixture.
@@ -1177,6 +1187,37 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('MISSING: .githooks/pre-push does not run Git LFS', run())
             (project / '.githooks/pre-push').write_text('#!/bin/sh\ngit lfs pre-push "$@"\n')
             self.assertEqual(run(), '')
+
+    def test_worktrees_left_at_an_old_path_are_told_with_their_fix(self):
+        # labricore, 2026-10-24: a project copied to a new path kept worktree records at the old
+        # one, git showed them prunable (some locked) and doctor said nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp).resolve() / 'old', Path(tmp).resolve() / 'new'
+            git = lambda *args: subprocess.run(['git', '-C', str(new if new.exists() else old), '-c', 'user.name=t',
+                                                '-c', 'user.email=t@t', *args], capture_output=True, check=True)
+            subprocess.run(['git', 'init', '-q', str(old)], check=True)
+            git('commit', '-q', '--allow-empty', '-m', 'base')
+            for name in ('moved', 'locked', 'gone'):
+                git('worktree', 'add', '-q', '-b', name, str(old / '.claude/worktrees' / name))
+            git('worktree', 'lock', str(old / '.claude/worktrees/locked'))
+            run = lambda: self.doctor_section('# --- worktrees git lists', '# --- build output a merged worktree keeps',
+                                              new if new.exists() else old, os.environ)
+            self.assertEqual(run(), '')
+            for name in ('gone', 'locked'):
+                shutil.rmtree(old / '.claude/worktrees' / name)
+            old.rename(new)
+            out = run()
+            self.assertNotIn('MISSING', out)
+            lines = out.splitlines()
+            self.assertEqual(len(lines), 3, out)
+            moved, locked, gone = (next(l for l in lines if 'worktrees/%s' % n in l.split(',')[0]) for n in ('moved', 'locked', 'gone'))
+            self.assertIn("git worktree repair '%s'" % (new / '.claude/worktrees/moved').as_posix(), moved)
+            self.assertIn("git worktree unlock '%s'" % (old / '.claude/worktrees/locked').as_posix(), locked)
+            self.assertIn('git worktree prune', gone)
+            self.assertNotIn('repair', gone)
+            # Told, never fixed: every record is still there.
+            self.assertEqual(subprocess.run(['git', '-C', str(new), 'worktree', 'list'], capture_output=True,
+                                            text=True).stdout.count('\n'), 4)
 
     def test_a_hook_file_the_committed_settings_do_not_register_is_not_ready(self):
         # #101: a sync copied five guards, settings.json was merged but not committed, and

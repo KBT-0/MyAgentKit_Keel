@@ -13,11 +13,14 @@
 # workflow skipped by path leaves a required check Pending (GitHub, "Troubleshooting required
 # status checks"), and this script already decides what a documentation-only change skips.
 #
-# Usage: check.sh [--for-commit|--for-merge]
+# Usage: check.sh [--for-commit|--for-merge|--no-build]
 #   default       run the gates
 #   --for-commit  what .githooks/pre-commit runs: the gates, without the build when the
 #                 staged change is documentation only (section 4 decides; the flag only asks)
 #   --for-merge   what .githooks/pre-merge-commit runs: the same, for the merge's result
+#   --no-build    a manual run without the build, every other step run: to check the gate
+#                 itself (after a sync, on a documentation change); its PASS line says so.
+#                 No hook passes it, and it is never a pass for a task that changed code.
 #
 # ADDING A GATE: add the check, AND a fixture test for it in the project's test suite: a
 # small input that breaks the rule must turn the check red with its own `FAIL [tag]` line,
@@ -393,12 +396,13 @@ case "$lock_path" in
   *) build_log="${lock_path%.lock}-build.log" ;;
 esac
 
-for_commit="" for_merge="" pass_note=""
+for_commit="" for_merge="" no_build="" pass_note=""
 case "${1:-}" in
   "")           ;;
   --for-commit) for_commit=1 ;;
   --for-merge)  for_merge=1 ;;
-  *)            echo "usage: check.sh [--for-commit|--for-merge]"; exit 2 ;;
+  --no-build)   no_build=1 ;;
+  *)            echo "usage: check.sh [--for-commit|--for-merge|--no-build]"; exit 2 ;;
 esac
 
 # Every scan, filter and boundary check below reads text in the C locale. In a UTF-8 locale
@@ -1082,7 +1086,10 @@ print(len(fields) // 2)
 ' "$docs_always_build" "${for_merge:+merge}" 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
-    if [ -n "$docs_only" ]; then
+    if [ -n "$no_build" ]; then
+      pass_note=" (build not run: --no-build)"
+      printf '%s\n' "NOTE [build]: not run: --no-build (a check of the gate itself, never a task's pass)."
+    elif [ -n "$docs_only" ]; then
       if [ "$docs_only" = 1 ]; then unit=file; else unit=files; fi
       pass_note=" (build not run: documentation-only commit, $docs_only $unit)"
       printf '%s\n' "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
@@ -1132,6 +1139,38 @@ print(len(fields) // 2)
       fi
     fi ;;
 esac
+
+# ---------------------------------------------------------------------------
+# 4b) The project's own gate steps
+# ---------------------------------------------------------------------------
+# This file is kit-owned, so a project step that is not a value (a negative test of its own
+# hook) lives in scripts/check.project.sh, project-owned, as doctor.project.sh does for
+# doctor.sh; the kit ships none, so a sync never writes it. Executed, not sourced: it runs repo
+# scripts from the checkout's root, which boundary_checks.sh's fixture test cannot (labricore,
+# 2026-10-24), and it cannot change this gate's state. It runs on every run, documentation-only
+# commits, cached builds and --no-build included; its lines print as they are, a non-zero exit
+# fails the gate, and an absent file runs nothing. A file that cannot run (no #! line, which Git
+# for Windows never runs, or no execute bit) fails: a step that never runs enforces nothing.
+if [ -e scripts/check.project.sh ]; then
+  first=""; IFS= read -r first < scripts/check.project.sh || true
+  case $first in
+    '#!'*) [ -x scripts/check.project.sh ] || first="" ;;
+    *) first="" ;;
+  esac
+  if [ -z "$first" ]; then
+    echo "FAIL [project]: scripts/check.project.sh cannot run: make #!/bin/sh its first line, then"
+    echo "                chmod +x scripts/check.project.sh && git update-index --chmod=+x scripts/check.project.sh"
+    fail=1
+  else
+    ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+      exec scripts/check.project.sh ) < /dev/null
+    project_rc=$?
+    if [ "$project_rc" -ne 0 ]; then
+      printf '%s\n' "FAIL [project]: scripts/check.project.sh exited $project_rc (its lines above)."
+      fail=1
+    fi
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 5) Scanner integrity — LAST, so it covers every scan above, including the project's own

@@ -367,6 +367,49 @@ class CheckGateTests(unittest.TestCase):
         code, out = gate(self.project, self.build, args=args)
         return code, out, self.mark.exists()
 
+    def test_the_projects_gate_steps_run_on_every_commit_and_their_failure_fails_it(self):
+        # A project step had no home in the kit-owned gate; run from the build it lost every
+        # documentation-only commit (labricore, 2026-10-24).
+        git = self.commit_fixture()
+        hook = self.project / 'scripts/check.project.sh'
+        hook.write_text('#!/bin/sh\ntest -f scripts/gate_config.sh || exit 9\necho project step ran\nexit "${HOOK_EXIT:-0}"\n')
+        hook.chmod(0o755)
+        (self.project / 'docs/a.md').write_text('a\n')
+        git('add', 'docs/a.md')
+        code, out, built = self.gate_built()
+        self.assertEqual((code, built), (0, False), out)
+        self.assertIn('project step ran', out)
+        self.assertIn('CHECK: PASS (build not run: documentation-only commit, 1 file)', out)
+        code, out = gate(self.project, self.build, args=('--for-commit',), HOOK_EXIT='3')
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh exited 3', out)
+        # A hook that cannot run enforces nothing: no #! line, or no execute bit, fails.
+        hook.write_text('echo project step ran\n')
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 1, out)
+        self.assertNotIn('project step ran', out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh cannot run', out)
+        hook.write_text('#!/bin/sh\necho project step ran\n')
+        hook.chmod(0o644)
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh cannot run', out)
+        hook.unlink()
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('[project]', out)
+
+    def test_no_build_skips_the_build_and_says_so(self):
+        # Checking the gate itself after a sync on a doc-only change meant copying a 900 MB
+        # project to edit its build command (leeway L8, 2026-10-24).
+        git = self.commit_fixture()
+        code, out, built = self.gate_built(args=('--no-build',))
+        self.assertEqual((code, built), (0, False), out)
+        self.assertIn('CHECK: PASS (build not run: --no-build)', out)
+        (self.project / 'b.md').write_text('b ' + MARKER + '\n')
+        code, out, built = self.gate_built(args=('--no-build',))
+        self.assertEqual((code, built), (1, False), out)
+
     def test_a_documentation_only_commit_skips_the_build_and_only_the_build(self):
         # A project's gate ran its full build for minutes on every commit that changed only
         # documentation. The build is skipped for such a commit, and the PASS line says so.

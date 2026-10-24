@@ -141,6 +141,8 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
          .githooks/*.project) miss "$f has no #! line (Git for Windows never runs it; the kit's hook refuses it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
          scripts/doctor.project.sh) project_bare=1
            miss "$f has no #! line (Git for Windows never runs it, and doctor skipped it)" "make #!/bin/sh its first line, then chmod +x $f" ;;
+         scripts/check.project.sh|scripts/review_selftest.project.sh)
+           miss "$f has no #! line (the kit refuses to run it, so the gate or the self-test fails)" "make #!/bin/sh its first line, then chmod +x $f" ;;
        esac
        continue ;;
   esac
@@ -335,6 +337,42 @@ if [ -d .claude/hooks ]; then
     [ -f "$f" ] || miss ".claude/settings.json registers $f, which does not exist" "sync the kit again, or remove the entry and commit settings.json"
   done
 fi
+
+# --- worktrees git lists at a path that is gone or in another copy ---------------------
+# A project copied or moved to a new path (Windows to Linux, labricore 2026-10-24) keeps each
+# linked worktree's record at the old path: `git worktree list` shows it prunable, a locked one
+# is never pruned, and a worker of the same name cannot be spawned. Told, never fixed here
+# (NOTE, not MISSING: the machine is ready). A folder that moved with the project is joined
+# again by `git worktree repair <its new path>` (git-scm.com/docs/git-worktree, "repair"); a
+# gone one's record goes with `git worktree prune`, a locked one after `git worktree unlock`.
+git worktree list --porcelain 2>/dev/null | {
+  main="" wt="" locked=""
+  tell() {
+    [ -n "$wt" ] && [ "$wt" != "$main" ] || return 0
+    case $wt in
+      "$main"/*) [ -d "$wt" ] && return 0 ;;
+      */.claude/worktrees/*) ;;
+      *) [ -d "$wt" ] && return 0 ;;
+    esac
+    here="$main/.claude/worktrees/${wt#*/.claude/worktrees/}"
+    case $wt in */.claude/worktrees/*) [ -d "$here" ] || here="" ;; *) here="" ;; esac
+    if [ -n "$here" ]; then
+      fix="its folder moved with the project, so join it again: git worktree repair '$here'"
+    elif [ -n "$locked" ]; then
+      fix="git worktree unlock '$wt' && git worktree prune"
+    else
+      fix="git worktree prune"
+    fi
+    printf '%s\n' "NOTE: git lists the worktree $wt${locked:+ (locked)}, a path that is gone or in another copy of the project; fix: $fix"
+  }
+  while IFS= read -r line; do
+    case $line in
+      "worktree "*) tell; wt=${line#worktree } locked=""; [ -n "$main" ] || main=$wt ;;
+      locked|"locked "*) locked=1 ;;
+    esac
+  done
+  tell
+}
 
 # --- build output a merged worktree keeps (Claude Code overlay) -----------------------
 # The list ships empty, the safe default: a worktree holding build output is then kept. A

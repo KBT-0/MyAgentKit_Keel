@@ -178,7 +178,8 @@ kit's `core/scripts/gate_config.sh` there once and sets them in it.
 <!-- REVIEW_COMPANIONS_START -->
 
 `review_dispatch.py`, `claude_bridge.py`,
-`codex_bridge.py`, `agent_process.py`, `agent_usage.py`, `test_claude_bridge.py`, and
+`codex_bridge.py`, `agent_process.py`, `agent_usage.py`, `usage_summary.py` (the usage
+suite runs it), `test_claude_bridge.py`, and
 `test_agent_usage.py`, plus `codex_quota.py`, `test_codex_quota.py`, `review_test_support.py`
 and `owns_check.py` (`review.sh` runs it on a `REVIEW_TASK_FILE` brief's `Owns:` line).
 
@@ -293,5 +294,20 @@ Each check the project adds has a fixture test in the suite the build command ru
 with its own `FAIL` line, a clean one leaves it green. The gate does not check that those
 tests exist or that the build command runs them: a green `CHECK: PASS` says the checks found
 nothing, and only the fixture tests show that each check can fail.
+
+A project step that is not a value (a negative test of the project's own hook, a check that
+runs its scripts) goes in `scripts/check.project.sh`, project-owned, executable and starting
+with a `#!` line: `check.sh` runs it from the checkout's root after its own steps, on every
+run, documentation-only commits included, and its non-zero exit fails the gate, as does a file
+that cannot run. The project's own suites for `scripts/review.sh --self-test` go in
+`scripts/review_selftest.project.sh` the same way: it runs after the kit's suites and passes
+only when it exits 0 and prints the line `PROJECT SELF-TEST: PASS`. The kit ships neither
+file, so a sync never writes them.
+
+To check the gate itself without the build (after a sync, on a documentation change), run
+`./scripts/check.sh --no-build`: every other step runs, and the result reads
+`CHECK: PASS (build not run: --no-build)`, never a task's pass. No hook passes the flag. A
+commit of documents alone skips the build on its own (`docs_only_skip_build` in
+`scripts/gate_config.sh`).
 
 {{PROJECT_SETUP_STEPS}}

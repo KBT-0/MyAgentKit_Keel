@@ -546,7 +546,7 @@ mandatory, in a fresh session with no shared context: that is what decorrelates 
 from the author's (`docs/REVIEW_GATE.md`, "Invariant", says who takes it).
 
 The table decides the AUTHOR and REVIEWER roles and may change its mind each month. A swap is
-recorded in `scripts/review.sh` and in `docs/STATE.md`; the review records stay comparable
+recorded in `scripts/gate_config.sh` and in `docs/STATE.md`; the review records stay comparable
 across it because both directions publish one format. **Limit:** no change is reviewed by a
 weaker tier than its author's alone (the review row), so a budget swap moves the authors, never
 a review below its author (`docs/research/claude-lead-codex.md`, findings 4 and 9: a weaker

@@ -13,6 +13,32 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- A project's own gate steps and self-test suites have a home (labricore field report 1, item 3):
+  `scripts/check.project.sh`, run by `check.sh` from the checkout's root after its own steps on
+  every run, documentation-only commits included (its non-zero exit fails the gate), and
+  `scripts/review_selftest.project.sh`, run by `review.sh --self-test` after the kit's suites
+  (it must print `PROJECT SELF-TEST: PASS`). Both are project-owned, executed like
+  `scripts/doctor.project.sh`, and absent means nothing runs; a file without a `#!` line or the
+  execute bit fails, and `doctor.sh` names it. The kit ships neither, so a sync never writes them.
+- `check.sh --no-build` checks the gate itself without the build (leeway L8); its PASS line says
+  so and no hook passes it.
+- `doctor.sh` tells each worktree git still lists at a path that is gone or in another copy of
+  the project (a moved project), with its fix: `git worktree repair` for a folder that moved
+  along, else `git worktree prune` (`git worktree unlock` first for a locked one). It changes
+  nothing.
+- **ACTION** (`docs/DEV_SETUP.md`, `docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run
+  `sync-kit.sh . --merge`, or by hand: in `DEV_SETUP.md`, add `usage_summary.py` to the
+  REVIEW_COMPANIONS list (the usage suite of `review.sh --self-test` runs it) and copy the two
+  new paragraphs of section 5 from the kit's `core/docs/DEV_SETUP.md`; in `HANDOFF.md`, delete
+  from "End the prompt with:" to "never completion." (the v0.13 ACTION said so, and the kit's own
+  copy still held it; the text is in `docs/HANDOFF_KIT.md`); in `WORKFLOW.md`, a reviewer swap
+  is recorded in `scripts/gate_config.sh`, not `scripts/review.sh`.
+- **ACTION** (projects with a step of their own patched into `check.sh`'s build command or into
+  `review.sh`): move it to `scripts/check.project.sh` or `scripts/review_selftest.project.sh`
+  (`#!/bin/sh` first line, `chmod +x`, `git add --chmod=+x`).
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
