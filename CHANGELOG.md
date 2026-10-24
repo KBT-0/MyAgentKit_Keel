@@ -19,7 +19,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - `/myagentkit:mode autopilot|present` works in a project older than v0.13 and in the kit's source repo (L11): both plugins ship `working_mode.py` and the WORKFLOW.md rules it falls back to; with no docs/WORKFLOW.md the helper prints one plain line, and a presence switch still writes `.myagentkit/presence` and the `/goal` line.
 - Presence across checkouts (leeway L12, L13): a linked worktree reads the main checkout's `.myagentkit/presence`; a clone of a commit made while away (the `**Owner:** away` line, no record) shows `Owner: away` with a one-line note instead of exit 1, and the hooks follow that line until a switch records the presence there.
 - While away, a worker's context band line no longer tells it to update `docs/STATE.md` (L14); on POSIX the suggestions ledger lock fails open at once on a read-only folder instead of waiting 5 s (L15).
-- `review.sh` without `--reviewer` in solo runs the mode's own family (`family: codex` runs Codex, else Claude), whatever `DEFAULT_REVIEWER` says (L16, `docs/REVIEW_GATE.md`, "Invariant"); cross, saver and a STATE.md without the mode line keep `DEFAULT_REVIEWER`.
+- `review.sh` without `--reviewer` in solo runs the mode's own family (`family: codex` runs Codex, else Claude), whatever `DEFAULT_REVIEWER` says (L16, `docs/REVIEW_GATE.md`, "Invariant"); cross and saver keep `DEFAULT_REVIEWER`; a STATE.md without the mode line runs Claude (the kit runs on Claude alone).
 
 ## v0.13 — 2026-10-23
 

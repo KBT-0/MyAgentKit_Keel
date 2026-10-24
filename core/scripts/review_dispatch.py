@@ -363,11 +363,14 @@ def reject_line_ending_churn(repo, scope, reference, diff, also=()):
 
 def mode_reviewer(repo, default):
     """The reviewer review.sh runs when none is named: solo reviews within its family
-    (docs/REVIEW_GATE.md, "Invariant"), which STATE.md's mode line names (none: claude); cross,
-    saver and a STATE.md without the line keep gate_config.sh's DEFAULT_REVIEWER (leeway L16)."""
+    (docs/REVIEW_GATE.md, "Invariant"), which STATE.md's mode line names (none: claude); cross and
+    saver keep gate_config.sh's DEFAULT_REVIEWER. No mode line at all runs claude: the kit runs on
+    Claude alone (owner, 2026-10-24; leeway L16)."""
     import working_mode
     state = repo / "docs/STATE.md"
     lines = list(working_mode.STATE_LINE.finditer(state.read_text(encoding="utf-8"))) if state.is_file() else []
+    if not lines:
+        return "claude"
     name, _, note = lines[0][2].partition(" (") if len(lines) == 1 else ("", "", "")
     if working_mode.normalized(name) != "solo":
         return default
