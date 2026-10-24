@@ -78,6 +78,7 @@ NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen question
 
 
 HANDOFF = re.compile(r'hand-?off', re.I)
+RULE_DOCS = {'HANDOFF.md', 'HANDOFF_KIT.md'}  # the kit's own rule docs: editing them hands nothing off
 # shortcut: only the transcript's last 4 MB is read; a longer turn misses its hand-off write (no bounce), widen if seen.
 TAIL = 4 * 1024 * 1024
 
@@ -126,7 +127,8 @@ def wrote_handoff(transcript) -> bool:
         for block in blocks:
             if isinstance(block, dict) and block.get('type') == 'tool_use' \
                     and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
-                    and HANDOFF.search(Path(str((block.get('input') or {}).get('file_path', ''))).name):
+                    and HANDOFF.search(name := Path(str((block.get('input') or {}).get('file_path', ''))).name) \
+                    and name not in RULE_DOCS:
                 return True
     return False
 

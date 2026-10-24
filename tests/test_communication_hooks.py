@@ -287,7 +287,7 @@ class PlainReportTests(unittest.TestCase):
     def test_a_turn_that_wrote_a_hand_off_must_give_the_opening_prompt(self):
         # Owner 2026-10-24: "handoff hazır" alone left the owner to write the new session's prompt.
         def transcript(*records):
-            path = self.project / 'session.jsonl'
+            path = self.project / f'session-{len(list(self.project.glob("session-*")))}.jsonl'
             path.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
             return str(path)
 
@@ -313,6 +313,9 @@ class PlainReportTests(unittest.TestCase):
                   (transcript(prompt, {'type': 'assistant', 'message': {'content': [
                       {'type': 'tool_use', 'name': 'Read', 'input': {'file_path': '/p/handoff-35.md'}}]}}, result),
                    'The hand-off is ready.'),
+                  # The kit's rule docs are named HANDOFF too; editing them hands nothing off.
+                  (transcript(prompt, write('/p/docs/HANDOFF.md', 'Edit'), result,
+                              write('/p/core/docs/HANDOFF_KIT.md', 'Edit'), result), 'HANDOFF.md fixed.'),
                   (str(self.project / 'missing.jsonl'), 'Handoff hazır.'), (None, 'Handoff hazır.'))
         for path, message in passes:
             with self.subTest(passes=message, path=path):
