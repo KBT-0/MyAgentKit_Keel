@@ -2,7 +2,7 @@ name: Mod tests
 
 # The kit's Claude Code mod (plugin/): `claude plugin validate` and `claude plugin test`.
 # Separate from ci.yml so its job names and matrix stay as they are. The Claude Code version
-# is pinned to the one the kit tests with; it is the mod's minimum (core/docs/GOTCHAS_KIT.md,
+# is pinned to the one the kit tests with; it is the mod's minimum (CONTRIBUTING.md,
 # "The kit's Claude Code mod"). Raise it with a re-run of both commands.
 on:
   push:
