@@ -31,6 +31,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
 PANES = ROOT / 'tests/fixtures/panes'
+# The tools a worker never uses, off its start prefix (#307 rank 5); AskUserQuestion: QUESTION-NAME.md is its channel.
+DENIED = ['--disallowedTools', 'AskUserQuestion', 'Artifact', 'ArtifactComments', 'ArtifactData', 'Workflow',
+          'DesignSync', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'EnterWorktree',
+          'ExitWorktree', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'SendFeedback']
 INSTRUCTION = ("Read {brief} and follow it. Your result file is {result}: its first four lines are Kind: "
                "completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and "
                "Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as "
@@ -891,8 +895,7 @@ exit 0
         launched = self.launched()
         self.assertIsNotNone(launched, result.stderr)
         self.assertEqual(launched['argv'], ['-n', name, '--model', model, '--effort', effort,
-                                            '--settings', settings, '--allowedTools', tools,
-                                            '--disallowedTools', 'AskUserQuestion'])
+                                            '--settings', settings, '--allowedTools', tools, *DENIED])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -1136,14 +1139,13 @@ exit 0
         merged = json.loads(Path(self.windows_path(argv[8])).read_text())
         self.assertEqual(merged['permissions'], {'defaultMode': 'auto'})
         self.assertEqual(argv[:8] + argv[9:], [self.instruction(brief, tab=True), '-n', 'w1', '--model', 'm', '--effort',
-                                               'high', '--settings', '--allowedTools', tools,
-                                               '--disallowedTools', 'AskUserQuestion'])
+                                               'high', '--settings', '--allowedTools', tools, *DENIED])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         # A worker is no child of the lead: the lead's session markers never reach it.
         self.assertFalse(MARKERS & set(launched['env_names']), launched['env_names'])
         self.assertIn('CLAUDE_CODE_EXECPATH', launched['env_names'])
-        # Its cache outlives its waits (docs/WORKFLOW.md, "Worker cost", rule 1).
+        # Its own sub-agents are short errands: five minutes (docs/WORKFLOW.md, "Worker cost", rule 1).
         self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', launched['env_names'])
         # Its report is for the lead: the plain-words Stop hook steps aside.
         self.assertIn('MYAGENTKIT_ROLE', launched['env_names'])
@@ -1470,8 +1472,7 @@ exit 0
                 # On native Windows the worker also gets the merged --settings file (the state hooks).
                 argv = self.launched()['argv'][1:]
                 self.assertEqual(argv[6], '--settings')
-                self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended,
-                                                       '--disallowedTools', 'AskUserQuestion'])
+                self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended, *DENIED])
 
     def test_the_displayed_behaviour_path_has_no_terminal_control_bytes(self):
         self.cwd = self.tmp / 'lead\x1b[2J\tdir'
@@ -1505,8 +1506,7 @@ exit 0
             if '--settings' in argv:
                 at = argv.index('--settings')
                 argv = argv[:at] + argv[at + 2:]
-            self.assertEqual(argv[-8:], ['-n', 'w1', '--model', 'm', '--effort', 'high',
-                                         '--disallowedTools', 'AskUserQuestion'])
+            self.assertEqual(argv[-6 - len(DENIED):], ['-n', 'w1', '--model', 'm', '--effort', 'high', *DENIED])
             self.assertFalse(marker.exists(), 'a backend value ran as shell')
             self.assertNotIn(token, result.stdout + result.stderr)
             (self.state / 'claude.json').unlink()
@@ -1947,6 +1947,7 @@ exit 0
         self.assertFalse(MARKERS & set(env), env)
         self.assertIn('CLAUDE_CODE_EXECPATH', env)
         self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', env)
+        self.assertIn(' CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m ', script)  # its sub-agents are short errands
         self.assertIn('MYAGENTKIT_ROLE', env)
 
     def test_a_started_worker_is_shown_unless_batch(self):
@@ -2395,12 +2396,13 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertTrue(argv[0].startswith('Read '), argv)  # the prompt first
         self.assertIn('--bg', argv)
         self.assertEqual(argv[argv.index('-n') + 1], 'w1')
-        self.assertEqual(argv[-2:], ['--disallowedTools', 'AskUserQuestion'])
+        self.assertEqual(argv[-len(DENIED):], DENIED)
         self.assertEqual(Path(self.launch()['cwd']).resolve(), worktree.resolve())
         self.assertEqual(self.launch()['markers'], [], 'the lead\'s child-session marker reached the launch')
         settings = json.loads(Path(argv[argv.index('--settings') + 1]).read_text(encoding='utf-8'))
         self.assertEqual(settings['worktree'], {'bgIsolation': 'none'})
         self.assertEqual(settings['env']['MYAGENTKIT_ROLE'], 'worker')
+        self.assertEqual(settings['env']['CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'], '5m')  # beats the spawner's 1h
         self.assertEqual(settings['attribution'], {'commit': '', 'pr': ''})
         full = '1a2b3c4d-5137-4293-88d5-c4339d1ce56c'
         self.assertEqual((self.workers / 'w1.session').read_text(), full + '\n')

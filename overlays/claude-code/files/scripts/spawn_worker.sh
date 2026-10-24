@@ -59,9 +59,11 @@
 # cost"). The worker's MAIN conversation follows `promptCacheTtl`, which the kit's
 # .claude/settings.json pins to "1h" (unset it is automatic: 1 hour on a subscription within its
 # usage limits, 5 minutes on an API key, Bedrock, Vertex or Foundry; CLAUDE_CODE_PROMPT_CACHE_TTL
-# overrides it; Claude Code 2.1.302's settings schema). CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h
-# on the launch line below covers only the worker's own sub-agents, workflows and helper
-# requests; the lead's own sub-agents keep five minutes, since they rarely wait longer (#116).
+# overrides it; Claude Code 2.1.302's settings schema). CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m
+# on the launch line below covers the worker's own sub-agents, workflows, forks and compaction
+# (the "everything else" bucket, code.claude.com/docs/en/prompt-caching): short errands, since
+# one that waits runs as a session of its own (guard_worker_route.py). It was 1h until #307
+# measured that premium unused; 5m also beats a 1h a spawner or the bg daemon carries.
 # A --backend endpoint may not cache at all (#190). The start costs either way: a new session
 # pays its whole first request as a cache write (about 47k to 52k tokens on five kit worker
 # transcripts, mostly Claude Code's own system prompt and tools), and a sub-agent pays its own
@@ -569,7 +571,7 @@ if s:
         d.setdefault("worktree", {})["bgIsolation"] = "none"
         # No variable of the launch reaches the session (it runs in a process the daemon
         # started; POSIX spike), and no AI attribution in its commits (a rule of the owner).
-        d.setdefault("env", {}).update(MYAGENTKIT_ROLE="worker", CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="1h")
+        d.setdefault("env", {}).update(MYAGENTKIT_ROLE="worker", CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="5m")
         d["attribution"] = {"commit": "", "pr": ""}
     print(json.dumps(d, indent=2))' "$hook" "$project" "$bg" >"$wdir/$name.settings.json" ||
     die "cannot merge the project and worker hooks into --settings (not a JSON object?): $own"
@@ -590,7 +592,7 @@ reset_state() {
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
 # CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay.
 bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
-unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h MYAGENTKIT_ROLE=worker"
+unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m MYAGENTKIT_ROLE=worker"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")${resume:+ --resume $(q "$resume")}"
@@ -609,7 +611,13 @@ printf '%s\n' "spawn_worker: host: $host"
 # No question dialog in a pane nobody may watch: QUESTION-NAME.md is the question channel (the
 # instruction says so; this enforces it). Permission prompts are not tools and
 # stay. AskUserQuestion is the tool's name in Claude Code 2.1.300 (code.claude.com/docs/en/sub-agents).
-cmd="$cmd --disallowedTools AskUserQuestion"
+# The rest are tools a worker never uses, off its start prefix: --disallowedTools removes them
+# from the model's context (CLI reference). Measured on 2.1.310 (#307 rank 5): a bg worker's
+# first request went from 46.5k to 27.4k tokens. SendMessage, ToolSearch, Monitor, Agent, Skill,
+# ReportFindings and the task tools stay.
+cmd="$cmd --disallowedTools AskUserQuestion Artifact ArtifactComments ArtifactData Workflow DesignSync RemoteTrigger"
+cmd="$cmd CronCreate CronDelete CronList ScheduleWakeup EnterWorktree ExitWorktree EnterPlanMode ExitPlanMode"
+cmd="$cmd PushNotification SendFeedback"
 # One line naming the brief by its absolute path, quoted by the same helper so a path with a
 # space or an apostrophe still reads as one path. The rest is the protocol codex_worker.py
 # reads (#189): a result without its header and marker, or not renamed into place, is never

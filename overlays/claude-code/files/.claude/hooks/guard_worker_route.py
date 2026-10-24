@@ -15,6 +15,15 @@ overrides the pin, so a call never needs one for such an agent.
 
 The reason for the choice is the lead's to tell the owner before the start; no hook sees chat.
 
+It also refuses a sub-agent, a fork included, whose description or prompt names a long job
+(a gate, CI, a merge, a watch, review.sh, check.sh, `gh run`): a sub-agent runs on the
+five-minute cache, so a wait past five minutes re-writes its whole context, and such a worker
+runs as a scripts/spawn_worker.sh session (docs/WORKFLOW.md "Worker cost" rule 1). In #307's
+14-day baseline these waits cost $100 of Keel's re-writes, all background Agent calls ("Fix
+round-3 review gate findings", "Merge three branches"). A refusal, not a warning: a warning
+arrives after the sub-agent has started, and a false match costs one call again with a line
+`No long wait: REASON` in the prompt.
+
 Exit 2 blocks the call and returns the message to the agent (Claude Code hook protocol).
 """
 import json
@@ -56,6 +65,17 @@ data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 if data.get("tool_name") not in ("Agent", "Task"):
     sys.exit(0)
 call = data.get("tool_input") or {}
+text = "%s\n%s" % (call.get("description") or "", call.get("prompt") or "")
+jobs = sorted({m.lower() for m in re.findall(r"\b(?:gate|ci|merge|watch|review\.sh|check\.sh|gh run)\b", text, re.I)})
+if jobs and not re.search(r"^\s*No long wait:", text, re.M | re.I):
+    print(
+        "BLOCKED: this sub-agent names a long job (%s). A sub-agent runs on the five-minute cache, "
+        "so a wait past five minutes re-writes its whole context: run it as a scripts/spawn_worker.sh "
+        "session (docs/WORKFLOW.md \"Worker cost\" rule 1). If it will not wait past five minutes, "
+        "add a line \"No long wait: REASON\" to the prompt and call again." % ", ".join(jobs),
+        file=sys.stderr,
+    )
+    sys.exit(2)
 if call.get("subagent_type") == "fork":
     sys.exit(0)
 missing = [name for name in ("model", "effort") if not call.get(name)]
