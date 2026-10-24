@@ -4587,7 +4587,7 @@ class BridgeTests(unittest.TestCase):
             (scripts / "gate_config.sh").write_bytes(config.encode())
             (scripts / "review.sh").write_bytes((ROOT / "review.sh").read_bytes())
             for name in ["codex_bridge.py", "claude_bridge.py", "agent_process.py",
-                         "agent_usage.py", "codex_quota.py", "review_dispatch.py"]:
+                         "agent_usage.py", "codex_quota.py", "review_dispatch.py", "working_mode.py"]:
                 (scripts / name).write_bytes((ROOT / name).read_bytes())
         return scripts
 
@@ -7272,6 +7272,22 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 result = self.run_wrapper("--uncommitted", "--reviewer", reviewer)
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIn("no model pinned for reviewer '%s'" % reviewer, result.stdout)
+        # leeway L16: unnamed, solo's reviewer is its own family (docs/REVIEW_GATE.md, "Invariant"),
+        # whatever DEFAULT_REVIEWER says; cross, saver and a STATE.md with no mode line keep it.
+        config = self.repo / "scripts/gate_config.sh"
+        config.write_text(re.sub(r'^DEFAULT_REVIEWER=.*$', 'DEFAULT_REVIEWER="codex"', config.read_text(),
+                                 flags=re.M))
+        (self.repo / "docs").mkdir(exist_ok=True)
+        for line, reviewer in (("solo", "claude"), ("Solo (family: claude)", "claude"),
+                               ("solo (family: codex)", "codex"), ("cross", "codex"),
+                               ("saver (low: claude, after: solo)", "codex"), (None, "codex")):
+            with self.subTest(mode=line):
+                (self.repo / "docs/STATE.md").write_text(
+                    "# State\n" + ("**Working mode:** %s\n" % line if line else ""))
+                result = self.run_wrapper("--uncommitted")
+                self.assertIn("no model pinned for reviewer '%s'" % reviewer, result.stdout)
+        result = self.run_wrapper("--uncommitted", REVIEW_REVIEWER="codex")  # named: never overridden
+        self.assertIn("no model pinned for reviewer 'codex'", result.stdout)
         # Defence in depth: the adapter refuses an empty pin even when called directly.
         scripts = self.install_wrapper()
         direct = subprocess.run([sys.executable, "-B", str(scripts / "codex_bridge.py"),

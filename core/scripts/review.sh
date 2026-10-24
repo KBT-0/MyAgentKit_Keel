@@ -151,7 +151,7 @@ scope_flag="--uncommitted"
 scope_arg=""
 scope_seen=0
 fallback=""
-reviewer="${REVIEW_REVIEWER:-$DEFAULT_REVIEWER}"
+reviewer="${REVIEW_REVIEWER:-}"
 backend="${MYAGENTKIT_BACKEND:-}"
 kit_verified=0
 kit=""
@@ -196,6 +196,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Unnamed, the reviewer follows the mode: solo reviews within its family (docs/REVIEW_GATE.md, "Invariant").
+[ -n "$reviewer" ] || reviewer=$($kit_python -B "$script_dir/review_dispatch.py" --mode-reviewer "$DEFAULT_REVIEWER") ||
+  { printf '%s\n' "$reviewer"; exit 2; }  # the dispatcher's FAIL line, docs/STATE.md unreadable
 # The reviewer is matched against a closed list rather than passed through. A value that
 # reaches a command line unchecked is how a scope flag becomes an argument injection.
 case "$reviewer" in

@@ -737,8 +737,8 @@ review cost 1.7 to 2.3 times, and its gain depends on the direction).
   `docs/research/claude-lead-codex.md`, finding 4); fresh sessions with no shared context
   are what keeps the review independent, since a fresh context is not biased toward code it
   just wrote (code.claude.com/docs/en/best-practices).
-- **The reviewer:** `scripts/review.sh --reviewer claude` (or `DEFAULT_REVIEWER="claude"`)
-  with `REVIEW_CLAUDE_MODEL` set for that run to a tier at least the author's (the review row
+- **The reviewer:** `scripts/review.sh --reviewer claude` (unnamed, solo's reviewer is its
+  family, whatever `DEFAULT_REVIEWER` says) with `REVIEW_CLAUDE_MODEL` set for that run to a tier at least the author's (the review row
   above). It
   is the existing per-reviewer Claude pin, so the review records stay in one format, and
   `--model` applies only to the session it starts (code.claude.com/docs/en/model-config).
@@ -863,7 +863,9 @@ Not a mode: a presence switch beside the mode in force, which keeps deciding who
 reviews. `**Owner:** away (autopilot since <time>)` or `**Owner:** present` in
 `docs/STATE.md`, under the "Working mode:" line, and `.myagentkit/presence` (ignored by Git,
 read by the hooks) record it; `scripts/working_mode.py autopilot` and `present` write both
-under the mode switch's rules, and nothing else changes the line. No record is present.
+under the mode switch's rules, and nothing else changes the line. No record is present. A
+linked worktree reads the main checkout's record; a checkout with no record anywhere (a clone of
+a commit made while away) follows the away line until a switch records it there.
 
 - **Starts:** `/myagentkit:mode autopilot`, or {{OWNER_NAME}} saying so in plain words
   ("autopilot'a al", "gece moduna alalım", "I'm off, keep going"): the lead runs

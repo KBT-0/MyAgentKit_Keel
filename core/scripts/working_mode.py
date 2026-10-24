@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 
@@ -320,15 +321,24 @@ def kit_rules(project):
 
 def owner(project, state):
     """(stamp, line, record words): the autopilot stamp of STATE's one Owner line (None for
-    present or no line), its match, and the words of .myagentkit/presence (none: present)."""
+    present or no line), its match, and the words of .myagentkit/presence, None when there is none."""
     found = presence_lines(state)
     if len(found) > 1:
         raise ValueError('STATE.md has more than one Owner line: ' + '; '.join(m[0].strip() for m in found))
     line = found[0] if found else None
     away = AWAY.fullmatch(line[2].strip().rstrip('.')) if line else None
     record = checked(project, '.myagentkit/presence')
-    words = record.read_text(encoding='utf-8').split() if record.exists() else ['present']
-    return (away[1] if away else None), line, words
+    if not record.exists() and (project / '.git').is_file():
+        # A linked worktree reads the main checkout's record, as the hooks do (leeway L13).
+        try:
+            common = subprocess.run(['git', '-C', str(project), 'rev-parse', '--path-format=absolute',
+                                     '--git-common-dir'], capture_output=True, text=True, timeout=15,
+                                    check=True).stdout.strip()
+            record = checked(Path(common).parent, '.myagentkit/presence') if common else record
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return (away[1] if away else None), line, (record.read_text(encoding='utf-8').split()
+                                                if record.exists() else None)
 
 
 def presence_lines(state):
@@ -363,6 +373,7 @@ def switch_presence(project, section, choice):
     now = datetime.now().astimezone().isoformat(timespec='seconds')
     # A second switch keeps the first stamp, so the report covers the whole absence; the return
     # keeps it too, with the time of the return, for scripts/autopilot_report.py.
+    words = words or []
     since = stamp or (words[1] if words[:1] == ['away'] and len(words) > 1 else None)
     if choice == 'autopilot':
         since = since or now
@@ -428,6 +439,12 @@ def working_mode(project, section, rows, choice=None, sides=None):
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
             raise ValueError('.myagentkit/mode and STATE.md disagree; choose a mode explicitly to repair them')
         stamp, _, words = owner(project, state)
+        # STATE.md is committed, .myagentkit/presence is ignored: a clone or worktree of a commit
+        # made while away has the line and no record. That is no disagreement (leeway L12); the
+        # hooks follow the line too, until a switch records the presence here.
+        elsewhere = words is None and stamp is not None
+        if words is None:
+            words = ['away', stamp] if stamp else ['present']
         if (words[:2] != ['away', stamp]) if stamp else (words[:1] != ['present']):
             raise ValueError('.myagentkit/presence and the STATE.md Owner line disagree; switch autopilot or '
                              'present explicitly to repair them')
@@ -435,6 +452,9 @@ def working_mode(project, section, rows, choice=None, sides=None):
         print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)')
               + (' (returns to ' + back[1] + ')' if back else ''))
         print('Owner: ' + ('away (autopilot since %s)' % stamp if stamp else 'present'))
+        if elsewhere:
+            print('(the STATE.md line was recorded in another checkout: .myagentkit/presence is missing here; '
+                  'the hooks follow the line until autopilot or present records it here)')
         for name, cells in rows:
             print(name + ' |' + cells)
         return

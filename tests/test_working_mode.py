@@ -811,8 +811,8 @@ class WorkingModeTests(unittest.TestCase):
         result = self.run_mode()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('disagree', result.stderr)
-        presence.unlink()
-        self.assertNotEqual(self.run_mode().returncode, 0)  # STATE away, the hooks' record gone
+        presence.write_text('', encoding='utf-8')
+        self.assertNotEqual(self.run_mode().returncode, 0)  # STATE away, the hooks' record emptied
         self.assertEqual(self.run_mode('present').returncode, 0)  # an explicit switch repairs
         body = '**Owner:** present\n**Owner:** present\n'
         self.state.write_text(body, encoding='utf-8')
@@ -826,6 +826,31 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Owner line', result.stderr)
         self.assertEqual(self.state.read_text(encoding='utf-8'), '**Owner:** present\n')
+
+    def test_an_away_line_without_a_presence_record_reads_as_away_in_another_checkout(self):
+        # leeway L12: STATE.md is committed with the away line while .myagentkit/presence is
+        # git-ignored, so a clone or worktree of that commit has none: no disagreement, no exit 1.
+        line = '**Owner:** away (autopilot since 2026-10-22T23:00:00+03:00)'
+        self.state.write_text('# State\n---\n**Working mode:** solo\n' + line + '\n', encoding='utf-8')
+        result = self.run_mode()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Owner: away (autopilot since 2026-10-22T23:00:00+03:00)', result.stdout)
+        self.assertIn('another checkout', result.stdout)
+        self.assertFalse((self.project / '.myagentkit/presence').exists())  # a read writes nothing
+
+    def test_a_linked_worktree_reads_the_main_checkouts_presence(self):
+        # leeway L13: the switch writes the main checkout's record; a worktree has none of its own.
+        worktree = Path(self.tmp.name) / 'wt'
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', str(self.project)]
+        for command in (['init', '-q'], ['add', 'docs'], ['commit', '-q', '-m', 'x'],
+                        ['worktree', 'add', '-q', str(worktree)]):
+            subprocess.run(git + command, check=True, capture_output=True)
+        (self.project / '.myagentkit').mkdir(exist_ok=True)
+        (self.project / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
+        result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(worktree)],
+                                capture_output=True, text=True, encoding='utf-8', timeout=15)
+        self.assertNotEqual(result.returncode, 0)  # main away, the worktree's STATE present
+        self.assertIn('disagree', result.stderr)
 
     def test_a_projects_own_owner_line_is_kept_and_never_read_as_presence(self):
         # Review round 1: a STATE.md naming its owner (**Owner:** <name>) broke the show path.

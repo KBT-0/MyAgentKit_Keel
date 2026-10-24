@@ -243,6 +243,23 @@ class ContextHookTests(unittest.TestCase):
                 self.assertNotIn('stop now', said)
                 self.assertNotIn('recommend', said)
                 self.assertNotIn('owner is back', said)  # a tool call is never the owner's message
+                self.assertIn('docs/STATE.md', said)
+        # leeway L14: a worker leaves STATE.md to the lead (docs/HANDOFF.md).
+        self.env['MYAGENTKIT_ROLE'] = 'worker'
+        said = self.run_progress([request(410_000)])
+        self.assertIn('keep going', said)
+        self.assertNotIn('STATE.md', said)
+
+    def test_a_committed_away_line_without_a_presence_record_reads_as_away(self):
+        # leeway L12: a clone or worktree of a night's commit carries the away line but not the
+        # ignored .myagentkit/presence; the hooks follow the line until a switch records it here.
+        (self.tmp / 'docs').mkdir()
+        (self.tmp / 'docs/STATE.md').write_text(
+            '# State\n**Owner:** away (autopilot since 2026-10-22T23:00:00+03:00)\n', encoding='utf-8')
+        self.assertIn('working_mode.py present', self.run_hook([request(10_000)]))
+        (self.tmp / '.myagentkit').mkdir()
+        (self.tmp / '.myagentkit/presence').write_text('present 2026-10-22T23:00:00+03:00 x\n', encoding='utf-8')
+        self.assertEqual(self.run_hook([request(10_000)]), '')  # the record wins over the line
 
     def test_a_prompt_while_away_names_the_owners_return_and_present_is_silent(self):
         self.assertEqual(self.run_hook([request(10_000)]), '')

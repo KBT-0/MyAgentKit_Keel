@@ -284,6 +284,21 @@ class PlainReportTests(unittest.TestCase):
         self.assertIn('Questions', result.stderr)
         self.assertNotIn('AskUserQuestion', result.stderr)
 
+    def test_a_lead_in_a_linked_worktree_reads_the_main_checkouts_presence(self):
+        # leeway L13: presence lived in the main checkout only, so a lead in a worktree got the present-owner text.
+        main, worktree = self.project / 'main', self.project / 'wt'
+        main.mkdir()
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', str(main)]
+        for command in (['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'x'],
+                        ['worktree', 'add', '-q', str(worktree)]):
+            subprocess.run(git + command, check=True, capture_output=True)
+        (main / '.myagentkit').mkdir()
+        (main / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
+        result = self.stop('Merge now?', CLAUDE_PROJECT_DIR=str(worktree))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('autopilot', result.stderr)
+        self.assertNotIn('AskUserQuestion', result.stderr)
+
     def test_a_worker_session_is_not_checked(self):
         result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
