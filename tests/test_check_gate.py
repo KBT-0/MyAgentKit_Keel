@@ -399,6 +399,40 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertNotIn('[project]', out)
 
+    def test_a_commit_hooks_git_variables_never_reach_the_build_or_the_project_step(self):
+        # Git exports GIT_DIR and GIT_INDEX_FILE to a hook; in a linked worktree a suite's
+        # `git -C "$tmp" init` re-initialised the worktree's repository instead: core.bare=true
+        # in the shared config, its fixture committed on the branch (labricore, 2026-10-24).
+        git = self.commit_fixture()
+        suite = ('#!/bin/sh\nset -e\nd=$(mktemp -d); echo x > "$d/f"; git -C "$d" init -q; git -C "$d" add .\n'
+                 'git -C "$d" -c user.name=a -c user.email=a@b.invalid commit -qm "fixture %s"\nrm -rf "$d"\n')
+        self.build.write_text(suite % 'build' + 'echo ran > "%s"\n' % self.mark)
+        hook = self.project / 'scripts/check.project.sh'
+        hook.write_text(suite % 'project step')
+        hook.chmod(0o755)
+        git('add', 'scripts/check.project.sh')
+        git('commit', '-q', '-m', 'project step')
+        self.record_gated()
+        hooks = self.tmp / 'hooks'
+        hooks.mkdir()
+        (hooks / 'pre-commit').write_text('#!/bin/sh\nexec sh scripts/check.sh --for-commit\n')
+        (hooks / 'pre-commit').chmod(0o755)
+        tree = self.tmp / 'tree'
+        git('worktree', 'add', '-q', '-b', 'side', str(tree))
+        (tree / 'code.c').write_text('int main(void) { return 1; }\n')
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_', 'GIT_'))
+               and k not in ('CDPATH', 'CI')}
+        env.update(GATE_TEST_BUILD=str(self.build), GATE_CACHE='off')
+        run = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=' + str(hooks), *args], cwd=tree,
+                                           env=env, capture_output=True, text=True)
+        run('add', 'code.c')
+        done = run('commit', '-q', '-m', 'worktree change')
+        self.assertTrue(self.mark.exists(), done.stdout + done.stderr)
+        bare = run('config', '--get', 'core.bare').stdout.strip()
+        log = run('log', '--format=%s', 'side').stdout.split('\n')[:3]
+        self.assertEqual((done.returncode, bare, log[:2]), (0, 'false', ['worktree change', 'project step']),
+                         done.stdout + done.stderr)
+
     def test_no_build_skips_the_build_and_says_so(self):
         # Checking the gate itself after a sync on a doc-only change meant copying a 900 MB
         # project to edit its build command (leeway L8, 2026-10-24).

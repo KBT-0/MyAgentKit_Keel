@@ -22,6 +22,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (it must print `PROJECT SELF-TEST: PASS`). Both are project-owned, executed like
   `scripts/doctor.project.sh`, and absent means nothing runs; a file without a `#!` line or the
   execute bit fails, and `doctor.sh` names it. The kit ships neither, so a sync never writes them.
+- `check.sh` runs `build_test_cmd` and `scripts/check.project.sh` without the variables
+  `git rev-parse --local-env-vars` lists (labricore field report 3, C8, data loss): Git hands a
+  commit hook GIT_DIR and GIT_INDEX_FILE, and in a linked worktree a suite's
+  `git -C "$tmp" init`/`commit` re-initialised the worktree's repository (core.bare=true in the
+  shared config, its fixture committed on the branch). Git in the build now finds the repository
+  from the working directory, and a commit's `git -c` options no longer reach it. A sync is enough.
 - `check.sh --no-build` checks the gate itself without the build (leeway L8); its PASS line says
   so and no hook passes it.
 - `doctor.sh` tells each worktree git still lists at a path that is gone or in another copy of

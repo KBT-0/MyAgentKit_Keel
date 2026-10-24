@@ -414,6 +414,12 @@ esac
 # the caller's locale back (section 4): compilers and test runners read sources by locale.
 caller_lc_all=${LC_ALL-} caller_lc_all_set=${LC_ALL+1}
 LC_ALL=C; export LC_ALL
+# A commit hook's GIT_DIR, GIT_INDEX_FILE and the rest `git rev-parse --local-env-vars` lists
+# serve this gate's own git calls; the build/test command and scripts/check.project.sh run
+# without them. In a linked worktree a suite's `git -C "$tmp" init` re-initialised the
+# worktree's repository instead: core.bare=true, its fixture committed on the branch
+# (labricore, 2026-10-24).
+git_local_vars=$(git rev-parse --local-env-vars 2>/dev/null) || git_local_vars=""
 
 # ---------------------------------------------------------------------------
 # The scanners' shared input: every tracked file plus every untracked one git does not
@@ -1115,6 +1121,8 @@ print(len(fields) // 2)
         rc=0
       else
         ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+          # shellcheck disable=SC2086 # one name per line: split on purpose
+          unset $git_local_vars
           exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
         rc=$?
         # Recorded only if the files are the same after the build as before it: an edit made
@@ -1163,6 +1171,8 @@ if [ -e scripts/check.project.sh ]; then
     fail=1
   else
     ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+      # shellcheck disable=SC2086 # one name per line: split on purpose
+      unset $git_local_vars
       exec scripts/check.project.sh ) < /dev/null
     project_rc=$?
     if [ "$project_rc" -ne 0 ]; then
