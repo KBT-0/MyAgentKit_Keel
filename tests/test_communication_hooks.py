@@ -284,21 +284,43 @@ class PlainReportTests(unittest.TestCase):
         self.assertIn('Questions', result.stderr)
         self.assertNotIn('AskUserQuestion', result.stderr)
 
-    def test_a_ready_hand_off_without_the_opening_prompt_is_bounced(self):
+    def test_a_turn_that_wrote_a_hand_off_must_give_the_opening_prompt(self):
         # Owner 2026-10-24: "handoff hazır" alone left the owner to write the new session's prompt.
-        for message in ('Handoff hazır.', '`handoff-36.md` yazıldı, oturum kapanabilir.',
-                        'I wrote the handoff to .myagentkit/v014/handoff-36.md.', 'The hand-off is ready.',
-                        'Handoff hazır:\n```\nls\n```'):
+        def transcript(*records):
+            path = self.project / 'session.jsonl'
+            path.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+            return str(path)
+
+        def stop(message, path):
+            return run('plain_report.py', json.dumps({'last_assistant_message': message, 'transcript_path': path},
+                                                     ensure_ascii=False), CLAUDE_PROJECT_DIR=str(self.project))
+        prompt = {'type': 'user', 'message': {'content': 'devam'}}
+        result = {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'content': 'ok'}]}}
+        def write(path, name='Write'):
+            return {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'name': name, 'input': {'file_path': path}}]}}
+        wrote = transcript(prompt, write('/p/.myagentkit/v014/handoff-36.md'), result,
+                           write('/p/docs/STATE.md', 'Edit'), result)
+        for message in ('Handoff hazır.', 'Hazır:\n```\nls\n```', 'Done.'):
             with self.subTest(message=message):
-                result = self.stop(message)
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn('opening prompt', result.stderr)
-        for message in ('Handoff hazır. Yeni oturuma yapıştır:\n```\nhandoff-36\'yı oku, devam et\n```\n'
-                        'Model: `claude-opus-5-5`.', "handoff-35'i okudum, devam ediyorum.",
-                        'Handoff hazırlıyorum.', 'The hand-off file is not written yet.', 'Handoff henüz hazır değil.'):
-            with self.subTest(passes=message):
-                result = self.stop(message)
-                self.assertEqual((result.returncode, result.stderr), (0, ''), message)
+                bounced = stop(message, wrote)
+                self.assertEqual(bounced.returncode, 2, bounced.stderr)
+                self.assertIn('opening prompt', bounced.stderr)
+        passes = ((wrote, 'Handoff hazır. Yeni oturuma yapıştır:\n```\nhandoff-36\'yı oku, devam et\n```'),
+                  # A hand-off written before the owner's last prompt, or only read, is not this turn's.
+                  (transcript(write('/p/HANDOFF-35.md'), result, prompt, write('/p/notes.md', 'Edit'), result),
+                   "Handoff'u okudum, testler hazır."),
+                  (transcript(prompt, {'type': 'assistant', 'message': {'content': [
+                      {'type': 'tool_use', 'name': 'Read', 'input': {'file_path': '/p/handoff-35.md'}}]}}, result),
+                   'The hand-off is ready.'),
+                  (str(self.project / 'missing.jsonl'), 'Handoff hazır.'), (None, 'Handoff hazır.'))
+        for path, message in passes:
+            with self.subTest(passes=message, path=path):
+                self.assertEqual((stop(message, path).returncode, stop(message, path).stderr), (0, ''))
+        # Under the autopilot switch nobody opens a session: no bounce.
+        (self.project / '.myagentkit').mkdir()
+        (self.project / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
+        self.assertEqual(stop('Handoff updated; next item.', wrote).returncode, 0)
 
     def test_a_worker_session_is_not_checked(self):
         result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')

@@ -18,9 +18,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **A hand-off closes with the opening prompt** (`docs/COMMUNICATION.md`, "Handoff";
   `AGENTS.md`, "A short yes to a proposed hand-off"): the message that says the hand-off is
   ready ends with a fenced code block holding the exact text the owner pastes into the new
-  session, and the model to open it on. The `plain_report.py` Stop hook bounces once a
-  message that says a hand-off is ready ("handoff hazır", "wrote the handoff") with no fenced
-  block naming the hand-off; the prompt then follows as one short extra message.
+  session, and the model to open it on. The `plain_report.py` Stop hook bounces once the final
+  message of a turn that wrote a hand-off file (a Write or Edit of a file named `*handoff*`,
+  read from the transcript) when no fenced block in it names the hand-off; the prompt then
+  follows as one short extra message. Not under the autopilot switch.
 - **ACTION** (`.claude/hooks/plain_report.py`, `AGENTS.md`, `docs/COMMUNICATION.md`,
   project-owned): run `sync-kit.sh . --merge`; a project that never edited the hook takes the
   kit's copy whole. Without the merge, add the kit's three sentences after "carries no bare

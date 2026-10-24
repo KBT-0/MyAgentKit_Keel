@@ -25,11 +25,13 @@ question in the report; otherwise it says what to do in either case, since an ow
 without that record is not visible to a hook. This check needs no commit-msg grammar: a
 missing one turns off only the label check.
 
-It also bounces a final message that says a hand-off is ready ("handoff-36 hazır", "wrote the
-handoff") with no fenced block that names the hand-off: the owner opens the next session and
-needs the exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The hook runs after the
-owner has read the message, so the prompt arrives as one more short message; the rule text asks
-for it in the first one.
+It also bounces a final message with no fenced block that names the hand-off when the turn
+wrote a hand-off file (a Write or Edit of a file whose name holds "handoff" since the owner's
+last prompt, read from the transcript's tail): the owner opens the next session and needs the
+exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The trigger is that write, not the
+message's wording, which no pattern reads reliably. Not under the autopilot switch: nobody
+opens a session then. The hook runs after the owner has read the message, so the prompt
+arrives as one more short message; the rule text asks for it in the first one.
 
 Once per turn: `stop_hook_active` is true when the turn already continued because of a stop
 hook, and the hook steps aside (Claude Code also caps consecutive blocks at eight). A worker
@@ -75,11 +77,9 @@ NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen question
                               r'|\baçık (?:bir )?soru(?!n)\w*\W*(?:yok|kalmadı)', re.I)
 
 
-# "handoff-36 hazır", "wrote the handoff"; never "handoff'u okudum", "handoff hazırlıyorum",
-# "the hand-off is not written" or "handoff hazır değil".
-HANDOFF_READY = re.compile(r'\bhand-?off\S*(?:\s+(?!not\b|henüz\b)\S+){0,4}?\s+(?:hazır|yazıldı|yazdım|ready|written)\b'
-                           r'(?!\s+(?:değil|yet)\b)'
-                           r'|\b(?:wrote|written|yazdım|yazıldı)\s+(?:\S+\s+){0,3}?hand-?off', re.I)
+HANDOFF = re.compile(r'hand-?off', re.I)
+# shortcut: only the transcript's last 4 MB is read; a longer turn misses its hand-off write (no bounce), widen if seen.
+TAIL = 4 * 1024 * 1024
 
 
 def split_fences(text: str) -> tuple[str, str]:
@@ -105,10 +105,35 @@ def without_code(text: str) -> str:
     return SPAN.sub(' ', split_fences(text)[0])
 
 
-def handoff_without_prompt(text: str) -> bool:
-    """The message says a hand-off is ready, and no fenced block names the hand-off to paste."""
-    outside, inside = split_fences(text)
-    return bool(HANDOFF_READY.search(outside.replace('`', ''))) and not re.search(r'hand-?off', inside, re.I)
+def wrote_handoff(transcript) -> bool:
+    """A Write or Edit of a file named *handoff* since the owner's last prompt, from the transcript's tail."""
+    try:
+        with open(transcript, 'rb') as file:
+            file.seek(max(0, os.fstat(file.fileno()).st_size - TAIL))
+            lines = file.read().splitlines()
+    except (OSError, TypeError, ValueError):
+        return False
+    for raw in reversed(lines):
+        try:
+            record = json.loads(raw)
+            content = record['message']['content']
+        except (ValueError, KeyError, TypeError):
+            continue
+        blocks = content if isinstance(content, list) else []
+        if record.get('type') == 'user' and not any(isinstance(b, dict) and b.get('type') == 'tool_result'
+                                                     for b in blocks):
+            return False  # the owner's prompt: the turn starts here
+        for block in blocks:
+            if isinstance(block, dict) and block.get('type') == 'tool_use' \
+                    and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
+                    and HANDOFF.search(Path(str((block.get('input') or {}).get('file_path', ''))).name):
+                return True
+    return False
+
+
+def handoff_without_prompt(text: str, transcript) -> bool:
+    """This turn wrote a hand-off file, and no fenced block in the final message names it."""
+    return not HANDOFF.search(split_fences(text)[1]) and wrote_handoff(transcript)
 
 
 def known_labels() -> set[str]:
@@ -237,8 +262,8 @@ def main() -> None:
                     'issue and say so in one line without a question mark. The owner has already read the '
                     'message: do not send it again (docs/COMMUNICATION.md, "Questions and approvals"; '
                     'core/docs/ in the kit).')
-    if handoff_without_prompt(text):
-        said.append('BLOCKED: the message says a hand-off is ready but gives the owner no opening prompt. The owner '
+    if not away() and handoff_without_prompt(text, data.get('transcript_path')):
+        said.append('BLOCKED: this turn wrote a hand-off file, and the message gives the owner no opening prompt. The owner '
                     'has already read the message: do not send it again. Send one short line and a fenced code block '
                     'with the exact text the owner pastes into the new session, in the chat language (the hand-off '
                     'file to read and "go on"), and the model to open it on (full model id), and close every '
