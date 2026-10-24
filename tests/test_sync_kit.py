@@ -441,8 +441,11 @@ class SyncKitTests(unittest.TestCase):
             result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
             listed = [line for line in result.stdout.splitlines() if '.claude/agents' in line]
-            self.assertEqual(listed, ["  conflict: .claude/agents/%s (a second reviewer agent beside "
-                                      "diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)" % name
+            # leeway L10: a domain reviewer (one tree or concern) is no duplicate to drop.
+            self.assertEqual(listed, ["  reviewer: .claude/agents/%s (beside diff-reviewer.md: a duplicate of its "
+                                      "whole-diff review keeps one of the two; a domain reviewer, scoped to one tree "
+                                      "or concern, stays, its description naming that scope; the kit's "
+                                      "docs/UPDATING.md)" % name
                                       for name in ('code-reviewer.md', 'review/pr_reviewer.md')])
             self.assertEqual({p.relative_to(folder).as_posix(): p.read_bytes().decode()
                               for p in folder.rglob('*.md')}, agents)
@@ -797,7 +800,7 @@ class SyncKitTests(unittest.TestCase):
 
     def merge_kit(self, tmp, entry, files):
         """A kit whose commits hold `files` {rel: (at base, at HEAD)}, None for no such file at
-        the base; returns (kit, project, base, env)."""
+        the base, rel below core/ or, from overlays/, below the kit; returns (kit, project, base, env)."""
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
         self.sync(tmp, entry, '--dry-run')
@@ -807,9 +810,10 @@ class SyncKitTests(unittest.TestCase):
         base = None
         for side in (0, 1):
             for rel, bodies in files.items():
-                (kit / 'core' / rel).parent.mkdir(parents=True, exist_ok=True)
+                dest = kit / rel if rel.startswith('overlays/') else kit / 'core' / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 if bodies[side] is not None:
-                    (kit / 'core' / rel).write_bytes(bodies[side])
+                    dest.write_bytes(bodies[side])
             git('add', '-A')
             git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.%d' % (side + 1))
             base = base or git('rev-parse', 'HEAD')
@@ -904,6 +908,12 @@ class SyncKitTests(unittest.TestCase):
                 if case == 'edited':
                     self.assertEqual(result.returncode, 1, out)
                     self.assertIn('conflict: scripts/check.sh', result.stdout)
+                    # labricore C4: the conflict text says no gate_config.sh is written, and
+                    # prints the values that would have gone into it.
+                    self.assertIn('No scripts/gate_config.sh is written', result.stdout)
+                    self.assertIn('            # read-only: wrangler deploy --dry-run\n'
+                                  '            build_test_cmd="make test"\n', result.stdout)
+                    self.assertIn('            # project name: Acme\n', result.stdout)
                     self.assertEqual((project / 'scripts/check.sh').read_bytes(), gate)
                     self.assertFalse((project / 'scripts/gate_config.sh').exists(), out)
                     continue
@@ -918,6 +928,76 @@ class SyncKitTests(unittest.TestCase):
                     self.assertIn('build_test_cmd="make test"', result.stdout)
                 else:
                     self.assertEqual((project / 'scripts/gate_config.sh').read_bytes(), expected)
+
+    def merge_run(self, kit, project, base, env):
+        return subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), '--merge', '--base', base],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_merge_takes_the_project_owned_files_of_a_taken_overlay(self):
+        # labricore C1: --merge read core/ alone, so .claude/hooks/context_size.py, equal to the
+        # kit's at the base, was neither listed nor updated. A project-owned file of an overlay
+        # the project took merges like a core one, and one the project lacks is listed.
+        hooks = 'overlays/claude-code/files/.claude/hooks/'
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, base, env = self.merge_kit(tmp, '- A change.\n', {
+                hooks + 'kit_owned.py': (b'# KIT-OWNED: x\none\n', b'# KIT-OWNED: x\none\n'),
+                hooks + 'context_size.py': (b'print(1)\n', b'print(2)\n'),
+                hooks + 'after_compact.txt': (b'old\n', b'new\n'),
+                hooks + 'new_hook.py': (None, b'print(3)\n'),
+                'overlays/unity/files/docs/UNITY_SETUP.md': (b'a\n', b'b\n')})
+            (project / '.claude/hooks').mkdir(parents=True)
+            (project / '.claude/hooks/kit_owned.py').write_bytes(b'# KIT-OWNED: x\none\n')
+            (project / '.claude/hooks/context_size.py').write_bytes(b'print(1)\n')
+            result = self.merge_run(kit, project, base, env)
+            out = result.stdout
+            self.assertEqual(result.returncode, 2, out + result.stderr)
+            self.assertIn('  merged:   .claude/hooks/context_size.py', out)
+            self.assertEqual((project / '.claude/hooks/context_size.py').read_bytes(), b'print(2)\n')
+            self.assertIn('  absent:   .claude/hooks/after_compact.txt', out)
+            self.assertIn('  kit-new:  .claude/hooks/new_hook.py', out)
+            self.assertNotIn('UNITY_SETUP', out, 'an overlay the project did not take is no merge')
+
+    def test_merge_fills_the_placeholders_the_project_filled_and_lists_the_rest(self):
+        # labricore C2 / leeway L5: merged kit text brought back {{OWNER_NAME}} and
+        # {{WORKTREE_POLICY}}, which the project had filled at setup. The values are read from
+        # the project's own files against the kit's text at the base; what none gives is listed,
+        # and a placeholder the project's own copy still holds is left to it.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, base, env = self.merge_kit(tmp, '- A change.\n', {
+                'AGENTS.md': (b'# Rules\nAsk {{OWNER_NAME}} before a push.\n',
+                              b'# Rules\nAsk {{OWNER_NAME}} before a push.\n'),
+                'docs/WORKFLOW.md': (b'intro\n\n{{WORKTREE_POLICY}}\n\nend\n',
+                                     b'intro\n\n{{WORKTREE_POLICY}}\n\nend\nTell {{OWNER_NAME}} when done.\n'
+                                     b'Again:\n\n{{WORKTREE_POLICY}}\n\nRisk: {{TOP_RISK}}.\n'),
+                'docs/STATE.md': (b'Waits on {{OWNER_NAME}}.\n', b'Waits on {{OWNER_NAME}} now.\n')})
+            (project / 'AGENTS.md').write_bytes(b'# Rules\nAsk Kemal before a push.\n')
+            (project / 'docs/WORKFLOW.md').write_bytes(b'intro\n\nOne tree.\nTwo lines.\n\nend\n')
+            (project / 'docs/STATE.md').write_bytes(b'Waits on {{OWNER_NAME}}.\n')
+            result = self.merge_run(kit, project, base, env)
+            out = result.stdout
+            self.assertEqual(result.returncode, 2, out + result.stderr)
+            self.assertEqual((project / 'docs/WORKFLOW.md').read_bytes(),
+                             b'intro\n\nOne tree.\nTwo lines.\n\nend\nTell Kemal when done.\n'
+                             b'Again:\n\nOne tree.\nTwo lines.\n\nRisk: {{TOP_RISK}}.\n')
+            self.assertIn('  placeholder: docs/WORKFLOW.md: {{TOP_RISK}} line 13 (', out)
+            self.assertEqual((project / 'docs/STATE.md').read_bytes(), b'Waits on {{OWNER_NAME}} now.\n')
+            self.assertNotIn('placeholder: docs/STATE.md', out)
+
+    def test_a_conflict_names_the_project_lines_found_in_no_kit_file(self):
+        # leeway L4: GOTCHAS.md came back with 8 hunks over most of 960 lines, one with 87
+        # project lines; a helper listing, per hunk, the project side's lines found in no kit
+        # file (the project's own content, to keep) made it tractable.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, base, env = self.merge_kit(tmp, '- A change.\n', {
+                'docs/GOTCHAS.md': (b'a\nb\n1\n2\n3\n4\n5\nf\n', b'a\nB kit\n1\n2\n3\n4\n5\nF kit\n'),
+                'docs/OTHER.md': (b'moved line\n', b'moved line\n')})
+            (project / 'docs/GOTCHAS.md').write_bytes(b'a\nb mine\n  moved line\nown rule\n1\n2\n3\n4\n5\nf mine\n')
+            result = self.merge_run(kit, project, base, env)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            merged = (project / 'docs/GOTCHAS.md').read_text().split('\n')
+            self.assertEqual(merged[1:6], ['<<<<<<< project', 'b mine', '  moved line', 'own rule', '======='])
+            self.assertIn('  conflict: docs/GOTCHAS.md, lines 2-8 (project-only 3, 5), 14-18 (project-only 15)\n',
+                          result.stdout)
 
     def test_merge_reads_kit_blobs_and_keeps_a_crlf_project_copy_crlf(self):
         # With autocrlf the kit's working-tree docs are CRLF over LF blobs: compared with the base

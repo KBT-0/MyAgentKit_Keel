@@ -13,6 +13,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- `sync-kit.sh --merge` merges the project-owned files of the overlays the project took, not
+  core's alone: `.claude/hooks/context_size.py`, `plain_report.py` and `after_compact.txt` were
+  left on the old copy without a word, though v0.13's ACTION item said the merge brings them. A
+  file the kit changed that the project lacks is listed as `absent:`. Placeholders the merged kit
+  text brings back (`{{OWNER_NAME}}`, `{{WORKTREE_POLICY}}`) are filled from the values the
+  project's own copies hold, and any left is listed as `placeholder:`. Each conflict range names
+  its `project-only` lines, the project side's lines no kit file holds (docs/UPDATING.md).
+- A conflicted `check.sh` or `review.sh` prints the values it holds for `scripts/gate_config.sh`,
+  and the stop says that no `gate_config.sh` is written while it is a conflict.
+- The reviewer-agent line of `sync-kit.sh` and `bootstrap.sh` reads `reviewer:` and tells a
+  duplicate of `diff-reviewer.md` (keep one) from a domain reviewer scoped to one tree (keep both).
+- **ACTION** (`.claude/hooks/context_size.py`, `.claude/hooks/plain_report.py`,
+  `.claude/hooks/after_compact.txt`, project-owned): a project that recorded v0.13 while they
+  stayed on the old copy (no `.myagentkit/presence` in them) copies the kit's
+  `overlays/claude-code/files/.claude/hooks/` ones over each it never edited, and merges an
+  edited one by hand; a project still at v0.12.1 reruns `sync-kit.sh . --merge`.
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
