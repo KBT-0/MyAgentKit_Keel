@@ -193,7 +193,8 @@ once", saving a low allowance) ends when its reason does, and the main rules ret
 When it is recorded (STATE.md, a brief), its end condition is written beside it ("until the
 allowance resets", "for this task"), so the end is a fact the next session reads.
 **A short yes to a proposed hand-off is the hand-off:** after you propose one, "go on" or a
-model name means update STATE, write the handoff and stop; new work in that session needs
+model name means update STATE, write the handoff, end with the new session's opening prompt
+in a code block (`docs/COMMUNICATION.md`, "Handoff") and stop; new work in that session needs
 an explicit "start it here".
 
 ### STOP — pause the work and ask (rare)

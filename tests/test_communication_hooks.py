@@ -284,6 +284,22 @@ class PlainReportTests(unittest.TestCase):
         self.assertIn('Questions', result.stderr)
         self.assertNotIn('AskUserQuestion', result.stderr)
 
+    def test_a_ready_hand_off_without_the_opening_prompt_is_bounced(self):
+        # Owner 2026-10-24: "handoff hazır" alone left the owner to write the new session's prompt.
+        for message in ('Handoff hazır.', '`handoff-36.md` yazıldı, oturum kapanabilir.',
+                        'I wrote the handoff to .myagentkit/v014/handoff-36.md.', 'The hand-off is ready.',
+                        'Handoff hazır:\n```\nls\n```'):
+            with self.subTest(message=message):
+                result = self.stop(message)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('opening prompt', result.stderr)
+        for message in ('Handoff hazır. Yeni oturuma yapıştır:\n```\nhandoff-36\'yı oku, devam et\n```\n'
+                        'Model: `claude-opus-5-5`.', "handoff-35'i okudum, devam ediyorum.",
+                        'Handoff hazırlıyorum.', 'The hand-off file is not written yet.', 'Handoff henüz hazır değil.'):
+            with self.subTest(passes=message):
+                result = self.stop(message)
+                self.assertEqual((result.returncode, result.stderr), (0, ''), message)
+
     def test_a_worker_session_is_not_checked(self):
         result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')
         self.assertEqual((result.returncode, result.stderr), (0, ''))

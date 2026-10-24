@@ -25,6 +25,12 @@ question in the report; otherwise it says what to do in either case, since an ow
 without that record is not visible to a hook. This check needs no commit-msg grammar: a
 missing one turns off only the label check.
 
+It also bounces a final message that says a hand-off is ready ("handoff-36 hazır", "wrote the
+handoff") with no fenced block that names the hand-off: the owner opens the next session and
+needs the exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The hook runs after the
+owner has read the message, so the prompt arrives as one more short message; the rule text asks
+for it in the first one.
+
 Once per turn: `stop_hook_active` is true when the turn already continued because of a stop
 hook, and the hook steps aside (Claude Code also caps consecutive blocks at eight). A worker
 session started by `scripts/spawn_worker.sh` (MYAGENTKIT_ROLE=worker) writes for the lead and
@@ -69,21 +75,40 @@ NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen question
                               r'|\baçık (?:bir )?soru(?!n)\w*\W*(?:yok|kalmadı)', re.I)
 
 
-def without_code(text: str) -> str:
-    """Drop fences closed by the same character and at least the opening length."""
-    lines, opener = [], None
+# "handoff-36 hazır", "wrote the handoff"; never "handoff'u okudum", "handoff hazırlıyorum",
+# "the hand-off is not written" or "handoff hazır değil".
+HANDOFF_READY = re.compile(r'\bhand-?off\S*(?:\s+(?!not\b|henüz\b)\S+){0,4}?\s+(?:hazır|yazıldı|yazdım|ready|written)\b'
+                           r'(?!\s+(?:değil|yet)\b)'
+                           r'|\b(?:wrote|written|yazdım|yazıldı)\s+(?:\S+\s+){0,3}?hand-?off', re.I)
+
+
+def split_fences(text: str) -> tuple[str, str]:
+    """Text outside and inside fences closed by the same character and at least the opening length."""
+    outside, inside, opener = [], [], None
     for line in text.splitlines(keepends=True):
-        match = FENCE.fullmatch(line.rstrip('\r\n'))
+        bare = line.rstrip('\r\n')
         if opener is None:
+            match = FENCE.fullmatch(bare)
             if match:
                 opener = match[1]
-                lines.append(' ')
+                outside.append(' ')
             else:
-                lines.append(line)
-        elif re.fullmatch(r'[ \t>]*' + re.escape(opener[0]) + '{' + str(len(opener)) + r',}[ \t]*',
-                          line.rstrip('\r\n')):
+                outside.append(line)
+        elif re.fullmatch(r'[ \t>]*' + re.escape(opener[0]) + '{' + str(len(opener)) + r',}[ \t]*', bare):
             opener = None
-    return SPAN.sub(' ', ''.join(lines))
+        else:
+            inside.append(line)
+    return ''.join(outside), ''.join(inside)
+
+
+def without_code(text: str) -> str:
+    return SPAN.sub(' ', split_fences(text)[0])
+
+
+def handoff_without_prompt(text: str) -> bool:
+    """The message says a hand-off is ready, and no fenced block names the hand-off to paste."""
+    outside, inside = split_fences(text)
+    return bool(HANDOFF_READY.search(outside.replace('`', ''))) and not re.search(r'hand-?off', inside, re.I)
 
 
 def known_labels() -> set[str]:
@@ -212,6 +237,12 @@ def main() -> None:
                     'issue and say so in one line without a question mark. The owner has already read the '
                     'message: do not send it again (docs/COMMUNICATION.md, "Questions and approvals"; '
                     'core/docs/ in the kit).')
+    if handoff_without_prompt(text):
+        said.append('BLOCKED: the message says a hand-off is ready but gives the owner no opening prompt. The owner '
+                    'has already read the message: do not send it again. Send one short line and a fenced code block '
+                    'with the exact text the owner pastes into the new session, in the chat language (the hand-off '
+                    'file to read and "go on"), and the model to open it on (full model id), and close every '
+                    'hand-off that way (docs/COMMUNICATION.md, "Handoff"; core/docs/ in the kit).')
     try:
         found = bare_labels(text)
     except Exception:  # noqa: BLE001 - no commit-msg grammar: only the label check is off
