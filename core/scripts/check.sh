@@ -1100,12 +1100,16 @@ print(len(fields) // 2)
       pass_note=" (build not run: documentation-only commit, $docs_only $unit)"
       printf '%s\n' "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
     else
-      # Quiet when it passes; on failure the summary line, then the TAIL, never a filter. The
-      # lines that locate a compile error ("In function", "required from", "note:") do not
-      # match "error", and a gate that printed only matching lines sent a CI-only failure out
-      # with its location cut away. The whole output stays in $build_log for a local run. On CI
-      # that file vanishes with the runner and the first error of a long chain sits above any
-      # tail, so CI prints the whole log.
+      # Quiet when it passes; on failure the summary line, then ONE CONTIGUOUS SPAN of the log,
+      # never a filter of lines. The lines that locate a compile error ("In function",
+      # "required from", "note:") do not match "error", and a gate that printed only matching
+      # lines sent a CI-only failure out with its location cut away. A unittest or pytest run's
+      # failures print from its first failure block to the end: every traceback whole and the
+      # summary counts, the passing output above it left out (a FAIL is never cut, AGENTS.md
+      # "Two registers" rule 3; #307 measured test logs as the largest tool results). Any other
+      # output prints its TAIL. The whole output stays in $build_log for a local run. On CI that
+      # file vanishes with the runner and the first error of a long chain sits above any tail,
+      # so CI prints the whole log; MYAGENTKIT_CHECK_VERBOSE=1 prints it on any run.
       # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
       # 150 lines: about the 10000 characters a tool result shows whole; Claude Code cuts a Bash
       # result at 30000 characters (BASH_MAX_OUTPUT_LENGTH, code.claude.com/docs/en/settings).
@@ -1135,9 +1139,28 @@ print(len(fields) // 2)
           cache_record=$cache_key
         fi
       fi
-      if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
-        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
+      whole=""
+      if [ -n "${CI:-}" ]; then whole=CI; fi
+      if [ "${MYAGENTKIT_CHECK_VERBOSE:-0}" != 0 ]; then whole=MYAGENTKIT_CHECK_VERBOSE; fi
+      # The first failure block: unittest's 70 "=" line before "FAIL:" or "ERROR:", pytest's
+      # "=== FAILURES ===" or "=== ERRORS ===". A CR (native Windows writes CRLF) and colour
+      # escapes (pytest --color=yes) are dropped before the match.
+      failures_at=""
+      [ "$rc" -eq 0 ] || [ -n "$whole" ] || failures_at=$(awk '{ line = $0; sub(/\r$/, "", line); gsub(/\033\[[0-9;]*m/, "", line) }
+        length(prev) == 70 && prev ~ /^=+$/ && line ~ /^(FAIL|ERROR|UNEXPECTED SUCCESS): / { print NR - 1; exit }
+        line ~ /^=+ (FAILURES|ERRORS) =+$/ { print NR; exit }
+        { prev = line }' "$build_log")
+      if [ "$rc" -eq 0 ] && [ "$whole" = MYAGENTKIT_CHECK_VERBOSE ] && [ "$cache_found" != hit ]; then
+        printf '%s\n' "NOTE [build]: passed. Its whole output follows ($whole)."
         cat "$build_log"
+      elif [ "$rc" -ne 0 ] && [ -n "$whole" ]; then
+        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows ($whole)."
+        cat "$build_log"
+        fail=1
+      elif [ -n "$failures_at" ]; then
+        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its failures and summary follow, from line $failures_at;"
+        printf '%s\n' "              the passing output above them and the whole output are in $build_log"
+        tail -n "+$failures_at" "$build_log"
         fail=1
       elif [ "$rc" -ne 0 ]; then
         printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"

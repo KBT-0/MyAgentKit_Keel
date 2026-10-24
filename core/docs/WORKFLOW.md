@@ -271,6 +271,10 @@ breaks, everything keeps looking green.
 
 ## A red gate that passes on re-run
 
+Read a failure from the gate's printed `FAIL [build]` block, or grep the log path it names; never
+read that log or a harness spill file whole, and set `MYAGENTKIT_CHECK_VERBOSE=1` only to see a
+passing build's output. For CI, `gh run view <id> --log-failed`, never `--log`.
+
 A FAIL that does not reproduce is not a PASS to forget. A timing-dependent test, a gate that
 overlapped another gate, or a real race all look the same afterwards: the next
 run is green, and the failing test, its error line and the load it ran under are gone, so a

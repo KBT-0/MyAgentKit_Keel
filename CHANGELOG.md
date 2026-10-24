@@ -28,6 +28,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `git -C "$tmp" init`/`commit` re-initialised the worktree's repository (core.bare=true in the
   shared config, its fixture committed on the branch). Git in the build now finds the repository
   from the working directory, and a commit's `git -c` options no longer reach it. A sync is enough.
+- A failed `check.sh` build prints the failures, not the passing output (#307 rank 3): a
+  unittest or pytest run prints from its first failure block to the end, every traceback whole and
+  the summary counts; other output keeps its last 150 lines. The whole output stays in the log
+  the FAIL line names (`.git/check-build.log`). `MYAGENTKIT_CHECK_VERBOSE=1` prints the whole log
+  on any run, pass included; CI prints it on failure as before. A sync is enough.
 - `check.sh --no-build` checks the gate itself without the build (leeway L8); its PASS line says
   so and no hook passes it.
 - `doctor.sh` tells each worktree git still lists at a path that is gone or in another copy of
