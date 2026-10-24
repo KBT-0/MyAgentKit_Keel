@@ -262,23 +262,52 @@ def mode(project, choice=None, sides=None):
         if choice is not None:
             raise ValueError('no mode was switched: the project predates the three modes')
         return
+    presence = choice is not None and normalized(choice) in PRESENCE
     # Read before the lock is created: a switch never writes WORKFLOW.md.
-    workflow = checked(project, 'docs/WORKFLOW.md').read_text(encoding='utf-8')
-    if '### Working modes, by name' not in workflow:
-        raise ValueError('WORKFLOW.md has no "Working modes, by name" section')
-    section = workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
-    rows = re.findall(r'^\| `([a-z-]+)` \|([^\n]+)$', section, re.M)
-    names = [name for name, _ in rows]
-    if tuple(names) != MODES:
-        raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
-    if choice is None:
-        return working_mode(project, section, rows)
+    path = checked(project, 'docs/WORKFLOW.md')
+    if not path.is_file():
+        # The kit's own source repo or a half-installed project (L11): presence still switches.
+        if not presence:
+            raise ValueError('no docs/WORKFLOW.md in %s, so no working mode is defined here (the kit\'s source '
+                             'repo, or a project the kit is not fully installed in)' % shown(project))
+        section = ''
+    else:
+        workflow = path.read_text(encoding='utf-8')
+        if '### Working modes, by name' not in workflow:
+            raise ValueError('WORKFLOW.md has no "Working modes, by name" section')
+        section = modes_section(workflow)
+        rows = re.findall(r'^\| `([a-z-]+)` \|([^\n]+)$', section, re.M)
+        names = [name for name, _ in rows]
+        if tuple(names) != MODES:
+            raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
+        if choice is None:
+            return working_mode(project, section, rows)
     with switch_lock(project):
-        if normalized(choice) in PRESENCE:
+        if presence:
             if sides is not None:
                 raise ValueError(normalized(choice) + ' takes no note')
             return switch_presence(project, section, normalized(choice))
         return working_mode(project, section, rows, choice, sides)
+
+
+def modes_section(workflow):
+    return workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
+
+
+def autopilot_rules(section):
+    return re.search(r'^#{3,4} autopilot(?![\w-]).*?(?=^#{2,4} |\Z)', section, re.M | re.S)
+
+
+def kit_rules(project):
+    """The autopilot rules from the kit's own WORKFLOW.md, for a project without them (L11): the
+    kit source repo's core/docs/, else the copy shipped beside this helper (a plugin's docs/)."""
+    for path in (project / 'core/docs/WORKFLOW.md', Path(__file__).resolve().parents[1] / 'docs/WORKFLOW.md'):
+        if path.is_file():
+            workflow = path.read_text(encoding='utf-8')
+            rules = autopilot_rules(modes_section(workflow)) if '### Working modes, by name' in workflow else None
+            if rules is not None:
+                return path, rules[0].replace('{{OWNER_NAME}}', 'the owner')
+    return None, None
 
 
 def owner(project, state):
@@ -302,13 +331,25 @@ def presence_lines(state):
 
 def switch_presence(project, section, choice):
     """Write STATE's Owner line and .myagentkit/presence together, as a mode switch writes its two."""
-    rules = re.search(r'^#{3,4} autopilot(?![\w-]).*?(?=^#{2,4} |\Z)', section, re.M | re.S)
-    if rules is None:
-        raise ValueError('WORKFLOW.md has no autopilot rules ("### autopilot, the owner-away switch" after '
-                         '"Working modes, by name"); sync the kit (v0.13) and run this again')
+    rules = autopilot_rules(section)
+    notes = []
+    if rules is not None:
+        rules = rules[0]
+    else:
+        source, rules = kit_rules(project)
+        if rules is None:
+            raise ValueError('WORKFLOW.md has no autopilot rules ("### autopilot, the owner-away switch" after '
+                             '"Working modes, by name"); sync the kit (v0.13) and run this again')
+        notes.append(('This project\'s docs/WORKFLOW.md predates the autopilot rules (kit v0.13); they come from '
+                      '%s; /myagentkit:sync brings them into the project.' if section else
+                      'No docs/WORKFLOW.md here; the autopilot rules come from %s.') % shown(source))
     state_path = checked(project, 'docs/STATE.md')
-    state_bytes = state_path.read_bytes()
-    state = state_bytes.decode('utf-8')
+    if state_path.is_file():
+        state_bytes = state_path.read_bytes()
+    else:
+        state_bytes = None
+        notes.append('There is no docs/STATE.md here, so no Owner line was written; .myagentkit/presence records it.')
+    state = state_bytes.decode('utf-8') if state_bytes is not None else ''
     stamp, line, words = owner(project, state)
     record = checked(project, '.myagentkit/presence')
     now = datetime.now().astimezone().isoformat(timespec='seconds')
@@ -330,12 +371,18 @@ def switch_presence(project, section, choice):
         position = position or len(state)
         updated = (state[:position] + ('' if position == 0 or state[:position].endswith('\n') else newline)
                    + '**Owner:** ' + value + newline + state[position:])
-    publish(project, state_path, state_bytes, updated.encode('utf-8'), record, text)
+    if state_bytes is None:
+        record.parent.mkdir(exist_ok=True)
+        os.replace(prepared(project, record, text.encode('utf-8')), record)
+    else:
+        publish(project, state_path, state_bytes, updated.encode('utf-8'), record, text)
+    for note in notes:
+        print(note)
     print('Owner: ' + value + '\n')
     if choice == 'present':
         print(BACK)
         return
-    print(rules[0].strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
+    print(rules.strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
           'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '
           'the report .myagentkit/autopilot/%s.md is written' % since[:10])
 

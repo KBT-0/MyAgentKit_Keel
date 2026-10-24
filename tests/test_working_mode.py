@@ -873,6 +873,58 @@ class WorkingModeTests(unittest.TestCase):
                 self.assertIn(level + ' autopilot', self.run_mode('autopilot').stdout)
                 self.assertEqual(self.run_mode('present').returncode, 0)
 
+    def test_without_workflow_or_state_a_plain_line_and_presence_is_still_recorded(self):
+        # L11: the kit's own source repo has neither file; the switch printed `[Errno 2] ...`.
+        (self.project / 'docs/WORKFLOW.md').unlink()
+        self.state.unlink()
+        for args in ((), ('cross',)):
+            result = self.run_mode(*args)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn('Errno', result.stderr)
+            self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+            self.assertIn('no docs/WORKFLOW.md', result.stderr)
+        presence = self.project / '.myagentkit/presence'
+        # The kit repo: its rules are core/docs/WORKFLOW.md.
+        (self.project / 'core/docs').mkdir(parents=True)
+        (self.project / 'core/docs/WORKFLOW.md').write_text(
+            (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').replace(
+                '### autopilot, the owner-away switch', '### autopilot, the owner-away switch (kit repo copy)', 1), encoding='utf-8')
+        result = self.run_mode('autopilot')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stamp = presence.read_text(encoding='utf-8').split()[1]
+        self.assertIn('no docs/STATE.md', result.stdout)
+        self.assertIn('### autopilot, the owner-away switch (kit repo copy)', result.stdout)
+        self.assertNotIn('{{OWNER_NAME}}', result.stdout)
+        self.assertIn('/goal every item', result.stdout)
+        self.assertIn('.myagentkit/autopilot/' + stamp[:10] + '.md', result.stdout)
+        self.assertFalse(self.state.exists())
+        result = self.run_mode('present')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(presence.read_text(encoding='utf-8'), '^present ' + re.escape(stamp) + r' \S+\n$')
+
+    def test_a_project_older_than_autopilot_switches_with_the_rules_beside_the_helper(self):
+        # L11: a v0.12 project's WORKFLOW.md has no autopilot section; the plugin's copy of the
+        # helper, run with --project, takes the rules from the WORKFLOW.md shipped beside it.
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        start, end = workflow.index('### autopilot, the owner-away switch'), workflow.index('## Worker cost')
+        (self.project / 'docs/WORKFLOW.md').write_text(workflow[:start] + workflow[end:], encoding='utf-8')
+        (self.project / 'docs/kit').mkdir()
+        (self.project / 'docs/kit/.kit-version').write_text('0.12.1\n', encoding='utf-8')
+        self.state.write_text('# State\n---\n**Working mode:** solo\nActive work.\n', encoding='utf-8')
+        result = self.run_mode('autopilot')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('predates the autopilot rules', result.stdout)
+        self.assertIn('### autopilot, the owner-away switch', result.stdout)
+        self.assertIn('/goal every item', result.stdout)
+        self.assertRegex(self.state.read_text(encoding='utf-8').splitlines()[3],
+                         r'^\*\*Owner:\*\* away \(autopilot since \S+\)$')
+        self.assertTrue((self.project / '.myagentkit/presence').read_text(encoding='utf-8').startswith('away '))
+        # Both plugins ship the helper and the rules it falls back to (scripts/package_codex_plugin.py).
+        for plugin in ('plugin', 'plugins/myagentkit'):
+            self.assertEqual((ROOT / plugin / 'scripts/working_mode.py').read_bytes(), SCRIPT.read_bytes(), plugin)
+            self.assertEqual((ROOT / plugin / 'docs/WORKFLOW.md').read_bytes(),
+                             (ROOT / 'core/docs/WORKFLOW.md').read_bytes(), plugin)
+
     def test_state_operations_stay_in_the_project_and_its_private_folder(self):
         before = self.state.read_bytes()
         secret = self.project / 'secret.txt'

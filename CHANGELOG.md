@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- `/myagentkit:mode autopilot|present` works in a project older than v0.13 and in the kit's source repo (L11): both plugins ship `working_mode.py` and the WORKFLOW.md rules it falls back to; with no docs/WORKFLOW.md the helper prints one plain line, and a presence switch still writes `.myagentkit/presence` and the `/goal` line.
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
