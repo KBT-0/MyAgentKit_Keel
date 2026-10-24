@@ -51,8 +51,9 @@ Default: delegate. The lead's context is re-read on every request and grows towa
 worker's is small and ends with its task (code.claude.com/docs/en/sub-agents, "Choose between
 subagents and main conversation"; /costs). Code, tests, doc edits outside the state files,
 reviews, review fixes and any read, search or test run longer than a few calls go to a worker
-or sub-agent. The lead does the work itself only when one of these holds, and names it in one
-visible line before it starts:
+or sub-agent. The lead reads results; it reads "Worker cost" and "Review rounds" in full only in
+doubt, and `docs/GOTCHAS.md` by its Contents. The lead does the work itself only when one of
+these holds, and names it in one visible line before it starts:
 
 1. Briefing costs more than doing: a direct answer, or about three tool calls that add little
    to its context (sub-agents doc: "quick, targeted change", "Latency matters").
@@ -125,6 +126,75 @@ The kit's #307 runs and the lead-route log replace these numbers.
    Edit it as `docs/AGENTS.md`, "STATE.md discipline", says, never touching the "Working mode:" line.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it, and go on with work that does not depend on it.
+
+## Task discipline — the details
+
+`AGENTS.md`, "Task discipline", states each rule in a sentence or two; this section holds the
+how. It is read when the topic comes up, not every session.
+
+- **Session start.** `./scripts/doctor.sh` changes nothing; a `MISSING:` line is offered as a
+  fix before any code is touched, since a red gate on an unready machine is not a code bug.
+- **Refactors.** A refactor you think is worth doing goes to `docs/BACKLOG.md` as one line, or
+  into its own task and commit; it never rides along in this task's diff.
+- **Tests.** Writing the test first is advice, not a rule. An ordinary test needs no mandatory
+  red proof; a gate check does ("Writing a gate"). A generated-content pipeline validates its
+  output (data validation, captures); unit tests of the generator are not mandatory. A
+  plugin's test or output advice (a self-check in place of the test tree, a capped report)
+  never replaces the test rules. A test piped through a filter (`| grep`, `| tail`) ahead of a
+  commit hides a red result, as `test; git commit` does.
+- **Fix now.** An issue or a `docs/BACKLOG.md` line is for what is out of the task's reach or
+  what {{OWNER_NAME}} deferred. A gate reviewer's Low goes to the backlog instead, since a fix
+  in the round adds code no reviewer has seen (`docs/REVIEW_GATE.md`, "Verdicts and who decides").
+- **Existing systems.** Search `docs/ARCHITECTURE.md` first, then the code. Never rewrite what
+  you could not find; ask if unsure. A second system doing the same job is a decay signal.
+- **Style.** A split is proposed, never done inside an unrelated task. Hidden global state
+  (singletons, static mutable state) makes tests order-dependent and hides an API's real
+  inputs; the clock and randomness come through the constructor for determinism.
+
+### Destructive commands
+
+Commit or stash before any command that discards work: `reset --hard`, `checkout --`,
+`restore`, `clean -f`, `stash drop`, a force push. Check `git status` first, every time.
+Uncommitted work is NOT in the reflog (`docs/GOTCHAS.md` says what can still be recovered). A
+hook refuses the loss-certain subset (always: stash drop/clear, force push, remote
+set-url/add, amending a pushed commit; on a dirty tree: reset --hard, checkout --/-f, restore,
+clean -f); the rule still covers every destructive command.
+
+The same care holds before a script's recursive delete of a directory a variable or a setting
+chose: a build cache there proves some build used it, not that every file is the tool's. Prove
+ownership by a marker the tool wrote (never a path prefix), refuse an empty path, a filesystem
+or repository root, an ancestor and an unresolved link, else stop with the repair;
+`claude_bridge.scratch` shows it. One exception: the worktree clean-up
+(`scripts/clean_worktrees.sh`, Claude Code overlay) removes through `git worktree remove` only
+a worktree git registered, and only after proving every file git does not track there
+disposable or a copy of main's ("Worker cost"); that proof stands in for the marker.
+
+### Ending running work
+
+A session, a review, a gate or a build keeps running unless {{OWNER_NAME}} asked for it to end,
+or it is provably finished or hung; a stopped job orphans what it started, spends quota and
+races the next run. A FINISHED worker is closed with `scripts/close_worker.sh` without asking;
+it refuses while its gate or commit runs. When ending is justified, end the whole process tree
+through the kit's script (`close_worker.sh`, `agent_process`), never one process by name, and
+leave a one-line reason in the STATE line.
+
+### The commit gate and attribution
+
+The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
+abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). `git commit
+--no-verify` is {{OWNER_NAME}}'s hatch, never an agent's. In the Claude Code overlay a
+PreToolUse hook (`.claude/hooks/guard_destructive_git.py`) refuses `--no-verify`, `commit -n`,
+`-c core.hooksPath=` and `--no-gpg-sign` in an agent's git command; the owner's own terminal is
+not affected. If the gate fails, fix the cause or stop and report; never route around it.
+
+No `Co-Authored-By` line names an AI tool, and no tool or model is credited as author,
+co-author or reviewer in a commit message or pull request description. `.githooks/commit-msg`
+rejects an attribution trailer (a `...-by:` line naming a tool, optionally followed by its
+model, or a tool vendor's address) and a "Generated with <tool>" line; a trailer naming a model
+alone ("Co-authored-by: Opus 5.5") and credit in prose ("reviewed by <model>", a model name in
+the subject) get past the hook, and the rule still forbids them. Every worker brief repeats the
+rule. The tool can be told not to add the trailer (`attribution` in `.claude/settings.json`);
+the hook is the backstop. The tool+model trace lives in `docs/STATE.md` only.
 
 ## Task ids
 
@@ -263,7 +333,7 @@ Gates get their own rules because they fail differently from ordinary code: when
 breaks, everything keeps looking green.
 
 - **Prove it RED, and keep it red with a fixture test.** Construct the failure condition,
-  watch the check reject it, undo it, and add a fixture test for the check to the project's
+  watch the check reject it for the right reason, undo it, and add a fixture test for the check to the project's
   test suite in the same task (the kit's `docs/gates-must-be-proven-red.md`). This red proof
   is for gate checks; an ordinary test needs none (the kit's `docs/research/test-rules.md`,
   findings 4 to 6). It is TDD's red step at the size of a gate; seeded failures measurably
@@ -437,9 +507,11 @@ cadence (ten days came from a project's request, kit issue #61).
 - The canonical instruction file is `AGENTS.md` (root and per folder). Tool-specific files
   are pointers.
 - `docs/STATE.md` is the single cross-tool memory. Every entry carries a tool+model trace.
+  Chat memory does not transfer between tools or sessions; per-tool memory features (goals,
+  IDE session memory, auto-memory) are scratch, never canonical.
 - Cross-tool transfer uses `docs/HANDOFF.md` — the target has no chat memory.
 - **Gates are tool-agnostic:** `scripts/check.sh` runs the same everywhere. Any tool's own
-  hooks are early feedback, never the rule itself; `.githooks/pre-commit` is the gate that
+  hooks, skills and agent definitions are convenience and early feedback, never the rule itself; `.githooks/pre-commit` is the gate that
   actually holds, for every tool.
 - **A second tool or family is welcome, never required:** it reduces correlated blind spots
   but does not remove them, and the one controlled measurement found the direction asymmetric

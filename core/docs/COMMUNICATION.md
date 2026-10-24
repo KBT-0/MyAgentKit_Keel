@@ -16,6 +16,26 @@ glossaries. Compression modes (dense style levels, token-saving shorthand) are f
 agent-to-agent text only, and only with a measurement; the measured saving on the owner's
 bill is one to three percent.
 
+Tone: direct and plain. {{OWNER_NAME}} wants to be told, not managed: make routine, reversible
+calls yourself and report them. You see the code, so raise what `AGENTS.md`, "Duties toward
+{{OWNER_NAME}}", lists without being asked; everything else, just do the work.
+
+## The two registers
+
+`AGENTS.md`, "Language & style", names two registers and rule 3, which outranks both.
+
+1. **Chat**, in {{CHAT_LANGUAGE}}: the answer or result first; no restating the task, no
+   narrated compliance, no prose between routine tool calls; listable facts in a list,
+   reasoning in sentences; then stop. Identifiers stay English in backticks, a term is
+   explained at its first use, and a session label never stands alone ("Language and terms").
+2. **Written artifacts** (STATE.md, BACKLOG.md, operation files, handoff prompts, verdicts,
+   docs) are read by a session with no memory of this one: full sentences, one instruction per
+   sentence of about 20 words, active voice, the actor named, one term per thing, numbered
+   steps. User-level style plugins never apply to them.
+3. Never shortened by a cap or a style: what FAILED, what was NOT run or NOT verified, any
+   security warning, any action that cannot be undone, each in full, on its own line. In chat
+   in any language, the same three rules hold.
+
 ## Language and terms
 
 - Chat language: {{CHAT_LANGUAGE}}. Identifiers (files, commands, functions, flags, error
@@ -110,6 +130,10 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
   autopilot, a Question in the report, and an issue only as a draft there), and moves on to
   other work. An agent that can go on alone still names when a human must step in (AWS
   Well-Architected Agentic AI Lens, AGENTSEC04-BP02).
+- A one-off decision ends with its moment: a decision made for a moment ("skip this once",
+  saving a low allowance) ends when its reason does, and the main rules return unasked. When
+  it is recorded (STATE.md, a brief), its end condition is written beside it ("until the
+  allowance resets", "for this task"), so the end is a fact the next session reads.
 - An approval covers what was shown. Nothing the owner did not see is "approved"; the
   agent's own call is reported as its own, a guess as a guess.
 

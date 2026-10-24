@@ -36,6 +36,21 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   session" sentence of "The lead routes", the "Read narrow" bullet of "Task discipline", the
   last sentence of `docs/AGENTS.md`'s "No size limit" bullet and the first sentence under
   WORKFLOW's "### The rules in brief".
+- **A shorter constitution** (#307 rank 4; `AGENTS.md`, `docs/WORKFLOW.md`,
+  `docs/COMMUNICATION.md`, `docs/REVIEW_GATE.md`, `docs/AGENTS.md`): the always-loaded
+  `AGENTS.md` goes from 17,289 to 9,155 characters. Every HARD RULE, the STOP and MENTION ONCE
+  lists and the reading order stay, each rule in one or two sentences with a pointer; the how
+  moves to the section the pointer names. A kit start wrote 7.5–10k more cache tokens than a
+  plain one, most of it this file. The hand-off line now ends with the new session's opening
+  prompt in a code block.
+- **ACTION** (`AGENTS.md`, `docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, `docs/REVIEW_GATE.md`,
+  `docs/AGENTS.md`, all project-owned): run `sync-kit.sh . --merge`. Without it, keep your
+  `AGENTS.md` as it is (it still holds every rule), or replace it with the kit's and copy, from
+  the kit: WORKFLOW's "## Task discipline — the details" with its three subsections (before
+  "## Task ids"), COMMUNICATION's "## The two registers", the tone paragraph closing
+  "Principle" and the one-off-decision bullet of "Questions and approvals", REVIEW_GATE's
+  paragraph on the extra review in "Risk tiers", and `docs/AGENTS.md`'s "## Writing
+  docs/ARCHITECTURE.md".
 
 ## v0.13 — 2026-10-23
 
