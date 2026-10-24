@@ -36,6 +36,7 @@ entries it was installed with; one the kit added later is listed here.
 - PowerShell from the Microsoft Store leaves suspended processes behind
 - A variable the session set does not reach the git hook
 - A PowerShell probe whose Set-Location fails goes on in the current folder
+- The kit's Claude Code mod
 
 ---
 
@@ -345,3 +346,19 @@ worktree, under the throwaway author, and the lead had to rebase it out. Make a 
 stop on the first error (`$ErrorActionPreference = 'Stop'`, or `-ErrorAction Stop` on the
 `Set-Location`), and before the commit check that `git rev-parse --show-toplevel` names the
 throwaway folder.
+
+
+## The kit's Claude Code mod
+
+The mod (`plugin/`) needs Claude Code 2.1.310 or newer, the version `.github/workflows/mod-tests.yml` pins.
+
+- Every mod feature has a no-mod path; gates, guards, the done signal and rules never depend on a mod.
+- An observer hook fails open; a guard hook has `.catch` (`claude plugin validate` warns without it).
+- A band puts `next(e)` in its own tree, or the handlers after it never run.
+- After a Claude Code upgrade re-run `claude plugin validate plugin` and `claude plugin test plugin`.
+- Install warning: without managed settings or a Team/Enterprise login, another installed mod can answer
+  `tool.call` before the kit's PreToolUse hooks run, allow via `tool.check` past a deny or a hook block, or
+  change a sub-agent's model in `agent.spawn`.
+- Sources: https://code.claude.com/docs/en/permissions ("Precedence among rules, hooks, and mods"),
+  https://code.claude.com/docs/en/hooks (where settings hooks run in the order), https://code.claude.com/docs/en/sub-agents
+  (`agent.spawn` model), https://code.claude.com/docs/en/plugins (`plugin validate`, `plugin test`).

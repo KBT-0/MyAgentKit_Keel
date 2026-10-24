@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased
+
+- **mod CI** (`.github/workflows/mod-tests.yml`, new): `claude plugin validate plugin` and `claude plugin test plugin` on Claude Code 2.1.310, the mod's minimum, when `plugin/**` changes; `core/docs/GOTCHAS_KIT.md` gains "The kit's Claude Code mod" (rules and the install warning about third-party mods). No project action.
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
