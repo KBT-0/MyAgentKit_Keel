@@ -283,6 +283,10 @@ def run_tests(root, directory, required, shard=None):
                                % (name, counts[name], minimum))
     if shard:
         suite = unittest.TestSuite(list(_cases(suite))[shard[0]::shard[1]])
+        # A module that lost tests below its SHARDS count would leave a shard green with none.
+        if not suite.countTestCases():
+            raise RuntimeError("%s shard %d of %d holds no test: lower its SHARDS count"
+                               % (", ".join(required), shard[0], shard[1]))
     output = io.StringIO()
     # Verbosity 1: a failure shows its FAIL and ERROR blocks and the count, not a line for each
     # passing test (a red CI job once carried about 45k tokens of those lines, #111).
@@ -358,7 +362,7 @@ def degree(cpus, units, busy=0.0):
     three times as long. Read once at the start; ponytail: a load that starts mid-run is not
     seen, gate each unit's start on the load (make -l) if that ever times a run out.
     On a 3-CPU runner three at once took 300 s each and timed out; one after another is what
-    passed there. GitHub's standard runners: macOS 3 vCPU, Linux and
+    passed there (CI's macOS jobs try two through UNITS, units_at_once). GitHub's standard runners: macOS 3 vCPU, Linux and
     Windows 2 (private repositories) or 4 (public) (docs.github.com/en/actions/reference/runners/
     github-hosted-runners, read 2026-10-15). From 4 CPUs, one unit per two CPUs: a unit's tests
     start shells and git, more processes than the one CPU each (the 4 and the half are the kit's
@@ -374,6 +378,8 @@ def units_at_once(cpus, units, busy, environ=os.environ):
     3 CPUs on every macOS job and 1.0 of 4 on a Windows one, which took them to one unit at once.
     UNITS, when set, is the count itself (at most the units)."""
     if environ.get(UNITS):
+        if not re.fullmatch(r"[0-9]+", environ[UNITS]):
+            raise ValueError("%s must be a whole number, not %r" % (UNITS, environ[UNITS]))
         return max(1, min(units, int(environ[UNITS])))
     return degree(cpus, units, 0.0 if environ.get("GITHUB_ACTIONS") == "true" else busy)
 
@@ -1545,10 +1551,10 @@ def main():
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())]
     left_out = sum(REQUIRED_SUITES[directory][name] for directory, reasons in NOT_ON_WINDOWS.items()
-                   for name in reasons if tier_of(name) in tiers) if not_here else 0
+                   for name in reasons if tier_of(name) in tiers)
     passed = run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
                        caps=[CAPS[tier_of(name)][0] * host for name in units],
-                       factor=min(degree(cpus, len(units)), 4), left_out=left_out)
+                       factor=min(max(parallel, degree(cpus, len(units))), 4), left_out=left_out)
     seconds = time.monotonic() - started
     if passed:
         print("TIME: %.1f s in all" % seconds)
