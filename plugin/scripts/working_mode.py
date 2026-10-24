@@ -48,6 +48,11 @@ BACK = ('The owner is back. Before anything else: run `python3 scripts/autopilot
         'report from it (docs/AUTOPILOT.md); give it in two layers (docs/COMMUNICATION.md, "Handoff"); then '
         'ask its Questions one by one with AskUserQuestion, the recommended option first. An Issue draft is '
         'posted only on the owner\'s yes.')
+# A project older than the presence switch (L11) has neither autopilot_report.py nor AUTOPILOT.md.
+OLD_BACK = ('The owner is back. Before anything else: write the report of the absence (done, from `git log` since the '
+            'stamp above; parked, each with its reason; questions) in two layers, the short answer first; then ask its '
+            'Questions one by one with AskUserQuestion, the recommended option first. An Issue draft is posted only '
+            'on the owner\'s yes.')
 
 
 def repairs_old_mode(old_lines, new_lines):
@@ -280,6 +285,9 @@ def mode(project, choice=None, sides=None):
         names = [name for name, _ in rows]
         if tuple(names) != MODES:
             raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
+        if not presence and not checked(project, 'docs/STATE.md').is_file():
+            raise ValueError('no docs/STATE.md in %s, so the working mode has no record here (a project the kit '
+                             'is not fully installed in)' % shown(project))
         if choice is None:
             return working_mode(project, section, rows)
     with switch_lock(project):
@@ -301,7 +309,7 @@ def autopilot_rules(section):
 def kit_rules(project):
     """The autopilot rules from the kit's own WORKFLOW.md, for a project without them (L11): the
     kit source repo's core/docs/, else the copy shipped beside this helper (a plugin's docs/)."""
-    for path in (project / 'core/docs/WORKFLOW.md', Path(__file__).resolve().parents[1] / 'docs/WORKFLOW.md'):
+    for path in (checked(project, 'core/docs/WORKFLOW.md'), Path(__file__).resolve().parents[1] / 'docs/WORKFLOW.md'):
         if path.is_file():
             workflow = path.read_text(encoding='utf-8')
             rules = autopilot_rules(modes_section(workflow)) if '### Working modes, by name' in workflow else None
@@ -380,7 +388,7 @@ def switch_presence(project, section, choice):
         print(note)
     print('Owner: ' + value + '\n')
     if choice == 'present':
-        print(BACK)
+        print(OLD_BACK if (kit_version(project) or (0, 13)) < (0, 13) else BACK)
         return
     print(rules.strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
           'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '

@@ -1,7 +1,7 @@
 ---
 description: Show the working mode in force and the three modes, or switch to one by name and print its rules for the lead; autopilot and present switch the owner's presence
 argument-hint: "[solo [\"family: X\"] | cross | saver \"low: X\" | autopilot | present]"
-allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 scripts/working_mode.py:*), Bash(py -3 scripts/working_mode.py:*)
+allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 scripts/working_mode.py:*), Bash(py -3 scripts/working_mode.py:*), Bash(python "*/.claude/plugins/*/scripts/working_mode.py" --project *), Bash(python3 "*/.claude/plugins/*/scripts/working_mode.py" --project *), Bash(py -3 "*/.claude/plugins/*/scripts/working_mode.py" --project *)
 ---
 # /myagentkit:mode [name]
 
@@ -61,7 +61,8 @@ question tool.
 **Older project or no helper.** For `autopilot` or `present`, when the project's
 `docs/kit/.kit-version` is older than 0.13, the helper is missing, or it refuses the name
 ("unknown mode"), say so in one line, then run this plugin's copy against the project:
-`python "${CLAUDE_PLUGIN_ROOT}/scripts/working_mode.py" --project "<absolute project root>" "<name>"`.
+`python "${CLAUDE_PLUGIN_ROOT}/scripts/working_mode.py" --project "<absolute project root>" "<name>"`
+(`python3` / `py -3` on the host, the path in double quotes as written).
 It writes the Owner line and `.myagentkit/presence`, takes the rules from the copy of
 WORKFLOW.md shipped beside it when the project has none (in the kit's source repo, from
 `core/docs/WORKFLOW.md`), and prints the `/goal` line; print its output as above.

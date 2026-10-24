@@ -883,7 +883,30 @@ class WorkingModeTests(unittest.TestCase):
             self.assertNotIn('Errno', result.stderr)
             self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
             self.assertIn('no docs/WORKFLOW.md', result.stderr)
+        (self.project / 'docs/WORKFLOW.md').write_bytes((ROOT / 'core/docs/WORKFLOW.md').read_bytes())
+        for args in ((), ('cross',), ('saver',)):
+            result = self.run_mode(*args)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn('Errno', result.stderr)
+            self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+            self.assertIn('no docs/STATE.md', result.stderr)
+        self.assertFalse((self.project / '.myagentkit/mode').exists())
+        (self.project / 'docs/WORKFLOW.md').unlink()
         presence = self.project / '.myagentkit/presence'
+        # A linked core/ is refused, as every other path the helper reads.
+        if hasattr(os, 'symlink'):
+            elsewhere = Path(self.tmp.name) / 'elsewhere'
+            (elsewhere / 'docs').mkdir(parents=True)
+            try:
+                os.symlink(elsewhere, self.project / 'core', target_is_directory=True)
+            except OSError:
+                pass
+            else:
+                result = self.run_mode('autopilot')
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('linked path refused', result.stderr)
+                self.assertFalse(presence.exists())
+                (self.project / 'core').unlink()
         # The kit repo: its rules are core/docs/WORKFLOW.md.
         (self.project / 'core/docs').mkdir(parents=True)
         (self.project / 'core/docs/WORKFLOW.md').write_text(
@@ -919,6 +942,11 @@ class WorkingModeTests(unittest.TestCase):
         self.assertRegex(self.state.read_text(encoding='utf-8').splitlines()[3],
                          r'^\*\*Owner:\*\* away \(autopilot since \S+\)$')
         self.assertTrue((self.project / '.myagentkit/presence').read_text(encoding='utf-8').startswith('away '))
+        result = self.run_mode('present')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('AskUserQuestion', result.stdout)
+        self.assertNotIn('autopilot_report.py', result.stdout)
+        self.assertNotIn('AUTOPILOT.md', result.stdout)
         # Both plugins ship the helper and the rules it falls back to (scripts/package_codex_plugin.py).
         for plugin in ('plugin', 'plugins/myagentkit'):
             self.assertEqual((ROOT / plugin / 'scripts/working_mode.py').read_bytes(), SCRIPT.read_bytes(), plugin)
