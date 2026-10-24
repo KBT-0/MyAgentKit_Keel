@@ -5,6 +5,7 @@ No real terminal, no tmux server, no `claude`: tmux, the Windows Terminal launch
 never a file named *.exe: under WSL such a file is handed to Windows), osascript and uname
 are stubs on PATH. The panes are real captures (tests/fixtures/panes/, see the README there).
 """
+import datetime
 import importlib.util
 import json
 import os
@@ -35,6 +36,12 @@ WORKING = ('idle.txt', 'working.txt', 'working-auto.txt', 'quoted-output.txt', '
 LIMIT = ("watch_workers: LIMIT: %s, its session stopped on a usage limit (You've hit your session limit \u00b7 resets "
          "8:40pm (Europe/Istanbul)): resume it after the reset (SendMessage 'limit reset, continue', or "
          "spawn_worker.sh --resume)\n")
+
+def limit_bg(name, when='resume it after the reset', sid='aaaa0001'):
+    # A background worker is no peer: its LIMIT line names the resume, which stops it first (L17).
+    return ("watch_workers: LIMIT: %s, its session stopped on a usage limit (You've hit your session limit \u00b7 resets "
+            "8:40pm (Europe/Istanbul)): %s: scripts/spawn_worker.sh %s ANSWER_FILE <its spawn options> --resume %s "
+            "(ANSWER_FILE says 'limit reset, continue'; the resume stops the blocked session first)\n" % (name, when, name, sid))
 
 # Every target must be exact (`=NAME`): a prefix match reached another project's session.
 TMUX = r'''#!/usr/bin/env python3
@@ -676,12 +683,14 @@ def said(text):
 
 # The entry Claude Code 2.1.308 wrote when a worker hit its limit (the kitowned transcript, 2026-10-22, trimmed).
 LIMITED = dict(parentUuid='34828d51', isSidechain=False, type='assistant', uuid='8efce0ab',
-               timestamp='2026-10-22T17:28:36.220Z',
+               # Written now: its reset (the next 8:40pm Istanbul) is still to come; PASSED's has come.
+               timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
                message=dict(id='8f2278dd', model='<synthetic>', role='assistant', stop_reason='stop_sequence',
                             type='message', content=[dict(type='text', text="You've hit your session limit \u00b7 resets "
                                                                              "8:40pm (Europe/Istanbul)")]),
                requestId='req_011CgHfq', apiError='usage_limit_reached', error='rate_limit', isApiErrorMessage=True,
                apiErrorStatus=429)
+PASSED = dict(LIMITED, timestamp='2026-10-22T17:28:36.220Z')
 TURN = dict(parentUuid='8efce0ab', isSidechain=False, type='system', subtype='turn_duration', durationMs=118828)
 WOKEN = dict(parentUuid='385659fe', isSidechain=False, type='user', isMeta=True,
              message=dict(role='user', content='Another Claude session sent a message: limit reset, continue'))
@@ -1436,7 +1445,7 @@ class BackgroundTests(Base):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
         self.transcript(said('Running the next suite.'), LIMITED, TURN)
-        self.assertEqual(self.watch().stdout, LIMIT % 'w1')
+        self.assertEqual(self.watch().stdout, limit_bg('w1'))
         gone = ('watch_workers: GONE: w1, its background session aaaa0001 is stopped with no new result report: '
                 'read its result file\n')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
@@ -1450,14 +1459,30 @@ class BackgroundTests(Base):
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
         self.transcript(said('Running the next suite.'), LIMITED, TURN)
         result = self.watch()
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, limit_bg('w1'), ''))
         self.assertEqual(self.watch().stdout, '', 'the stop was reported twice, or its blocked row as a wait')
         result = self.run_bg(WATCH, '--limit', 'w1')
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, limit_bg('w1'), ''))
         # Woken (a peer message, or a resume's prompt): a user entry follows, and the row speaks again.
         self.transcript(said('Running the next suite.'), LIMITED, TURN, WOKEN)
         self.assertIn('WAITING: w1, waiting for: no reason given', self.watch().stdout)
         self.assertEqual(self.run_bg(WATCH, '--limit', 'w1').returncode, 1)
+
+    def test_a_limit_whose_reset_passed_says_resume_now_once(self):
+        # L17: the line kept saying "resume it after the reset" after the reset, at every new watch.
+        self.spawned('w1')
+        (self.workers / 'w1.session').write_text('aaaa0001-5137-4293-88d5-c4339d1ce56c\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
+        self.transcript(said('Running the next suite.'), PASSED, TURN)
+        line = limit_bg('w1', 'reset passed: resume now', 'aaaa0001-5137-4293-88d5-c4339d1ce56c')
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, line, ''))
+        self.assertEqual(self.watch().stdout, '', 'the passed reset was reported twice')
+        self.assertEqual(self.run_bg(WATCH, '--limit', 'w1').stdout, line)
+        # A tab worker is a peer: its line keeps SendMessage, with the reset passed.
+        (self.workers / 'w1.host').write_text('tab\n')
+        result = self.run_bg(WATCH, '--limit', 'w1', VIS_UNAME='MINGW64_NT-10.0')
+        self.assertEqual(result.stdout, (LIMIT % 'w1').replace('resume it after the reset', 'reset passed: resume now'))
 
     def test_ordinary_text_or_a_quote_of_the_limit_line_is_no_limit(self):
         self.spawned('w1')

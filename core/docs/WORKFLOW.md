@@ -1199,7 +1199,9 @@ characters and retry; spaces are refused too. This remedy works on macOS and Lin
 **The disk is the done signal, on every platform.** Right after every spawn the lead starts
 ONE background command: the `sh scripts/watch_workers.sh --result NAME=PATH NAME` line the
 spawn prints. It exits when the worker reports (its result file, GONE, WAITING, or LIMIT: its
-usage limit stopped it, resume it after the reset), and the lead starts it again after every report but DONE and GONE. The printed line starts with a `cd`
+usage limit stopped it: resume it after the reset, or now once its line says "reset passed"; a
+background worker by the `spawn_worker.sh ... --resume ID` its line names, which stops the
+blocked session first and keeps its worktree), and the lead starts it again after every report but DONE and GONE. The printed line starts with a `cd`
 to the checkout that holds the worker's records (`.myagentkit/workers`), so it works pasted in
 any folder; run elsewhere with no record and no session it can see, the watcher exits 2 naming
 the checkout to run from, unless `--result` names a ready result, which it then reports. On

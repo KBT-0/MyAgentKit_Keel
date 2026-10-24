@@ -325,7 +325,33 @@ limited() {
     lim=$(printf '%s\n' "$e" | LC_ALL=C sed -n 's/.*"text":"\([^"]*\)".*/\1/p')
     printf '%s\n' "$lim" | LC_ALL=C grep -qE -- "$limit_re" || continue
     limkey=$(printf '%s\n' "$e" | cksum)
+    limts=$(printf '%s\n' "$e" | LC_ALL=C sed -n 's/.*"timestamp":"\([^"]*\)".*/\1/p')
+    if reset_passed "$lim" "$limts"; then passed=1; limkey="$limkey passed"; else passed=""; fi
     return 0
+  done
+  return 1
+}
+
+# reset_passed TEXT TIMESTAMP: the reset the limit TEXT names ("resets 3:40pm (Europe/Istanbul)",
+# the first such time after the entry's TIMESTAMP) has passed. A text it cannot read, no Python or
+# no time zone data: not passed, and the line keeps "resume it after the reset" (L17: it said so
+# after the reset too, every time the lead armed the watch again).
+reset_passed() {
+  for p in python3 python 'py -3'; do
+    pyrc=0
+    # shellcheck disable=SC2086 # py -3 splits on purpose
+    $p -I -c 'import datetime as d, re, sys
+m = re.search(r"resets (\d{1,2})(?::(\d\d))? ?([ap]m)(?: \(([^)]+)\))?", sys.argv[1], re.I)
+if not m:
+    sys.exit(1)
+if m[4]:
+    from zoneinfo import ZoneInfo
+at = d.datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00")).astimezone(ZoneInfo(m[4]) if m[4] else None)
+reset = at.replace(hour=int(m[1]) % 12 + (12 if m[3].lower() == "pm" else 0), minute=int(m[2] or 0), second=0, microsecond=0)
+if reset < at:
+    reset += d.timedelta(days=1)
+sys.exit(0 if d.datetime.now(d.timezone.utc) >= reset else 1)' "$1" "$2" </dev/null >/dev/null 2>&1 || pyrc=$?
+    case $pyrc in 0) return 0 ;; 1) return 1 ;; esac  # else not found, or a Store alias: the next
   done
   return 1
 }
@@ -339,8 +365,17 @@ limit_report() {
   setmark "$1" limit "$limkey"
 }
 
+# limit_say NAME TEXT: the LIMIT line; once the reset passed ($passed) it says to resume now. A
+# background worker is no peer (SendMessage cannot reach it): its line names the resume, which
+# stops the blocked session itself (spawn_worker.sh, L17).
 limit_say() {
-  say "watch_workers: LIMIT: $1, its session stopped on a usage limit (You${2#*You}): resume it after the reset (SendMessage 'limit reset, continue', or spawn_worker.sh --resume)"
+  if [ -n "${passed:-}" ]; then when="reset passed: resume now"; else when="resume it after the reset"; fi
+  if isbg "$1"; then
+    sid=$(cat -- "$wdir/$1.session" 2>/dev/null) || sid=$(cat -- "$wdir/$1.id" 2>/dev/null) || sid=SESSION_ID
+    say "watch_workers: LIMIT: $1, its session stopped on a usage limit (You${2#*You}): $when: scripts/spawn_worker.sh $1 ANSWER_FILE <its spawn options> --resume $sid (ANSWER_FILE says 'limit reset, continue'; the resume stops the blocked session first)"
+  else
+    say "watch_workers: LIMIT: $1, its session stopped on a usage limit (You${2#*You}): $when (SendMessage 'limit reset, continue', or spawn_worker.sh --resume)"
+  fi
 }
 
 # Only a validated numeric field reaches the companion hook. Its constants remain the
@@ -374,7 +409,7 @@ report() {
     return 0
   fi
   if [ "$1" = LIMIT ]; then
-    t=$(pane_limit) || t=""
+    t=$(pane_limit) || t=""; passed=""  # a pane line has no date to place its reset
     limit_say "$name" "$t" || return 2
     setmark "$name" limit "$(printf '%s\n' "$t" | cksum)"
     return 0

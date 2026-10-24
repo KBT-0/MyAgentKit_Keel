@@ -780,14 +780,16 @@ watch_line() {
 # or effort change is a new spawn. codex_worker.py --detach supervises it and ends it with
 # `claude stop ID`; nothing calls `claude daemon stop`, which ends every background session on
 # the host (docs/research/worker-orchestration-spike.md, T1-T3, 6, T4).
-# bg_row ID prints "live" (a process, or working/blocked: a starting session lists no pid, spike
-# check 4, as codex_worker.py counts it) or "-", and the sessionId of that row, or nothing.
+# bg_row ID prints "blocked" (a usage limit stops a session so, process or not), "live" (a
+# process), "starting" (working with no pid: a starting session lists none, spike check 4) or "-",
+# then the sessionId of that row, or nothing. All but "-" run, as codex_worker.py counts them.
 bg_row() {
   claude agents --json --all </dev/null 2>/dev/null | $kit_python -I -c 'import json, sys
 for row in json.loads(sys.stdin.buffer.read()):
     if row.get("id") == sys.argv[1]:
-        live = row.get("pid") or row.get("state") in ("working", "blocked")
-        print("live" if live else "-", row.get("sessionId") or "-")' "$1"
+        state = row.get("state")
+        live = "blocked" if state == "blocked" else "live" if row.get("pid") else "starting" if state == "working" else "-"
+        print(live, row.get("sessionId") or "-")' "$1"
 }
 # A published result or question ends its session KIT_WORKER_GRACE (60) s later, and the worker's
 # message brings the lead's --resume inside that grace (donemsgfix): a resume waits for that end
@@ -844,6 +846,32 @@ if [ -n "$bg" ]; then
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
   if [ -n "$old" ]; then
     row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
+    # L17: a usage limit leaves the session blocked after its reset, and a session whose daemon
+    # died keeps its last row (blocked, or working with no pid) while `claude logs` finds no job.
+    # A resume takes either over in place: `claude stop` (best effort: a gone daemon has no job),
+    # then a wait for its supervisor, so the stop's exit record never lands on the resumed run.
+    # Never close_worker.sh, which removes the worktree; a session that truly runs still refuses.
+    stale=""
+    case $row in
+      blocked*) stale="blocked at a usage limit" ;;
+      starting*) case $(claude logs "$old" </dev/null 2>&1) in
+          *"job not found"*|*"No job matching"*|*ENOENT*) stale="left by its gone daemon" ;; esac ;;
+    esac
+    if [ -n "$stale" ]; then
+      [ -n "$resume" ] || die "the background session $old of '$name' is $stale: resume it in place with --resume ${row#* } (it stops the session first; close_worker.sh would remove its worktree)"
+      claude stop "$old" </dev/null >/dev/null 2>&1 || :
+      printf '%s\n' "spawn_worker: the background session $old of '$name' is $stale: stopped it, resuming it in place"
+      [ ! -e "$wdir/$name.live" ] || $kit_python -I -c 'import importlib.util, sys, time
+from pathlib import Path
+s = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])
+m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+live, end = Path(sys.argv[2]), time.monotonic() + 20
+while live.exists() and not m.gone(live, 0) and time.monotonic() < end:
+    time.sleep(1)
+sys.exit(live.exists() and not m.gone(live, 0))' "$cworker" "$wdir/$name.live" ||
+        printf '%s\n' "spawn_worker: its earlier supervisor still runs after 20 s (its session never ended): it watches the resumed run too"
+      row="-"
+    fi
     while case $row in [!-]*) in_grace ;; *) false ;; esac; do
       row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
     done
