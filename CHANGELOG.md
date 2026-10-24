@@ -13,6 +13,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- **The lead routes** (`AGENTS.md`, `docs/WORKFLOW.md`): the session the owner opens is the
+  lead and hands code, tests, doc edits, reviews and long reads to a worker or sub-agent,
+  unless one of six exceptions in WORKFLOW's new "The lead routes" holds, named in one visible
+  line first. The delegation thresholds there are labelled estimates; only "a single call stays
+  inline" is firm.
+- **ACTION** (`AGENTS.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`;
+  without it, replace AGENTS.md's "The lead also reads" paragraph at the end of "Reading order"
+  with the kit's "**The lead routes.**" paragraph, and copy WORKFLOW's "### The lead routes"
+  to the end of "How we work — roles" with the roles list's "(below, "The lead routes")".
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's

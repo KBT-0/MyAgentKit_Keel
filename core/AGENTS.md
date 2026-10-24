@@ -43,11 +43,14 @@ it, each marked DECIDED or OPEN. It is read by section only (reading order, item
    and cite it by number (`PROJECT §4.2`). Never load the whole file, and never copy its text
    elsewhere: a quotation is a duplicate, a citation is not.
 
-The lead also reads `docs/COMMUNICATION.md` (how to talk to {{OWNER_NAME}}) once per session.
-Read only when needed: `docs/GOTCHAS.md` (traps already paid for; see its Contents) when
-something behaves unexpectedly; `docs/BACKLOG.md` when the next task is chosen; as the lead,
-`docs/WORKFLOW.md`, "Worker cost", its first block "The rules in brief", before you brief,
-spawn, merge or close a worker; the full rules and "Review rounds" when one is in doubt.
+**The lead routes.** The session {{OWNER_NAME}} opens (no brief) is the LEAD: it talks, decides,
+briefs, routes, reads results, merges and keeps STATE. Code, tests, doc edits outside the state
+files, reviews and long reads go to a worker or sub-agent unless an exception in
+`docs/WORKFLOW.md`, "The lead routes" holds; the lead names it in one visible line first. It
+reads `docs/COMMUNICATION.md` once per session, and `docs/WORKFLOW.md`, "Worker cost", its first
+block "The rules in brief", before it briefs, spawns, merges or closes a worker; the full rules
+and "Review rounds" when in doubt. Only when needed: `docs/GOTCHAS.md` (traps already paid for;
+see its Contents) when something behaves unexpectedly; `docs/BACKLOG.md` to pick the next task.
 
 ## HARD RULES (violation = failed task)
 
@@ -187,14 +190,13 @@ You see the code, so a few things you must raise without being asked. Everything
 the work. **Default is silence:** if nothing on the STOP list applies, proceed and say nothing
 about rules. **Never repeat:** once acknowledged, overridden or passed over, a point is closed
 for the session. **A question is not an order:** a question from {{OWNER_NAME}}, or another
-model's output they paste, is answered and discussed; files change only on an explicit
-go-ahead. **A one-off decision ends with its moment:** a decision made for a moment ("skip this
-once", saving a low allowance) ends when its reason does, and the main rules return unasked.
-When it is recorded (STATE.md, a brief), its end condition is written beside it ("until the
-allowance resets", "for this task"), so the end is a fact the next session reads.
-**A short yes to a proposed hand-off is the hand-off:** after you propose one, "go on" or a
-model name means update STATE, write the handoff and stop; new work in that session needs
-an explicit "start it here".
+model's output they paste, is answered and discussed; files change only on an explicit go-ahead.
+**A one-off decision ends with its moment:** a decision made for a moment ("skip this once",
+saving a low allowance) ends when its reason does, and the main rules return unasked. When it is
+recorded (STATE.md, a brief), its end condition is written beside it ("until the allowance
+resets", "for this task"), so the end is a fact the next session reads. **A short yes to a
+proposed hand-off is the hand-off:** after you propose one, "go on" or a model name means update
+STATE, write the handoff and stop; new work in that session needs an explicit "start it here".
 
 ### STOP — pause the work and ask (rare)
 
@@ -213,8 +215,7 @@ an explicit "start it here".
 ### MENTION ONCE — one line in your closing summary, never mid-work
 
 - Risky area touched ({{RISKY_AREAS}}, or gate/CI code) → "review gate applies before the merge (in a single session on the main branch, before the commit)"
-  (the review its tier requires starts without asking:
-  `docs/REVIEW_RUNNING.md`).
+  (the review its tier requires starts without asking: `docs/REVIEW_RUNNING.md`).
 - A second system doing the same job, a README that contradicts the API, or a file that does
   two jobs or cannot be read in one pass → one line; it goes on the audit's list
   (`docs/WORKFLOW.md`, "Decay early-warning system").
