@@ -335,12 +335,18 @@ relpath() {
   esac
 }
 # The overlays the project took: the presence of their files is the only record of it, so an
-# overlay with at least one of its kit-owned files in the project counts as taken.
+# overlay with at least one of its kit-owned files in the project counts as taken, and so does
+# one with a file of it below a folder of its own: the unity overlay holds no kit-owned file
+# and its project-owned ones were never merged (review High). A root file or one under .claude/
+# (a project's own CLAUDE.md, settings.json) is no record of an overlay.
+{ [ ! -d "$kit/overlays" ] || find "$kit/overlays" -type f; } > "$copies.o" || die "cannot list the kit's overlays"
 taken=" "
 while IFS= read -r src; do
   relpath "$src" && [ "$overlay" -eq 1 ] && [ -e "$target/$rel" ] || continue
+  case "$rel" in .claude/*) ;; */*) o=${src#"$kit/overlays/"}; taken="$taken${o%%/*} "; continue ;; esac
+  grep -qxF -- "$src" "$work_list" || continue
   o=${src#"$kit/overlays/"}; taken="$taken${o%%/*} "
-done < "$work_list"
+done < "$copies.o"
 while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
@@ -500,8 +506,12 @@ EOF
   [ "$held" -eq 0 ] || cat <<EOF
 
   No scripts/gate_config.sh is written while check.sh or review.sh is a conflict: the values
-  listed under its line go there. Once yours is moved aside, the rerun adopts nothing, so
-  copy the kit's core/scripts/gate_config.sh to scripts/gate_config.sh and set them by hand.
+  listed under its line go there. Once yours is moved aside, $(if [ -s "$copies.values" ]; then
+  echo "the rerun writes it from the adopted scripts' values; add the listed ones to it by hand."
+else
+  echo "the rerun adopts nothing, so copy
+  the kit's core/scripts/gate_config.sh to scripts/gate_config.sh and set them by hand."
+fi)
 EOF
   [ "$dirty" -eq 0 ] || cat <<EOF
 
@@ -720,13 +730,14 @@ learn() {
 }
 # fill OURS < MERGED — MERGED with each placeholder the project's copy OURS does not hold
 # filled from $mdir/values (the value found most often); one left unfilled goes to $mdir/left
-# as "{{NAME}} line N". A placeholder OURS still holds is the project's own, left to it.
+# as "{{NAME}} line N (why)". A placeholder OURS still holds is the project's own, left to it,
+# and listed only on a line OURS does not hold (a new kit line, review Low).
 fill() {
   : > "$mdir/left"
   awk -v vals="$mdir/values" -v ours="$1" -v left="$mdir/left" '
     function names(s) { while (match(s, /[{][{][A-Z0-9_]+[}][}]/)) { mine[substr(s, RSTART + 2, RLENGTH - 4)] = 1; s = substr(s, RSTART + RLENGTH) } }
     BEGIN { while ((getline l < vals) > 0) { t = index(l, "\t"); val[substr(l, 1, t - 1)] = substr(l, t + 1) }
-            while ((getline l < ours) > 0) names(l) }
+            while ((getline l < ours) > 0) { names(l); had[l] = 1 } }
     { s = $0; o = ""
       if (s ~ /^[{][{][A-Z0-9_]+[}][}]$/) {
         n = substr(s, 3, length(s) - 4)
@@ -735,7 +746,11 @@ fill() {
       while (match(s, /[{][{][A-Z0-9_]+[}][}]/)) {
         n = substr(s, RSTART + 2, RLENGTH - 4)
         if ((n in val) && !(n in mine) && !index(val[n], "\037")) r = val[n]
-        else { r = substr(s, RSTART, RLENGTH); if (!(n in mine)) printf "%s{{%s}} line %d", (c++ ? ", " : ""), n, out + 1 > left }
+        else {
+          r = substr(s, RSTART, RLENGTH)
+          why = (n in mine) ? "unfilled in the project\047s copy too" : (n in val) ? "its value spans lines" : "no value in the project\047s files"
+          if (!(n in mine) || !($0 in had)) printf "%s{{%s}} line %d (%s)", (c++ ? ", " : ""), n, out + 1, why > left
+        }
         o = o substr(s, 1, RSTART - 1) r; s = substr(s, RSTART + RLENGTH)
       }
       print o s; out++ }'
@@ -757,7 +772,8 @@ if [ "$merge" -eq 1 ]; then
     die "cannot read the project's placeholder values"
   # Every line of the kit's files at the base and now, and with the project's values filled in:
   # what a conflict's project side holds beyond them is the project's own.
-  { git -C "$kit" grep -h -I -e '' "$base" -- core overlays && git -C "$kit" grep -h -I -e '' HEAD -- core overlays; } > "$mdir/kitraw" &&
+  { git -C "$kit" -c grep.lineNumber=false -c grep.column=false grep -h -I -e '' "$base" -- core overlays &&
+    git -C "$kit" -c grep.lineNumber=false -c grep.column=false grep -h -I -e '' HEAD -- core overlays; } > "$mdir/kitraw" &&
     fill /dev/null < "$mdir/kitraw" | cat "$mdir/kitraw" - > "$mdir/kitlines" || die "cannot read the kit's files"
   echo
   printf '%s\n' "PROJECT-OWNED files, the kit's changes since ${base%"${base#???????}"} merged in:"
@@ -787,6 +803,12 @@ if [ "$merge" -eq 1 ]; then
     fi
     if grep -q '^<<<<<<< ' "$target/$rel"; then
       printf '%s\n' "  unresolved: $rel (conflict markers of an earlier merge); resolve them first"; open=1; continue
+    fi
+    # The owner's file: an agent's write to it is refused, and conflict markers in it leave
+    # Claude Code with no hook (review Medium). The kit's change is shown, not merged.
+    if [ "$rel" = .claude/settings.json ]; then
+      printf '%s\n' "  by hand:  $rel (the owner's file, not merged; the kit's change: git -C '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")' diff ${base%"${base#???????}"} HEAD -- $kp)"
+      open=1; continue
     fi
     tr -d '\r' < "$target/$rel" > "$mdir/ours" || die "cannot read $rel"
     rc=0
@@ -819,7 +841,7 @@ if [ "$merge" -eq 1 ]; then
       ' "$mdir/kitlines" "$target/$rel")"
     fi
     if [ -s "$mdir/left" ]; then
-      printf '%s\n' "  placeholder: $rel: $(cat "$mdir/left") (no value found in the project's files; fill by hand)"
+      printf '%s\n' "  placeholder: $rel: $(cat "$mdir/left"); fill by hand"
       open=1
     fi
   done < "$work_list"
@@ -833,7 +855,7 @@ if [ "$merge" -eq 1 ]; then
   printf '%s\n' "sync-kit: version left at v$have. Read each merged file's diff (git diff) and account for"
   echo "          every removed line; resolve each conflict listed (read only those lines);"
   printf '%s\n' "          then rerun with --actions-applied, without --merge, to record v$latest."
-  [ "$open" -eq 0 ] || echo "          Files are listed above as conflict, placeholder, unresolved, skipped or no base."
+  [ "$open" -eq 0 ] || echo "          Files are listed above as conflict, placeholder, unresolved, skipped, by hand or no base."
   exit 2
 fi
 
