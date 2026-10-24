@@ -391,6 +391,9 @@ except ValueError as error:
 ''' % str(ROOT))
         self.git(repo, 'init', '-q')
         self.git(repo, 'config', 'core.autocrlf', 'false')
+        # The suites copy this repo; a background maintenance or gc run would drop its lock files mid-copy.
+        self.git(repo, 'config', 'maintenance.auto', 'false')
+        self.git(repo, 'config', 'gc.auto', '0')
         (repo / 'line ends [1].txt').write_bytes(b'one\ntwo\n')
         (repo / 'real.txt').write_bytes(b'original\n')
         self.commit(repo)
