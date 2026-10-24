@@ -21,6 +21,25 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-24 — v0.14 gitguard: read the shell's quoting before refusing git in data
+
+Backflow (leeway field reports, defect 3 and L9). The v0.12 known limit ("git inside a quote,
+heredoc or code the hook cannot read is refused even when it is harmless") blocked read-only
+work every day: a quoted `<<<<<<<` in a grep, a heredoc body written to a file by `cat`, and
+`git status | awk '{print $2}'`; the workaround was the Write tool. The limit is narrowed, not
+dropped: a `<<<` counts only outside quotes and comments (anywhere when `$(...)` or a backtick
+hides the quoting), a heredoc body is judged when a shell or interpreter reads it, and awk's
+piped input is data only when every raw word that reads as its program is single-quoted (or
+holds no `$`, backtick or backslash) and the program has no `system`, pipe, `@include` or `-f`.
+Two Opus reviews (both Accept) found that the first awk test, "the program's single-quoted form
+appears anywhere in the line", let a decoy `'...'` vouch for a double-quoted program built from
+variables; the per-word test closes it. Each relaxation has a deny test for its dangerous
+neighbour in `tests/test_guard_destructive_git.py`. Still not judged (pre-existing, by the same
+reviews): a receiver that runs its input without being a shell or interpreter (`xargs env`,
+`parallel`, `xargs sh -c`) and write-then-run (`echo ... > s; bash s`). Sources:
+`.myagentkit/v014/gitguard-brief.md`, `gitguard-logic-r1-findings.md`,
+`gitguard-portability-r1-findings.md`.
+
 ### 2026-10-22 — v0.13 kitverify: verify a kit upgrade by the commit it copied; a clean review is empty lists
 
 Backflow (#305), both items paid for in a project's upgrade. 1. `--kit-verified` read the kit

@@ -260,6 +260,13 @@ def unquoted(text):
     return QUOTED.sub(lambda m: " " * len(m.group()), text)
 
 
+def unquote(word):
+    try:
+        return "".join(shlex.split(word))
+    except ValueError:
+        return None
+
+
 def plain_awk(args, text):
     """awk running a literal program that starts and loads no command (no system, pipe, getline
     from a command, @include/@load, -f/-e file), so what is piped into it is data."""
@@ -272,8 +279,10 @@ def plain_awk(args, text):
         i += 1
     i += i < len(args) and args[i] == "--"
     program = args[i] if i < len(args) else ""
-    # Single-quoted in the line (or nothing to expand), so the program is the text awk runs.
-    literal = f"'{program}'" in text or not re.search(r"[$`\\]", program)
+    # Every raw word that reads as the program is single-quoted (or nothing expands): a decoy
+    # `'...'` elsewhere cannot vouch for a double-quoted program built from variables.
+    raw = [w for w in re.findall(WORD, text) if unquote(w) == program]
+    literal = not re.search(r"[$`\\]", program) or bool(raw) and all(w == f"'{program}'" for w in raw)
     return bool(program) and literal and not re.search(r"system|[|@]", program)
 
 
@@ -298,7 +307,7 @@ def strip_heredocs(text):
         lines = text[start + 1:].split("\n")
         for line in lines:
             end += len(line) + 1
-            if (line.lstrip("\t") if m.group(1) else line) == m.group(3):
+            if (line.lstrip("\t") if m.group(1) else line).removesuffix("\r") == m.group(3):
                 break
         body, outside = text[start:end], text[:start] + "\n" + text[end:]
         # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
@@ -342,16 +351,19 @@ def substitutions(text):
     return found
 
 
+# One raw shell word, its quotes kept.
+WORD = r'''(?:[^\s;&|()<>'"\\]+|\\.|'[^']*'|"(?:\\.|[^"\\])*")+'''
+
+
 def shell_tokens(text, strict=False):
     """Shell words and separators, with redirections removed before quote information is lost."""
     # Consume complete raw shell words so quoted/escaped >, < and descriptor numbers survive.
     # Strip a redirection together with its target before shlex discards quote information or
     # splits `2>&1` at `&`. A separate `2 >out` leaves 2 as an argument, as the shell does.
-    word = r'''(?:[^\s;&|()<>'"\\]+|\\.|'[^']*'|"(?:\\.|[^"\\])*")+'''
     redirect = r'(?:\d+)?(?:&>>?|>>|>&|>\||>|<>|<<|<&|<)'
     # A `#` starts a comment only where a word starts (`page#top` is one word), and the comment ends
     # before its newline, which stays a separator (shlex's own comments ate it, joining two lines).
-    text = re.sub(r'(?P<comment>#[^\n]*)|(?P<redirect>' + redirect + r'[ \t]*' + word + r')|' + word,
+    text = re.sub(r'(?P<comment>#[^\n]*)|(?P<redirect>' + redirect + r'[ \t]*' + WORD + r')|' + WORD,
                   lambda m: ' ' if m.group('redirect') or m.group('comment') else m.group(), text)
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|\n()<>")
     lexer.whitespace, lexer.whitespace_split, lexer.commenters = " \t\r", True, ""

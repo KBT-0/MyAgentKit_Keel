@@ -920,6 +920,15 @@ class V014FieldReportTests(GuardCase):
             "git log | xargs awk '{print}'", "git log | awk '@include \"x\"'", "git log | awk '{print}' | sh",
         ], 2)
 
+    def test_a_single_quoted_decoy_elsewhere_does_not_make_awks_program_literal(self):
+        self.assertVerdict([
+            "echo '{$p($0)}'; p=system; echo git push --mirror | awk \"{$p(\"'$0)}'",
+            "p='$x'; git log | awk \"$x\"",
+        ], 2)
+
+    def test_a_crlf_heredoc_terminator_ends_the_body(self):
+        self.assertVerdict(["cat > n.md <<'EOF'\r\nx\r\nEOF\r\ngit stash drop"], 2)
+
 
 if __name__ == '__main__':
     unittest.main()
