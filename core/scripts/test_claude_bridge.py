@@ -391,9 +391,6 @@ except ValueError as error:
 ''' % str(ROOT))
         self.git(repo, 'init', '-q')
         self.git(repo, 'config', 'core.autocrlf', 'false')
-        # The suites copy this repo; a background maintenance or gc run would drop its lock files mid-copy.
-        self.git(repo, 'config', 'maintenance.auto', 'false')
-        self.git(repo, 'config', 'gc.auto', '0')
         (repo / 'line ends [1].txt').write_bytes(b'one\ntwo\n')
         (repo / 'real.txt').write_bytes(b'original\n')
         self.commit(repo)
@@ -1602,6 +1599,9 @@ class BridgeTests(unittest.TestCase):
         self.git("init", "-q")
         # Git for Windows turns autocrlf on system-wide: archive and checkout bytes then differ.
         self.git("config", "core.autocrlf", "false")
+        # Tests copy this repo; git's background maintenance or gc would drop a lock file mid-copy.
+        self.git("config", "maintenance.auto", "false")
+        self.git("config", "gc.auto", "0")
         (self.repo / '.gitignore').write_bytes(IGNORE_RULES)
         for name in ["AGENTS.md", "docs/PHASES.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md"]:
             path = self.repo / name
