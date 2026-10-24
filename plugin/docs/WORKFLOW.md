@@ -922,7 +922,8 @@ a commit made while away) follows the away line until a switch records it there.
   judges the message. Any other message (a farewell, the `/goal` line, a late instruction)
   is an instruction: the lead acts on it and stays in autopilot. When it ends, before
   anything else the lead runs
-  `python3 scripts/working_mode.py present`, gives the report in two layers
+  `python3 scripts/working_mode.py present`, tells {{OWNER_NAME}} to type `/goal clear` (the goal
+  stays active until then), gives the report in two layers
   (`docs/COMMUNICATION.md`, "Handoff"), then asks its Questions one by one with
   AskUserQuestion, the recommended option first; an Issue draft is posted only on
   {{OWNER_NAME}}'s yes. The Claude Code overlay's `context_size.py` repeats this rule at each

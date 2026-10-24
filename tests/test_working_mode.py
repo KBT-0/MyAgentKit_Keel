@@ -800,6 +800,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertRegex(presence.read_text(encoding='utf-8'), '^present ' + re.escape(stamp) + r' \S+\n$')
         self.assertIn('AskUserQuestion', result.stdout)
         self.assertIn('autopilot_report.py', result.stdout)
+        self.assertIn('Type `/goal clear`', result.stdout)  # the autopilot goal outlives present
         self.assertIn('Owner: present', self.run_mode().stdout)
 
     def test_presence_takes_no_note_and_disagreeing_or_unknown_owner_lines_are_refused(self):

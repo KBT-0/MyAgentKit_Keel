@@ -55,7 +55,7 @@ side's allowance has reset, return to the mode the note's `after:` names (`docs/
 no note. For `autopilot`, print its output whole: the rules, the checklist for the owner to
 go through before leaving, and the `/goal` line the owner types (you cannot run it). The
 owner may also turn it on in plain words; the lead then runs the same helper itself. For
-`present`, do what its output says: the report, then the questions one by one with the
+`present`, show the owner its first line (type `/goal clear`: the autopilot goal stays active until they do), then do what its output says: the report, then the questions one by one with the
 question tool.
 
 **Older project or no helper.** For `autopilot` or `present`, when the project's

@@ -44,6 +44,8 @@ EXAMPLES = {'solo': 'family: codex', 'saver': 'low: claude'}
 PRESENCE = ('autopilot', 'present')
 OWNER_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
 AWAY = re.compile(r'away \(autopilot since (\S+)\)')
+# /goal is a session-scoped Stop hook: present removes the record, not the goal (the lead cannot run a slash command).
+GOAL_CLEAR = 'Type `/goal clear`: the autopilot goal stays active until you do.\n\n'
 BACK = ('The owner is back. Before anything else: run `python3 scripts/autopilot_report.py` (`python` on native '
         'Windows) and finish the '
         'report from it (docs/AUTOPILOT.md); give it in two layers (docs/COMMUNICATION.md, "Handoff"); then '
@@ -399,7 +401,7 @@ def switch_presence(project, section, choice):
         print(note)
     print('Owner: ' + value + '\n')
     if choice == 'present':
-        print(OLD_BACK if (kit_version(project) or (0, 13)) < (0, 13) else BACK)
+        print(GOAL_CLEAR + (OLD_BACK if (kit_version(project) or (0, 13)) < (0, 13) else BACK))
         return
     print(rules.strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
           'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '

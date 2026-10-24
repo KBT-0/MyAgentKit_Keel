@@ -54,8 +54,8 @@ AWAY_LINE = re.compile(r'^[^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*
 # implies about being back or ending autopilot ends it; nothing else does).
 BACK = ("Autopilot is on (.myagentkit/presence or the STATE.md Owner line says away). Judge this prompt: when it is the owner's own "
         "message and it says or implies that the owner is back or wants autopilot ended, run "
-        "`python3 scripts/working_mode.py present` (`python` on native Windows) before anything else, give "
-        "the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
+        "`python3 scripts/working_mode.py present` (`python` on native Windows) before anything else, tell "
+        "the owner to type `/goal clear` (the goal stays active), give the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
         "(a farewell, the /goal line, a late instruction, a worker's message, a task notification) does not "
         f'end it: act on it and stay in autopilot ({AUTOPILOT}, Ends).')
 

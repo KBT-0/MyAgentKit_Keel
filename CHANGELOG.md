@@ -15,6 +15,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- Ending autopilot (`working_mode.py present`) now starts with "Type `/goal clear`": the owner's `/goal` stays active after the presence record is gone and keeps pushing turns until they clear it; the mode command, WORKFLOW.md "Ends" and the away reminder say the same.
 - `/myagentkit:mode autopilot|present` works in a project older than v0.13 and in the kit's source repo (L11): both plugins ship `working_mode.py` and the WORKFLOW.md rules it falls back to; with no docs/WORKFLOW.md the helper prints one plain line, and a presence switch still writes `.myagentkit/presence` and the `/goal` line.
 - Presence across checkouts (leeway L12, L13): a linked worktree reads the main checkout's `.myagentkit/presence`; a clone of a commit made while away (the `**Owner:** away` line, no record) shows `Owner: away` with a one-line note instead of exit 1, and the hooks follow that line until a switch records the presence there.
 - While away, a worker's context band line no longer tells it to update `docs/STATE.md` (L14); on POSIX the suggestions ledger lock fails open at once on a read-only folder instead of waiting 5 s (L15).
