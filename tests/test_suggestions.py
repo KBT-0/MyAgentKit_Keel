@@ -98,6 +98,18 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(1, 'wrong')])
         self.assertEqual(self.context(self.run_hook('stop', self.event(stop_hook_active=False))), '')
 
+    def test_stop_reads_the_last_message_the_transcript_has_not_flushed_yet(self):
+        # Field (leeway, 2026-10-24): the final text block landed in the transcript 68 ms after the Stop hook read
+        # it, so a verdict written there got a reminder; the hook input's last_assistant_message carries it.
+        self.write(note(5), {'kind': 'delivered', 'id': 5, 'session': 's1'})
+        self.say('Checking the note.')
+        said = self.context(self.run_hook('stop', self.event(
+            stop_hook_active=False,
+            last_assistant_message='myagentkit-suggestion #5: wrong, because the change was already in.')))
+        self.assertEqual(said, '')
+        self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(5, 'wrong')])
+        self.assertEqual(self.rows('reminded'), [])
+
     def test_stop_hook_active_never_reminds(self):
         self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'})
         self.assertEqual(self.context(self.run_hook('stop', self.event(stop_hook_active=True))), '')

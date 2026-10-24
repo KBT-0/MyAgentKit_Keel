@@ -13,6 +13,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- myagentkit-suggestion: the Stop hook reads a verdict written in the turn's final text block from the hook input's
+  `last_assistant_message`; the transcript could get that block after the hook read it, and the agent was asked
+  for a verdict it had already written (field report, leeway). Sync alone is enough.
+- myagentkit-suggestion mod: the side check sees every owner message since its last check, one typed while a turn
+  ran too, not only the latest one (a note flagged work an earlier message had asked for). Sync alone is enough.
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's

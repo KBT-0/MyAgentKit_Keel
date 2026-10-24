@@ -11,7 +11,7 @@ per line, append only:
   note       a side check's note (`add-note`): id, session, topic, claim, evidence, check, usage
   check      a side check that abstained or whose note was dropped (with the reason), with its usage
   delivered  the note went to the agent: next to a tool result (`post-tool`) or the next prompt (`prompt`)
-  verdict    the agent's verdict line, read from the transcript at `stop`
+  verdict    the agent's verdict line, read at `stop` from the transcript and the hook's last_assistant_message
   reminded   `stop` asked once for a missing verdict; a second missing one stays verdictless
   throttle   `stop` told the owner that delivery stopped
   lifted     the owner's `on` lifted a precision stop: the judged window starts afresh
@@ -206,6 +206,9 @@ def _stop(path: Path, data: dict):
                 and s['notes'][n].get('session') == session]
     if open_ids:
         said = said_verdicts(Path(data['transcript_path']))
+        # The final text block can reach the transcript after Stop reads it (measured: 68 ms late); the
+        # hook input carries it whole.
+        said.update((int(n), v.lower()) for n, v in VERDICT.findall(data.get('last_assistant_message') or ''))
         rows = [{'kind': 'verdict', 'id': n, 'verdict': 'wrong' if said[n] == 'not useful' else said[n],
                  'session': session} for n in open_ids if n in said]
         if rows:
