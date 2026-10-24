@@ -973,8 +973,8 @@ Why: docs/WORKFLOW_RATIONALE.md, "autopilot, the owner-away switch".
 
 ### The rules in brief
 
-The lead reads this block before it briefs, spawns, merges or closes a worker and after a
-compaction; the full rule below, with its sources, when one is in doubt (the measurements:
+The lead reads this block once per session and again after a compaction, not before each brief,
+spawn, merge or close; the full rule below, with its sources, when one is in doubt (the measurements:
 `docs/WORKFLOW_RATIONALE.md`).
 
 1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.

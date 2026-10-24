@@ -24,6 +24,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   without it, replace AGENTS.md's "The lead also reads" paragraph at the end of "Reading order"
   with the kit's "**The lead routes.**" paragraph, and copy WORKFLOW's "### The lead routes"
   to the end of "How we work — roles" with the roles list's "(below, "The lead routes")".
+- **Narrow reads** (#307; `AGENTS.md`, `docs/AGENTS.md`, `docs/WORKFLOW.md`; AGENTS.md stays at
+  its line count). "Read narrow": grep or a range first, never a whole log, spill file or file
+  over 300 lines (measured over 14 days: `cat FILE` cost $69 in Keel and $41 in leeway, unranged
+  Reads 3.2M and 2.9M tokens, spill files read back whole 0.85M and 0.6M). The reading order reads STATE.md's "Active work" and "Blocked" sections,
+  not the file (leeway's 63k-char STATE.md: 207 whole reads, $12). The lead reads WORKFLOW's
+  "The rules in brief" once per session and after a compaction, not before every spawn (381
+  WORKFLOW.md reads, $15 in Keel).
+- **ACTION** (`AGENTS.md`, `docs/AGENTS.md`, `docs/WORKFLOW.md`, project-owned): run
+  `sync-kit.sh . --merge`; without it, copy the kit's reading-order item 3, the "Once per
+  session" sentence of "The lead routes", the "Read narrow" bullet of "Task discipline", the
+  last sentence of `docs/AGENTS.md`'s "No size limit" bullet and the first sentence under
+  WORKFLOW's "### The rules in brief".
 
 ## v0.13 — 2026-10-23
 

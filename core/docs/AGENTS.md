@@ -45,7 +45,8 @@ Binding for every agent that edits a file under `docs/`. The constitution is the
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
   and a pointer.
 - No size limit applies to STATE.md. What keeps it small is deleting finished work in the
-  commit that finishes it, and the backlog living in `docs/BACKLOG.md`.
+  commit that finishes it, and the backlog living in `docs/BACKLOG.md`. It is read by section
+  (`grep -n '^## '`, then a range), never whole.
 - Every entry carries a tool+model trace, and updating STATE.md at session end is the
   agent's job, not {{OWNER_NAME}}'s. A session on a branch or in a worktree writes
   `docs/worktree-notes/<branch>.md` instead; the lead folds it in at the merge

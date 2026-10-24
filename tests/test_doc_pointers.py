@@ -229,6 +229,16 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('A task whose checks build, download or write outside the worktree quotes its '
                       'environment', handoff)
 
+    def test_reads_stay_narrow_state_by_section_worker_cost_once(self):
+        # #307: whole-file reads and re-reads of STATE.md and WORKFLOW.md were the measured leaks.
+        agents = ' '.join((ROOT / 'core/AGENTS.md').read_text(encoding='utf-8').split())
+        self.assertIn('never a whole log, spill file or file over 300 lines', agents)
+        reading = agents[agents.index('## Reading order'):agents.index('## HARD RULES')]
+        self.assertIn('`docs/STATE.md`: its "Active work" and "Blocked" sections', reading)
+        self.assertIn('Once per session it reads `docs/COMMUNICATION.md` and `docs/WORKFLOW.md`', reading)
+        self.assertNotIn('before it briefs, spawns, merges or closes a worker', reading)
+        self.assertIn('It is read by section', (ROOT / 'core/docs/AGENTS.md').read_text(encoding='utf-8'))
+
     def test_review_rounds_are_capped_once_and_the_lead_reads_a_short_block(self):
         # #106: inner rounds ran "until no Medium remains", which never ends. #123: the final
         # review was due per branch in WORKFLOW and per release in the gate. #85: the lead's

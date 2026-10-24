@@ -34,7 +34,7 @@ it, each marked DECIDED or OPEN. It is read by section only (reading order, item
    and offer each fix before touching code: a red gate on an unready machine is not a code bug.
 1. This file, which you are reading now. Do not open it again.
 2. `docs/PHASES.md` — what we are building now, and what is deliberately OUT of scope.
-3. `docs/STATE.md` — cross-session work state. Updating it at session end is YOUR job.
+3. `docs/STATE.md`: its "Active work" and "Blocked" sections. Updating it at session end is YOUR job.
 4. `docs/ARCHITECTURE.md`: read it when the task crosses a module boundary or you cannot tell
    from the target folder's `AGENTS.md` where the code lives. It holds boundaries, invariants
    and who may decide what, not a description of each file; keep it near 100 lines.
@@ -46,11 +46,10 @@ it, each marked DECIDED or OPEN. It is read by section only (reading order, item
 **The lead routes.** The session {{OWNER_NAME}} opens (no brief) is the LEAD: it talks, decides,
 briefs, routes, reads results, merges and keeps STATE. Code, tests, doc edits outside the state
 files, reviews and long reads go to a worker or sub-agent unless an exception in
-`docs/WORKFLOW.md`, "The lead routes" holds; the lead names it in one visible line first. It
-reads `docs/COMMUNICATION.md` once per session, and `docs/WORKFLOW.md`, "Worker cost", its first
-block "The rules in brief", before it briefs, spawns, merges or closes a worker; the full rules
-and "Review rounds" when in doubt. Only when needed: `docs/GOTCHAS.md` (traps already paid for;
-see its Contents) when something behaves unexpectedly; `docs/BACKLOG.md` to pick the next task.
+`docs/WORKFLOW.md`, "The lead routes" holds; the lead names it in one visible line first. Once
+per session it reads `docs/COMMUNICATION.md` and `docs/WORKFLOW.md`, "Worker cost", its first
+block "The rules in brief"; the rules and "Review rounds" in full only in doubt; `docs/GOTCHAS.md`
+(its Contents) when something behaves unexpectedly; `docs/BACKLOG.md` to pick the next task.
 
 ## HARD RULES (violation = failed task)
 
@@ -119,6 +118,7 @@ see its Contents) when something behaves unexpectedly; `docs/BACKLOG.md` to pick
   test tree, a capped report) never replaces these rules. A test runs in its own command and
   its result is read before a commit: never `test; git commit`, never a test piped through a
   filter (`| grep`, `| tail`) ahead of the commit, since both hide a red result.
+- **Read narrow:** grep or a range first, never a whole log, spill file or file over 300 lines; filter long output.
 - The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
   abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). **Agents
   never use `git commit --no-verify`** — that hatch is {{OWNER_NAME}}'s. In the Claude Code
