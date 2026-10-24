@@ -137,7 +137,7 @@ REQUIRED_SUITES = {
               'test_codex_worker': 67 if os.name == 'nt' else 69 if Path('/proc/self/fd').is_dir() else 68, 'test_working_mode': 57,
               'test_worker_visibility': 102 if os.name == 'nt' or os.path.exists('/dev/full') else 101, 'test_doc_pointers': 31,
               'test_usage_summary': 33, 'test_done_audits': 2, 'test_autopilot_report': 1,
-              'test_kit_output': 3, 'test_kit_runner': 51, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 3, 'test_kit_runner': 53, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 52 if os.name == 'nt' else 51, 'test_python_fallback': 3, 'test_master_writer': 13,
               'test_install': 12 if os.name == 'nt' else 8, 'test_gate_config': 3},
@@ -153,8 +153,10 @@ NOT_ON_WINDOWS = {
 # Modules too long for one unit, each run as that many units (#146). A module name is unique
 # across the folders. ponytail: hand-set from measured seconds; a slow module added later only
 # lengthens the run until it is listed here.
+# test_review_upgrade, test_spawn_worker and test_worker_visibility: the longest single units of
+# CI run 40016622584 (877 s on macOS, 626 s and 421 s on Windows).
 SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4, 'test_gate_checks': 3, 'test_check_gate_windows': 3,
-          'test_git_hooks': 3}
+          'test_git_hooks': 3, 'test_review_upgrade': 3, 'test_spawn_worker': 2, 'test_worker_visibility': 2}
 # Two tiers (docs/research/kit-self-checks.md, findings 6 and 7: a commit stage of about ten
 # minutes, the long suites in a second stage). The fast tier is the default run, for every
 # change and before a push; `--slow` runs the slow tier alone, `--all` both (CI runs the two as
@@ -165,7 +167,7 @@ SHARDS = {'test_claude_bridge': 8, 'test_bootstrap': 4, 'test_gate_checks': 3, '
 # Unsharded modules that start right after the shards (their locale suites too): queued last, a
 # 240-280 s unit alone set the fast tier's tail (measured in the tiers report).
 LONG = ('test_sync_kit', 'test_guard_destructive_git', 'test_claude_sandbox',
-        'test_close_worker_windows', 'test_worker_paths_windows', 'test_review_upgrade')
+        'test_close_worker_windows', 'test_worker_paths_windows')
 SLOW = {'acceptance', 'test_bootstrap', 'test_claude_bridge', 'test_spawn_worker', 'test_spawn_codex',
         'test_worker_visibility', 'test_doctor', 'test_close_worker', 'locale/test_git_hooks',
         'test_install'}
@@ -302,6 +304,8 @@ def run_tests(root, directory, required, shard=None):
 
 
 SCALE = "MYAGENTKIT_TEST_TIMEOUT_SCALE"
+# Units at once, set by hand: CI's macOS jobs (3 vCPUs, where degree() gives one) set it.
+UNITS = "MYAGENTKIT_CHECK_UNITS"
 
 
 def limit(seconds):
@@ -362,6 +366,29 @@ def degree(cpus, units, busy=0.0):
     check's own start leave a load near 0.6, which took a 4-CPU runner to one unit at once."""
     free = round(cpus - busy) if busy >= 1 else cpus
     return 1 if free < 4 else min(units, max(2, free // 2))
+
+
+def units_at_once(cpus, units, busy, environ=os.environ):
+    """degree(), with two CI exceptions. A GitHub Actions job has its runner to itself, so the
+    load read at its start is the job's own setup, not other work: run 40016622584 read 3.0 of
+    3 CPUs on every macOS job and 1.0 of 4 on a Windows one, which took them to one unit at once.
+    UNITS, when set, is the count itself (at most the units)."""
+    if environ.get(UNITS):
+        return max(1, min(units, int(environ[UNITS])))
+    return degree(cpus, units, 0.0 if environ.get("GITHUB_ACTIONS") == "true" else busy)
+
+
+def shard(units, spec):
+    """The units of shard "K/N" (1 <= K <= N): every Nth unit from the Kth. The longest units
+    are sorted first, so this spreads them over the N jobs; the N shards hold every unit once.
+    ValueError on another spec or on a shard left without a unit."""
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", spec)
+    if not match or int(match[1]) > int(match[2]):
+        raise ValueError("--shard takes K/N with 1 <= K <= N, not %r" % spec)
+    picked = units[int(match[1]) - 1::int(match[2])]
+    if not picked:
+        raise ValueError("--shard %s: %d units leave this shard empty" % (spec, len(units)))
+    return picked
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
@@ -1458,6 +1485,8 @@ def main():
     tier.add_argument("--slow", action="store_true",
                       help="run the slow tier alone (bootstrap, acceptance, the review bridge, doctor, worker-spawn and close_worker suites, the locale run of test_git_hooks)")
     tier.add_argument("--all", action="store_true", help="run the fast and the slow tier (a release)")
+    parser.add_argument("--shard", metavar="K/N",
+                        help="run shard K of N of the tier: every Nth unit from the Kth (CI splits a tier over N jobs)")
     parser.add_argument("--unit", help=argparse.SUPPRESS)
     parser.add_argument("--timing-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -1495,19 +1524,28 @@ def main():
     tiers = ["fast", "slow"] if args.all else ["slow"] if args.slow else ["fast"]
     tier_of = lambda name: "slow" if module(name) in SLOW or name in SLOW else "fast"
     units = [name for name in units if tier_of(name) in tiers]
+    if args.shard:
+        try:
+            units = shard(units, args.shard)
+        except ValueError as error:
+            parser.error(str(error))
+        # The suites left out on this host are said once, by the first shard.
+        if not args.shard.startswith("1/"):
+            not_here = []
     host = float(os.environ.get(SCALE, "1"))
     target = sum(CAPS[name][1] for name in tiers) * host
     cpus = os.cpu_count() or 1
     busy = busy_cpus(cpus)
-    parallel = degree(cpus, len(units), busy)
-    print("KIT CHECK: %s tier, %d of %d units at once (%d CPUs, %.1f busy with other work), %.0f s target"
-          % (" and ".join(tiers), parallel, len(units), cpus, busy, target))
+    parallel = units_at_once(cpus, len(units), busy)
+    print("KIT CHECK: %s tier%s, %d of %d units at once (%d CPUs, %.1f busy with other work), %.0f s target"
+          % (" and ".join(tiers), ", shard " + args.shard if args.shard else "", parallel, len(units), cpus,
+             busy, target))
     for line in not_here:
         print(line)
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())]
     left_out = sum(REQUIRED_SUITES[directory][name] for directory, reasons in NOT_ON_WINDOWS.items()
-                   for name in reasons if tier_of(name) in tiers)
+                   for name in reasons if tier_of(name) in tiers) if not_here else 0
     passed = run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=not_here,
                        caps=[CAPS[tier_of(name)][0] * host for name in units],
                        factor=min(degree(cpus, len(units)), 4), left_out=left_out)

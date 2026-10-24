@@ -1034,6 +1034,31 @@ def main():
         with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '1.5'}):
             self.assertEqual(check_kit.limit(300), 450)
 
+    def test_a_ci_job_ignores_its_own_setup_load_and_takes_a_set_count(self):
+        # Run 40016622584: every macOS job read 3.0 busy of 3 CPUs, a Windows one 1.0 of 4, and ran
+        # one unit at once. A GitHub Actions job has its runner to itself.
+        self.assertEqual(check_kit.units_at_once(4, 60, 1.0, {}), 1)
+        self.assertEqual(check_kit.units_at_once(4, 60, 1.0, {'GITHUB_ACTIONS': 'true'}), 2)
+        self.assertEqual(check_kit.units_at_once(20, 60, 16, {'GITHUB_ACTIONS': 'false'}), 2)
+        # MYAGENTKIT_CHECK_UNITS is the count itself, never more than the units nor under one.
+        self.assertEqual(check_kit.units_at_once(3, 60, 3.0, {'MYAGENTKIT_CHECK_UNITS': '2'}), 2)
+        self.assertEqual(check_kit.units_at_once(3, 1, 0, {'MYAGENTKIT_CHECK_UNITS': '2'}), 1)
+        self.assertEqual(check_kit.units_at_once(3, 60, 0, {'MYAGENTKIT_CHECK_UNITS': '0'}), 1)
+        self.assertEqual(check_kit.units_at_once(4, 60, 0, {'MYAGENTKIT_CHECK_UNITS': ''}), 2)
+
+    def test_the_shards_of_a_tier_hold_every_unit_once(self):
+        units = ['acceptance', 'a@0', 'a@1', 'a@2', 'b', 'c', 'd']
+        shards = [check_kit.shard(units, '%d/3' % index) for index in (1, 2, 3)]
+        # Every Nth from the Kth: the longest units, sorted first, land in different jobs.
+        self.assertEqual(shards, [['acceptance', 'a@2', 'd'], ['a@0', 'b'], ['a@1', 'c']])
+        self.assertEqual(sorted(sum(shards, [])), sorted(units))
+        self.assertEqual(check_kit.shard(units, '1/1'), units)
+        for spec in ('0/3', '4/3', '3', '1/0', 'a/b', ' 1/3', '1/3 '):
+            with self.assertRaisesRegex(ValueError, 'K/N'):
+                check_kit.shard(units, spec)
+        with self.assertRaisesRegex(ValueError, 'empty'):
+            check_kit.shard(units, '8/8')
+
     def test_the_busy_cpus_are_read_from_the_host(self):
         # POSIX: the load average; native Windows: GetSystemTimes' idle share over a second.
         cpus = os.cpu_count() or 1
