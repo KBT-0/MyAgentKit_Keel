@@ -13,6 +13,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- `guard_destructive_git.py` no longer refuses four read-only forms (leeway field reports,
+  defect 3 and L9): a quoted `<<<<<<<` (`grep -c '^<<<<<<<' f; git diff --stat`), a heredoc body
+  for a file or `cat` that mentions git or `<<<`, and `git status | awk '{print $2}'`. A `<<<`
+  counts only outside quotes and comments (anywhere when the line has `$(...)`/backticks or in an
+  interpreter's heredoc); a quoted `<<X` is no heredoc; awk's piped input is data only for a
+  literal program with no `system`, pipe, `@include` or `-f`. Sync is enough.
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's

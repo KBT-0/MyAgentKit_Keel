@@ -59,9 +59,11 @@ data such as a gh title never does) has each `git ...` in it judged as the comma
 so a mention of a safe command passes and a loss-certain one is refused (#77); a quoted `'git'`
 starts an argv list read to its closing bracket, across lines, a bare item being a variable. Refused as
 unreadable when it carries a git word: shell or interpreter input piped from a command that holds
-git, a backslash-newline, a here-string, env/exec options, a command named by a variable, and an
-unbalanced quote. Other here-documents are dropped before parsing, so a commit message may
-mention git. Shell redirections are removed before reading git arguments; quoted/escaped
+git (not awk running a literal program that starts no command), a backslash-newline, a `<<<`
+here-string outside quotes and comments (anywhere in a line with `$(...)`/backticks or in an
+interpreter's here-document), env/exec options, a command named by a variable, and an unbalanced
+quote. Other here-documents are dropped before parsing, so a commit message may mention git; a
+quoted or commented `<<` is not one. Shell redirections are removed before reading git arguments; quoted/escaped
 operators remain arguments. `git config core.hooksPath .githooks` wires the project's own gate
 when `.githooks` stays inside the tree of every folder the command may stand in, through its own
 `cd`, `-C`, `--git-dir` and `GIT_DIR` routes (doctor's printed fix passes as printed).
@@ -245,15 +247,50 @@ def interpreter(name):
     }
 
 
+# What the shell reads as quoted or as a comment: an escape, an ANSI-C `$'...'`, a quoted string,
+# a `#` where a word starts.
+QUOTED = re.compile(r"""\\.|\$'(?:\\.|[^'\\])*'|'[^']*'|"(?:\\.|[^"\\])*"|(?:^|(?<=[\s;&|()]))#[^\n]*""", re.S)
+
+
+def unquoted(text):
+    """text with its quoted strings and comments blanked (the same length), so a `<<`/`<<<` left in
+    it is a shell operator; None when a `$(...)` or backtick may nest quotes this scan cannot follow."""
+    if "$(" in text or "`" in text:
+        return None
+    return QUOTED.sub(lambda m: " " * len(m.group()), text)
+
+
+def plain_awk(args, text):
+    """awk running a literal program that starts and loads no command (no system, pipe, getline
+    from a command, @include/@load, -f/-e file), so what is piped into it is data."""
+    i = 0
+    while i < len(args) and args[i].startswith("-") and args[i] != "--":
+        if args[i] in ("-F", "-v"):
+            i += 1
+        elif not re.fullmatch(r"-[Fv].+", args[i]):
+            return False
+        i += 1
+    i += i < len(args) and args[i] == "--"
+    program = args[i] if i < len(args) else ""
+    # Single-quoted in the line (or nothing to expand), so the program is the text awk runs.
+    literal = f"'{program}'" in text or not re.search(r"[$`\\]", program)
+    return bool(program) and literal and not re.search(r"system|[|@]", program)
+
+
 def strip_heredocs(text):
     """(the text without here-document bodies, [(read_by_a_shell, body)]). A body that holds git
     is listed when any command is a shell (its body is judged as shell), or when its receiving
-    command/pipeline contains an interpreter (`cat <<EOF | python`: judged as loose text)."""
-    bodies = []
+    command/pipeline contains an interpreter (`cat <<EOF | python`: judged as loose text).
+    A quoted or commented `<<` is an argument, not a here-document."""
+    bodies, pos = [], 0
     while True:
-        m = re.search(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2", text)
+        m = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2").search(text, pos)
         if not m:
             return text, bodies
+        blank = unquoted(text)
+        if blank is not None and blank[m.start()] != "<":
+            pos = m.end()
+            continue
         start = text.find("\n", m.end())
         if start < 0:
             return text[:m.start()] + text[m.end():], bodies
@@ -698,9 +735,13 @@ def verdict(g, depth=0):
 
 def judge(command, cwds, changed=False, env=None):
     """(always, why, (git, ignored, changed)) findings; raises Unreadable."""
-    if (re.search(r"\\\r?\n", command) or "<<<" in command) and GIT_WORD.search(command):
-        raise Unreadable("a backslash-newline or a here-string")
     text, bodies = strip_heredocs(command)
+    # A body for a file or cat is data and a shell's body is judged as a command below; an
+    # interpreter's body is code no shell lexes, so a `<<<` anywhere in it counts.
+    code = [body for shell, body in bodies if not shell]
+    if GIT_WORD.search(command) and (any(re.search(r"\\\r?\n", t) for t in [text, *code])
+                                     or any("<<<" in t for t in [unquoted(text) or text, *code])):
+        raise Unreadable("a backslash-newline or a here-string")
     # Every folder the command may stand in. The caller's folder is always one: a `cd` may not run
     # (after `||`), may run in a subshell (`( )`, a pipeline, `&`), so it only adds a folder.
     env, cwds, pipeline_git = dict(env or {}), list(cwds), False
@@ -745,7 +786,8 @@ def judge(command, cwds, changed=False, env=None):
         elif (name in SHELLS and not interpreter(name) and any(GIT_WORD.search(t) for t in text.split())
               and (len(leading) == len(rest) - 1 or any(re.fullmatch(r"-[a-zA-Z]*s[a-zA-Z]*", t) for t in leading))):
             raise Unreadable(f"{name} reading commands from its input")  # no script operand, or -s
-        elif input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest):
+        elif (input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest)
+              and not (name in ("awk", "gawk", "mawk") and plain_awk(rest[1:], text))):
             raise Unreadable(f"interpreter input through {name}")
         elif name != "git" and name not in CALM and has_git:
             # An interpreter's code, a wrapper's command (sudo, xargs: it appends operands) or
