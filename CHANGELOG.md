@@ -13,6 +13,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14
+
+- `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
+  transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
+  output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after
+  measurement; run `python scripts/token_audit.py ~/.claude/projects/<project folder> --json OUT.json`. No action.
+
 ## v0.13 — 2026-10-23
 
 - **autopilot**, the owner-away switch (`docs/research/unattended-lead.md`; the owner's
