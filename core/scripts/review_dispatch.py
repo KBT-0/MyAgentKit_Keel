@@ -366,12 +366,23 @@ def mode_reviewer(repo, default):
     (docs/REVIEW_GATE.md, "Invariant"), which STATE.md's mode line names (none: claude); cross and
     saver keep gate_config.sh's DEFAULT_REVIEWER. No mode line at all runs claude: the kit runs on
     Claude alone (owner, 2026-10-24; leeway L16)."""
-    import working_mode
+    try:
+        import working_mode
+    except ImportError as error:
+        raise ValueError("scripts/working_mode.py is missing beside review_dispatch.py (%s); sync the kit "
+                         "or name the reviewer with --reviewer" % error) from error
     state = repo / "docs/STATE.md"
-    lines = list(working_mode.STATE_LINE.finditer(state.read_text(encoding="utf-8"))) if state.is_file() else []
+    text = state.read_text(encoding="utf-8") if state.is_file() else ""
+    lines = list(working_mode.STATE_LINE.finditer(text))
+    # A line the mode helper refuses is refused here too, never read as another family's default.
+    if len(working_mode.mode_lines(text)) > len(lines[:1]):
+        raise ValueError("docs/STATE.md needs one Working mode line written as **Working mode:** NAME: "
+                         + working_mode.numbered(text))
     if not lines:
         return "claude"
-    name, _, note = lines[0][2].partition(" (") if len(lines) == 1 else ("", "", "")
+    name, _, note = lines[0][2].partition(" (")
+    if working_mode.normalized(name) not in working_mode.MODES:
+        raise ValueError("invalid docs/STATE.md Working mode: " + lines[0][2].strip())
     if working_mode.normalized(name) != "solo":
         return default
     family = re.search(r"family: ([^(),]+)", note)
@@ -382,7 +393,11 @@ def mode_reviewer(repo, default):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["--mode-reviewer"] and len(argv) == 2:
-        print(mode_reviewer(Path.cwd(), argv[1]))
+        try:
+            print(mode_reviewer(Path.cwd(), argv[1]))
+        except (OSError, ValueError) as error:
+            print("FAIL [review]: " + str(error))  # review.sh prints it
+            return 2
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)

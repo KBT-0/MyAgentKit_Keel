@@ -7296,6 +7296,35 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(direct.returncode, 5, direct.stdout)
         self.assertIn("--model must pin one model id", direct.stdout)
 
+    def test_the_mode_reviewer_answer_is_read_whole_or_refused_with_a_fail_line(self):
+        # presence round 1: Windows Python ends the answer with \r\n, and $(...) strips only the \n.
+        scripts = self.install_wrapper()
+        (self.repo / "docs").mkdir(exist_ok=True)
+        dispatcher = scripts / "review_dispatch.py"
+        real = dispatcher.read_bytes()
+        dispatcher.write_text("import sys\nif sys.argv[1:2] == ['--mode-reviewer']:\n"
+                              "    sys.stdout.buffer.write(b'claude\\r\\n'); raise SystemExit(0)\n"
+                              "print('dispatched: ' + ' '.join(sys.argv[1:])); raise SystemExit(2)\n")
+        result = self.run_wrapper("--uncommitted")
+        self.assertIn("dispatched: ", result.stdout)
+        self.assertIn("--reviewer claude ", result.stdout)
+        dispatcher.write_bytes(real)
+        # A mode line working_mode.py refuses is refused here too, never read as another family's default.
+        for body in ("**Working mode:** solo\n**Working mode:** cross\n", "**Working mode:** solo.\n",
+                     "working mode: solo (family: codex)\n"):
+            with self.subTest(body=body):
+                (self.repo / "docs/STATE.md").write_text("# State\n" + body)
+                result = self.run_wrapper("--uncommitted")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertRegex(result.stdout, r"^FAIL \[review\]: .*Working mode", result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+        (self.repo / "docs/STATE.md").write_text("# State\n")
+        (scripts / "working_mode.py").unlink()  # a sync that stopped short
+        result = self.run_wrapper("--uncommitted")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"^FAIL \[review\]: .*working_mode\.py")
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_the_wrapper_accepts_no_reviewer_it_cannot_name(self):
         for argv in (["--uncommitted", "--reviewer", "gemini"],
                      ["--uncommitted", "--reviewer", "--dangerously-skip-permissions"]):

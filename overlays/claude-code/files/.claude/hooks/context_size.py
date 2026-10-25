@@ -61,15 +61,18 @@ BACK = ("Autopilot is on (.myagentkit/presence or the STATE.md Owner line says a
 
 
 def main_checkout(root: Path):
-    """The main checkout when ROOT is a linked worktree (its .git is a file), else None."""
+    """The main checkout when ROOT is a linked worktree (its .git is a file), else None; a
+    submodule (its common Git folder is no checkout's .git) keeps its own."""
     if not (root / '.git').is_file():
         return None
     try:
-        common = subprocess.run(['git', '-C', str(root), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+        # Made absolute here, not with --path-format (Git 2.31+): relative output is relative to ROOT.
+        common = subprocess.run(['git', '-C', str(root), 'rev-parse', '--git-common-dir'],
                                 capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+        common = (root / common).resolve() if common else None
     except (OSError, subprocess.SubprocessError):
         return None
-    return Path(common).parent if common else None
+    return common.parent if common is not None and common.name == '.git' and common.is_dir() else None
 
 
 def recorded(folder):
@@ -82,13 +85,11 @@ def recorded(folder):
 
 def away() -> bool:
     """The owner switched autopilot on: .myagentkit/presence starts with "away", the project's own
-    or, in a linked worktree, the main checkout's (leeway L13). With neither, STATE.md's committed
-    away line counts (L12): a clone or worktree of a night's commit lacks the ignored record, and
+    or, in a linked worktree, the main checkout's, which working_mode.py writes there too (leeway
+    L13). Without that record, STATE.md's committed away line counts (L12): a clone or worktree of a night's commit lacks the ignored record, and
     an owner wrongly taken as present is asked questions nobody answers until morning."""
     root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
-    word = recorded(root)
-    if word is None and (main := main_checkout(root)) is not None:
-        word = recorded(main)
+    word = recorded(main_checkout(root) or root)
     if word is not None:
         return word == ['away']
     try:

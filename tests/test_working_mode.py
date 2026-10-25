@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import io
 from pathlib import Path
+import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -839,19 +841,48 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('another checkout', result.stdout)
         self.assertFalse((self.project / '.myagentkit/presence').exists())  # a read writes nothing
 
-    def test_a_linked_worktree_reads_the_main_checkouts_presence(self):
-        # leeway L13: the switch writes the main checkout's record; a worktree has none of its own.
+    def old_git(self):
+        """An environment whose git refuses rev-parse --path-format, as Git before 2.31 does
+        (POSIX only: a shell script is no command on Windows)."""
+        folder = Path(self.tmp.name) / 'old-git'
+        folder.mkdir(exist_ok=True)
+        (folder / 'git').write_text('#!/bin/sh\nfor a; do case $a in --path-format*) echo "unknown option $a" >&2; '
+                                    'exit 129;; esac; done\nexec %s "$@"\n' % shlex.quote(shutil.which('git')),
+                                    encoding='utf-8')
+        (folder / 'git').chmod(0o755)
+        return dict(os.environ, PATH=str(folder) + os.pathsep + os.environ.get('PATH', ''))
+
+    def test_a_linked_worktree_reads_and_switches_the_main_checkouts_presence(self):
+        # leeway L13: one record per repository, the main checkout's: a worktree's branch STATE.md
+        # line does not override it (L12), and a switch there writes it, on Git before 2.31 too.
         worktree = Path(self.tmp.name) / 'wt'
         git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', str(self.project)]
         for command in (['init', '-q'], ['add', 'docs'], ['commit', '-q', '-m', 'x'],
                         ['worktree', 'add', '-q', str(worktree)]):
             subprocess.run(git + command, check=True, capture_output=True)
         (self.project / '.myagentkit').mkdir(exist_ok=True)
-        (self.project / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
-        result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(worktree)],
-                                capture_output=True, text=True, encoding='utf-8', timeout=15)
-        self.assertNotEqual(result.returncode, 0)  # main away, the worktree's STATE present
-        self.assertIn('disagree', result.stderr)
+        presence = self.project / '.myagentkit/presence'
+        stamp = '2026-10-22T23:00:00+03:00'
+        for env in (None, self.old_git()) if os.name != 'nt' else (None,):
+            with self.subTest(old_git=env is not None):
+                presence.write_text('away %s\n' % stamp, encoding='utf-8')
+                for line in ('', '**Owner:** present\n'):
+                    (worktree / 'docs/STATE.md').write_text('# State\n' + line, encoding='utf-8')
+                    result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(worktree)],
+                                            capture_output=True, text=True, encoding='utf-8', timeout=15, env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('Owner: away (autopilot since %s)' % stamp, result.stdout)
+                    self.assertIn("main checkout's .myagentkit/presence wins", result.stdout)
+                result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(worktree),
+                                         'present'], capture_output=True, text=True, encoding='utf-8', timeout=15,
+                                        env=env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertRegex(presence.read_text(encoding='utf-8'), '^present ' + re.escape(stamp) + r' \S+\n$')
+                self.assertFalse((worktree / '.myagentkit/presence').exists())
+                result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(worktree)],
+                                        capture_output=True, text=True, encoding='utf-8', timeout=15, env=env)
+                self.assertIn('Owner: present\n', result.stdout)
+                self.assertNotIn('wins', result.stdout)  # the record and the line agree now
 
     def test_a_projects_own_owner_line_is_kept_and_never_read_as_presence(self):
         # Review round 1: a STATE.md naming its owner (**Owner:** <name>) broke the show path.
