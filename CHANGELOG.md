@@ -100,6 +100,24 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   "Principle" and the one-off-decision bullet of "Questions and approvals", REVIEW_GATE's
   paragraph on the extra review in "Risk tiers", and `docs/AGENTS.md`'s "## Writing
   docs/ARCHITECTURE.md".
+- #307 rank 1: `guard_worker_route.py` refuses a sub-agent (a fork too) whose description or
+  prompt tells it to merge, or to run, watch or wait for a gate, CI, a pipeline, `review.sh`,
+  `check.sh` or `gh run` (verb and job on one line; naming one, or "the author ran check.sh",
+  passes, so does the kit's own task prompt); it runs as `spawn_worker.sh`, or the prompt says
+  `No long wait: REASON`. Expected: Keel's $100 of five-minute re-writes in 14 days (5 %).
+  **ACTION:** re-copy `.claude/hooks/guard_worker_route.py`; in `docs/WORKFLOW.md`, "Worker
+  cost" rule 1, run `sync-kit.sh . --merge` or take its sub-agent cache and hook sentences from
+  the kit's copy.
+  The kit's `overlays/claude-code/README.md` rows need nothing: that README is not copied.
+- #307 rank 5: `spawn_worker.sh` starts workers without 17 tools they never use
+  (`--disallowedTools`: Artifact, Workflow, the Cron and plan-mode tools, ...). Measured on
+  2.1.310, bg host, claude-opus-5-5: a worker's first request 46.5k → 27.4k tokens (−41 %).
+  Expected: at least BASELINE's $35 of Keel's worker prefix (it assumed 15k of the 19k).
+- #307 rank 6: a spawned worker's own sub-agents, workflows and forks run on the five-minute
+  cache (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`, was 1h); the lead and the worker sessions
+  keep `promptCacheTtl: 1h`. Expected: most of leeway's $90 unused one-hour premium was the
+  kit's old `subagentPromptCacheTtl: 1h` (in the overlay 10-13 to 10-18, gone in v0.12); this
+  takes the rest, about Keel's $4 sub-agent share plus the workers' sub-agents.
 
 ## v0.13 — 2026-10-23
 

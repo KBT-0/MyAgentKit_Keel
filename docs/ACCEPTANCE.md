@@ -21,10 +21,11 @@ what was run and what was found.
   - Buckets: 0–100k, 100–200k, 200–300k, 300–400k, 400k+, the context read the way
     `context_size.py` reads it (the last request's input plus cache read plus cache write).
   - Per bucket, per 100 assistant messages, the lead's own errors: `guard_worker_route`
-    refusals (model or effort forgotten), `commit-msg` AI-attribution refusals, the owner's
-    explicit corrections (marked by hand: "no", "I said this already"), and the written rules
-    a script can check (chat language, identifiers in backticks, a bare session label like
-    D-1, a push or a new round nobody asked for).
+    refusals for a forgotten model or effort (its long-job refusals are not counted),
+    `commit-msg` AI-attribution refusals, the owner's explicit corrections (marked by hand:
+    "no", "I said this already"), and the written rules a script can check (chat language,
+    identifiers in backticks, a bare session label like D-1, a push or a new round nobody
+    asked for).
   - Around each compaction, the same counts for the 20 messages before and the 20 after; a
     second compaction in one session is marked apart.
   - Cost: `scripts/agent_cost.py --latest` and the `/usage` "Prompt cache (main)" line: the

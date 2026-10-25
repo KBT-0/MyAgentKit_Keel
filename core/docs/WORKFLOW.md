@@ -1039,11 +1039,15 @@ Rules, binding for whoever routes workers:
 
 1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that
    waits on jobs past five minutes runs as a `scripts/spawn_worker.sh` session, the only one
-   with the one-hour cache: the session has the project's `promptCacheTtl`, and the launch
-   line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h`. The `worker` sub-agent and the lead's
-   other sub-agents run on the five-minute default: in one project sub-agents wrote 4.56M
-   one-hour cache tokens over 1,582 requests and only 11 gaps passed five minutes (#116); a
-   one-hour write costs 2x base input, a five-minute one 1.25x.
+   with the one-hour cache: the session has the project's `promptCacheTtl`. Every sub-agent,
+   the `worker` sub-agent, a fork and a spawned worker's own sub-agents included, runs on five
+   minutes (the launch line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`): in one project
+   sub-agents wrote 4.56M one-hour cache tokens over 1,582 requests and only 11 gaps passed five
+   minutes (#116); a one-hour write costs 2x base input, a five-minute one 1.25x. The kit's
+   `guard_worker_route.py` refuses a sub-agent whose description or prompt tells it to merge,
+   or to run, watch or wait for a gate, CI, a pipeline, `review.sh`, `check.sh` or `gh run`;
+   one that will not wait past five minutes says so in a prompt line `No long wait: REASON`
+   (#307: such waits cost $100 of re-writes in 14 days).
    The worker starts long jobs in the background and is re-invoked when they exit, and never
    runs `sleep`, `until`, `pgrep` or tail-the-log loops. `git commit` and `git merge` are long
    jobs too: the pre-commit and pre-merge-commit hooks run the full gate. Claude Code's Bash
@@ -1051,9 +1055,9 @@ Rules, binding for whoever routes workers:
    the background, so a commit runs in the background or with a `timeout` above the
    project's measured gate time (in one project the gate took a median 167 s, at most 462 s). To react to a log line or a state
    change, use the Monitor tool with a filtered command, not a loop
-   (code.claude.com/docs/en/tools-reference). Only a worker definition's
-   `experimental.cacheTtl: 1h` is ignored while a subscription draws usage credits; the kit's
-   `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable is not subject to that exception
+   (code.claude.com/docs/en/tools-reference). A worker definition's
+   `experimental.cacheTtl: 1h` is ignored while a subscription draws usage credits, and the
+   `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable outranks it in any case
    ([Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
    checked 2026-10-16). Where the one-hour cache is unavailable (a gateway that does not
    forward `anthropic-beta`, the Claude apps gateway, a Bedrock model without it, or another
