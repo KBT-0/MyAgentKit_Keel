@@ -26,7 +26,7 @@ HEADING = re.compile(r"\W*verdict\W*", re.I)
 # A line that leads with Critical or High, after list, table and emphasis markup and labels such as
 # "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; "High-severity" too, not "High-tier".
 LABEL = r"(?:issue|finding|[a-z]?\d+|severity|`[^`\n]*`)"  # one way to split a line: no backtracking blow-up
-BLOCKING = re.compile(r"^[^\w\n]*(?:%s[^\w\n]+)*(?:critical|high)\b(?!-(?:tier|effort)\b)" % LABEL,
+BLOCKING = re.compile(r"^[^\w\n`]*(?:%s[^\w\n`]+)*(?:critical|high)\b(?!-(?:tier|effort)\b)" % LABEL,
                       re.I | re.M)
 
 

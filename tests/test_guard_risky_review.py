@@ -100,7 +100,7 @@ class RiskyReviewTests(unittest.TestCase):
         for last in ('VERDICT: APPROVE', '**Accept with Manual Checks**', '## Verdict\nAccept with Manual Checks\n- Medium: x',
                      'Verdict: PASS', 'VERDICT: PASS (no blocking findings, two Lows)', '## Verdict\nPASS',  # ctl10 run 2
                      'Verdict: Accept\n1. High-tier focus not run', 'Verdict: Accept\nNo Critical or High finding',
-                     'Verdict: Accept\n' + 'finding 1 ' * 40 + 'x'):  # an ambiguous label split took 2**40 steps
+                     'Verdict: Accept\n' + 'finding 1 ' * 40 + 'x', 'Verdict: Accept\n' + '`` ' * 40 + 'x'):  # an ambiguous label split took 2**40 steps
             with self.subTest(last=last):
                 self.event('SubagentStart', agent_id=last)
                 self.event('SubagentStop', agent_id=last, last=last)
