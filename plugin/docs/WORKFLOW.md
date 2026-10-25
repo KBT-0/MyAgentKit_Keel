@@ -85,6 +85,75 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it, and go on with work that does not depend on it.
 
+## Task discipline — the details
+
+`AGENTS.md`, "Task discipline", states each rule in a sentence or two; this section holds the
+how. It is read when the topic comes up, not every session.
+
+- **Session start.** `./scripts/doctor.sh` changes nothing; a `MISSING:` line is offered as a
+  fix before any code is touched, since a red gate on an unready machine is not a code bug.
+- **Refactors.** A refactor you think is worth doing goes to `docs/BACKLOG.md` as one line, or
+  into its own task and commit; it never rides along in this task's diff.
+- **Tests.** Writing the test first is advice, not a rule. An ordinary test needs no mandatory
+  red proof; a gate check does ("Writing a gate"). A generated-content pipeline validates its
+  output (data validation, captures); unit tests of the generator are not mandatory. A
+  plugin's test or output advice (a self-check in place of the test tree, a capped report)
+  never replaces the test rules. A test piped through a filter (`| grep`, `| tail`) ahead of a
+  commit hides a red result, as `test; git commit` does.
+- **Fix now.** An issue or a `docs/BACKLOG.md` line is for what is out of the task's reach or
+  what {{OWNER_NAME}} deferred. A gate reviewer's Low goes to the backlog instead, since a fix
+  in the round adds code no reviewer has seen (`docs/REVIEW_GATE.md`, "Verdicts and who decides").
+- **Existing systems.** Search `docs/ARCHITECTURE.md` first, then the code. Never rewrite what
+  you could not find; ask if unsure. A second system doing the same job is a decay signal.
+- **Style.** A split is proposed, never done inside an unrelated task. Hidden global state
+  (singletons, static mutable state) makes tests order-dependent and hides an API's real
+  inputs; the clock and randomness come through the constructor for determinism.
+
+### Destructive commands
+
+Commit or stash before any command that discards work: `reset --hard`, `checkout --`,
+`restore`, `clean -f`, `stash drop`, a force push. Check `git status` first, every time.
+Uncommitted work is NOT in the reflog (`docs/GOTCHAS.md` says what can still be recovered). A
+hook refuses the loss-certain subset (always: stash drop/clear, force push, remote
+set-url/add, amending a pushed commit; on a dirty tree: reset --hard, checkout --/-f, restore,
+clean -f); the rule still covers every destructive command.
+
+The same care holds before a script's recursive delete of a directory a variable or a setting
+chose: a build cache there proves some build used it, not that every file is the tool's. Prove
+ownership by a marker the tool wrote (never a path prefix), refuse an empty path, a filesystem
+or repository root, an ancestor and an unresolved link, else stop with the repair;
+`claude_bridge.scratch` shows it. One exception: the worktree clean-up
+(`scripts/clean_worktrees.sh`, Claude Code overlay) removes through `git worktree remove` only
+a worktree git registered, and only after proving every file git does not track there
+disposable or a copy of main's ("Worker cost"); that proof stands in for the marker.
+
+### Ending running work
+
+A session, a review, a gate or a build keeps running unless {{OWNER_NAME}} asked for it to end,
+or it is provably finished or hung; a stopped job orphans what it started, spends quota and
+races the next run. A FINISHED worker is closed with `scripts/close_worker.sh` without asking;
+it refuses while its gate or commit runs. When ending is justified, end the whole process tree
+through the kit's script (`close_worker.sh`, `agent_process`), never one process by name, and
+leave a one-line reason in the STATE line.
+
+### The commit gate and attribution
+
+The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
+abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). `git commit
+--no-verify` is {{OWNER_NAME}}'s hatch, never an agent's. In the Claude Code overlay a
+PreToolUse hook (`.claude/hooks/guard_destructive_git.py`) refuses `--no-verify`, `commit -n`,
+`-c core.hooksPath=` and `--no-gpg-sign` in an agent's git command; the owner's own terminal is
+not affected. If the gate fails, fix the cause or stop and report; never route around it.
+
+No `Co-Authored-By` line names an AI tool, and no tool or model is credited as author,
+co-author or reviewer in a commit message or pull request description. `.githooks/commit-msg`
+rejects an attribution trailer (a `...-by:` line naming a tool, optionally followed by its
+model, or a tool vendor's address) and a "Generated with <tool>" line; a trailer naming a model
+alone ("Co-authored-by: Opus 5.5") and credit in prose ("reviewed by <model>", a model name in
+the subject) get past the hook, and the rule still forbids them. Every worker brief repeats the
+rule. The tool can be told not to add the trailer (`attribution` in `.claude/settings.json`);
+the hook is the backstop. The tool+model trace lives in `docs/STATE.md` only.
+
 ## Task ids
 
 - A task id is a short token that starts with a letter and holds at least one digit:
@@ -222,7 +291,7 @@ Gates get their own rules because they fail differently from ordinary code: when
 breaks, everything keeps looking green.
 
 - **Prove it RED, and keep it red with a fixture test.** Construct the failure condition,
-  watch the check reject it, undo it, and add a fixture test for the check to the project's
+  watch the check reject it for the right reason, undo it, and add a fixture test for the check to the project's
   test suite in the same task (the kit's `docs/gates-must-be-proven-red.md`). This red proof
   is for gate checks; an ordinary test needs none (the kit's `docs/research/test-rules.md`,
   findings 4 to 6). It is TDD's red step at the size of a gate; seeded failures measurably
@@ -270,6 +339,10 @@ breaks, everything keeps looking green.
   blank field looks like a field.
 
 ## A red gate that passes on re-run
+
+Read a failure from the gate's printed `FAIL [build]` block, or grep the log path it names; never
+read that log or a harness spill file whole, and set `MYAGENTKIT_CHECK_VERBOSE=1` only to see a
+passing build's output. For CI, `gh run view <id> --log-failed`, never `--log`.
 
 A FAIL that does not reproduce is not a PASS to forget. A timing-dependent test, a gate that
 overlapped another gate, or a real race all look the same afterwards: the next
@@ -396,9 +469,11 @@ cadence (ten days came from a project's request, kit issue #61).
 - The canonical instruction file is `AGENTS.md` (root and per folder). Tool-specific files
   are pointers.
 - `docs/STATE.md` is the single cross-tool memory. Every entry carries a tool+model trace.
+  Chat memory does not transfer between tools or sessions; per-tool memory features (goals,
+  IDE session memory, auto-memory) are scratch, never canonical.
 - Cross-tool transfer uses `docs/HANDOFF.md` — the target has no chat memory.
 - **Gates are tool-agnostic:** `scripts/check.sh` runs the same everywhere. Any tool's own
-  hooks are early feedback, never the rule itself; `.githooks/pre-commit` is the gate that
+  hooks, skills and agent definitions are convenience and early feedback, never the rule itself; `.githooks/pre-commit` is the gate that
   actually holds, for every tool.
 - **A second tool or family is welcome, never required:** it reduces correlated blind spots
   but does not remove them, and the one controlled measurement found the direction asymmetric
@@ -546,7 +621,7 @@ mandatory, in a fresh session with no shared context: that is what decorrelates 
 from the author's (`docs/REVIEW_GATE.md`, "Invariant", says who takes it).
 
 The table decides the AUTHOR and REVIEWER roles and may change its mind each month. A swap is
-recorded in `scripts/review.sh` and in `docs/STATE.md`; the review records stay comparable
+recorded in `scripts/gate_config.sh` and in `docs/STATE.md`; the review records stay comparable
 across it because both directions publish one format. **Limit:** no change is reviewed by a
 weaker tier than its author's alone (the review row), so a budget swap moves the authors, never
 a review below its author (`docs/research/claude-lead-codex.md`, findings 4 and 9: a weaker
@@ -936,8 +1011,8 @@ Why: docs/WORKFLOW_RATIONALE.md, "autopilot, the owner-away switch".
 
 ### The rules in brief
 
-The lead reads this block before it briefs, spawns, merges or closes a worker and after a
-compaction; the full rule below, with its sources, when one is in doubt (the measurements:
+The lead reads this block once per session and again after a compaction, not before each brief,
+spawn, merge or close; the full rule below, with its sources, when one is in doubt (the measurements:
 `docs/WORKFLOW_RATIONALE.md`).
 
 1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.
@@ -968,11 +1043,15 @@ Rules, binding for whoever routes workers:
 
 1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that
    waits on jobs past five minutes runs as a `scripts/spawn_worker.sh` session, the only one
-   with the one-hour cache: the session has the project's `promptCacheTtl`, and the launch
-   line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h`. The `worker` sub-agent and the lead's
-   other sub-agents run on the five-minute default: in one project sub-agents wrote 4.56M
-   one-hour cache tokens over 1,582 requests and only 11 gaps passed five minutes (#116); a
-   one-hour write costs 2x base input, a five-minute one 1.25x.
+   with the one-hour cache: the session has the project's `promptCacheTtl`. Every sub-agent,
+   the `worker` sub-agent, a fork and a spawned worker's own sub-agents included, runs on five
+   minutes (the launch line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`): in one project
+   sub-agents wrote 4.56M one-hour cache tokens over 1,582 requests and only 11 gaps passed five
+   minutes (#116); a one-hour write costs 2x base input, a five-minute one 1.25x. The kit's
+   `guard_worker_route.py` refuses a sub-agent whose description or prompt tells it to merge,
+   or to run, watch or wait for a gate, CI, a pipeline, `review.sh`, `check.sh` or `gh run`;
+   one that will not wait past five minutes says so in a prompt line `No long wait: REASON`
+   (#307: such waits cost $100 of re-writes in 14 days).
    The worker starts long jobs in the background and is re-invoked when they exit, and never
    runs `sleep`, `until`, `pgrep` or tail-the-log loops. `git commit` and `git merge` are long
    jobs too: the pre-commit and pre-merge-commit hooks run the full gate. Claude Code's Bash
@@ -980,9 +1059,9 @@ Rules, binding for whoever routes workers:
    the background, so a commit runs in the background or with a `timeout` above the
    project's measured gate time (in one project the gate took a median 167 s, at most 462 s). To react to a log line or a state
    change, use the Monitor tool with a filtered command, not a loop
-   (code.claude.com/docs/en/tools-reference). Only a worker definition's
-   `experimental.cacheTtl: 1h` is ignored while a subscription draws usage credits; the kit's
-   `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable is not subject to that exception
+   (code.claude.com/docs/en/tools-reference). A worker definition's
+   `experimental.cacheTtl: 1h` is ignored while a subscription draws usage credits, and the
+   `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable outranks it in any case
    ([Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
    checked 2026-10-16). Where the one-hour cache is unavailable (a gateway that does not
    forward `anthropic-beta`, the Claude apps gateway, a Bedrock model without it, or another
@@ -1199,7 +1278,9 @@ characters and retry; spaces are refused too. This remedy works on macOS and Lin
 **The disk is the done signal, on every platform.** Right after every spawn the lead starts
 ONE background command: the `sh scripts/watch_workers.sh --result NAME=PATH NAME` line the
 spawn prints. It exits when the worker reports (its result file, GONE, WAITING, or LIMIT: its
-usage limit stopped it, resume it after the reset), and the lead starts it again after every report but DONE and GONE. The printed line starts with a `cd`
+usage limit stopped it: resume it after the reset, or now once its line says "reset passed"; a
+background worker by the `spawn_worker.sh ... --resume ID` its line names, which stops the
+blocked session first and keeps its worktree), and the lead starts it again after every report but DONE and GONE. The printed line starts with a `cd`
 to the checkout that holds the worker's records (`.myagentkit/workers`), so it works pasted in
 any folder; run elsewhere with no record and no session it can see, the watcher exits 2 naming
 the checkout to run from, unless `--result` names a ready result, which it then reports. On
