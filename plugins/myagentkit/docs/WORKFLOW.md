@@ -1015,6 +1015,9 @@ The lead reads this block once per session and again after a compaction, not bef
 spawn, merge or close; the full rule below, with its sources, when one is in doubt (the measurements:
 `docs/WORKFLOW_RATIONALE.md`).
 
+**One task, one session:** the session that owns a task makes its edits itself; a worker only
+for independent work that runs in parallel, a sub-agent only for wide reading or a review.
+
 1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.
 2. A gate finding goes back to the author's side while its context is under the band and the
    fix is no redesign; otherwise a fresh worker takes it.
@@ -1023,8 +1026,9 @@ spawn, merge or close; the full rule below, with its sources, when one is in dou
 4. The lead does not poll either; it waits for notifications. After every spawn it starts the
    printed `sh scripts/watch_workers.sh` line as ONE background command: the disk is the done
    signal, and an idle notice is optional, never relied on alone.
-5. Mechanical work: the cheaper model at medium effort; design-bearing code: the strongest at
-   high. Model and effort are always passed, never inherited.
+5. Effort is medium by default, high only for hard debugging or a design step. A worker or
+   sub-agent gets its model and effort on the call, never inherited unawares; a definition that
+   writes `model: inherit` (the diff reviewer: the session's tier) is that choice.
 6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
 7. Worker reports are short (about 350 words); long output goes to a file.
