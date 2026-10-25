@@ -255,9 +255,9 @@ DONE:   <the command or observation that proves it>
 REVIEW: you review your diff with fresh sub-agents before the commit; where
         CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH is 1 you cannot, so say so
 
-If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
-review gate per docs/REVIEW_RUNNING.md in a FRESH session that the working mode names
-(docs/REVIEW_GATE.md, "Invariant").
+If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: the review gate is the
+lead's (docs/REVIEW_RUNNING.md), in a FRESH session that the working mode names
+(docs/REVIEW_GATE.md, "Invariant"); report the diff ready for it and stop.
 Any other change gets its tier's review (docs/REVIEW_GATE.md, "Risk tiers").
 
 When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
