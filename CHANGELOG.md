@@ -36,7 +36,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `sync-kit.sh . --merge`. A small fix (one commit, one module) skips `doctor.sh` and the STATE.md trace and runs
   `check.sh` once, before the commit. REVIEW_GATE "Invariant": a small risky diff (one task, under about 400 changed
   lines, not a release) takes the diff-reviewer on the session's tier as its required review; a larger diff or a
-  release keeps a stronger tier. Round 2 runs for a Critical or High fix.
+  release keeps a stronger tier. A small diff touching a hook, a gate, a CI configuration or a check script takes one
+  `scripts/review.sh` round instead. Round 2 runs for a Critical or High fix, as a fresh diff-reviewer.
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after

@@ -7,8 +7,8 @@ them into "paths", joined with an earlier record for the same HEAD; a reviewer t
 back through the SubagentHandback tool (auto mode) is read there, from the tool's message, since its
 stop's last_assistant_message is not the report (Claude Code hooks docs, SubagentStop). A file made
 while the reviewer ran is not among them, so the guard asks for it again. A stop with no start note, or whose last
-message does not open with an Accept verdict line (Accept, Accept with Manual Checks) or lists a
-Critical or High, records nothing: a reviewer that failed or was cut off, and a Reject, whose fix a
+message does not open with an Accept verdict line (Accept, Accept with Manual Checks, or a PASS or
+APPROVE some reviewers write) or lists a Critical or High, records nothing: a reviewer that failed or was cut off, and a Reject, whose fix a
 fresh review sees before the commit (owner 2026-10-25).
 It only records and always exits 0: a SubagentStop hook's exit 2 would keep the reviewer running.
 """
@@ -20,9 +20,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from guard_risky_review import changed, head, read_record, record_path  # noqa: E402
 
-VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve)\b", re.I)
+VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve|pass)\b", re.I)  # ctl10: "VERDICT: PASS"
 HEADING = re.compile(r"\W*verdict\W*", re.I)
-BLOCKING = re.compile(r"^\W*(?:\d+\W+)?(?:severity\W*)?(?:critical|high)\b", re.I | re.M)  # "1. High", "Severity: High"
+# A line that leads with Critical or High, after list, table and emphasis markup and labels such as
+# "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; not "High-tier" or "High: none".
+LABEL = r"(?:(?:issue|finding)[^\w\n]*\d*|[a-z]?\d+|severity|`[^`\n]*`)"
+BLOCKING = re.compile(r"^[^\w\n]*(?:%s[^\w\n]+)*(?:critical|high)(?![-\w])(?![^\w\n]*(?:none|0)\b)" % LABEL,
+                      re.I | re.M)
 
 
 def accepted(message):
@@ -31,7 +35,7 @@ def accepted(message):
     lines = [line for line in message.splitlines() if line.strip()]
     if lines and HEADING.fullmatch(lines[0]):
         lines = lines[1:]
-    return bool(lines) and bool(VERDICT.match(lines[0])) and not BLOCKING.search(message)
+    return bool(lines) and bool(VERDICT.match(lines[0])) and not BLOCKING.search(re.sub(r"[*_]", "", message))
 
 
 def main():

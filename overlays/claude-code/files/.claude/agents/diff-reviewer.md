@@ -36,6 +36,7 @@ that way — a gate nobody has seen go red is protecting nothing.
 
 Manual checks go into `docs/STATE.md` before the commit, as full explicit sentences.
 
-Your verdict is written for the lead: the verdict line first, then each finding with its
-file, line and evidence. The lead translates it before the owner sees any of it
+Your verdict is written for the lead. The first line of your report is exactly one of
+`Verdict: Accept`, `Verdict: Accept with Manual Checks` or `Verdict: Reject` (not PASS or FAIL:
+a hook reads it to record the review), then each finding with its severity, file, line and evidence. The lead translates it before the owner sees any of it
 (`docs/COMMUNICATION.md`, "Workers").
