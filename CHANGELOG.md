@@ -19,6 +19,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after
   measurement; run `python scripts/token_audit.py ~/.claude/projects/<project folder> --json OUT.json`. No action.
+- The kit's own CI ends sooner, with every test still run on every job's platform and Python:
+  `scripts/check_kit.py --shard K/N` runs every Nth unit of a tier from the Kth, and native
+  Windows splits its fast tier over 2 jobs and its slow tier over 3; a GitHub Actions job no
+  longer reads its own setup's load as other work (one unit at once on every macOS job and on a
+  Windows one), `MYAGENTKIT_CHECK_UNITS` sets the units at once (CI's macOS jobs: 2), and
+  `test_review_upgrade`, `test_spawn_worker` and `test_worker_visibility` run as 3, 2 and 2
+  units. Kit-internal: no project action.
+- `test_claude_bridge`'s `BridgeTests` fixture repo (the one its tests copy) turns off git's background maintenance and gc, so its
+  copies no longer fail on a vanishing `.git/objects/maintenance.lock`. Kit-internal.
 
 ## v0.13 — 2026-10-23
 

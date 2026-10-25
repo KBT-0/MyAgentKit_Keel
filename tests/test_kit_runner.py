@@ -422,6 +422,12 @@ runpy.run_path(%r, run_name='__main__')
                 passed, out = runner(('suite/test_kit_probe@%d' % index, command))
                 self.assertEqual(passed, expected, out)
                 self.assertIn('probe failure message' if index == 0 else 'suite ran 1 tests', out)
+        # Two tests in three shards: the third holds none and fails by name, never "ran 0 tests".
+        script.write_text(text.replace("sys.exit(", "check_kit.SHARDS = {'test_kit_probe': 3}\nsys.exit(")
+                          .replace("unit('suite/test_kit_probe'", "unit('suite/test_kit_probe@2'"))
+        passed, out = runner(('suite/test_kit_probe@2', command))
+        self.assertFalse(passed, out)
+        self.assertIn('test_kit_probe shard 2 of 3 holds no test', out)
 
     def test_main_runs_one_unit_per_module_and_refuses_a_module_without_a_count(self):
         # A module that does not run on this host gets its NOT RUN line, no unit ("ran 0 tests"),
@@ -463,6 +469,15 @@ runpy.run_path(%r, run_name='__main__')
         # A long unit starts right after the shards, never last.
         self.assertTrue(set(check_kit.LONG) <= set(check_kit.REQUIRED_SUITES['tests']))
         self.assertLess(fast.index('tests/test_sync_kit'), fast.index('tests/test_packaging'))
+        # --shard K/N runs that shard of the tier; the left-out suites' lines are said by 1/N only.
+        first, out = units('--slow', '--shard', '1/3')
+        self.assertIn('shard 1/3', out)
+        self.assertIn('NOT RUN: tests/test_doctor on native Windows (a reason)', out)
+        self.assertEqual(first, check_kit.shard(slow, '1/3'))
+        second, out = units('--slow', '--shard', '2/3')
+        self.assertIn('shard 2/3', out)
+        self.assertNotIn('NOT RUN: tests/test_doctor', out)
+        self.assertEqual(second, check_kit.shard(slow, '2/3'))
         with self.assertRaisesRegex(RuntimeError, 'SLOW names no unit of the kit check: test_gone'):
             units(slow=check_kit.SLOW | {'test_gone'})
         (self.tmp / 'suite').mkdir()
@@ -1034,6 +1049,33 @@ def main():
         with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '1.5'}):
             self.assertEqual(check_kit.limit(300), 450)
 
+    def test_a_ci_job_ignores_its_own_setup_load_and_takes_a_set_count(self):
+        # Run 40016622584: every macOS job read 3.0 busy of 3 CPUs, a Windows one 1.0 of 4, and ran
+        # one unit at once. A GitHub Actions job has its runner to itself.
+        self.assertEqual(check_kit.units_at_once(4, 60, 1.0, {}), 1)
+        self.assertEqual(check_kit.units_at_once(4, 60, 1.0, {'GITHUB_ACTIONS': 'true'}), 2)
+        self.assertEqual(check_kit.units_at_once(20, 60, 16, {'GITHUB_ACTIONS': 'false'}), 2)
+        # MYAGENTKIT_CHECK_UNITS is the count itself, never more than the units nor under one.
+        self.assertEqual(check_kit.units_at_once(3, 60, 3.0, {'MYAGENTKIT_CHECK_UNITS': '2'}), 2)
+        self.assertEqual(check_kit.units_at_once(3, 1, 0, {'MYAGENTKIT_CHECK_UNITS': '2'}), 1)
+        self.assertEqual(check_kit.units_at_once(3, 60, 0, {'MYAGENTKIT_CHECK_UNITS': '0'}), 1)
+        self.assertEqual(check_kit.units_at_once(4, 60, 0, {'MYAGENTKIT_CHECK_UNITS': ''}), 2)
+        with self.assertRaisesRegex(ValueError, 'MYAGENTKIT_CHECK_UNITS must be a whole number'):
+            check_kit.units_at_once(3, 60, 0, {'MYAGENTKIT_CHECK_UNITS': '2.0'})
+
+    def test_the_shards_of_a_tier_hold_every_unit_once(self):
+        units = ['acceptance', 'a@0', 'a@1', 'a@2', 'b', 'c', 'd']
+        shards = [check_kit.shard(units, '%d/3' % index) for index in (1, 2, 3)]
+        # Every Nth from the Kth: the longest units, sorted first, land in different jobs.
+        self.assertEqual(shards, [['acceptance', 'a@2', 'd'], ['a@0', 'b'], ['a@1', 'c']])
+        self.assertEqual(sorted(sum(shards, [])), sorted(units))
+        self.assertEqual(check_kit.shard(units, '1/1'), units)
+        for spec in ('0/3', '4/3', '3', '1/0', 'a/b', ' 1/3', '1/3 '):
+            with self.assertRaisesRegex(ValueError, 'K/N'):
+                check_kit.shard(units, spec)
+        with self.assertRaisesRegex(ValueError, 'empty'):
+            check_kit.shard(units, '8/8')
+
     def test_the_busy_cpus_are_read_from_the_host(self):
         # POSIX: the load average; native Windows: GetSystemTimes' idle share over a second.
         cpus = os.cpu_count() or 1
@@ -1060,23 +1102,39 @@ def main():
 
     def test_main_runs_fewer_units_on_a_loaded_host_with_the_unloaded_timeout_factor(self):
         # 16 of 20 CPUs busy: 2 units at once (not the unloaded 10), and the test-internal limits
-        # keep the factor of 4 an unloaded run gives (not the loaded run's 2).
-        calls = []
-        with unittest.mock.patch.object(check_kit, 'busy_cpus', return_value=16.0), \
-                unittest.mock.patch.object(check_kit.os, 'cpu_count', return_value=20), \
-                unittest.mock.patch.object(check_kit, 'run_units',
-                                           side_effect=lambda *a, **kw: calls.append((a, kw)) or True), \
-                unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
-                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
-                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(out):
-            self.assertEqual(check_kit.main(), 0, out.getvalue())
-        (units, _, parallel), options = calls[0]
+        # keep the factor of 4 an unloaded run gives (not the loaded run's 2). The environment is
+        # this test's own: CI sets GITHUB_ACTIONS, under which the load is the job's own setup.
+        def run(environ, cpus=20, busy=16.0):
+            calls = []
+            with unittest.mock.patch.dict(os.environ, environ), \
+                    unittest.mock.patch.object(check_kit, 'busy_cpus', return_value=busy), \
+                    unittest.mock.patch.object(check_kit.os, 'cpu_count', return_value=cpus), \
+                    unittest.mock.patch.object(check_kit, 'run_units',
+                                               side_effect=lambda *a, **kw: calls.append((a, kw)) or True), \
+                    unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
+                    unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                    contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(out):
+                for name in ('GITHUB_ACTIONS', check_kit.UNITS):
+                    if name not in environ:
+                        os.environ.pop(name, None)
+                self.assertEqual(check_kit.main(), 0, out.getvalue())
+            (units, _, parallel), options = calls[0]
+            return units, parallel, options['factor'], out.getvalue()
+
+        units, parallel, factor, out = run({})
         self.assertGreater(len(units), 20)
         self.assertEqual(parallel, check_kit.degree(20, len(units), 16.0))
         self.assertEqual(parallel, 2)
-        self.assertEqual(options['factor'], min(check_kit.degree(20, len(units)), 4))
-        self.assertEqual(options['factor'], 4)
-        self.assertIn('2 of %d units at once (20 CPUs, 16.0 busy with other work)' % len(units), out.getvalue())
+        self.assertEqual(factor, min(check_kit.degree(20, len(units)), 4))
+        self.assertEqual(factor, 4)
+        self.assertIn('2 of %d units at once (20 CPUs, 16.0 busy with other work)' % len(units), out)
+        # In a GitHub Actions job the same reading is the job's own setup: the unloaded 10.
+        units, parallel, factor, out = run({'GITHUB_ACTIONS': 'true'})
+        self.assertEqual(parallel, 10)
+        self.assertIn('10 of %d units at once (20 CPUs, 16.0 busy with other work)' % len(units), out)
+        # Units set by hand above the CPU rule raise the limits' factor with them (3 vCPUs: degree 1).
+        units, parallel, factor, out = run({check_kit.UNITS: '2'}, cpus=3, busy=0.0)
+        self.assertEqual((parallel, factor), (2, 2))
 
     def test_a_unit_on_a_loaded_host_keeps_the_timeout_factor_of_a_full_run(self):
         # Under load fewer units run at once, but the host is as busy: the factor stays at the

@@ -17,6 +17,14 @@ permissions:
 # it (fast 90 min, slow 270 min here) fails by name; a tier over its target only warns.
 # timeout-minutes is GitHub's own hang guard above a normal run plus one unit's cap, so the cap
 # names a hung unit first; the slow job sits at GitHub's 360-minute job maximum.
+# The wall time is the slowest job's (run 40016622584: Windows slow 41 min, macOS 26-30, Ubuntu
+# 7-8), so the slow jobs are cut down, not the tests (finding 6: a commit stage of about ten
+# minutes; finding 12: peers use parallel matrix jobs). Native Windows splits each tier over jobs
+# (--shard K/N: every Nth unit from the Kth). macOS runs two units at once on its 3 vCPUs, where
+# the check's own rule gives one; it is not split: a free account runs at most 5 macOS jobs at
+# once and 20 jobs in all (docs.github.com/en/actions/reference/limits, read 2026-10-24), and this
+# file starts 18. A public repository's standard runners cost nothing (docs.github.com/en/billing/
+# concepts/product-billing/github-actions, read 2026-10-24).
 env:
   MYAGENTKIT_TEST_TIMEOUT_SCALE: '3'
 
@@ -46,6 +54,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo locale-gen tr_TR.UTF-8
       - name: Run the kit check's ${{ matrix.tier }} tier (scripts/check_kit.py through its launcher)
+        env:
+          MYAGENTKIT_CHECK_UNITS: ${{ runner.os == 'macOS' && '2' || '' }}
         run: ./scripts/check.sh ${{ matrix.tier == 'slow' && '--slow' || '' }}
 
   # Native Windows: Git for Windows' sh with a python.org CPython, the host the gate lock, a
@@ -53,7 +63,7 @@ jobs:
   # pass elsewhere, so only these jobs prove them. A case that needs a POSIX host prints NOT RUN
   # here; the jobs above prove it.
   windows:
-    name: windows-latest / Python ${{ matrix.python }} / ${{ matrix.tier }}
+    name: windows-latest / Python ${{ matrix.python }} / ${{ matrix.tier }} ${{ matrix.shard }}/${{ matrix.tier == 'slow' && 3 || 2 }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.tier == 'slow' && 360 || 150 }}
     strategy:
@@ -61,6 +71,12 @@ jobs:
       matrix:
         python: ['3.11', '3.14']
         tier: [fast, slow]
+        # fast in 2 jobs, slow in 3: run 40016622584's units summed 1200-1360 s and 3500-4900 s,
+        # two at once per job.
+        shard: [1, 2, 3]
+        exclude:
+          - tier: fast
+            shard: 3
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         # The tags: without a v* tag (depth 1 has none) the kit check's ACTION check is NOT RUN.
@@ -71,4 +87,4 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Run the kit check's ${{ matrix.tier }} tier (scripts/check_kit.py through its launcher) on native Windows
         shell: bash
-        run: sh scripts/check.sh ${{ matrix.tier == 'slow' && '--slow' || '' }}
+        run: sh scripts/check.sh ${{ matrix.tier == 'slow' && '--slow' || '' }} --shard ${{ matrix.shard }}/${{ matrix.tier == 'slow' && 3 || 2 }}
