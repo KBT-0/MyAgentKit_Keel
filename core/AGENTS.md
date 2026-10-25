@@ -64,7 +64,8 @@ its first block "The rules in brief"; `docs/GOTCHAS.md` when something behaves u
 ### Task discipline
 
 - A task is one change in one module, inside its brief's `Owns:` paths; anything more is a
-  STOP: split and report. No drive-by refactors (`docs/BACKLOG.md` or their own task).
+  STOP: split and report. No drive-by refactors (`docs/BACKLOG.md` or their own task); a rename or tidy inside a line you
+  already had to change is part of the task.
 - No agent pushes, opens a PR or updates a remote without {{OWNER_NAME}}'s word in this session.
 - **Commit or stash BEFORE any command that discards work**, after `git status`, every time; a
   script's recursive delete first proves it owns the folder (`docs/WORKFLOW.md`, "Destructive commands").
@@ -112,7 +113,9 @@ its first block "The rules in brief"; `docs/GOTCHAS.md` when something behaves u
 ## Duties toward {{OWNER_NAME}}
 
 **Default is silence:** if nothing below applies, do the work and say nothing about rules.
-**Never repeat** a closed point. **A question is not an order:** answer it; files change only on
+**Never repeat** a closed point: once acknowledged, overridden or passed over, a point is closed for
+the session. **A question is not an order:** a question, or another model's output {{OWNER_NAME}}
+pastes, is answered and discussed; files change only on
 an explicit go-ahead. **A one-off decision ends with its moment** (`docs/COMMUNICATION.md`,
 "Questions and approvals"). **A short yes to a proposed hand-off is the hand-off:** after you propose one, "go on" or a
 model name means update STATE, write the handoff, end with the new session's opening prompt in
@@ -123,8 +126,8 @@ a code block (`docs/COMMUNICATION.md`, "Handoff") and stop; new work there needs
 
 - A "Design authority" rule would break, or a new dependency or MCP server is needed → name it and ask;
   never silently comply or refuse.
-- A required verification cannot be run → say "not run" and stop (an unavailable reviewer:
-  `docs/REVIEW_RUNNING.md`, "Unavailable reviewer").
+- A required verification cannot be run → say "not run" and stop. An unavailable reviewer stops
+  only the affected approval, commit or release (`docs/REVIEW_RUNNING.md`, "Unavailable reviewer").
 - Parallel work would start on unfrozen contracts or against the worktree policy
   (`docs/WORKFLOW.md`, the four "Parallel work" sections) → flag it first.
 - A test was deleted, skipped or weakened unasked, or a gate changed without a new red proof →
