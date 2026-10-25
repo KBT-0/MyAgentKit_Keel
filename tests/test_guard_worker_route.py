@@ -22,10 +22,12 @@ def run(tool_input, tool='Agent'):
 class LongWaitRouteTests(unittest.TestCase):
     def test_a_sub_agent_that_names_a_long_job_is_refused(self):
         for tool, call in [
-            ('Agent', {'description': 'Fix round-3 review gate findings', 'prompt': 'Fix them and commit.'}),
-            ('Agent', {'description': 'v012 ci worker', 'prompt': 'Make the CI green.'}),
+            ('Agent', {'description': 'Fix round-3 review gate findings',
+                       'prompt': 'Fix them, then run the review gate again.'}),
+            ('Agent', {'description': 'v012 ci worker', 'prompt': 'Push and wait for CI to go green.'}),
             ('Task', {'description': 'Merge three branches', 'prompt': 'Merge a, b and c into master.'}),
-            ('Agent', {'description': 'x', 'prompt': 'Run gh run watch 123 and report.'}),
+            ('Agent', {'description': 'x', 'prompt': 'Merging a into master; watching the pipeline until green.'}),
+            ('Agent', {'description': 'x', 'prompt': 'gh run watch 123, then report.'}),
             ('Agent', {'description': 'x', 'prompt': 'Run scripts/check.sh, then report.'}),
             ('Agent', {'subagent_type': 'fork', 'description': 'x', 'prompt': 'Wait for the review.sh round.'}),
         ]:
@@ -43,10 +45,23 @@ class LongWaitRouteTests(unittest.TestCase):
             # An inner diff-reviewer's prompt cites the review protocol by its file name.
             {'subagent_type': 'diff-reviewer', 'description': 'Inner review round 1',
              'prompt': 'Review the diff against docs/REVIEW_GATE.md, "What a reviewer attacks first".'},
+            # Naming a job, or reporting one that already ran, waits on nothing.
+            {'subagent_type': 'diff-reviewer', 'description': 'Inner review round 2',
+             'prompt': 'The author ran scripts/check.sh: PASS. Fix the review gate findings and commit.'},
+            {'description': 'Review', 'prompt': 'Review the merge commit 1a2b3c.'},
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'))
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_the_kits_own_task_prompt_template_passes(self):
+        # core/docs/HANDOFF.md "Day-to-day task prompt" names the commit gate, CI and the review
+        # gate; a sub-agent briefed per it must not be refused.
+        handoff = (HOOK.parents[5] / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
+        template = handoff.split('## Day-to-day task prompt', 1)[1].split('```', 2)[1]
+        self.assertIn('review gate', template)
+        result = run({'description': 'Task', 'prompt': template, 'model': 'claude-opus-5-5', 'effort': 'high'})
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_other_tools_pass(self):
         self.assertEqual(run({'command': 'gh run watch 1'}, 'Bash').returncode, 0)

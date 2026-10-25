@@ -969,10 +969,10 @@ Rules, binding for whoever routes workers:
    minutes (the launch line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`): in one project
    sub-agents wrote 4.56M one-hour cache tokens over 1,582 requests and only 11 gaps passed five
    minutes (#116); a one-hour write costs 2x base input, a five-minute one 1.25x. The kit's
-   `guard_worker_route.py` refuses a sub-agent whose description or prompt names a gate, CI, a
-   merge, a watch, `review.sh`, `check.sh` or `gh run`; one that will not wait past five
-   minutes says so in a prompt line `No long wait: REASON` (#307: such waits cost $100 of
-   re-writes in 14 days).
+   `guard_worker_route.py` refuses a sub-agent whose description or prompt tells it to merge,
+   or to run, watch or wait for a gate, CI, a pipeline, `review.sh`, `check.sh` or `gh run`;
+   one that will not wait past five minutes says so in a prompt line `No long wait: REASON`
+   (#307: such waits cost $100 of re-writes in 14 days).
    The worker starts long jobs in the background and is re-invoked when they exit, and never
    runs `sleep`, `until`, `pgrep` or tail-the-log loops. `git commit` and `git merge` are long
    jobs too: the pre-commit and pre-merge-commit hooks run the full gate. Claude Code's Bash

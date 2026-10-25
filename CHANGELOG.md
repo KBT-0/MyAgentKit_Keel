@@ -16,9 +16,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## Unreleased — v0.14
 
 - #307 rank 1: `guard_worker_route.py` refuses a sub-agent (a fork too) whose description or
-  prompt names a gate, CI, a merge, a watch, `review.sh`, `check.sh` or `gh run`; it runs as
-  `spawn_worker.sh`, or the prompt says `No long wait: REASON`. Expected: Keel's $100 of
-  five-minute re-writes in 14 days (5 %).
+  prompt tells it to merge, or to run, watch or wait for a gate, CI, a pipeline, `review.sh`,
+  `check.sh` or `gh run` (verb and job on one line; naming one, or "the author ran check.sh",
+  passes, so does the kit's own task prompt); it runs as `spawn_worker.sh`, or the prompt says
+  `No long wait: REASON`. Expected: Keel's $100 of five-minute re-writes in 14 days (5 %).
+  **ACTION:** re-copy `.claude/hooks/guard_worker_route.py`; in `docs/WORKFLOW.md`, "Worker
+  cost" rule 1, run `sync-kit.sh . --merge` or take its sub-agent cache and hook sentences from
+  the kit's copy.
+  The kit's `overlays/claude-code/README.md` rows need nothing: that README is not copied.
 - #307 rank 5: `spawn_worker.sh` starts workers without 17 tools they never use
   (`--disallowedTools`: Artifact, Workflow, the Cron and plan-mode tools, ...). Measured on
   2.1.310, bg host, claude-opus-5-5: a worker's first request 46.5k → 27.4k tokens (−41 %).
