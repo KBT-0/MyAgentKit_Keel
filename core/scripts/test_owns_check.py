@@ -161,8 +161,10 @@ class OwnsCheckTests(unittest.TestCase):
         scripts.mkdir()
         for name in ('review.sh', 'gate_config.sh', 'owns_check.py'):
             (scripts / name).write_bytes((SCRIPT.parent / name).read_bytes())
-        (scripts / 'review_dispatch.py').write_text('import os; print("dispatched in", os.getcwd())\n',
-                                                    encoding='utf-8')
+        # review.sh asks the dispatcher for the working mode's reviewer first (--mode-reviewer, L16).
+        (scripts / 'review_dispatch.py').write_text(
+            'import os, sys\nprint("claude" if "--mode-reviewer" in sys.argv else "dispatched in " + os.getcwd())\n',
+            encoding='utf-8')
         self.commit()
         base = self.git('rev-parse', 'HEAD').stdout.decode().strip()
         worktree = Path(self.tmp.name) / 'worktree'

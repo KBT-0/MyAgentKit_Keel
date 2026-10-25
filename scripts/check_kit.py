@@ -127,15 +127,15 @@ REQUIRED_SUITES = {
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 3, 'test_bootstrap': 42 if case_folds() else 41, 'test_acceptance': 20,
-              'test_review_upgrade': 5 if os.name == 'nt' else 6,
-              'test_scan_gate': 1, 'test_gate_checks': 15 if symlinks_work() else 14, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
-              'test_check_gate': 20, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
+              'test_review_upgrade': 6 if os.name == 'nt' else 7,
+              'test_scan_gate': 1, 'test_gate_checks': 17 if symlinks_work() else 16, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
+              'test_check_gate': 23, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
-              'test_sync_kit': 62 if case_folds() else 61, 'test_doctor': 13, 'test_git_hooks': 38, 'test_stop_hook': 12, 'test_context_hook': 16, 'test_communication_hooks': 38, 'test_suggestions': 19, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 12, 'test_guard_worker_route': 4, 'test_guard_destructive_git': 67 if os.name == 'nt' else 66, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
-              'test_spawn_worker': 84 if os.name == 'nt' else 105, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
+              'test_sync_kit': 67 if case_folds() else 66, 'test_doctor': 14, 'test_git_hooks': 38, 'test_stop_hook': 12, 'test_context_hook': 17, 'test_communication_hooks': 40, 'test_suggestions': 20, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 12, 'test_guard_worker_route': 4, 'test_guard_destructive_git': 75 if os.name == 'nt' else 74, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
+              'test_spawn_worker': 86 if os.name == 'nt' else 107, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
-              'test_codex_worker': 67 if os.name == 'nt' else 69 if Path('/proc/self/fd').is_dir() else 68, 'test_working_mode': 57,
-              'test_worker_visibility': 102 if os.name == 'nt' or os.path.exists('/dev/full') else 101, 'test_doc_pointers': 31,
+              'test_codex_worker': 67 if os.name == 'nt' else 69 if Path('/proc/self/fd').is_dir() else 68, 'test_working_mode': 61,
+              'test_worker_visibility': 103 if os.name == 'nt' or os.path.exists('/dev/full') else 102, 'test_doc_pointers': 32,
               'test_usage_summary': 33, 'test_done_audits': 2, 'test_autopilot_report': 2,
               'test_kit_output': 3, 'test_kit_runner': 53, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,

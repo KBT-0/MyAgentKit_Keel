@@ -28,8 +28,6 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   units. Kit-internal: no project action.
 - `test_claude_bridge`'s `BridgeTests` fixture repo (the one its tests copy) turns off git's background maintenance and gc, so its
   copies no longer fail on a vanishing `.git/objects/maintenance.lock`. Kit-internal.
-## Unreleased
-
 - **mod CI** (`.github/workflows/mod-tests.yml`, new): `claude plugin validate plugin` and `claude plugin test plugin` on Claude Code 2.1.310, the mod's minimum, when `plugin/**` changes; `CONTRIBUTING.md` gains "The kit's Claude Code mod" (rules and the install warning about third-party mods) and its release check reads both workflows of the release commit. No project action.
 - `guard_destructive_git.py` no longer refuses four read-only forms (leeway field reports,
   defect 3 and L9): a quoted `<<<<<<<` (`grep -c '^<<<<<<<' f; git diff --stat`), a heredoc body
