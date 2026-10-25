@@ -39,6 +39,26 @@ reviews): a receiver that runs its input without being a shell or interpreter (`
 `parallel`, `xargs sh -c`) and write-then-run (`echo ... > s; bash s`). Sources:
 `.myagentkit/v014/gitguard-brief.md`, `gitguard-logic-r1-findings.md`,
 `gitguard-portability-r1-findings.md`.
+### 2026-10-24 — v0.14 leadrule: the lead routes, workers execute
+
+Failure: lead sessions implemented inline and filled their own context, which every later
+request re-reads. Main-chain counts on 2026-10-24: labricore lead 28 Edit / 81 Bash, Keel lead
+29 Edit / 99 Bash, leeway 0 Edit. The cause: `AGENTS.md` had no line saying the lead does not
+implement; only WORKFLOW's roles list did, and no hook warns on a lead's Edit/Write. Anthropic
+names the same failure ("Sometimes the lead starts implementing tasks itself instead of waiting
+for teammates", code.claude.com/docs/en/agent-teams). So `AGENTS.md` gets the rule in one
+paragraph (net +1 line, the always-loaded prefix) and WORKFLOW "The lead routes" holds the six
+exceptions and the thresholds. Delegation is not free: Anthropic measured it saving money only
+on routine work with a long cost tail or work larger than one context, with Sonnet 5 workers,
+an earlier model (platform.claude.com, "Optimizing for cost and intelligence"); a list-price
+break-even model shows one delegated call costing several times the call, so "a single call
+stays inline" is the one firm number and the rest are labelled estimates until the #307 runs
+and the lead-route log measure them. Rejected: `claude --agent lead` (it replaces Claude
+Code's system prompt and leaks into worker sessions), a new working mode (the rule must hold
+in every mode), and a ~8-call counter hook (it overlaps `progress_reminder.py` and its number
+has no evidence); a strict deny mode is an owner question. Sources: the kit's
+`.myagentkit/v014/research-lead-delegation.md` and `reseval/EVALUATION.md` (claims 1, 3-5,
+11), not in the repo.
 
 ### 2026-10-22 — v0.13 kitverify: verify a kit upgrade by the commit it copied; a clean review is empty lists
 

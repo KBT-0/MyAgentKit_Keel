@@ -56,6 +56,11 @@ Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and th
 the diff is too long to read, a longer summary lists every changed file with its line counts,
 every open or deferred finding and every manual check, and {{OWNER_NAME}} may ask for the diff.
 
+The review its tier requires starts without asking; an extra review beyond it is
+{{OWNER_NAME}}'s call (`/myagentkit:cross-review`). Findings go to the author's side
+(`docs/WORKFLOW.md`, "Worker cost", rule 2), and round 2 reviews the fix; after two rounds the
+next step is {{OWNER_NAME}}'s or an issue ("Rounds").
+
 Every tier's review is a gate: the change does not pass without its result
 (`docs/REVIEW_RUNNING.md`, "Unavailable reviewer"). Every review's Lows are capped as
 `REVIEW_PROMPT` caps them (`scripts/claude_bridge.py`), the only place the number is written.
