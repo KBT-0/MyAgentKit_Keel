@@ -36,7 +36,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   interpreter's heredoc); a quoted `<<X` is no heredoc; awk's piped input is data only for a
   literal program with no `system`, pipe, `@include` or `-f`: every raw word that reads as the
   program is single-quoted, so a quoted decoy elsewhere cannot vouch for `awk "$p"`. A heredoc
-  terminator ending in CR ends the body. Sync is enough.
+  terminator ending in CR ends the body.
+- **ACTION** (`.claude/hooks/guard_destructive_git.py`, project-owned): run `sync-kit.sh . --merge`;
+  without it, copy the kit's `overlays/claude-code/files/.claude/hooks/guard_destructive_git.py` over
+  yours, then re-apply any local change you made to it.
 - A project's own gate steps and self-test suites have a home (labricore field report 1, item 3):
   `scripts/check.project.sh`, run by `check.sh` from the checkout's root after its own steps on
   every run, documentation-only commits included (its non-zero exit fails the gate), and
