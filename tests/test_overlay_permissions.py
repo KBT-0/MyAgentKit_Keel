@@ -167,8 +167,8 @@ class OverlaySettingsTests(unittest.TestCase):
         # says `onFailure: block` (Claude Code v2.1.295+, https://code.claude.com/docs/en/hooks).
         guards = [h for e in self.settings['hooks']['PreToolUse'] for h in e['hooks']]
         self.assertEqual(sorted(h['command'].split('/')[-1].rstrip('"') for h in guards),
-                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_root_scan.py',
-                          'guard_secret_files.py', 'guard_worker_route.py'])
+                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_risky_review.py',
+                          'guard_root_scan.py', 'guard_secret_files.py', 'guard_worker_route.py'])
         for hook in guards:
             with self.subTest(hook=hook['command']):
                 # guard_root_scan fails open (#298, lead decision D1): it only saves a CPU core, and

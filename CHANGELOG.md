@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **A risky diff's review is enforced** (Claude Code overlay, #307): `guard_risky_review.py` (PreToolUse, shell
+  tools) refuses a `git commit` that changes a `risky_paths` file the diff-reviewer agent has not seen since HEAD;
+  `record_review.py` (SubagentStop, diff-reviewer) records the paths a review saw in the git folder. Two of ten
+  headless kit runs had committed a money-rounding fix with no review. Fixing the findings after the review is allowed.
+- **ACTION** (`scripts/gate_config.sh`, project-owned): add `risky_paths="..."`, the risky areas as path globs plus
+  `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*` (see the kit's
+  `core/scripts/gate_config.sh`); without it the guard is off. Run `sync-kit.sh . --merge` for the two hooks and
+  `.claude/settings.json`.
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after

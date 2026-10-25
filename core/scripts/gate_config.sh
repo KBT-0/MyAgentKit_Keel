@@ -40,6 +40,12 @@ docs_only_skip_build=1
 # matched as Python's fnmatch.fnmatchcase does (a * also crosses a /): "docs/api/*.md README.md".
 docs_always_build=""
 
+# The risky paths of AGENTS.md's review rule: a Claude Code commit that changes one waits until the
+# diff-reviewer agent has seen it (.claude/hooks/guard_risky_review.py). Space-separated globs from
+# the top of the repository, matched like docs_always_build: "src/billing/* scripts/check.sh".
+# Empty: no path is checked.
+risky_paths="{{RISKY_PATHS}}"
+
 # BUILD CACHE (check.sh, section 4, says what the key holds). build_cache_inputs is a command
 # that prints whatever else the build depends on, which the tree does not hold. Starters, keep
 # the ones your build uses (a missing tool fails the command, and a failing command means no

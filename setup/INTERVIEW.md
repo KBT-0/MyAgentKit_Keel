@@ -410,6 +410,7 @@ when they become current, never now.
 | Placeholder | What goes in |
 |---|---|
 | `{{RISKY_AREAS}}` | The Phase 2 list, as specific nouns. Gates and CI are already listed permanently — do not repeat them |
+| `{{RISKY_PATHS}}` (scripts/gate_config.sh) | The same areas as path globs, plus the gate files: `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*`. A commit touching one waits for the diff review |
 | `{{TOP_RISK_PRIORITY}}` | The single worst failure mode, as the first review priority, with what makes it expensive |
 | `{{REVIEWER_MODEL}}` | The strongest model available for reviews |
 
