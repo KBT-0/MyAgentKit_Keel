@@ -864,7 +864,8 @@ reviews. `**Owner:** away (autopilot since <time>)` or `**Owner:** present` in
 `docs/STATE.md`, under the "Working mode:" line, and `.myagentkit/presence` (ignored by Git,
 read by the hooks) record it; `scripts/working_mode.py autopilot` and `present` write both
 under the mode switch's rules, and nothing else changes the line. No record is present. A
-linked worktree reads the main checkout's record; a checkout with no record anywhere (a clone of
+linked worktree reads and switches the main checkout's record, one per repository, and that record
+wins over the worktree's own STATE line; a checkout with no record anywhere (a clone of
 a commit made while away) follows the away line until a switch records it there.
 
 - **Starts:** `/myagentkit:mode autopilot`, or {{OWNER_NAME}} saying so in plain words
