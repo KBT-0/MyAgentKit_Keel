@@ -136,7 +136,7 @@ REQUIRED_SUITES = {
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 67 if os.name == 'nt' else 69 if Path('/proc/self/fd').is_dir() else 68, 'test_working_mode': 57,
               'test_worker_visibility': 102 if os.name == 'nt' or os.path.exists('/dev/full') else 101, 'test_doc_pointers': 31,
-              'test_usage_summary': 33, 'test_done_audits': 2, 'test_autopilot_report': 1,
+              'test_usage_summary': 33, 'test_done_audits': 2, 'test_autopilot_report': 2,
               'test_kit_output': 3, 'test_kit_runner': 53, 'test_clean_worktrees': 144, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 52 if os.name == 'nt' else 51, 'test_python_fallback': 3, 'test_master_writer': 13,

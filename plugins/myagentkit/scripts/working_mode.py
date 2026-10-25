@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 
@@ -43,11 +44,18 @@ EXAMPLES = {'solo': 'family: codex', 'saver': 'low: claude'}
 PRESENCE = ('autopilot', 'present')
 OWNER_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
 AWAY = re.compile(r'away \(autopilot since (\S+)\)')
+# /goal is a session-scoped Stop hook: present removes the record, not the goal (the lead cannot run a slash command).
+GOAL_CLEAR = 'Type `/goal clear`: the autopilot goal stays active until you do.\n\n'
 BACK = ('The owner is back. Before anything else: run `python3 scripts/autopilot_report.py` (`python` on native '
         'Windows) and finish the '
         'report from it (docs/AUTOPILOT.md); give it in two layers (docs/COMMUNICATION.md, "Handoff"); then '
         'ask its Questions one by one with AskUserQuestion, the recommended option first. An Issue draft is '
         'posted only on the owner\'s yes.')
+# A project older than the presence switch (L11) has neither autopilot_report.py nor AUTOPILOT.md.
+OLD_BACK = ('The owner is back. Before anything else: write the report of the absence (done, from `git log` since the '
+            'stamp above; parked, each with its reason; questions) in two layers, the short answer first; then ask its '
+            'Questions one by one with AskUserQuestion, the recommended option first. An Issue draft is posted only '
+            'on the owner\'s yes.')
 
 
 def repairs_old_mode(old_lines, new_lines):
@@ -262,36 +270,84 @@ def mode(project, choice=None, sides=None):
         if choice is not None:
             raise ValueError('no mode was switched: the project predates the three modes')
         return
+    presence = choice is not None and normalized(choice) in PRESENCE
     # Read before the lock is created: a switch never writes WORKFLOW.md.
-    workflow = checked(project, 'docs/WORKFLOW.md').read_text(encoding='utf-8')
-    if '### Working modes, by name' not in workflow:
-        raise ValueError('WORKFLOW.md has no "Working modes, by name" section')
-    section = workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
-    rows = re.findall(r'^\| `([a-z-]+)` \|([^\n]+)$', section, re.M)
-    names = [name for name, _ in rows]
-    if tuple(names) != MODES:
-        raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
-    if choice is None:
-        return working_mode(project, section, rows)
+    path = checked(project, 'docs/WORKFLOW.md')
+    if not path.is_file():
+        # The kit's own source repo or a half-installed project (L11): presence still switches.
+        if not presence:
+            raise ValueError('no docs/WORKFLOW.md in %s, so no working mode is defined here (the kit\'s source '
+                             'repo, or a project the kit is not fully installed in)' % shown(project))
+        section = ''
+    else:
+        workflow = path.read_text(encoding='utf-8')
+        if '### Working modes, by name' not in workflow:
+            raise ValueError('WORKFLOW.md has no "Working modes, by name" section')
+        section = modes_section(workflow)
+        rows = re.findall(r'^\| `([a-z-]+)` \|([^\n]+)$', section, re.M)
+        names = [name for name, _ in rows]
+        if tuple(names) != MODES:
+            raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
+        if not presence and not checked(project, 'docs/STATE.md').is_file():
+            raise ValueError('no docs/STATE.md in %s, so the working mode has no record here (a project the kit '
+                             'is not fully installed in)' % shown(project))
+        if choice is None:
+            return working_mode(project, section, rows)
     with switch_lock(project):
-        if normalized(choice) in PRESENCE:
+        if presence:
             if sides is not None:
                 raise ValueError(normalized(choice) + ' takes no note')
             return switch_presence(project, section, normalized(choice))
         return working_mode(project, section, rows, choice, sides)
 
 
+def modes_section(workflow):
+    return workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
+
+
+def autopilot_rules(section):
+    return re.search(r'^#{3,4} autopilot(?![\w-]).*?(?=^#{2,4} |\Z)', section, re.M | re.S)
+
+
+def kit_rules(project):
+    """The autopilot rules from the kit's own WORKFLOW.md, for a project without them (L11): the
+    kit source repo's core/docs/, else the copy shipped beside this helper (a plugin's docs/)."""
+    for path in (checked(project, 'core/docs/WORKFLOW.md'), Path(__file__).resolve().parents[1] / 'docs/WORKFLOW.md'):
+        if path.is_file():
+            workflow = path.read_text(encoding='utf-8')
+            rules = autopilot_rules(modes_section(workflow)) if '### Working modes, by name' in workflow else None
+            if rules is not None:
+                return path, rules[0].replace('{{OWNER_NAME}}', 'the owner')
+    return None, None
+
+
+def presence_record(project):
+    """.myagentkit/presence: one record per repository, the main checkout's, which a linked
+    worktree reads and switches too, as the hooks do (leeway L13); a submodule keeps its own."""
+    if (project / '.git').is_file():
+        try:
+            # Made absolute here, not with --path-format (Git 2.31+): relative output is relative to PROJECT.
+            common = subprocess.run(['git', '-C', str(project), 'rev-parse', '--git-common-dir'], capture_output=True,
+                                    text=True, timeout=15, check=True).stdout.strip()
+            common = (project / common).resolve() if common else None
+            if common is not None and common.name == '.git' and common.is_dir():
+                return checked(common.parent, '.myagentkit/presence')
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return checked(project, '.myagentkit/presence')
+
+
 def owner(project, state):
     """(stamp, line, record words): the autopilot stamp of STATE's one Owner line (None for
-    present or no line), its match, and the words of .myagentkit/presence (none: present)."""
+    present or no line), its match, and the words of .myagentkit/presence, None when there is none."""
     found = presence_lines(state)
     if len(found) > 1:
         raise ValueError('STATE.md has more than one Owner line: ' + '; '.join(m[0].strip() for m in found))
     line = found[0] if found else None
     away = AWAY.fullmatch(line[2].strip().rstrip('.')) if line else None
-    record = checked(project, '.myagentkit/presence')
-    words = record.read_text(encoding='utf-8').split() if record.exists() else ['present']
-    return (away[1] if away else None), line, words
+    record = presence_record(project)
+    return (away[1] if away else None), line, (record.read_text(encoding='utf-8').split()
+                                                if record.exists() else None)
 
 
 def presence_lines(state):
@@ -302,18 +358,31 @@ def presence_lines(state):
 
 def switch_presence(project, section, choice):
     """Write STATE's Owner line and .myagentkit/presence together, as a mode switch writes its two."""
-    rules = re.search(r'^#{3,4} autopilot(?![\w-]).*?(?=^#{2,4} |\Z)', section, re.M | re.S)
-    if rules is None:
-        raise ValueError('WORKFLOW.md has no autopilot rules ("### autopilot, the owner-away switch" after '
-                         '"Working modes, by name"); sync the kit (v0.13) and run this again')
+    rules = autopilot_rules(section)
+    notes = []
+    if rules is not None:
+        rules = rules[0]
+    else:
+        source, rules = kit_rules(project)
+        if rules is None:
+            raise ValueError('WORKFLOW.md has no autopilot rules ("### autopilot, the owner-away switch" after '
+                             '"Working modes, by name"); sync the kit (v0.13) and run this again')
+        notes.append(('This project\'s docs/WORKFLOW.md predates the autopilot rules (kit v0.13); they come from '
+                      '%s; /myagentkit:sync brings them into the project.' if section else
+                      'No docs/WORKFLOW.md here; the autopilot rules come from %s.') % shown(source))
     state_path = checked(project, 'docs/STATE.md')
-    state_bytes = state_path.read_bytes()
-    state = state_bytes.decode('utf-8')
+    if state_path.is_file():
+        state_bytes = state_path.read_bytes()
+    else:
+        state_bytes = None
+        notes.append('There is no docs/STATE.md here, so no Owner line was written; .myagentkit/presence records it.')
+    state = state_bytes.decode('utf-8') if state_bytes is not None else ''
     stamp, line, words = owner(project, state)
-    record = checked(project, '.myagentkit/presence')
+    record = presence_record(project)
     now = datetime.now().astimezone().isoformat(timespec='seconds')
     # A second switch keeps the first stamp, so the report covers the whole absence; the return
     # keeps it too, with the time of the return, for scripts/autopilot_report.py.
+    words = words or []
     since = stamp or (words[1] if words[:1] == ['away'] and len(words) > 1 else None)
     if choice == 'autopilot':
         since = since or now
@@ -330,12 +399,18 @@ def switch_presence(project, section, choice):
         position = position or len(state)
         updated = (state[:position] + ('' if position == 0 or state[:position].endswith('\n') else newline)
                    + '**Owner:** ' + value + newline + state[position:])
-    publish(project, state_path, state_bytes, updated.encode('utf-8'), record, text)
+    if state_bytes is None:
+        record.parent.mkdir(exist_ok=True)
+        os.replace(prepared(record.parents[1], record, text.encode('utf-8')), record)
+    else:
+        publish(project, state_path, state_bytes, updated.encode('utf-8'), record, text)
+    for note in notes:
+        print(note)
     print('Owner: ' + value + '\n')
     if choice == 'present':
-        print(BACK)
+        print(GOAL_CLEAR + (OLD_BACK if (kit_version(project) or (0, 13)) < (0, 13) else BACK))
         return
-    print(rules[0].strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
+    print(rules.strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
           'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '
           'the report .myagentkit/autopilot/%s.md is written' % since[:10])
 
@@ -373,13 +448,29 @@ def working_mode(project, section, rows, choice=None, sides=None):
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
             raise ValueError('.myagentkit/mode and STATE.md disagree; choose a mode explicitly to repair them')
         stamp, _, words = owner(project, state)
+        # STATE.md is committed, .myagentkit/presence is ignored: a clone or worktree of a commit
+        # made while away has the line and no record. That is no disagreement (leeway L12); the
+        # hooks follow the line too, until a switch records the presence here.
+        elsewhere = words is None and stamp is not None
+        main = presence_record(project).parents[1] != project
+        if words is None:
+            words = ['away', stamp] if stamp else ['present']
         if (words[:2] != ['away', stamp]) if stamp else (words[:1] != ['present']):
-            raise ValueError('.myagentkit/presence and the STATE.md Owner line disagree; switch autopilot or '
-                             'present explicitly to repair them')
+            if not main:
+                raise ValueError('.myagentkit/presence and the STATE.md Owner line disagree; switch autopilot or '
+                                 'present explicitly to repair them')
+            # A branch's STATE.md is its lead's to edit; the main checkout's record is the presence (L12, L13).
+            stamp = (' '.join(words[1:2]) or '?') if words[:1] == ['away'] else None
+            elsewhere = 'main'
         back = AFTER.search(note.strip(' ().')) if current == 'saver' else None
         print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)')
               + (' (returns to ' + back[1] + ')' if back else ''))
         print('Owner: ' + ('away (autopilot since %s)' % stamp if stamp else 'present'))
+        if elsewhere == 'main':
+            print("(the main checkout's .myagentkit/presence wins over this worktree's STATE.md Owner line)")
+        elif elsewhere:
+            print('(the STATE.md line was recorded in another checkout: .myagentkit/presence is missing here; '
+                  'the hooks follow the line until autopilot or present records it here)')
         for name, cells in rows:
             print(name + ' |' + cells)
         return
@@ -444,7 +535,7 @@ def publish(project, state_path, state_bytes, updated_bytes, record, text):
     pending = []
     try:
         pending.append(prepared(project, state_path, updated_bytes))
-        pending.append(prepared(project, record, text.encode('utf-8')))
+        pending.append(prepared(record.parents[1], record, text.encode('utf-8')))
         pending.append(prepared(project, state_path, state_bytes))
         if state_path.read_bytes() != state_bytes:
             raise ValueError('STATE.md changed during the mode switch; retry with the current document')

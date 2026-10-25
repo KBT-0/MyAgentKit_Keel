@@ -7,7 +7,7 @@ below by the lead right after `working_mode.py autopilot`, and filled as the nig
 never only at the end. The rules: "autopilot, the owner-away switch" in `docs/WORKFLOW.md`.
 The morning: the lead runs `working_mode.py present`, then
 `python3 scripts/autopilot_report.py` (`python` on native Windows), whose output is the Done
-section, gives the report in two layers (`docs/COMMUNICATION.md`, "Handoff"), then asks
+section, opens the report to the owner with "type `/goal clear`", gives the report in two layers (`docs/COMMUNICATION.md`, "Handoff"), then asks
 the Questions one by one with AskUserQuestion.
 
 Done comes from git, never from the lead's own account. Every other line is short: a long
@@ -15,6 +15,8 @@ queue pushes the owner into approving in bulk.
 
 ```markdown
 # Autopilot <since> – <until>
+
+Type `/goal clear`: the autopilot goal stays active until you do.
 
 ## Done
 <!-- The autopilot_report.py output: commits and merges since the stamp, worker

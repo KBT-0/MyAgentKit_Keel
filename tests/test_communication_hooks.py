@@ -284,6 +284,34 @@ class PlainReportTests(unittest.TestCase):
         self.assertIn('Questions', result.stderr)
         self.assertNotIn('AskUserQuestion', result.stderr)
 
+    def test_a_lead_in_a_linked_worktree_reads_the_main_checkouts_presence(self):
+        # leeway L13: presence lived in the main checkout only, so a lead in a worktree got the present-owner text.
+        main, worktree = self.project / 'main', self.project / 'wt'
+        main.mkdir()
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', str(main)]
+        for command in (['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'x'],
+                        ['worktree', 'add', '-q', str(worktree)]):
+            subprocess.run(git + command, check=True, capture_output=True)
+        (main / '.myagentkit').mkdir()
+        (main / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
+        # One record per repository: a worktree's own (an older switch wrote one) does not shadow it.
+        (worktree / '.myagentkit').mkdir()
+        (worktree / '.myagentkit/presence').write_text('present\n', encoding='utf-8')
+        envs = [{}]
+        if os.name != 'nt':  # Git before 2.31 has no rev-parse --path-format; a shell script stands in
+            old = self.project / 'old-git'
+            old.mkdir()
+            (old / 'git').write_text('#!/bin/sh\nfor a; do case $a in --path-format*) exit 129;; esac; done\n'
+                                     'exec "%s" "$@"\n' % shutil.which('git'), encoding='utf-8')
+            (old / 'git').chmod(0o755)
+            envs.append({'PATH': str(old) + os.pathsep + os.environ.get('PATH', '')})
+        for env in envs:
+            with self.subTest(old_git=bool(env)):
+                result = self.stop('Merge now?', CLAUDE_PROJECT_DIR=str(worktree), **env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('autopilot', result.stderr)
+                self.assertNotIn('AskUserQuestion', result.stderr)
+
     def test_a_worker_session_is_not_checked(self):
         result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')
         self.assertEqual((result.returncode, result.stderr), (0, ''))

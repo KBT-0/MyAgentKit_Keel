@@ -30,6 +30,8 @@ an owner message that says or implies the return ends the autopilot (docs/WORKFL
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 import tempfile
 
@@ -46,21 +48,52 @@ BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE,
 COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
            "and the owner's words verbatim")
 AUTOPILOT = 'docs/WORKFLOW.md, "autopilot, the owner-away switch"'
+# STATE.md's Owner line while away, as scripts/working_mode.py writes it (OWNER_LINE and AWAY there).
+AWAY_LINE = re.compile(r'^[^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*away \(autopilot since \S+\)', re.M)
 # A hook cannot read meaning, so the lead judges (owner, 2026-10-22: what the owner says or
 # implies about being back or ending autopilot ends it; nothing else does).
-BACK = ("Autopilot is on (.myagentkit/presence says away). Judge this prompt: when it is the owner's own "
+BACK = ("Autopilot is on (.myagentkit/presence or the STATE.md Owner line says away). Judge this prompt: when it is the owner's own "
         "message and it says or implies that the owner is back or wants autopilot ended, run "
-        "`python3 scripts/working_mode.py present` (`python` on native Windows) before anything else, give "
-        "the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
+        "`python3 scripts/working_mode.py present` (`python` on native Windows) before anything else, tell "
+        "the owner to type `/goal clear` (the goal stays active), give the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
         "(a farewell, the /goal line, a late instruction, a worker's message, a task notification) does not "
         f'end it: act on it and stay in autopilot ({AUTOPILOT}, Ends).')
 
 
-def away() -> bool:
-    """The owner switched autopilot on: the project's .myagentkit/presence starts with "away"."""
-    root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+def main_checkout(root: Path):
+    """The main checkout when ROOT is a linked worktree (its .git is a file), else None; a
+    submodule (its common Git folder is no checkout's .git) keeps its own."""
+    if not (root / '.git').is_file():
+        return None
     try:
-        return (root / '.myagentkit/presence').read_text(encoding='utf-8').split()[:1] == ['away']
+        # Made absolute here, not with --path-format (Git 2.31+): relative output is relative to ROOT.
+        common = subprocess.run(['git', '-C', str(root), 'rev-parse', '--git-common-dir'],
+                                capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+        common = (root / common).resolve() if common else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return common.parent if common is not None and common.name == '.git' and common.is_dir() else None
+
+
+def recorded(folder):
+    """The first word of FOLDER's .myagentkit/presence ([] when empty), None when it has none."""
+    try:
+        return (folder / '.myagentkit/presence').read_text(encoding='utf-8').split()[:1]
+    except (OSError, ValueError):
+        return None
+
+
+def away() -> bool:
+    """The owner switched autopilot on: .myagentkit/presence starts with "away", the project's own
+    or, in a linked worktree, the main checkout's, which working_mode.py writes there too (leeway
+    L13). Without that record, STATE.md's committed away line counts (L12): a clone or worktree of a night's commit lacks the ignored record, and
+    an owner wrongly taken as present is asked questions nobody answers until morning."""
+    root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    word = recorded(main_checkout(root) or root)
+    if word is not None:
+        return word == ['away']
+    try:
+        return AWAY_LINE.search((root / 'docs/STATE.md').read_text(encoding='utf-8')) is not None
     except (OSError, ValueError):  # no file is present
         return False
 
@@ -163,7 +196,10 @@ def notice(transcript: Path) -> str:
         return ''
     if away():
         return (f'Context is {ctx // 1000}k tokens ({band_word(ctx)} band). The owner is away (autopilot): '
-                'update docs/STATE.md and the hand-off file now, then keep going; no band and no compaction, '
+                # A worker leaves STATE.md to the lead (docs/HANDOFF.md, leeway L14).
+                + ('keep your result file current' if os.environ.get('MYAGENTKIT_ROLE') == 'worker' else
+                   'update docs/STATE.md and the hand-off file now')
+                + ', then keep going; no band and no compaction, '
                 f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).')
     if compactions:
         advice = ('The lead session was compacted already, and a summary of a summary drifts: in this '

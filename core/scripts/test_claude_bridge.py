@@ -4590,7 +4590,7 @@ class BridgeTests(unittest.TestCase):
             (scripts / "gate_config.sh").write_bytes(config.encode())
             (scripts / "review.sh").write_bytes((ROOT / "review.sh").read_bytes())
             for name in ["codex_bridge.py", "claude_bridge.py", "agent_process.py",
-                         "agent_usage.py", "codex_quota.py", "review_dispatch.py"]:
+                         "agent_usage.py", "codex_quota.py", "review_dispatch.py", "working_mode.py"]:
                 (scripts / name).write_bytes((ROOT / name).read_bytes())
         return scripts
 
@@ -7275,6 +7275,22 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 result = self.run_wrapper("--uncommitted", "--reviewer", reviewer)
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIn("no model pinned for reviewer '%s'" % reviewer, result.stdout)
+        # leeway L16: unnamed, solo's reviewer is its own family (docs/REVIEW_GATE.md, "Invariant"),
+        # whatever DEFAULT_REVIEWER says; cross and saver keep it; no mode line runs claude (owner 2026-10-24).
+        config = self.repo / "scripts/gate_config.sh"
+        config.write_text(re.sub(r'^DEFAULT_REVIEWER=.*$', 'DEFAULT_REVIEWER="codex"', config.read_text(),
+                                 flags=re.M))
+        (self.repo / "docs").mkdir(exist_ok=True)
+        for line, reviewer in (("solo", "claude"), ("Solo (family: claude)", "claude"),
+                               ("solo (family: codex)", "codex"), ("cross", "codex"),
+                               ("saver (low: claude, after: solo)", "codex"), (None, "claude")):
+            with self.subTest(mode=line):
+                (self.repo / "docs/STATE.md").write_text(
+                    "# State\n" + ("**Working mode:** %s\n" % line if line else ""))
+                result = self.run_wrapper("--uncommitted")
+                self.assertIn("no model pinned for reviewer '%s'" % reviewer, result.stdout)
+        result = self.run_wrapper("--uncommitted", REVIEW_REVIEWER="codex")  # named: never overridden
+        self.assertIn("no model pinned for reviewer 'codex'", result.stdout)
         # Defence in depth: the adapter refuses an empty pin even when called directly.
         scripts = self.install_wrapper()
         direct = subprocess.run([sys.executable, "-B", str(scripts / "codex_bridge.py"),
@@ -7282,6 +7298,35 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                 env=self.review_env(), capture_output=True, text=True)
         self.assertEqual(direct.returncode, 5, direct.stdout)
         self.assertIn("--model must pin one model id", direct.stdout)
+
+    def test_the_mode_reviewer_answer_is_read_whole_or_refused_with_a_fail_line(self):
+        # presence round 1: Windows Python ends the answer with \r\n, and $(...) strips only the \n.
+        scripts = self.install_wrapper()
+        (self.repo / "docs").mkdir(exist_ok=True)
+        dispatcher = scripts / "review_dispatch.py"
+        real = dispatcher.read_bytes()
+        dispatcher.write_text("import sys\nif sys.argv[1:2] == ['--mode-reviewer']:\n"
+                              "    sys.stdout.buffer.write(b'claude\\r\\n'); raise SystemExit(0)\n"
+                              "print('dispatched: ' + ' '.join(sys.argv[1:])); raise SystemExit(2)\n")
+        result = self.run_wrapper("--uncommitted")
+        self.assertIn("dispatched: ", result.stdout)
+        self.assertIn("--reviewer claude ", result.stdout)
+        dispatcher.write_bytes(real)
+        # A mode line working_mode.py refuses is refused here too, never read as another family's default.
+        for body in ("**Working mode:** solo\n**Working mode:** cross\n", "**Working mode:** solo.\n",
+                     "working mode: solo (family: codex)\n"):
+            with self.subTest(body=body):
+                (self.repo / "docs/STATE.md").write_text("# State\n" + body)
+                result = self.run_wrapper("--uncommitted")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertRegex(result.stdout, r"^FAIL \[review\]: .*Working mode", result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+        (self.repo / "docs/STATE.md").write_text("# State\n")
+        (scripts / "working_mode.py").unlink()  # a sync that stopped short
+        result = self.run_wrapper("--uncommitted")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"^FAIL \[review\]: .*working_mode\.py")
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_the_wrapper_accepts_no_reviewer_it_cannot_name(self):
         for argv in (["--uncommitted", "--reviewer", "gemini"],

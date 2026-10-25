@@ -337,7 +337,10 @@ class SectionPointerTests(unittest.TestCase):
         # The command may run its helper unprompted, never any Python code.
         tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
         self.assertEqual([t for t in tools if t.startswith('Bash(')],
-                         ['Bash(%s scripts/working_mode.py:*)' % p for p in ('python', 'python3', 'py -3')])
+                         ['Bash(%s scripts/working_mode.py:*)' % p for p in ('python', 'python3', 'py -3')]
+                         # L11: the plugin's own copy, for a project older than the presence switch.
+                         + ['Bash(%s "*/.claude/plugins/*/scripts/working_mode.py" --project *)' % p
+                            for p in ('python', 'python3', 'py -3')])
         for mode in rows:
             with self.subTest(mode=mode):
                 definition = re.split(r'(?m)^#### %s(?![\w-]).*$' % mode, workflow)[1].split('####')[0]

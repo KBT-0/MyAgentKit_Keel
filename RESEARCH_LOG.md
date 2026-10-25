@@ -63,6 +63,14 @@ has no evidence); a strict deny mode is an owner question. Sources: the kit's
 Withdrawn before release (2026-10-25): the owner chose one task, one session (the lean-kit plan,
 `.myagentkit/v014/tokresearch/PLAN.md` Y1): a routing lead plus a worker per edit was 75 % of the
 measured spend, and the kit cost 1.46-2.9x plain Claude Code on the controlled tasks.
+### 2026-10-24 — v0.14 presence: one presence record per repository (L12, L13); unnamed solo review runs its family (L16)
+
+Backflow (leeway field report 4) and owner decision (owner, 2026-10-24). L12: STATE.md commits the away line while
+`.myagentkit/presence` is ignored, so a clone or worktree of a night's commit exited 1 and its hooks took the owner
+as present; a line without a record now counts as away with a note. L13: a lead in a linked worktree read no record;
+the main checkout's record is now the one record every checkout reads and switches, winning over a branch's
+STATE.md line (editing that line is the branch lead's). L16: an unnamed solo review ran DEFAULT_REVIEWER (Codex)
+outside the mode's family; solo now runs its family, no mode line runs Claude (the kit runs on Claude alone).
 
 ### 2026-10-22 — v0.13 kitverify: verify a kit upgrade by the commit it copied; a clean review is empty lists
 

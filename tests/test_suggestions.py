@@ -254,10 +254,18 @@ class LedgerTests(unittest.TestCase):
                 raise PermissionError(13, 'Access is denied', str(path))
             return real(path, flags, *args)
         entered = False
-        with mock.patch.object(hook.os, 'open', opening), hook.locked(self.ledger):
+        with mock.patch.object(hook.os, 'name', 'nt'), mock.patch.object(hook.os, 'open', opening), \
+                hook.locked(self.ledger):
             entered = True
         self.assertTrue(entered)
         self.assertEqual(len(calls), 3)
+        # leeway L15: on POSIX the same error is a read-only folder, never a race: fail open at once.
+        calls.clear()
+        with mock.patch.object(hook.os, 'name', 'posix'), mock.patch.object(hook.os, 'open', opening), \
+                mock.patch.object(hook.time, 'sleep') as slept, self.assertRaises(TimeoutError):
+            with hook.locked(self.ledger):
+                pass
+        self.assertEqual((len(calls), slept.call_count), (1, 0))
 
     def test_on_lifts_a_precision_stop_and_judges_afresh(self):
         self.judged('wrong', 'wrong', 'wrong', 'wrong', 'partly')

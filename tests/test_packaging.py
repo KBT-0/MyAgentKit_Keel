@@ -25,6 +25,8 @@ class PackagingTests(unittest.TestCase):
             root = Path(tmp)
             (root / "scripts").mkdir()
             (root / "core/scripts").mkdir(parents=True)
+            (root / "core/docs").mkdir()
+            (root / "core/docs/WORKFLOW.md").write_text("canonical rules\n")
             shutil.copyfile(ROOT / "scripts/package_codex_plugin.py", root / "scripts/package_codex_plugin.py")
             source = root / "core/scripts/claude_bridge.py"
             source.write_text("canonical runtime\n")
@@ -67,6 +69,7 @@ class PackagingTests(unittest.TestCase):
             root = Path(tmp)
             shutil.copytree(ROOT / "core/scripts", root / "core/scripts",
                             ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(ROOT / "core/docs", root / "core/docs")
             (root / "scripts").mkdir()
             shutil.copyfile(ROOT / "scripts/package_codex_plugin.py", root / "scripts/package_codex_plugin.py")
             (root / "plugin/.claude-plugin").mkdir(parents=True)
