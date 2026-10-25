@@ -18,11 +18,13 @@ same `./scripts/check.sh`; task transfer is `docs/HANDOFF.md`.
 ## Reading order (new session)
 
 1. `./scripts/doctor.sh` (changes nothing); on `MISSING:` tell {{OWNER_NAME}} and offer each fix first.
+   This file is read once; do not open it again.
 2. `docs/PHASES.md` (now, and what is OUT of scope); `docs/STATE.md`: its "Active work" and
    "Blocked" sections (updating it at session end is YOUR job).
 3. `docs/ARCHITECTURE.md`: read it when the task crosses a module boundary or the folder's
    `AGENTS.md` / `README.md` does not say where the code lives; one SECTION of `docs/PROJECT.md`
    by its Contents, cited by number (`PROJECT §4.2`), never loaded whole.
+4. The target folder's `AGENTS.md` / module `README.md`.
 
 The session {{OWNER_NAME}} opens is the lead. Once per session it reads `docs/COMMUNICATION.md` and `docs/WORKFLOW.md`,
 "Worker cost", its first block "The rules in brief". When needed: `docs/GOTCHAS.md` (paid-for
@@ -58,7 +60,7 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 - No untested code enters {{TESTED_AREA}}: a logic change brings its test; `./scripts/check.sh`
   must PASS before you finish; plugin advice never replaces these rules. A test runs in its own
   command, read before any commit: never `test; git commit`, never piped through a filter.
-- **Read narrow:** grep or a range first, never a whole log, spill file or file over 300 lines.
+- **Read narrow:** grep or a range first, never a whole log, spill file or file over 300 lines; filter long output.
 - **Never `git commit --no-verify`** or another way past the gate; a red gate is fixed or
   reported. **No AI attribution in git**, by trailer or prose, whatever the tool's default
   (`docs/WORKFLOW.md`, "The commit gate and attribution").
@@ -81,16 +83,18 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 - **Two registers; rule 3 outranks both.** (1) Chat in {{CHAT_LANGUAGE}}: the answer first, then
   stop (`docs/COMMUNICATION.md` binds every message {{OWNER_NAME}} reads). (2) Written artifacts:
   full sentences, the actor named ("The two registers"). (3) Never cut by a cap or a style: what
-  FAILED, what was NOT run, a security warning, an action that cannot be undone — in full, on its own line.
+  FAILED, what was NOT run or verified, a security warning, an action that cannot be undone — in full,
+  on its own line, in any language.
 - One job per file and class; a file too large to read in one pass is a decay signal: report it.
-  No hidden global state in core logic (clock, randomness via the constructor). Short doc comments
-  on public APIs.
+  No hidden global state in core logic (dependencies, clock, randomness via the constructor). Short
+  doc comments on public APIs; name things well instead of compensating with comments.
 
 ## Duties toward {{OWNER_NAME}}
 
 **Default is silence**: if nothing below applies, work and say nothing about rules. **Never
-repeat** a closed point. **A question is not an order:** a question, or pasted model output, is
-answered; files change only on an explicit go-ahead. **A one-off decision ends with its moment**
+repeat** a closed point: once acknowledged, overridden or passed over, a point is closed for the
+session. **A question is not an order:** a question, or another model's output {{OWNER_NAME}} pastes,
+is answered and discussed; files change only on an explicit go-ahead. **A one-off decision ends with its moment**
 (`docs/COMMUNICATION.md`, "Questions and approvals"). **A short yes to a proposed hand-off is the
 hand-off:** "go on" or a model name means update STATE, write the handoff, end with the new
 session's opening prompt in a code block (`docs/COMMUNICATION.md`, "Handoff") and stop; new work
@@ -98,9 +102,10 @@ there needs an explicit "start it here".
 
 ### STOP — pause the work and ask (rare)
 
-- A "Design authority" rule would break, or a new dependency or MCP server is needed → ask.
-- A required verification cannot be run → "not run", stop; an unavailable reviewer stops only that
-  approval (`docs/REVIEW_RUNNING.md`, "Unavailable reviewer").
+- A "Design authority" rule would break, or a new dependency or MCP server is needed → name it and ask;
+  never silently comply or refuse.
+- A required verification cannot be run → "not run", stop; an unavailable reviewer stops only the
+  affected approval, commit or release (`docs/REVIEW_RUNNING.md`, "Unavailable reviewer").
 - Parallel work on unfrozen contracts or against the worktree policy (`docs/WORKFLOW.md`, the four
   "Parallel work" sections) → flag it first.
 - A test deleted, skipped or weakened unasked, or a gate changed without a new red proof
@@ -114,11 +119,11 @@ there needs an explicit "start it here".
   procedure done a third time (a skill), bulk work fit for a cheaper model.
 - Context past 200k → no new round; 300k: `/compact` or a hand-off; 400k: stop
   (`docs/WORKFLOW.md`, "Worker cost", rule 8).
-- A repeated cost with a cheaper way around it, with a number from `scripts/agent_cost.py`.
+- A repeated cost with a cheaper way around it, with a number from `scripts/agent_cost.py`; never hunt for savings.
 {{KIT_FEEDBACK_RULE}}
 
 ## Task completion checklist
 
-`./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
+One module; `./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
 `docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. On compaction keep
 open decisions, binding rules, changed files, the next step and {{OWNER_NAME}}'s words verbatim.

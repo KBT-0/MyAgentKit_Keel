@@ -5,13 +5,17 @@ AGENTS.md makes a review of every risky diff required, and only the text held it
 headless kit runs committed a money-rounding fix without one (#307, ctl3 and ctl5). The risky
 paths are `risky_paths` in scripts/gate_config.sh (space-separated globs, matched as Python's
 fnmatch.fnmatchcase does, so a * also crosses a /); empty or still a placeholder, the hook is off.
-`record_review.py` (SubagentStop, diff-reviewer) writes the paths changed against HEAD when a
-review ends; a commit passes when every risky path it would change is among the paths recorded
-for the current HEAD. Fixing the review's findings before the commit is the author's job
+`record_review.py` notes the paths changed against HEAD when a diff-reviewer starts
+(SubagentStart) and records them when it ends (SubagentStop); a commit passes when every risky
+path it would change is among the paths recorded for the current HEAD. A rename counts as both
+its paths, and the risky paths are HEAD's setting joined with the working tree's, so a commit
+cannot narrow the setting it is checked against. Fixing the review's findings before the commit is the author's job
 (docs/REVIEW_GATE.md, "Verdicts and who decides"), so a change after the review does not void it;
 a new commit moves HEAD and starts the next record.
 shortcut: it reads the shell command for `git ... commit` on one line, so a commit inside a script
-(`sh scripts/sync_kit.sh`) is not seen; upgrade to the git hook if an agent commits that way.
+(`sh scripts/sync_kit.sh`) is not seen, and it runs before the command, so a risky file the same
+command writes first (`git apply fix.patch && git commit -am fix`) is not seen either; upgrade to
+the git hook if an agent commits that way.
 
 Exit 2 blocks the call and returns the message to the agent (Claude Code hook protocol).
 """
@@ -36,7 +40,8 @@ def head(root):
 
 def changed(root):
     """Paths that differ from HEAD (staged, unstaged or untracked): what `git add -A` would commit."""
-    tracked = git(root, "diff", "--name-only", "-z", "HEAD") if head(root) else git(root, "ls-files", "-z")
+    # --no-renames: a rename out of a risky folder lists its old path too
+    tracked = git(root, "diff", "--name-only", "--no-renames", "-z", "HEAD") if head(root) else git(root, "ls-files", "-z")
     untracked = git(root, "ls-files", "--others", "--exclude-standard", "-z")
     return {p for p in ((tracked or "") + (untracked or "")).split("\0") if p}
 
@@ -47,22 +52,33 @@ def record_path(root):
 
 
 def risky_globs(root):
+    """HEAD's risky_paths joined with the working tree's: an edit that empties the setting does
+    not switch the guard off for its own commit."""
+    texts = [git(root, "show", "HEAD:scripts/gate_config.sh") if head(root) else None]
     try:
         with open(os.path.join(root, "scripts", "gate_config.sh"), encoding="utf-8") as f:
-            match = re.search(r'^risky_paths="([^"]*)"', f.read(), re.M)
+            texts.append(f.read())
     except (OSError, UnicodeError):
-        return []
-    value = match.group(1) if match else ""
-    return [] if "{{" in value else value.split()
+        pass
+    globs = set()
+    for text in filter(None, texts):
+        match = re.search(r'^risky_paths="([^"]*)"', text, re.M)
+        value = match.group(1) if match else ""
+        globs |= set() if "{{" in value else set(value.split())
+    return sorted(globs)
 
 
-def reviewed(root):
+def read_record(root):
     try:
         with open(record_path(root), encoding="utf-8") as f:
             record = json.load(f)
     except (OSError, ValueError):
-        return set()
-    return set(record.get("paths", [])) if record.get("head") == head(root) else set()
+        return {}
+    return record if isinstance(record, dict) and record.get("head") == head(root) else {}
+
+
+def reviewed(root):
+    return set(read_record(root).get("paths", []))
 
 
 def main():

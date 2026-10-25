@@ -101,7 +101,8 @@ if not missing or pinned(call.get("subagent_type")):
 print(
     "BLOCKED: this Agent call names no %s, so it would inherit the lead's. Pick the model from "
     "docs/WORKFLOW.md \"Model routing\" (a worker: the cheapest tier that fits the work; a reviewer: "
-    "the session's tier, or the diff-reviewer agent, which inherits it) and the effort from its effort "
+    "the required review the strongest model available that is not the author's tier; the "
+    "diff-reviewer agent's early check inherits the session's) and the effort from its effort "
     "table, pass both on the call, and tell the owner first, in one plain line, which model and "
     "effort and why." % " and no ".join(missing),
     file=sys.stderr,

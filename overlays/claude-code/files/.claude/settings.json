@@ -193,6 +193,18 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "diff-reviewer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/record_review.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "matcher": "diff-reviewer",

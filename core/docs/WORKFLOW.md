@@ -1028,7 +1028,8 @@ for independent work that runs in parallel, a sub-agent only for wide reading or
    signal, and an idle notice is optional, never relied on alone.
 5. Effort is medium by default, high only for hard debugging or a design step. A worker or
    sub-agent gets its model and effort on the call, never inherited unawares; a definition that
-   writes `model: inherit` (the diff reviewer: the session's tier) is that choice.
+   writes `model: inherit` (the diff-reviewer's early check: the session's tier) is that choice.
+   The required review keeps its tier from "Model routing".
 6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
 7. Worker reports are short (about 350 words); long output goes to a file.

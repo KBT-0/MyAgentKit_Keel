@@ -1,7 +1,7 @@
 """guard_risky_review.py refuses a commit of a risky path no diff review has seen (#307).
 
 Two of ten headless kit runs committed a money-rounding fix without the review AGENTS.md
-requires; record_review.py (SubagentStop, diff-reviewer) is the review's trace.
+requires; record_review.py (SubagentStart and SubagentStop, diff-reviewer) is the review's trace.
 """
 import json
 import os
@@ -44,8 +44,12 @@ class RiskyReviewTests(unittest.TestCase):
     def commit(self, command='git add -A && git commit -m "fix rounding"'):
         return self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'tool_input': {'command': command}})
 
+    def event(self, name, agent='diff-reviewer', agent_id='a1'):
+        return self.hook('record_review.py', {'hook_event_name': name, 'agent_type': agent, 'agent_id': agent_id})
+
     def review(self, agent='diff-reviewer'):
-        return self.hook('record_review.py', {'hook_event_name': 'SubagentStop', 'agent_type': agent})
+        self.event('SubagentStart', agent)
+        return self.event('SubagentStop', agent)
 
     def test_an_unreviewed_risky_change_is_refused_and_a_review_lets_it_pass(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
@@ -64,6 +68,29 @@ class RiskyReviewTests(unittest.TestCase):
         self.review()
         (self.root / 'src/money/tax.py').write_text('t = 1\n', encoding='utf-8')
         self.assertIn('src/money/tax.py', self.commit().stderr.decode())
+
+    def test_a_file_made_while_the_reviewer_runs_is_refused(self):
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        self.event('SubagentStart')
+        (self.root / 'src/money/tax.py').write_text('t = 1\n', encoding='utf-8')
+        self.event('SubagentStop')
+        refused = self.commit()
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('src/money/tax.py', refused.stderr.decode())
+        self.assertNotIn('round.py', refused.stderr.decode())
+        self.event('SubagentStop', agent_id='never-started')  # a stop with no start records nothing
+        self.assertEqual(self.commit().returncode, 2)
+
+    def test_a_rename_out_of_the_risky_folder_is_refused(self):
+        self.git('mv', 'src/money/round.py', 'legacy.py')
+        refused = self.commit()
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('src/money/round.py', refused.stderr.decode())
+
+    def test_emptying_the_setting_does_not_free_its_own_commit(self):
+        (self.root / 'src/money/round.py').write_text('x = 9\n', encoding='utf-8')
+        self.config('')
+        self.assertEqual(self.commit('git commit -am x').returncode, 2)
 
     def test_a_new_head_voids_the_old_record(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
@@ -84,14 +111,17 @@ class RiskyReviewTests(unittest.TestCase):
         for value in ('', '{{RISKY_PATHS}}'):
             with self.subTest(value=value):
                 self.config(value)
+                self.git('add', 'scripts/gate_config.sh')
+                self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'off')
                 self.assertEqual(self.commit().returncode, 0)
 
     def test_the_overlay_wires_both_hooks(self):
         settings = json.loads((HOOKS.parent / 'settings.json').read_text(encoding='utf-8'))['hooks']
         guard = [e for e in settings['PreToolUse'] if 'guard_risky_review' in e['hooks'][0]['command']]
         self.assertEqual([e['matcher'] for e in guard], ['Bash|PowerShell|Monitor'])
-        record = [e for e in settings['SubagentStop'] if 'record_review' in e['hooks'][0]['command']]
-        self.assertEqual([e['matcher'] for e in record], ['diff-reviewer'])
+        for event in ('SubagentStart', 'SubagentStop'):
+            record = [e for e in settings[event] if 'record_review' in e['hooks'][0]['command']]
+            self.assertEqual([e['matcher'] for e in record], ['diff-reviewer'], event)
 
 
 if __name__ == '__main__':
