@@ -1577,7 +1577,7 @@ Why: docs/WORKFLOW_RATIONALE.md, "Design before code".
 - The reviewer is a new sub-agent in every inner round, because the author never reviews its
   own change.
 - Inner rounds keep the gate's cap (`docs/REVIEW_GATE.md`, "Rounds"): at most two; round 2 runs
-  only when round 1 left a Critical fix, confirms every finding the dispositions claim
+  only when round 1 left a Critical or High fix, confirms every finding the dispositions claim
   fixed, a Medium included, and reports new Critical or High only. A Medium is fixed when a test
   verifies it, else named in the report; a Low goes to the report; what remains after round 2
   goes to the lead. A fresh reviewer nearly always finds another Medium, so "until clean"

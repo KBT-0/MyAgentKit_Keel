@@ -17,11 +17,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **A risky diff's review is enforced** (Claude Code overlay, #307): `guard_risky_review.py` (PreToolUse, shell
   tools) refuses a `git commit` that changes a `risky_paths` file the diff-reviewer agent has not seen since HEAD;
-  `record_review.py` (SubagentStart and SubagentStop, diff-reviewer) records in the git folder the paths changed
-  when a review started, once it ends. A rename counts as both its paths; the risky paths are HEAD's setting joined
+  `record_review.py` (SubagentStart, SubagentStop and a PostToolUse on SubagentHandback, diff-reviewer) records in
+  the git folder the paths changed when a review started, once it hands back or ends. A rename counts as both its paths; the risky paths are HEAD's setting joined
   with the working tree's. Only an Accept counts (owner 2026-10-25): a reviewer with no verdict line records nothing,
-  and a Reject's fix needs a fresh review before the commit, which is round 2 for a Critical or High fix again. A
-  completed `scripts/review.sh --uncommitted` review that did not Reject writes the same record. Two of ten headless
+  and a Reject's fix needs a fresh review before the commit, which is round 2 for a Critical or High fix again. An
+  Accept that lists a Critical or High counts as a Reject. A completed `scripts/review.sh --uncommitted` Claude
+  review that Accepted writes the same record (not a shadow run; a Codex result names no verdict, so it does not). Two of ten headless
   kit runs had committed a money-rounding fix with no review.
 - **ACTION** (`scripts/gate_config.sh`, project-owned): add `risky_paths="..."`, the risky areas as path globs plus
   `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*` (see the kit's

@@ -361,8 +361,16 @@ def reject_line_ending_churn(repo, scope, reference, diff, also=()):
                              % (kind, os.fsdecode(name)))
 
 
+def guard_counts(scope, result, chain):
+    """Whether a completed review satisfies guard_risky_review.py: an --uncommitted review whose verdict
+    names an Accept, not a shadow run (it closes nothing). A Codex result carries no verdict, so it
+    records nothing and the guard asks for a diff-reviewer review (fail closed)."""
+    verdict = str((result.get("result") or {}).get("verdict") or "")
+    return scope == "uncommitted" and not chain.get("shadow") and verdict.startswith("Accept")
+
+
 def note_reviewed(repo):
-    """Record a completed --uncommitted review that did not Reject for the Claude Code overlay's guard_risky_review.py
+    """Record a completed --uncommitted review that Accepted for the Claude Code overlay's guard_risky_review.py
     (the git folder's myagentkit-reviewed, in record_review.py's format; owner 2026-10-25). A failure
     only means the guard asks for a diff-reviewer review."""
     def git(*args):
@@ -691,7 +699,7 @@ def main(argv=None):
             exit_code = 5
         if chain["status"] == "completed" and exit_code == 0:
             chain["selected_reviewer"] = names[provider]
-            if scope == "uncommitted" and (result.get("result") or {}).get("verdict") != "Reject":
+            if guard_counts(scope, result, chain):
                 note_reviewed(repo)
         else:
             chain["status"] = "failed"

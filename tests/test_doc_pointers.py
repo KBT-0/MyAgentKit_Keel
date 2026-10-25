@@ -209,13 +209,13 @@ class SectionPointerTests(unittest.TestCase):
     def test_the_diff_reviewer_names_its_reading_and_makes_its_own_copy(self):
         # #105: "run your reproductions in a throwaway copy" named no way to make one (a review
         # mutated tracked files and reverted them), and "its reading list" pointed at nothing.
-        # #103: it is the author's side's early check, not the gate's review.
+        # #103: the author's side's early check; a small risky diff's required review since lean-kit Y4.
         reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
                             .read_text(encoding='utf-8').split())
         # Lean kit Y4 (owner 2026-10-25): the reviewer runs on the session's model without CLAUDE.md, reads the gate doc.
         self.assertIn('Read `docs/REVIEW_GATE.md` and follow it', reviewer)
         self.assertIn('read `docs/ARCHITECTURE.md` only when the diff crosses a module boundary', reviewer)
-        self.assertIn("the author's side's early check, not the gate's review", reviewer)
+        self.assertIn("the author's side's early check, and the required review of a small risky diff", reviewer)
         self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
         self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
         # rpipe review Low: without the bridge's flags an owner's diff.noprefix broke `git apply`

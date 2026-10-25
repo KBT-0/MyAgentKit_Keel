@@ -84,16 +84,33 @@ class RiskyReviewTests(unittest.TestCase):
 
     def test_a_review_with_no_verdict_records_nothing(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
-        for last in ('API Error: overloaded', 'placeholder', '', 'Verdict: Reject\n- High: x'):
+        for last in ('API Error: overloaded', 'placeholder', '', 'Verdict: Reject\n- High: x',
+                     'Verdict: Reject\n\n- High: x\n\nAccept once the High is fixed.',
+                     'Verdict: Accept\n\n- High: src/money/round.py:1 rounds down. REPRODUCED'):
             with self.subTest(last=last):
                 self.event('SubagentStart')
                 self.event('SubagentStop', last=last)
                 self.assertEqual(self.commit().returncode, 2)
-        for last in ('VERDICT: APPROVE', '**Accept with Manual Checks**'):
+        for last in ('VERDICT: APPROVE', '**Accept with Manual Checks**', '## Verdict\nAccept with Manual Checks\n- Medium: x'):
             with self.subTest(last=last):
                 self.event('SubagentStart', agent_id=last)
                 self.event('SubagentStop', agent_id=last, last=last)
         self.assertEqual(self.commit().returncode, 0)
+
+    def test_a_handed_back_report_is_read_from_the_tool(self):
+        # auto mode: the report goes through SubagentHandback; the stop's last message is not the report
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        handback = {'hook_event_name': 'PostToolUse', 'agent_type': 'diff-reviewer', 'tool_name': 'SubagentHandback'}
+        for agent_id, message in (('r1', 'Verdict: Reject\n- High: x'), ('r2', 'Verdict: Accept\n- High: x')):
+            self.event('SubagentStart', agent_id=agent_id)
+            self.hook('record_review.py', dict(handback, agent_id=agent_id, tool_input={'message': message}))
+            self.event('SubagentStop', agent_id=agent_id, last='')
+            self.assertEqual(self.commit().returncode, 2, message)
+        self.event('SubagentStart', agent_id='r3')
+        self.hook('record_review.py', dict(handback, agent_id='r3',
+                                           tool_input={'message': 'Verdict: Accept with Manual Checks. No Critical or High.'}))
+        self.event('SubagentStop', agent_id='r3', last='')  # the stop after it keeps the record
+        self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
 
     def test_a_completed_review_sh_review_counts(self):
         # review_dispatch.py writes the same record after a completed --uncommitted review
@@ -105,6 +122,11 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertEqual(self.commit().returncode, 0)
         self.event('SubagentStop', agent_id='open')
         self.assertEqual(self.commit().returncode, 0)
+        accept, reject = {'result': {'verdict': 'Accept with Manual Checks'}}, {'result': {'verdict': 'Reject'}}
+        self.assertTrue(review_dispatch.guard_counts('uncommitted', accept, {}))
+        for scope, result, chain in (('uncommitted', reject, {}), ('uncommitted', {'status': 'completed'}, {}),
+                                     ('uncommitted', accept, {'shadow': True}), ('base', accept, {})):
+            self.assertFalse(review_dispatch.guard_counts(scope, result, chain), (scope, result, chain))
 
     def test_a_rename_out_of_the_risky_folder_is_refused(self):
         self.git('mv', 'src/money/round.py', 'legacy.py')
@@ -144,6 +166,8 @@ class RiskyReviewTests(unittest.TestCase):
         settings = json.loads((HOOKS.parent / 'settings.json').read_text(encoding='utf-8'))['hooks']
         guard = [e for e in settings['PreToolUse'] if 'guard_risky_review' in e['hooks'][0]['command']]
         self.assertEqual([e['matcher'] for e in guard], ['Bash|PowerShell|Monitor'])
+        handback = [e for e in settings['PostToolUse'] if 'record_review' in e['hooks'][0]['command']]
+        self.assertEqual([e['matcher'] for e in handback], ['SubagentHandback'])
         for event in ('SubagentStart', 'SubagentStop'):
             record = [e for e in settings[event] if 'record_review' in e['hooks'][0]['command']]
             self.assertEqual([e['matcher'] for e in record], ['diff-reviewer'], event)
