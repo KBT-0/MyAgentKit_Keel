@@ -218,6 +218,8 @@ class OverlaySettingsTests(unittest.TestCase):
             (agents / 'quoted.md').write_text(pin.format('quoted', '"{{WORKER_MODEL}}"'), encoding='utf-8')
             (agents / 'inherit.md').write_text(pin.format('inherit', 'inherit'), encoding='utf-8')
             (agents / 'qinherit.md').write_text(pin.format('qinherit', '"inherit"'), encoding='utf-8')
+            # #307 lean: diff-reviewer writes `model: inherit` and no effort, a choice of the session's.
+            (agents / 'bare.md').write_text('---\nname: bare\nmodel: inherit\n---\nx\n', encoding='utf-8')
             # Claude Code finds a definition by its name: field, in any folder under agents/.
             (agents / 'renamed.md').write_text(pin.format('by-name', 'claude-opus-5-5'), encoding='utf-8')
             (agents / 'sub' / 'x.md').write_text(pin.format('renamed', 'inherit'), encoding='utf-8')
@@ -225,8 +227,8 @@ class OverlaySettingsTests(unittest.TestCase):
             (user / 'p.md').write_text(pin.format('half', 'claude-opus-5-5'), encoding='utf-8')  # the project's half wins
             env = {k: v for k, v in os.environ.items() if k not in ('HOME', 'USERPROFILE')}
             env.update(CLAUDE_PROJECT_DIR=project, HOME=home, USERPROFILE=home)
-            for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('quoted', 2), ('inherit', 2),
-                               ('qinherit', 2), ('by-name', 0), ('renamed', 2), ('user-pinned', 0),
+            for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('quoted', 2), ('inherit', 0),
+                               ('qinherit', 0), ('bare', 0), ('by-name', 0), ('renamed', 0), ('user-pinned', 0),
                                ('general-purpose', 2), ('fork', 0)]:
                 payload = json.dumps({'tool_name': 'Agent', 'tool_input': {'subagent_type': kind, 'prompt': 'p'}})
                 with self.subTest(kind=kind):

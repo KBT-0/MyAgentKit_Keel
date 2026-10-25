@@ -52,7 +52,7 @@ def frontmatter(path):
 
 def pinned(kind):
     """Whether the agent definition named `kind` pins both model and effort (not a setup
-    placeholder, not `inherit`). Claude Code finds a definition by its `name:` field in any .md
+    placeholder), or writes `model: inherit`, which chooses the session's model and effort. Claude Code finds a definition by its `name:` field in any .md
     under the folder, not by the file name, and the project folder wins over the user folder
     (code.claude.com/docs/en/sub-agents). Two definitions with one name: both must pin. A plugin
     agent (`plugin:name`) is not looked up."""
@@ -63,8 +63,10 @@ def pinned(kind):
         found = [head for root, _, files in os.walk(folder) for name in files if name.endswith(".md")
                  for head in [frontmatter(os.path.join(root, name))] if head.get("name") == kind]
         if found:
-            return all(re.match(r"[^\s{]", head.get(field, "")) and head[field] != "inherit"
-                       for head in found for field in ("model", "effort"))
+            # `model: inherit` is a written choice (the reviewer runs on the session's tier, #307).
+            chosen = lambda head, field: bool(re.match(r"[^\s{]", head.get(field, "")))
+            return all(chosen(head, "model") and (head["model"] == "inherit" or chosen(head, "effort"))
+                       for head in found)
     return False
 
 
@@ -99,7 +101,7 @@ if not missing or pinned(call.get("subagent_type")):
 print(
     "BLOCKED: this Agent call names no %s, so it would inherit the lead's. Pick the model from "
     "docs/WORKFLOW.md \"Model routing\" (a worker: the cheapest tier that fits the work; a reviewer: "
-    "the strongest model available that is not the author's tier) and the effort from its effort "
+    "the session's tier, or the diff-reviewer agent, which inherits it) and the effort from its effort "
     "table, pass both on the call, and tell the owner first, in one plain line, which model and "
     "effort and why." % " and no ".join(missing),
     file=sys.stderr,

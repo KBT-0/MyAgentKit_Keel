@@ -1,6 +1,7 @@
 {
   "promptCacheTtl": "1h",
   "enableArtifact": false,
+  "skillListingMaxDescChars": 160,
   "autoCompactWindow": 450000,
   "worktree": {
     "bgIsolation": "none"
