@@ -8,8 +8,7 @@ codebase grows.
 
 - **LEAD** — plans with {{OWNER_NAME}}. Reads `docs/PROJECT.md` (by section), `docs/PHASES.md`
   and `docs/ARCHITECTURE.md`.
-  Produces the task brief (`docs/HANDOFF.md`). Decides model routing. Does not implement
-  (below, "The lead routes").
+  Produces the task brief (`docs/HANDOFF.md`). Decides model routing. Does not implement.
 - **WORKER** — implements one task in one module. Bound by `AGENTS.md`, the gates, the tests.
 - **REVIEWER** — `docs/REVIEW_GATE.md`. A fresh session that did not write the patch; the
   working mode names who takes it (`docs/REVIEW_GATE.md`, "Invariant"). Its findings go back
@@ -44,47 +43,6 @@ so an A/B counts only sessions started fresh on its side (code.claude.com/docs/e
 "System prompt flags in resumed conversations"). `BEHAVIOUR.md` is unmeasured: the on/off toggle
 and the usage record exist so the A/B can decide, and until it runs the appendix is the owner's
 choice. It holds only lines `AGENTS.md` does not already say in the same words.
-
-### The lead routes
-
-Default: delegate. The lead's context is re-read on every request and grows toward the band; a
-worker's is small and ends with its task (code.claude.com/docs/en/sub-agents, "Choose between
-subagents and main conversation"; /costs). Code, tests, doc edits outside the state files,
-reviews, review fixes and any read, search or test run longer than a few calls go to a worker
-or sub-agent. The lead reads results; it reads "Worker cost" and "Review rounds" in full only in
-doubt, and `docs/GOTCHAS.md` by its Contents. The lead does the work itself only when one of
-these holds, and names it in one visible line before it starts:
-
-1. Briefing costs more than doing: a direct answer, or about three tool calls that add little
-   to its context (sub-agents doc: "quick, targeted change", "Latency matters").
-2. It is the lead's own job: talk with {{OWNER_NAME}}, decisions, plans, briefs, routing,
-   reading results and reviews, STATE/BACKLOG/hand-off, commit, merge, the integration build.
-3. One dependent chain with {{OWNER_NAME}} in the loop, each step built on the last
-   (sub-agents doc: "frequent back-and-forth").
-4. Waiting would do harm: stopping a process that damages work, reverting a gate that blocks
-   everyone.
-5. No worker can run: no Agent tool, the spawn depth limit, the allowance spent.
-6. {{OWNER_NAME}} says so for this task; the decision ends with the task.
-
-Delegation is not free: a fresh sub-agent starts at about 32k tokens, a spawned session at
-about 45-49k, and re-reads what the lead already knew. Anthropic measured delegation saving
-money only on routine work with a long cost tail or on work larger than one context, and a
-single dependent chain cheaper on one model (platform.claude.com, "Optimizing for cost and
-intelligence"); those workers ran on Claude Sonnet 5, an earlier model. The thresholds are
-estimates from list-price arithmetic in the kit's v0.14 research, not a measurement, except the
-first:
-
-- A single tool call stays inline (firm: delegating it costs several times the call).
-- To a cheaper tier from about five calls when the lead keeps working after it, about ten
-  otherwise.
-- To the same tier only for more than about 20k tokens of reads and output, or when the lead
-  has a long life ahead.
-- A Fable lead never implements: on Fable's prices every errand past a single call is cheaper
-  on Opus or Sonnet.
-
-One task per worker, one writer per file group, the design decided in the brief (Cognition,
-"Don't Build Multi-Agents": parallel agents make conflicting implicit decisions).
-The kit's #307 runs and the lead-route log replace these numbers.
 
 ## Task lifecycle (every task)
 

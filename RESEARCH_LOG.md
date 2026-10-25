@@ -60,6 +60,10 @@ has no evidence); a strict deny mode is an owner question. Sources: the kit's
 `.myagentkit/v014/research-lead-delegation.md` and `reseval/EVALUATION.md` (claims 1, 3-5,
 11), not in the repo.
 
+Withdrawn before release (2026-10-25): the owner chose one task, one session (the lean-kit plan,
+`.myagentkit/v014/tokresearch/PLAN.md` Y1): a routing lead plus a worker per edit was 75 % of the
+measured spend, and the kit cost 1.46-2.9x plain Claude Code on the controlled tasks.
+
 ### 2026-10-22 — v0.13 kitverify: verify a kit upgrade by the commit it copied; a clean review is empty lists
 
 Backflow (#305), both items paid for in a project's upgrade. 1. `--kit-verified` read the kit

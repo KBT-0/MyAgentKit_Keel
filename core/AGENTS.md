@@ -35,12 +35,10 @@ section only (reading order, item 6).
 6. IF NEEDED, one SECTION of `docs/PROJECT.md`, found by its Contents, cited by number
    (`PROJECT §4.2`), never quoted or loaded whole.
 
-**The lead routes.** The session {{OWNER_NAME}} opens (no brief) is the LEAD: it talks, decides,
-briefs, routes, merges and keeps STATE. Code, tests, other doc edits, reviews and long reads go
-to a worker unless `docs/WORKFLOW.md`, "The lead routes" names an exception, said first in one
-line. Once per session it reads `docs/COMMUNICATION.md` and `docs/WORKFLOW.md`, "Worker cost",
-its first block "The rules in brief"; `docs/GOTCHAS.md` when something behaves unexpectedly;
-`docs/BACKLOG.md` to pick the next task.
+The session {{OWNER_NAME}} opens is the lead. Once per session it reads `docs/COMMUNICATION.md` and `docs/WORKFLOW.md`,
+"Worker cost", its first block "The rules in brief". Only when needed:
+`docs/GOTCHAS.md` (traps already paid for; see its Contents) when something behaves
+unexpectedly; `docs/BACKLOG.md` to pick the next task.
 
 ## HARD RULES (violation = failed task)
 

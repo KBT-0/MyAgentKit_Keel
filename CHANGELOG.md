@@ -73,15 +73,6 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **ACTION** (projects with a step of their own patched into `check.sh`'s build command or into
   `review.sh`): move it to `scripts/check.project.sh` or `scripts/review_selftest.project.sh`
   (`#!/bin/sh` first line, `chmod +x`, `git add --chmod=+x`).
-- **The lead routes** (`AGENTS.md`, `docs/WORKFLOW.md`): the session the owner opens is the
-  lead and hands code, tests, doc edits, reviews and long reads to a worker or sub-agent,
-  unless one of six exceptions in WORKFLOW's new "The lead routes" holds, named in one visible
-  line first. The delegation thresholds there are labelled estimates; only "a single call stays
-  inline" is firm.
-- **ACTION** (`AGENTS.md`, `docs/WORKFLOW.md`, project-owned): run `sync-kit.sh . --merge`;
-  without it, replace AGENTS.md's "The lead also reads" paragraph at the end of "Reading order"
-  with the kit's "**The lead routes.**" paragraph, and copy WORKFLOW's "### The lead routes"
-  to the end of "How we work — roles" with the roles list's "(below, "The lead routes")".
 - **Narrow reads** (#307; `AGENTS.md`, `docs/AGENTS.md`, `docs/WORKFLOW.md`; AGENTS.md stays at
   its line count). "Read narrow": grep or a range first, never a whole log, spill file or file
   over 300 lines (measured over 14 days: `cat FILE` cost $69 in Keel and $41 in leeway, unranged
@@ -90,8 +81,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   "The rules in brief" once per session and after a compaction, not before every spawn (381
   WORKFLOW.md reads, $15 in Keel).
 - **ACTION** (`AGENTS.md`, `docs/AGENTS.md`, `docs/WORKFLOW.md`, project-owned): run
-  `sync-kit.sh . --merge`; without it, copy the kit's reading-order item 3, the "Once per
-  session" sentence of "The lead routes", the "Read narrow" bullet of "Task discipline", the
+  `sync-kit.sh . --merge`; without it, copy the kit's reading-order item 3, the "once per
+  session" paragraph that ends "Reading order", the "Read narrow" bullet of "Task discipline", the
   last sentence of `docs/AGENTS.md`'s "No size limit" bullet and the first sentence under
   WORKFLOW's "### The rules in brief".
 - **A shorter constitution** (#307 rank 4; `AGENTS.md`, `docs/WORKFLOW.md`,
