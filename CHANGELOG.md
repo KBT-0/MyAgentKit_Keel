@@ -161,6 +161,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   stayed on the old copy (no `.myagentkit/presence` in them) copies the kit's
   `overlays/claude-code/files/.claude/hooks/` ones over each it never edited, and merges an
   edited one by hand; a project still at v0.12.1 reruns `sync-kit.sh . --merge`.
+- myagentkit-suggestion: the Stop hook reads a verdict written in the turn's final text block from the hook input's
+  `last_assistant_message`; the transcript could get that block after the hook read it, and the agent was asked
+  for a verdict it had already written (field report, leeway). Sync alone is enough.
+- myagentkit-suggestion mod: the side check sees every owner message since its last check, one typed while a turn
+  ran too, not only the latest one (a note flagged work an earlier message had asked for). Sync alone is enough.
 
 ## v0.13 — 2026-10-23
 

@@ -87,12 +87,34 @@ test('ten main-loop tool calls run one side check over a window, and its note go
   expect(c.logs).toEqual(['myagentkit-suggestion #7: ' + NOTE.claim])
 })
 
+// Field (leeway, 2026-10-24): two owner messages typed while a turn ran; the check saw only the second and
+// flagged the work the first asked for.
+test('every owner message since the last check reaches the window, a mid-turn one too', async ($, on) => {
+  const c = fresh()
+  stubs(on, c)
+  await start($)
+  await $.prompt.submit({ text: 'Upgrade the kit first.' })
+  await calls($, 4)
+  await $.prompt.submit({ text: 'Then build and try the project.' })
+  await calls($, 6)
+  expect(c.asks.length).toBe(1)
+  expect(c.asks[0].prompt).toContain('Upgrade the kit first.')
+  expect(c.asks[0].prompt).toContain('Then build and try the project.')
+  await $.prompt.submit({ text: 'Now ship it.' })
+  await $.turn.complete({ answer: '', isAborted: false })
+  await calls($, 13)
+  expect(c.asks.length).toBe(2)
+  expect(c.asks[1].prompt).not.toContain('Upgrade the kit first.')
+  expect(c.asks[1].prompt).toContain('Then build and try the project.')
+  expect(c.asks[1].prompt).toContain('Now ship it.')
+})
+
 test('the window keeps the request whole, drops the oldest calls and stays under 6000 characters', async () => {
   const many = Array.from({ length: 10 }, (_, i) => ({ tool: 'Read', args: 'x'.repeat(300), head: 'y'.repeat(300 + i),
     isError: i === 9 }))
   const text = windowText('Fix the parser', many)
   expect(text.length).toBeLessThanOrEqual(6000)
-  expect(text.startsWith('The user\'s current request (first lines):\nFix the parser\n')).toBe(true)
+  expect(text.startsWith('The user\'s messages since the last check, oldest first (first lines):\nFix the parser\n')).toBe(true)
   expect(text).toContain('ERROR: ' + 'y'.repeat(309))
   expect(text).not.toContain('-> ' + 'y'.repeat(300) + '\n') // the oldest call
 })

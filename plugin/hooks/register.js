@@ -2,7 +2,7 @@
 //
 // Now and then, $.model.complete reads a small window, never the whole conversation: the last
 // main-loop tool calls (name, trimmed arguments, the head of the result, errors), the first lines
-// of the current prompt, the known topics and the recent notes. Its prompt abstains by default and
+// of the owner's messages since the last check, the known topics and the recent notes. Its prompt abstains by default and
 // returns at most one note: a claim with evidence and one read-only check. Its cost stays a few
 // thousand input tokens however long the session grows (owner, 2026-10-22: a fork reread the whole
 // conversation on every check). The note shows as a dim `$.ui.log` line and goes to the project's
@@ -14,9 +14,10 @@
 
 // Starting values (7.2): a check every 10 main-loop tool calls, or at once on a rule trigger
 // (the same call or the same error 3 times); 3 calls of quiet after a note; at most 5 notes a
-// session; none while a plan limit is 80% used. The window holds the request's first lines, the last
-// 10 calls, the 20 most recent known topics and the recent notes, at most 6000 characters, and the
-// reply at most 400 tokens.
+// session; none while a plan limit is 80% used. The window holds the first lines of the owner's
+// messages since the previous check (the latest one before it too, at most 5), the last 10 calls,
+// the 20 most recent known topics and the recent notes, at most 6000 characters, and the reply at
+// most 400 tokens.
 const EVERY = 10
 const REPEAT = 3
 const IMMUNE = 3
@@ -26,6 +27,7 @@ const WINDOW_CALLS = 10
 const WINDOW_CHARS = 6000
 const KNOWN_TOPICS = 20
 const REPLY_TOKENS = 400
+const PROMPTS = 5
 
 // A note field's length cap; a field is one line, and one that carries the delivery frame's own
 // markers drops the note (a tool result in the window can steer the reply).
@@ -33,16 +35,17 @@ const CAPS = { claim: 200, evidence: 300, check: 200, topic: 60 }
 const MARKERS = ['[myagentkit-suggestion', '●']
 
 const run = { root: '', isOn: false, turnCalls: 0, sinceCheck: 0, interval: 1, immune: 0, notes: 0, isBusy: false,
-  actions: new Map(), errors: new Map(), window: [], prompt: '' }
+  actions: new Map(), errors: new Map(), window: [], prompts: [] }
 
 function reset() {
-  Object.assign(run, { turnCalls: 0, sinceCheck: 0, interval: 1, immune: 0, notes: 0, window: [], prompt: '' })
+  Object.assign(run, { turnCalls: 0, sinceCheck: 0, interval: 1, immune: 0, notes: 0, window: [], prompts: [] })
   run.actions.clear()
   run.errors.clear()
 }
 
 const PROMPT = `You are a side observer of a coding agent's work. You do not act and you do not give orders.
-You see a window, not the whole conversation: the user's current request and the agent's last tool calls.
+You see a window, not the whole conversation: the user's messages since the last check, oldest first (the last
+one is the current request; an earlier one still stands unless a later one drops it), and the agent's last tool calls.
 Find at most ONE thing the main agent should know and has not already handled: a claim that a tool result
 contradicts, a requirement from the user's words that the work misses, a test or gate that was weakened, a
 loop, a decision made without saying so.
@@ -105,11 +108,11 @@ function head(result) {
   return oneLine(typeof value === 'string' ? value : JSON.stringify(value) ?? '', 300)
 }
 
-// The window the side check reads, newest call last. The request's lines (capped at 600) and the
+// The window the side check reads, newest call last. The owner's messages (each capped at 600) and the
 // tail (known topics, recent notes, the trigger) stay whole; the oldest calls drop until it fits WINDOW_CHARS.
 export function windowText(prompt, calls, tail = '') {
   const lines = calls.map((c) => c.tool + ' ' + c.args + (c.isError ? '\n   ERROR: ' : '\n   -> ') + c.head)
-  const text = (kept) => 'The user\'s current request (first lines):\n' + (prompt || '(none seen)') +
+  const text = (kept) => 'The user\'s messages since the last check, oldest first (first lines):\n' + (prompt || '(none seen)') +
     '\n\nThe agent\'s last ' + kept.length + ' tool calls, oldest first:\n' +
     (kept.map((line, i) => (i + 1) + '. ' + line).join('\n') || '(none)') + tail
   let kept = lines
@@ -140,9 +143,10 @@ async function check($, trigger) {
       return
     }
     run.sinceCheck = 0
-    const prompt = windowText(run.prompt, run.window,
+    const prompt = windowText(run.prompts.join('\n---\n'), run.window,
       '\n\nKnown topics (do not repeat): ' + (gate.known.slice(-KNOWN_TOPICS).join('; ') || 'none') +
       '\nRecent notes: ' + (gate.recent.join(' | ') || 'none') + '\nWhy this check runs now: ' + trigger)
+    run.prompts = run.prompts.slice(-1) // the latest stays the current request for the next check
     const reply = await $.model.complete({ model: await $.session.model(), system: PROMPT, prompt,
       maxTokens: REPLY_TOKENS, timeoutMs: 60000 })
     if (!reply?.isAnswered) return // an API error or a timeout: fail open (7.6)
@@ -191,7 +195,10 @@ export function register(on) {
 
   on('prompt.submit', async ($, e, next) => {
     // A background task's notice wakes the session as a prompt too; it is not the user's request.
-    if (run.isOn && typeof e.text === 'string' && e.origin?.kind !== 'task-notification') run.prompt = e.text.split('\n').slice(0, 5).join('\n').slice(0, 600)
+    // One typed while a turn ran fires here too (at Enter): it adds to the earlier ones, never replaces them.
+    if (run.isOn && typeof e.text === 'string' && e.origin?.kind !== 'task-notification') {
+      run.prompts = [...run.prompts, e.text.split('\n').slice(0, 5).join('\n').slice(0, 600)].slice(-PROMPTS)
+    }
     return next(e)
   })
 
