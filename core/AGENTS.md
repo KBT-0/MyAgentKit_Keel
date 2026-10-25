@@ -50,7 +50,9 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 ### Task discipline
 
 - One change in one module, inside the brief's `Owns:` paths; more is a STOP (split, report).
-  No drive-by refactors; a tidy inside a line you had to change is part of the task.
+  No drive-by refactors; a tidy inside a line you had to change is part of the task. A second
+  bug of the same cause in a file the task changes is part of the task too: fix it with its test
+  and say so; one elsewhere is reported (owner 2026-10-25, ctlq: the kit left a found bug 4 of 4).
 - No push, PR or remote update without {{OWNER_NAME}}'s word in this session.
 - **Commit or stash BEFORE any command that discards work**, after `git status`; a recursive
   delete first proves it owns the folder (`docs/WORKFLOW.md`, "Destructive commands").
