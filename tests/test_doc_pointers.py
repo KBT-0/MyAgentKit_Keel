@@ -698,6 +698,14 @@ class SectionPointerTests(unittest.TestCase):
                     # The pointer ends the project's section of the same name (CHANGELOG, UPDATING.md).
                     self.assertEqual(re.findall(r'^#{2,4} (.+)$', project[:pointer.start()], re.M)[-1], pointer[1])
                     self.assertRegex(project[pointer.end():], r'^\n*(#|\Z)')
+                # Moved text leaves the project file: HANDOFF.md kept a moved span the CHANGELOG's
+                # ACTION told projects to delete (leeway L7, 2026-10-24).
+                flat = ' '.join(project.split())
+                for lines in body.split('\n\n'):
+                    paragraph = ' '.join(lines.split())
+                    contents = all(line.startswith('- ') and len(line) < 100 for line in lines.strip().splitlines())
+                    if len(paragraph) > 120 and not paragraph.startswith('#') and not contents:
+                        self.assertNotIn(paragraph, flat)
                 # A quote of a heading still finds it in the file it names.
                 self.assertEqual([h for h in headings(path) if h not in headings(ROOT / 'core/docs' / (name + '.md'))], [])
         for name in ('REVIEW_GATE', 'COMMUNICATION', 'GLOSSARY', 'STRONG_REVIEW', 'AGENTS'):

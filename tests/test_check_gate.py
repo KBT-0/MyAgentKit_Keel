@@ -367,6 +367,83 @@ class CheckGateTests(unittest.TestCase):
         code, out = gate(self.project, self.build, args=args)
         return code, out, self.mark.exists()
 
+    def test_the_projects_gate_steps_run_on_every_commit_and_their_failure_fails_it(self):
+        # A project step had no home in the kit-owned gate; run from the build it lost every
+        # documentation-only commit (labricore, 2026-10-24).
+        git = self.commit_fixture()
+        hook = self.project / 'scripts/check.project.sh'
+        hook.write_text('#!/bin/sh\ntest -f scripts/gate_config.sh || exit 9\necho project step ran\nexit "${HOOK_EXIT:-0}"\n')
+        hook.chmod(0o755)
+        (self.project / 'docs/a.md').write_text('a\n')
+        git('add', 'docs/a.md')
+        code, out, built = self.gate_built()
+        self.assertEqual((code, built), (0, False), out)
+        self.assertIn('project step ran', out)
+        self.assertIn('CHECK: PASS (build not run: documentation-only commit, 1 file)', out)
+        code, out = gate(self.project, self.build, args=('--for-commit',), HOOK_EXIT='3')
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh exited 3', out)
+        # A hook that cannot run enforces nothing: no #! line, or no execute bit, fails.
+        hook.write_text('echo project step ran\n')
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 1, out)
+        self.assertNotIn('project step ran', out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh cannot run', out)
+        hook.write_text('#!/bin/sh\necho project step ran\n')
+        hook.chmod(0o644)
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh cannot run', out)
+        hook.unlink()
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('[project]', out)
+
+    def test_a_commit_hooks_git_variables_never_reach_the_build_or_the_project_step(self):
+        # Git exports GIT_DIR and GIT_INDEX_FILE to a hook; in a linked worktree a suite's
+        # `git -C "$tmp" init` re-initialised the worktree's repository instead: core.bare=true
+        # in the shared config, its fixture committed on the branch (labricore, 2026-10-24).
+        git = self.commit_fixture()
+        suite = ('#!/bin/sh\nset -e\nd=$(mktemp -d); echo x > "$d/f"; git -C "$d" init -q; git -C "$d" add .\n'
+                 'git -C "$d" -c user.name=a -c user.email=a@b.invalid commit -qm "fixture %s"\nrm -rf "$d"\n')
+        self.build.write_text(suite % 'build' + 'echo ran > "%s"\n' % self.mark)
+        hook = self.project / 'scripts/check.project.sh'
+        hook.write_text(suite % 'project step')
+        hook.chmod(0o755)
+        git('add', 'scripts/check.project.sh')
+        git('commit', '-q', '-m', 'project step')
+        self.record_gated()
+        hooks = self.tmp / 'hooks'
+        hooks.mkdir()
+        (hooks / 'pre-commit').write_text('#!/bin/sh\nexec sh scripts/check.sh --for-commit\n')
+        (hooks / 'pre-commit').chmod(0o755)
+        tree = self.tmp / 'tree'
+        git('worktree', 'add', '-q', '-b', 'side', str(tree))
+        (tree / 'code.c').write_text('int main(void) { return 1; }\n')
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_', 'GIT_'))
+               and k not in ('CDPATH', 'CI')}
+        env.update(GATE_TEST_BUILD=str(self.build), GATE_CACHE='off')
+        run = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=' + str(hooks), *args], cwd=tree,
+                                           env=env, capture_output=True, text=True)
+        run('add', 'code.c')
+        done = run('commit', '-q', '-m', 'worktree change')
+        self.assertTrue(self.mark.exists(), done.stdout + done.stderr)
+        bare = run('config', '--get', 'core.bare').stdout.strip()
+        log = run('log', '--format=%s', 'side').stdout.split('\n')[:3]
+        self.assertEqual((done.returncode, bare, log[:2]), (0, 'false', ['worktree change', 'project step']),
+                         done.stdout + done.stderr)
+
+    def test_no_build_skips_the_build_and_says_so(self):
+        # Checking the gate itself after a sync on a doc-only change meant copying a 900 MB
+        # project to edit its build command (leeway L8, 2026-10-24).
+        git = self.commit_fixture()
+        code, out, built = self.gate_built(args=('--no-build',))
+        self.assertEqual((code, built), (0, False), out)
+        self.assertIn('CHECK: PASS (build not run: --no-build)', out)
+        (self.project / 'b.md').write_text('b ' + MARKER + '\n')
+        code, out, built = self.gate_built(args=('--no-build',))
+        self.assertEqual((code, built), (1, False), out)
+
     def test_a_documentation_only_commit_skips_the_build_and_only_the_build(self):
         # A project's gate ran its full build for minutes on every commit that changed only
         # documentation. The build is skipped for such a commit, and the PASS line says so.

@@ -78,6 +78,28 @@ class ReviewUpgradeTests(unittest.TestCase):
                 if code:
                     self.assertIn('FAIL [review]: review self-tests produced no completion evidence', result.stdout)
 
+    def test_project_self_tests_run_after_the_kits_and_need_their_own_completion_line(self):
+        # A project's own suites had no place in the kit-owned self-test (labricore, 2026-10-24).
+        cases = (('#!/bin/sh\necho PROJECT SELF-TEST: PASS\n', 0, 'PROJECT SELF-TEST: PASS'),
+                 ('#!/bin/sh\necho ran nothing\n', 2, 'project self-tests produced no completion evidence'),
+                 ('#!/bin/sh\necho PROJECT SELF-TEST: PASS\nexit 1\n', 2, 'project self-tests failed (exit 1)'),
+                 ('echo PROJECT SELF-TEST: PASS\n', 2, 'scripts/review_selftest.project.sh cannot run'))
+        for body, code, line in cases:
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as tmp:
+                scripts = Path(tmp) / 'scripts'
+                scripts.mkdir()
+                for name in ('review.sh', 'gate_config.sh'):
+                    shutil.copyfile(ROOT / 'core/scripts' / name, scripts / name)
+                (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n')
+                hook = scripts / 'review_selftest.project.sh'
+                hook.write_text(body)
+                hook.chmod(0o755)
+                result = subprocess.run(['sh', str(scripts / 'review.sh'), '--self-test'],
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertIn(line, result.stdout)
+                self.assertIn('REVIEW SELF-TEST: PASS', result.stdout)
+
     def test_contract_suite_survives_project_owned_defaults(self):
         # Reproduce an installed project's Codex default and named pins, in its gate_config.sh
         # (#94). The shared fixture must isolate empty-pin/template cases without rewriting it.
@@ -124,6 +146,11 @@ class ReviewUpgradeTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('UPGRADE IMPORTS: PASS', result.stdout)
+            # The self-test also runs scripts it never imports: the usage readers (labricore, 2026-10-24).
+            reader = 'test_agent_usage.UsageTests.test_the_usage_readers_read_the_main_checkout_from_a_linked_worktree'
+            result = subprocess.run([sys.executable, '-B', '-m', 'unittest', reader], cwd=scripts,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # An existing project upgrades its wrapper as well as its companion files.
             project = Path(tmp)
             (scripts / 'review.sh').write_text('# Previous project-owned wrapper.\nexit 2\n')

@@ -180,6 +180,43 @@ class GateCheckTests(unittest.TestCase):
         out = self.assert_red('FAIL [build]: the build/test command exited 1. Its whole output follows (CI).', CI='true')
         self.assertIn('\nbuild line 0\n', out)
 
+    def test_a_passing_build_prints_no_suite_output_and_the_verbose_switch_prints_it(self):
+        write(self.build, 'echo "test_one ... ok"; echo "Ran 1 test"; echo OK\n')
+        out = self.assert_green(MYAGENTKIT_CHECK_VERBOSE='')
+        self.assertNotIn('test_one ... ok', out)
+        self.assertIn('test_one ... ok', (self.project / '.git/check-build.log').read_text(encoding='utf-8'))
+        self.assertIn('\ntest_one ... ok\n', self.assert_green(MYAGENTKIT_CHECK_VERBOSE='1', GATE_CACHE='off'))
+
+    def test_a_failing_suite_prints_every_failure_whole_and_the_summary_not_its_passing_output(self):
+        # A FAIL is never cut (AGENTS.md "Two registers", rule 3): a 200-line traceback above a
+        # fixed tail lost its first lines; the passing lines above the first failure are noise.
+        passing = 'i=0; while [ $i -lt 300 ]; do echo "test_$i ... ok"; i=$((i + 1)); done\n'
+        trace = 'i=0; while [ $i -lt 200 ]; do echo "  frame $i"; i=$((i + 1)); done\n'
+        runners = {
+            'unittest': ('printf "%070d\\n" 0 | tr 0 =; echo "ERROR: test_a (t.T.test_a)"\n' + trace +
+                         'printf "%070d\\n" 0 | tr 0 =; echo "FAIL: test_b (t.T.test_b)"\n'
+                         'echo "AssertionError: 1 != 2"; echo "Ran 302 tests"; echo "FAILED (failures=1, errors=1)"\n',
+                         'ERROR: test_a (t.T.test_a)', 'FAILED (failures=1, errors=1)'),
+            'pytest': ('echo "==================== FAILURES ===================="; echo "___ test_a ___"\n' + trace +
+                       'echo "E   assert 1 == 2"; echo "======= 1 failed, 300 passed in 1.00s ======="\n',
+                       '___ test_a ___', '1 failed, 300 passed'),
+        }
+        for runner, (failures, first, summary) in runners.items():
+            with self.subTest(runner=runner):
+                write(self.build, passing + failures + 'exit 1\n')
+                out = self.assert_red('FAIL [build]: the build/test command exited 1. Its failures and summary follow',
+                                      CI='', MYAGENTKIT_CHECK_VERBOSE='')
+                for line in (first, '  frame 0', '  frame 199', summary):
+                    self.assertIn(line, out)
+                self.assertNotIn('test_0 ... ok', out)
+                self.assertIn('.git/check-build.log', out)
+                log = (self.project / '.git/check-build.log').read_text(encoding='utf-8')
+                self.assertIn('test_0 ... ok', log)
+                self.assertIn(summary, log)
+                out = self.assert_red('FAIL [build]: the build/test command exited 1. Its whole output follows '
+                                      '(MYAGENTKIT_CHECK_VERBOSE).', CI='', MYAGENTKIT_CHECK_VERBOSE='1')
+                self.assertIn('test_0 ... ok', out)
+
     def test_a_scanner_that_fails_cannot_end_in_a_pass(self):
         # A grep that crashes inside a command substitution once let the gate sail on to PASS.
         real = subprocess.run(['sh', '-c', 'command -v grep'], capture_output=True, text=True,

@@ -13,11 +13,14 @@
 # workflow skipped by path leaves a required check Pending (GitHub, "Troubleshooting required
 # status checks"), and this script already decides what a documentation-only change skips.
 #
-# Usage: check.sh [--for-commit|--for-merge]
+# Usage: check.sh [--for-commit|--for-merge|--no-build]
 #   default       run the gates
 #   --for-commit  what .githooks/pre-commit runs: the gates, without the build when the
 #                 staged change is documentation only (section 4 decides; the flag only asks)
 #   --for-merge   what .githooks/pre-merge-commit runs: the same, for the merge's result
+#   --no-build    a manual run without the build, every other step run: to check the gate
+#                 itself (after a sync, on a documentation change); its PASS line says so.
+#                 No hook passes it, and it is never a pass for a task that changed code.
 #
 # ADDING A GATE: add the check, AND a fixture test for it in the project's test suite: a
 # small input that breaks the rule must turn the check red with its own `FAIL [tag]` line,
@@ -393,12 +396,13 @@ case "$lock_path" in
   *) build_log="${lock_path%.lock}-build.log" ;;
 esac
 
-for_commit="" for_merge="" pass_note=""
+for_commit="" for_merge="" no_build="" pass_note=""
 case "${1:-}" in
   "")           ;;
   --for-commit) for_commit=1 ;;
   --for-merge)  for_merge=1 ;;
-  *)            echo "usage: check.sh [--for-commit|--for-merge]"; exit 2 ;;
+  --no-build)   no_build=1 ;;
+  *)            echo "usage: check.sh [--for-commit|--for-merge|--no-build]"; exit 2 ;;
 esac
 
 # Every scan, filter and boundary check below reads text in the C locale. In a UTF-8 locale
@@ -410,6 +414,12 @@ esac
 # the caller's locale back (section 4): compilers and test runners read sources by locale.
 caller_lc_all=${LC_ALL-} caller_lc_all_set=${LC_ALL+1}
 LC_ALL=C; export LC_ALL
+# A commit hook's GIT_DIR, GIT_INDEX_FILE and the rest `git rev-parse --local-env-vars` lists
+# serve this gate's own git calls; the build/test command and scripts/check.project.sh run
+# without them. In a linked worktree a suite's `git -C "$tmp" init` re-initialised the
+# worktree's repository instead: core.bare=true, its fixture committed on the branch
+# (labricore, 2026-10-24).
+git_local_vars=$(git rev-parse --local-env-vars 2>/dev/null) || git_local_vars=""
 
 # ---------------------------------------------------------------------------
 # The scanners' shared input: every tracked file plus every untracked one git does not
@@ -1082,17 +1092,24 @@ print(len(fields) // 2)
 ' "$docs_always_build" "${for_merge:+merge}" 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
-    if [ -n "$docs_only" ]; then
+    if [ -n "$no_build" ]; then
+      pass_note=" (build not run: --no-build)"
+      printf '%s\n' "NOTE [build]: not run: --no-build (a check of the gate itself, never a task's pass)."
+    elif [ -n "$docs_only" ]; then
       if [ "$docs_only" = 1 ]; then unit=file; else unit=files; fi
       pass_note=" (build not run: documentation-only commit, $docs_only $unit)"
       printf '%s\n' "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
     else
-      # Quiet when it passes; on failure the summary line, then the TAIL, never a filter. The
-      # lines that locate a compile error ("In function", "required from", "note:") do not
-      # match "error", and a gate that printed only matching lines sent a CI-only failure out
-      # with its location cut away. The whole output stays in $build_log for a local run. On CI
-      # that file vanishes with the runner and the first error of a long chain sits above any
-      # tail, so CI prints the whole log.
+      # Quiet when it passes; on failure the summary line, then ONE CONTIGUOUS SPAN of the log,
+      # never a filter of lines. The lines that locate a compile error ("In function",
+      # "required from", "note:") do not match "error", and a gate that printed only matching
+      # lines sent a CI-only failure out with its location cut away. A unittest or pytest run's
+      # failures print from its first failure block to the end: every traceback whole and the
+      # summary counts, the passing output above it left out (a FAIL is never cut, AGENTS.md
+      # "Two registers" rule 3; #307 measured test logs as the largest tool results). Any other
+      # output prints its TAIL. The whole output stays in $build_log for a local run. On CI that
+      # file vanishes with the runner and the first error of a long chain sits above any tail,
+      # so CI prints the whole log; MYAGENTKIT_CHECK_VERBOSE=1 prints it on any run.
       # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
       # 150 lines: about the 10000 characters a tool result shows whole; Claude Code cuts a Bash
       # result at 30000 characters (BASH_MAX_OUTPUT_LENGTH, code.claude.com/docs/en/settings).
@@ -1108,6 +1125,8 @@ print(len(fields) // 2)
         rc=0
       else
         ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+          # shellcheck disable=SC2086 # one name per line: split on purpose
+          unset $git_local_vars
           exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
         rc=$?
         # Recorded only if the files are the same after the build as before it: an edit made
@@ -1120,9 +1139,28 @@ print(len(fields) // 2)
           cache_record=$cache_key
         fi
       fi
-      if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
-        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
+      whole=""
+      if [ -n "${CI:-}" ]; then whole=CI; fi
+      if [ "${MYAGENTKIT_CHECK_VERBOSE:-0}" != 0 ]; then whole=MYAGENTKIT_CHECK_VERBOSE; fi
+      # The first failure block: unittest's 70 "=" line before "FAIL:" or "ERROR:", pytest's
+      # "=== FAILURES ===" or "=== ERRORS ===". A CR (native Windows writes CRLF) and colour
+      # escapes (pytest --color=yes) are dropped before the match.
+      failures_at=""
+      [ "$rc" -eq 0 ] || [ -n "$whole" ] || failures_at=$(awk '{ line = $0; sub(/\r$/, "", line); gsub(/\033\[[0-9;]*m/, "", line) }
+        length(prev) == 70 && prev ~ /^=+$/ && line ~ /^(FAIL|ERROR|UNEXPECTED SUCCESS): / { print NR - 1; exit }
+        line ~ /^=+ (FAILURES|ERRORS) =+$/ { print NR; exit }
+        { prev = line }' "$build_log")
+      if [ "$rc" -eq 0 ] && [ "$whole" = MYAGENTKIT_CHECK_VERBOSE ] && [ "$cache_found" != hit ]; then
+        printf '%s\n' "NOTE [build]: passed. Its whole output follows ($whole)."
         cat "$build_log"
+      elif [ "$rc" -ne 0 ] && [ -n "$whole" ]; then
+        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows ($whole)."
+        cat "$build_log"
+        fail=1
+      elif [ -n "$failures_at" ]; then
+        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its failures and summary follow, from line $failures_at;"
+        printf '%s\n' "              the passing output above them and the whole output are in $build_log"
+        tail -n "+$failures_at" "$build_log"
         fail=1
       elif [ "$rc" -ne 0 ]; then
         printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"
@@ -1132,6 +1170,40 @@ print(len(fields) // 2)
       fi
     fi ;;
 esac
+
+# ---------------------------------------------------------------------------
+# 4b) The project's own gate steps
+# ---------------------------------------------------------------------------
+# This file is kit-owned, so a project step that is not a value (a negative test of its own
+# hook) lives in scripts/check.project.sh, project-owned, as doctor.project.sh does for
+# doctor.sh; the kit ships none, so a sync never writes it. Executed, not sourced: it runs repo
+# scripts from the checkout's root, which boundary_checks.sh's fixture test cannot (labricore,
+# 2026-10-24), and it cannot change this gate's state. It runs on every run, documentation-only
+# commits, cached builds and --no-build included; its lines print as they are, a non-zero exit
+# fails the gate, and an absent file runs nothing. A file that cannot run (no #! line, which Git
+# for Windows never runs, or no execute bit) fails: a step that never runs enforces nothing.
+if [ -e scripts/check.project.sh ]; then
+  first=""; IFS= read -r first < scripts/check.project.sh || true
+  case $first in
+    '#!'*) [ -x scripts/check.project.sh ] || first="" ;;
+    *) first="" ;;
+  esac
+  if [ -z "$first" ]; then
+    echo "FAIL [project]: scripts/check.project.sh cannot run: make #!/bin/sh its first line, then"
+    echo "                chmod +x scripts/check.project.sh && git update-index --chmod=+x scripts/check.project.sh"
+    fail=1
+  else
+    ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+      # shellcheck disable=SC2086 # one name per line: split on purpose
+      unset $git_local_vars
+      exec scripts/check.project.sh ) < /dev/null
+    project_rc=$?
+    if [ "$project_rc" -ne 0 ]; then
+      printf '%s\n' "FAIL [project]: scripts/check.project.sh exited $project_rc (its lines above)."
+      fail=1
+    fi
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 5) Scanner integrity — LAST, so it covers every scan above, including the project's own

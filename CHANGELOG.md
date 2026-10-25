@@ -39,6 +39,40 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   literal program with no `system`, pipe, `@include` or `-f`: every raw word that reads as the
   program is single-quoted, so a quoted decoy elsewhere cannot vouch for `awk "$p"`. A heredoc
   terminator ending in CR ends the body. Sync is enough.
+- A project's own gate steps and self-test suites have a home (labricore field report 1, item 3):
+  `scripts/check.project.sh`, run by `check.sh` from the checkout's root after its own steps on
+  every run, documentation-only commits included (its non-zero exit fails the gate), and
+  `scripts/review_selftest.project.sh`, run by `review.sh --self-test` after the kit's suites
+  (it must print `PROJECT SELF-TEST: PASS`). Both are project-owned, executed like
+  `scripts/doctor.project.sh`, and absent means nothing runs; a file without a `#!` line or the
+  execute bit fails, and `doctor.sh` names it. The kit ships neither, so a sync never writes them.
+- `check.sh` runs `build_test_cmd` and `scripts/check.project.sh` without the variables
+  `git rev-parse --local-env-vars` lists (labricore field report 3, C8, data loss): Git hands a
+  commit hook GIT_DIR and GIT_INDEX_FILE, and in a linked worktree a suite's
+  `git -C "$tmp" init`/`commit` re-initialised the worktree's repository (core.bare=true in the
+  shared config, its fixture committed on the branch). Git in the build now finds the repository
+  from the working directory, and a commit's `git -c` options no longer reach it. A sync is enough.
+- A failed `check.sh` build prints the failures, not the passing output (#307 rank 3): a
+  unittest or pytest run prints from its first failure block to the end, every traceback whole and
+  the summary counts; other output keeps its last 150 lines. The whole output stays in the log
+  the FAIL line names (`.git/check-build.log`). `MYAGENTKIT_CHECK_VERBOSE=1` prints the whole log
+  on any run, pass included; CI prints it on failure as before. A sync is enough.
+- `check.sh --no-build` checks the gate itself without the build (leeway L8); its PASS line says
+  so and no hook passes it.
+- `doctor.sh` tells each worktree git still lists at a path that is gone or in another copy of
+  the project (a moved project), with its fix: `git worktree repair` for a folder that moved
+  along, else `git worktree prune` (`git worktree unlock` first for a locked one). It changes
+  nothing.
+- **ACTION** (`docs/DEV_SETUP.md`, `docs/HANDOFF.md`, `docs/WORKFLOW.md`, project-owned): run
+  `sync-kit.sh . --merge`, or by hand: in `DEV_SETUP.md`, add `usage_summary.py` to the
+  REVIEW_COMPANIONS list (the usage suite of `review.sh --self-test` runs it) and copy the two
+  new paragraphs of section 5 from the kit's `core/docs/DEV_SETUP.md`; in `HANDOFF.md`, delete
+  from "End the prompt with:" to "never completion." (the v0.13 ACTION said so, and the kit's own
+  copy still held it; the text is in `docs/HANDOFF_KIT.md`); in `WORKFLOW.md`, a reviewer swap
+  is recorded in `scripts/gate_config.sh`, not `scripts/review.sh`.
+- **ACTION** (projects with a step of their own patched into `check.sh`'s build command or into
+  `review.sh`): move it to `scripts/check.project.sh` or `scripts/review_selftest.project.sh`
+  (`#!/bin/sh` first line, `chmod +x`, `git add --chmod=+x`).
 
 ## v0.13 — 2026-10-23
 

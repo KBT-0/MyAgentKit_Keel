@@ -27,7 +27,11 @@ rule writes it in the project-owned file (`docs/<NAME>.md` beside `docs/<NAME>_K
 `docs/WORKFLOW.md` for `docs/USAGE.md`; `scripts/gate_config.sh` for a gate value), and the
 project file wins over the kit's.
 A project's own machine checks, once in its own `scripts/doctor.sh`, move to
-`scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last.
+`scripts/doctor.project.sh`, which the kit's `doctor.sh` runs last. In the same way its own
+gate steps go in `scripts/check.project.sh`, which `check.sh` runs after its own steps on every
+commit, and its own self-test suites in `scripts/review_selftest.project.sh`, which
+`review.sh --self-test` runs after the kit's. The kit ships none of the three, so a sync never
+writes them.
 
 Three scripts stay the project's, and they are where its own content lives (#94):
 
