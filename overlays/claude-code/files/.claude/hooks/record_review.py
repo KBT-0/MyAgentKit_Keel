@@ -20,12 +20,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from guard_risky_review import changed, head, read_record, record_path  # noqa: E402
 
-VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve|pass)\b", re.I)  # ctl10: "VERDICT: PASS"
+# A PASS only after "Verdict" (ctl10: "VERDICT: PASS"): a cut-off "Pass 1: reading the diff" is none.
+VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve)\b|\W*verdict\W*pass\b", re.I)
 HEADING = re.compile(r"\W*verdict\W*", re.I)
 # A line that leads with Critical or High, after list, table and emphasis markup and labels such as
-# "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; not "High-tier" or "High: none".
-LABEL = r"(?:(?:issue|finding)[^\w\n]*\d*|[a-z]?\d+|severity|`[^`\n]*`)"
-BLOCKING = re.compile(r"^[^\w\n]*(?:%s[^\w\n]+)*(?:critical|high)(?![-\w])(?![^\w\n]*(?:none|0)\b)" % LABEL,
+# "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; "High-severity" too, not "High-tier".
+LABEL = r"(?:issue|finding|[a-z]?\d+|severity|`[^`\n]*`)"  # one way to split a line: no backtracking blow-up
+BLOCKING = re.compile(r"^[^\w\n]*(?:%s[^\w\n]+)*(?:critical|high)\b(?!-(?:tier|effort)\b)" % LABEL,
                       re.I | re.M)
 
 
@@ -33,8 +34,8 @@ def accepted(message):
     """The verdict line comes first (diff-reviewer.md), after a bare "Verdict" heading at most; an Accept
     that lists a Critical or High reads as Reject (REVIEW_GATE.md, "Verdicts and who decides")."""
     lines = [line for line in message.splitlines() if line.strip()]
-    if lines and HEADING.fullmatch(lines[0]):
-        lines = lines[1:]
+    if len(lines) > 1 and HEADING.fullmatch(lines[0]):
+        lines = ["Verdict: " + lines[1]] + lines[2:]
     return bool(lines) and bool(VERDICT.match(lines[0])) and not BLOCKING.search(re.sub(r"[*_]", "", message))
 
 

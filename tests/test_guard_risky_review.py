@@ -90,14 +90,17 @@ class RiskyReviewTests(unittest.TestCase):
                      'Verdict: Accept\n\n1. High, REPRODUCED. x', 'Accept\nSeverity: Critical - x',
                      'Verdict: PASS\n- High: x', 'Verdict: Accept\nIssue #1 — High: x', 'Verdict: Accept\nFinding 1: High - x',
                      'Verdict: Accept\n- `a.py:3` — High: x', 'Verdict: Accept\n- H1 (High) x',
-                     'Verdict: Accept\n| 1 | High | a.py:3 | x |', 'Verdict: Accept\n_High_ x'):
+                     'Verdict: Accept\n| 1 | High | a.py:3 | x |', 'Verdict: Accept\n_High_ x',
+                     'Verdict: Accept\n- High-severity: a.py:3 x', 'Verdict: Accept\n- Critical-path bug: a.py:3 x',
+                     'Verdict: Accept\n- High: none of the callers check it, a.py:3', 'Pass 1: reading the diff'):
             with self.subTest(last=last):
                 self.event('SubagentStart')
                 self.event('SubagentStop', last=last)
                 self.assertEqual(self.commit().returncode, 2)
         for last in ('VERDICT: APPROVE', '**Accept with Manual Checks**', '## Verdict\nAccept with Manual Checks\n- Medium: x',
-                     'Verdict: PASS', 'VERDICT: PASS (no blocking findings, two Lows)',  # ctl10 run 2
-                     'Verdict: Accept\n1. High-tier focus not run', 'Verdict: Accept\nNo Critical or High finding'):
+                     'Verdict: PASS', 'VERDICT: PASS (no blocking findings, two Lows)', '## Verdict\nPASS',  # ctl10 run 2
+                     'Verdict: Accept\n1. High-tier focus not run', 'Verdict: Accept\nNo Critical or High finding',
+                     'Verdict: Accept\n' + 'finding 1 ' * 40 + 'x'):  # an ambiguous label split took 2**40 steps
             with self.subTest(last=last):
                 self.event('SubagentStart', agent_id=last)
                 self.event('SubagentStop', agent_id=last, last=last)
