@@ -361,6 +361,32 @@ def reject_line_ending_churn(repo, scope, reference, diff, also=()):
                              % (kind, os.fsdecode(name)))
 
 
+def note_reviewed(repo):
+    """Record a completed --uncommitted review that did not Reject for the Claude Code overlay's guard_risky_review.py
+    (the git folder's myagentkit-reviewed, in record_review.py's format; owner 2026-10-25). A failure
+    only means the guard asks for a diff-reviewer review."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=20,
+                              check=True).stdout
+    try:
+        head = git("rev-parse", "--verify", "-q", "HEAD").strip()
+        names = (git("diff", "--name-only", "--no-renames", "-z", "HEAD")
+                 + git("ls-files", "--others", "--exclude-standard", "-z"))
+        path = Path(git("rev-parse", "--git-path", "myagentkit-reviewed").strip())
+        path = path if path.is_absolute() else Path(repo) / path
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            record = {}
+        if not isinstance(record, dict) or record.get("head") != head:
+            record = {}
+        paths = set(record.get("paths", [])) | {name for name in names.split("\0") if name}
+        path.write_text(json.dumps({"head": head, "paths": sorted(paths), "pending": record.get("pending", {})}),
+                        encoding="utf-8")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print("NOTE [review]: the reviewed-paths record was not written (%s)" % error, flush=True)
+
+
 def mode_reviewer(repo, default):
     """The reviewer review.sh runs when none is named: solo reviews within its family
     (docs/REVIEW_GATE.md, "Invariant"), which STATE.md's mode line names (none: claude); cross and
@@ -665,6 +691,8 @@ def main(argv=None):
             exit_code = 5
         if chain["status"] == "completed" and exit_code == 0:
             chain["selected_reviewer"] = names[provider]
+            if scope == "uncommitted" and (result.get("result") or {}).get("verdict") != "Reject":
+                note_reviewed(repo)
         else:
             chain["status"] = "failed"
         # A cancel at any point after launch ends the chain: both adapters relabel a cancelled

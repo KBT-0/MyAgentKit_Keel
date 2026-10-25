@@ -17,7 +17,8 @@ same `./scripts/check.sh`; task transfer is `docs/HANDOFF.md`.
 
 ## Reading order (new session)
 
-1. `./scripts/doctor.sh` (changes nothing); on `MISSING:` tell {{OWNER_NAME}} and offer each fix first.
+1. `./scripts/doctor.sh` (changes nothing; not for a small fix, see the checklist); on `MISSING:` tell
+   {{OWNER_NAME}} and offer each fix first.
    This file is read once; do not open it again.
 2. `docs/PHASES.md` (now, and what is OUT of scope); `docs/STATE.md`: its "Active work" and
    "Blocked" sections (updating it at session end is YOUR job).
@@ -125,5 +126,7 @@ there needs an explicit "start it here".
 ## Task completion checklist
 
 One module; `./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
-`docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. On compaction keep
+`docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. A small fix (one commit,
+one module; owner 2026-10-25) skips `doctor.sh` and the STATE.md trace and runs `./scripts/check.sh` once,
+before the commit; a review's manual checks still go to STATE.md. On compaction keep
 open decisions, binding rules, changed files, the next step and {{OWNER_NAME}}'s words verbatim.

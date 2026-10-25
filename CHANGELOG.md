@@ -19,8 +19,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   tools) refuses a `git commit` that changes a `risky_paths` file the diff-reviewer agent has not seen since HEAD;
   `record_review.py` (SubagentStart and SubagentStop, diff-reviewer) records in the git folder the paths changed
   when a review started, once it ends. A rename counts as both its paths; the risky paths are HEAD's setting joined
-  with the working tree's. Two of ten headless kit runs had committed a money-rounding fix with no review. Fixing the
-  findings after the review is allowed.
+  with the working tree's. Only an Accept counts (owner 2026-10-25): a reviewer with no verdict line records nothing,
+  and a Reject's fix needs a fresh review before the commit, which is round 2 for a Critical or High fix again. A
+  completed `scripts/review.sh --uncommitted` review that did not Reject writes the same record. Two of ten headless
+  kit runs had committed a money-rounding fix with no review.
 - **ACTION** (`scripts/gate_config.sh`, project-owned): add `risky_paths="..."`, the risky areas as path globs plus
   `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*` (see the kit's
   `core/scripts/gate_config.sh`); without it the guard is off. Run `sync-kit.sh . --merge` for the two hooks
@@ -28,8 +30,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **ACTION** (`.claude/agents/diff-reviewer.md`, `.claude/agents/worker.md`, project-owned; lean kit, #307): run
   `sync-kit.sh . --merge`. diff-reviewer runs on the session's model and effort (`model: inherit`) without CLAUDE.md
   (`omitClaudeMd: true`) and reads `docs/REVIEW_GATE.md` only, `docs/ARCHITECTURE.md` when the diff crosses a module
-  boundary; a review's second round runs only for a Critical fix. `.claude/settings.json` turns the Artifact tool off
-  (`enableArtifact: false`, about 12k tokens a request).
+  boundary. `.claude/settings.json` turns the Artifact tool off (`enableArtifact: false`, about 12k tokens a request).
+- **ACTION** (`AGENTS.md`, `docs/REVIEW_GATE.md`, `docs/WORKFLOW.md`, project-owned; owner decisions 2026-10-25): run
+  `sync-kit.sh . --merge`. A small fix (one commit, one module) skips `doctor.sh` and the STATE.md trace and runs
+  `check.sh` once, before the commit. REVIEW_GATE "Invariant": a small risky diff (one task, under about 400 changed
+  lines, not a release) takes the diff-reviewer on the session's tier as its required review; a larger diff or a
+  release keeps a stronger tier. Round 2 runs for a Critical or High fix.
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after

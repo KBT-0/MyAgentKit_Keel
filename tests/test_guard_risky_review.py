@@ -44,8 +44,9 @@ class RiskyReviewTests(unittest.TestCase):
     def commit(self, command='git add -A && git commit -m "fix rounding"'):
         return self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'tool_input': {'command': command}})
 
-    def event(self, name, agent='diff-reviewer', agent_id='a1'):
-        return self.hook('record_review.py', {'hook_event_name': name, 'agent_type': agent, 'agent_id': agent_id})
+    def event(self, name, agent='diff-reviewer', agent_id='a1', last='Verdict: Accept\n\nNo findings.'):
+        return self.hook('record_review.py', {'hook_event_name': name, 'agent_type': agent, 'agent_id': agent_id,
+                                              'last_assistant_message': last})
 
     def review(self, agent='diff-reviewer'):
         self.event('SubagentStart', agent)
@@ -80,6 +81,30 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertNotIn('round.py', refused.stderr.decode())
         self.event('SubagentStop', agent_id='never-started')  # a stop with no start records nothing
         self.assertEqual(self.commit().returncode, 2)
+
+    def test_a_review_with_no_verdict_records_nothing(self):
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        for last in ('API Error: overloaded', 'placeholder', '', 'Verdict: Reject\n- High: x'):
+            with self.subTest(last=last):
+                self.event('SubagentStart')
+                self.event('SubagentStop', last=last)
+                self.assertEqual(self.commit().returncode, 2)
+        for last in ('VERDICT: APPROVE', '**Accept with Manual Checks**'):
+            with self.subTest(last=last):
+                self.event('SubagentStart', agent_id=last)
+                self.event('SubagentStop', agent_id=last, last=last)
+        self.assertEqual(self.commit().returncode, 0)
+
+    def test_a_completed_review_sh_review_counts(self):
+        # review_dispatch.py writes the same record after a completed --uncommitted review
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core/scripts'))
+        import review_dispatch
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        self.event('SubagentStart', agent_id='open')  # a diff-reviewer still running keeps its note
+        review_dispatch.note_reviewed(self.root)
+        self.assertEqual(self.commit().returncode, 0)
+        self.event('SubagentStop', agent_id='open')
+        self.assertEqual(self.commit().returncode, 0)
 
     def test_a_rename_out_of_the_risky_folder_is_refused(self):
         self.git('mv', 'src/money/round.py', 'legacy.py')

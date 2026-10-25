@@ -257,7 +257,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn(scope, brief)
         self.assertIn(scope.split('round 2 ')[1], workflow.split('Inner rounds keep the gate')[1])
         self.assertIn(scope.split('round 2 ')[1], worker)
-        self.assertIn('starts a new fresh reviewer on the result only when round 1 left a Critical fix', workflow)
+        self.assertIn('starts a new fresh reviewer on the result only when round 1 left a Critical or High fix', workflow)
         for text in (worker, workflow, brief):
             self.assertNotIn('until no Critical, High or Medium finding remains', text)
             self.assertNotIn('only verifies Critical or High fixes', text)

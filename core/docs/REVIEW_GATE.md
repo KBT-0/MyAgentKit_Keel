@@ -18,7 +18,10 @@ author's, high at most, since a review never runs at xhigh or max (owner decisio
 2026-10-19), and an author's effort nobody named counts as high (owner decision 66,
 2026-10-20); one tier's ids of different versions are one tier (gpt-6-astra and gpt-6.1-astra,
 decision 65). A lower tier's review
-of a higher tier's work is an extra opinion only, never the required review alone. Sources:
+of a higher tier's work is an extra opinion only, never the required review alone. One exception
+(owner, lean-kit decision Y4, 2026-10-25): a small risky diff (one task, under about 400 changed
+lines, not a release) takes the `diff-reviewer` agent on the session's tier, in its own fresh
+context, as its required review; a larger diff or a release keeps the rule above. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
 self-review was in the same session, not a fresh one (`docs/research/ai-review-workflows.md`,
 [1] and [25]); the tier order is the owner's choice (2026-10-19). This is the one place the
@@ -98,7 +101,7 @@ included, and reports new Critical or High only. A third round needs
 `REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}
 or an issue. Sources: KARARLAR B02 inv2#12 / D06 inv2#12; Claude Code Code Review's
 re-review convergence and best-practices guidance on repeated corrections. The two-round cap
-is the owner's choice. Round 2 runs only when round 1 left a Critical fix to verify.
+is the owner's choice. Round 2 runs only when round 1 left a Critical or High fix to verify.
 The final review is due once per release, never per branch, and is written only here: one
 fresh NEW-label review of the release's merged diff, high effort, by a session that did not
 write its larger part; its Critical or High fix gets one re-read at medium effort, not a new
