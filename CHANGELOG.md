@@ -21,8 +21,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   headless kit runs had committed a money-rounding fix with no review. Fixing the findings after the review is allowed.
 - **ACTION** (`scripts/gate_config.sh`, project-owned): add `risky_paths="..."`, the risky areas as path globs plus
   `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*` (see the kit's
-  `core/scripts/gate_config.sh`); without it the guard is off. Run `sync-kit.sh . --merge` for the two hooks and
-  `.claude/settings.json`.
+  `core/scripts/gate_config.sh`); without it the guard is off. Run `sync-kit.sh . --merge` for the two hooks
+  (`.claude/hooks/guard_risky_review.py`, `.claude/hooks/record_review.py`) and `.claude/settings.json`.
+- **ACTION** (`.claude/agents/diff-reviewer.md`, `.claude/agents/worker.md`, project-owned; lean kit, #307): run
+  `sync-kit.sh . --merge`. diff-reviewer runs on the session's model and effort (`model: inherit`) without CLAUDE.md
+  (`omitClaudeMd: true`) and reads `docs/REVIEW_GATE.md` only, `docs/ARCHITECTURE.md` when the diff crosses a module
+  boundary; a review's second round runs only for a Critical fix. `.claude/settings.json` turns the Artifact tool off
+  (`enableArtifact: false`, about 12k tokens a request).
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after

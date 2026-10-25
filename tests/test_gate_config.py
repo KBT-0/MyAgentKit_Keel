@@ -53,7 +53,8 @@ class GateConfigTests(unittest.TestCase):
             self.assertIsNotNone(names, name)
             moved |= set(names[1].split('|'))
         template = (ROOT / 'core/scripts/gate_config.sh').read_text(encoding='utf-8')
-        self.assertEqual(moved, set(re.findall(r'^([A-Za-z_]+)=', template, re.M)))
+        # risky_paths is read by .claude/hooks/guard_risky_review.py only and is new in v0.14: no old value to move.
+        self.assertEqual(moved, set(re.findall(r'^([A-Za-z_]+)=', template, re.M)) - {'risky_paths'})
         # Each has its default in the script that reads it, set before the file is sourced.
         gate = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
         review = (ROOT / 'core/scripts/review.sh').read_text(encoding='utf-8')
