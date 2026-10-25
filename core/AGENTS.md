@@ -55,7 +55,8 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
   and say so; one elsewhere is reported (owner 2026-10-25, ctlq: the kit left a found bug 4 of 4).
 - No push, PR or remote update without {{OWNER_NAME}}'s word in this session.
 - A git command line holding `--out`, `--ext`, `--textc` or `--sub`, a commit message included,
-  is denied (`.claude/settings.json`): write the message to a file and `git commit -F FILE`.
+  is denied (`.claude/settings.json`): write the message to a `mktemp` file (a fixed name like
+  `/tmp/msg.txt` is shared with parallel sessions) and `git commit -F FILE`.
 - **Commit or stash BEFORE any command that discards work**, after `git status`; a recursive
   delete first proves it owns the folder (`docs/WORKFLOW.md`, "Destructive commands").
 - **Never end running work** unless {{OWNER_NAME}} asked or it is provably finished or hung
@@ -64,7 +65,8 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
   "Verdicts and who decides".
 - No untested code enters {{TESTED_AREA}}: a logic change brings its test; `./scripts/check.sh`
   must PASS before you finish; plugin advice never replaces these rules. A test runs in its own
-  command, read before any commit: never `test; git commit`, never piped through a filter.
+  command, read before any commit: never `test; git commit`, never piped through a filter. The
+  commit hook runs `./scripts/check.sh` and refuses a red commit: do not also run it by hand.
 - **Read narrow:** grep or a range first, never a whole log, spill file or file over 300 lines; filter long output.
 - **Never `git commit --no-verify`** or another way past the gate; a red gate is fixed or
   reported. **No AI attribution in git**, by trailer or prose, whatever the tool's default
@@ -78,7 +80,8 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling) pass the review
   gate before they reach the main branch; others get their tier's review (`docs/REVIEW_GATE.md`,
-  "Risk tiers"). It starts unasked; a FRESH session reviews, never the author
+  "Risk tiers"). It starts unasked, on the uncommitted diff, before the first commit attempt (an
+  unreviewed risky commit is refused); a FRESH session reviews, never the author
   (`docs/REVIEW_GATE.md`, "Invariant", "Rounds"). A verdict's manual checks go to `docs/STATE.md`.
 - **Never report a verification you did not run**; say "not run".
 
@@ -131,6 +134,6 @@ there needs an explicit "start it here".
 
 One module; `./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
 `docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. A small fix (one commit,
-one module; owner 2026-10-25) skips `doctor.sh` and the STATE.md trace and runs `./scripts/check.sh` once,
-before the commit; a risky diff still takes its review, and its manual checks still go to STATE.md. On compaction keep
+one module; owner 2026-10-25) skips `doctor.sh` and the STATE.md trace and leaves `./scripts/check.sh` to
+the commit hook; a risky diff still takes its review, and its manual checks still go to STATE.md. On compaction keep
 open decisions, binding rules, changed files, the next step and {{OWNER_NAME}}'s words verbatim.

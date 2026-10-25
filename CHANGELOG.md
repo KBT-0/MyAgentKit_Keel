@@ -41,7 +41,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   AGENTS.md "Task discipline": a second bug of the same cause in a file the task changes is fixed in the task, with
   its test; one elsewhere is reported (the ctlq quality run: the kit reported a found off-by-one 4 of 4 and left it).
   AGENTS.md also says a commit message holding `--out`, `--ext`, `--textc` or `--sub` is denied and goes through
-  `git commit -F` (ctlq: no kit run of the `--out` feature task could commit).
+  `git commit -F` (ctlq: no kit run of the `--out` feature task could commit), the file made by `mktemp`.
+  AGENTS.md: a risky diff's review starts before the first commit attempt, and `./scripts/check.sh` is left to
+  the commit hook, never also run by hand (ctlq lean 14: 9 of 33 commit attempts refused unreviewed, 24 hand runs).
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after
