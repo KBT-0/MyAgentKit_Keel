@@ -272,13 +272,12 @@ in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 | `{{WORKER_MODEL}}` | The author model from the interview (`sonnet`, `opus`, or a full model id) |
 | `{{LONG_JOBS}}` | The project's jobs that run longer than a few minutes, by name, as the interview's question 8 recorded them, or `none` when no worker waits that long |
 | `{{WORKER_EFFORT}}` | The worker's reasoning effort (`low`, `medium`, `high`), as the interview's question 8 recorded it: `high` when the worker's tasks bear design, lower when they are mechanical |
-| `{{REVIEWER_MODEL}}` | `diff-reviewer.md`'s model: the strongest model available for reviews (`setup/INTERVIEW.md`, "Risk and review") |
 | `{{GATED_PATHS}}` / `{{GATED_FILE_PATTERN}}` | `.claude/hooks/gate_on_stop.sh`: the paths whose change makes the Stop hook run the gate (`setup/INTERVIEW.md`) |
 | `{{BOUNDARY_GUARDS}}` | `.claude/hooks/guard_boundaries.py`: a live list element; replace the quoted string with real tuples, or delete the line if nothing is guardable (`setup/INTERVIEW.md`) |
 
 The overlay's files also carry the core's `{{PROJECT_NAME}}`, `{{OWNER_NAME}}` and
-`{{RISKY_AREAS}}`, filled with the same values as the core files. `diff-reviewer.md` ships
-with `effort: high`: reviews run at high effort. A project that already has its own reviewer
+`{{RISKY_AREAS}}`, filled with the same values as the core files. `diff-reviewer.md` runs
+on the session's model and effort (`model: inherit`; `docs/REVIEW_GATE.md`, "Invariant"). A project that already has its own reviewer
 agent under `.claude/agents` keeps one definition, not two: merge what its own carries into
 `diff-reviewer.md` and delete it, or keep its own and delete `diff-reviewer.md`. Two
 definitions for one job is the decay signal `AGENTS.md` names, and a lead then picks either.

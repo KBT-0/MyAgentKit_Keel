@@ -64,15 +64,16 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    the code is reverted. Only a gate check must prove red, by its fixture test ("Writing a
    gate"). A generated-content pipeline validates its output (data validation, captures);
    unit tests of the generator are not mandatory. Existing tests stay; only tests measured as redundant or slow
-   are consolidated (the kit's `docs/research/test-rules.md`). Then run `./scripts/check.sh`
-   before finishing.
+   are consolidated (the kit's `docs/research/test-rules.md`). `./scripts/check.sh` must
+   PASS before finishing.
    The same script is wired into git as `.githooks/pre-commit`, so a failing gate aborts the
-   commit for every tool — but running it yourself is still the rule. The hook is the
-   backstop, not the plan, and agents never bypass it with `--no-verify`.
+   commit for every tool. A task that ends in a commit leaves the run to the hook and reads its
+   `CHECK: PASS` line (none: the hook is unwired, run the script by hand and say so); a task that
+   ends without a commit runs it by hand. Agents never bypass it with `--no-verify`.
 5. **Review by tier:** the brief's `Risk:` line names the tier, and the tier names the
    review (`docs/REVIEW_GATE.md`, "Risk tiers"): one light reviewer for low, one for medium,
    two for high (gates, hooks, check scripts, review tooling); code in {{RISKY_AREAS}} is
-   medium.
+   medium. A small diff takes the exception in `docs/REVIEW_GATE.md`, "Invariant".
    It runs in a FRESH session before the change reaches the main branch (when exactly:
    `docs/REVIEW_GATE.md`, its opening lines). The author never approves their own patch.
 6. **Document:** a changed public API updates its README in the same task (`AGENTS.md`,
@@ -1122,10 +1123,11 @@ Rules, binding for whoever routes workers:
 5. **Mechanical work goes to the cheaper model at medium effort**: doc fixes, running a
    documented proof, folding notes. Design-bearing code gets the strongest model at high
    effort; reviews follow the "Model routing" effort table. Model and effort are never left
-   to inheritance: an omitted sub-agent model resolves to the main conversation's
+   to inheritance unawares: an omitted sub-agent model resolves to the main conversation's
    (code.claude.com/docs/en/sub-agents, "Choose a model"), a sub-agent runs at its
    lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
-   `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
+   `worker.md` does, as a fallback; `diff-reviewer.md` writes `model: inherit` on purpose, the
+   session's tier: `docs/REVIEW_GATE.md`, "Invariant"), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call; the Claude Code
    overlay's `guard_worker_route.py` hook refuses one that lacks either (a fork excepted, it
    cannot change them). A separate

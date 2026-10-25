@@ -2,9 +2,9 @@
 name: diff-reviewer
 description: >
   Safety diff review for {{PROJECT_NAME}}; it is told not to change the reviewed checkout. Use
-  for EVERY diff touching {{RISKY_AREAS}}, or any gate, CI configuration, check script or
-  review tooling —
-  before commit. Spawn FRESH: the implementer session must never review its own patch.
+  for EVERY small diff touching {{RISKY_AREAS}}, before commit; a hook, gate, CI, check-script,
+  review-tooling or tool-settings diff takes one `scripts/review.sh` round instead
+  (`docs/REVIEW_GATE.md`, "Invariant"). Spawn FRESH: the implementer session must never review its own patch.
 model: inherit
 omitClaudeMd: true
 tools: Read, Grep, Glob, Bash

@@ -26,11 +26,15 @@ import re
 import subprocess
 import sys
 
-COMMIT = re.compile(r"\bgit\b[^\n;&|]*?\bcommit\b")
+# `commit` as git's subcommand, after global options (-C dir, -c k=v, --no-pager): `git show HEAD:commit.md` is none
+# The two option forms never match the same text (-c/-C take a value; others never are -c/-C): no backtracking blow-up.
+COMMIT = re.compile(r"\bgit(?:\s+(?:-[Cc]\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|-(?![Cc]\s)[\w-]+(?:=\S+)?))*"
+                    r"\s+commit(?![\w-])")
 
 
 def git(root, *args):
-    result = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=20)
+    result = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=20)
     return result.stdout if result.returncode == 0 else None
 
 
@@ -62,8 +66,8 @@ def risky_globs(root):
         pass
     globs = set()
     for text in filter(None, texts):
-        match = re.search(r'^risky_paths="([^"]*)"', text, re.M)
-        value = match.group(1) if match else ""
+        match = re.search(r'^risky_paths=(["\'])(.*?)\1', text, re.M)
+        value = match.group(2) if match else ""
         globs |= set() if "{{" in value else set(value.split())
     return sorted(globs)
 
@@ -94,8 +98,9 @@ def main():
     if not missing:
         return 0
     print("BLOCKED: this commit changes risky paths no diff review has seen since HEAD (%s). Start the "
-          "diff-reviewer agent on the uncommitted diff (docs/REVIEW_GATE.md, \"Risk tiers\"), fix what it "
-          "finds, then commit." % ", ".join(missing), file=sys.stderr)
+          "diff-reviewer agent on the uncommitted diff, or for a hook, gate, CI or check-script change one "
+          "`scripts/review.sh --uncommitted` round (docs/REVIEW_GATE.md, \"Invariant\"), fix what it finds, "
+          "then commit." % ", ".join(missing), file=sys.stderr)
     return 2
 
 

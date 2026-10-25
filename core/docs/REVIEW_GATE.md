@@ -21,8 +21,8 @@ decision 65). A lower tier's review
 of a higher tier's work is an extra opinion only, never the required review alone. One exception
 (owner, lean-kit decision Y4, 2026-10-25): a small risky diff (one task, under about 400 changed
 lines, not a release) takes the `diff-reviewer` agent on the session's tier, in its own fresh
-context, as its required review, unless it touches a hook, a gate, a CI configuration or a check
-script: that diff takes one `scripts/review.sh` round, a fresh session whose evidence lands in
+context, as its required review, unless it touches a hook, a gate, a CI configuration, a check
+script, review tooling or tool settings: that diff takes one `scripts/review.sh` round, a fresh session whose evidence lands in
 `docs/reviews/`: one reviewer without `REVIEW_FOCUS`, one combined focus (owner, 2026-10-25). When round 1 left a Critical or High, round 2 is a fresh
 `diff-reviewer` on the fix, never a new label. A larger diff or a release keeps the rule above. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
@@ -56,14 +56,15 @@ with the reason in the brief; a working mode never lowers it.
 |---|---|---|
 | low | documentation (a behaviour-rule document such as `AGENTS.md`, `docs/WORKFLOW.md` or this file included), tests only, one file outside the rows below | one light reviewer, medium effort |
 | medium | code in {{RISKY_AREAS}} outside the high row | one reviewer, medium effort |
-| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, each at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge |
+| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, each at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge; a small diff: the "Invariant" exception |
 
 Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and the diff. When
 the diff is too long to read, a longer summary lists every changed file with its line counts,
 every open or deferred finding and every manual check, and {{OWNER_NAME}} may ask for the diff.
 
 A Claude Code commit that changes a `risky_paths` file (`scripts/gate_config.sh`) is refused until
-the diff-reviewer agent has seen that path since HEAD (`.claude/hooks/guard_risky_review.py`).
+a review has seen that path since HEAD: the diff-reviewer agent, or a completed `scripts/review.sh
+--uncommitted` Accept (`.claude/hooks/guard_risky_review.py`).
 
 The review its tier requires starts without asking; an extra review beyond it is
 {{OWNER_NAME}}'s call (`/myagentkit:cross-review`). Findings go to the author's side

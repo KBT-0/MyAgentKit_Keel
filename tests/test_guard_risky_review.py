@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HOOKS = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/.claude/hooks'
@@ -36,8 +37,8 @@ class RiskyReviewTests(unittest.TestCase):
     def config(self, value):
         (self.root / 'scripts/gate_config.sh').write_text('risky_paths="%s"\n' % value, encoding='utf-8')
 
-    def hook(self, name, payload):
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.root))
+    def hook(self, name, payload, **extra):
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.root), **extra)
         return subprocess.run([sys.executable, str(HOOKS / name)], input=json.dumps(payload).encode(),
                               env=env, capture_output=True, timeout=60)
 
@@ -161,6 +162,41 @@ class RiskyReviewTests(unittest.TestCase):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
         self.assertEqual(self.commit('git status && git diff').returncode, 0)
         self.assertEqual(self.commit('git -c core.hooksPath=x commit -qam fix').returncode, 2)
+
+    def test_a_read_only_git_line_naming_commit_passes(self):
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        for command in ('git show HEAD:docs/commit-style.md', 'git log -1 --format=%H  # the reviewed commit',
+                        'git commit-tree HEAD^{tree}'):
+            with self.subTest(command=command):
+                self.assertEqual(self.commit(command).returncode, 0)
+        self.assertEqual(self.commit('git -c user.name="A B" commit -qam fix').returncode, 2)
+        started = time.monotonic()
+        self.commit('git ' + ' -c ' * 3000 + 'x')
+        self.assertLess(time.monotonic() - started, 30)  # leanrel: an overlapping option form backtracked for minutes
+
+    def test_a_non_ascii_risky_path_under_a_c_locale(self):
+        # leanrel High: a locale codec without the name's bytes crashed both hooks; every commit was refused
+        name = os.path.join(str(self.root), 'src', 'money', 'の.py')
+        # a POSIX test run under LC_ALL=C (check_kit's locale matrix) cannot encode the name: write the UTF-8 bytes
+        with open(name if os.name == 'nt' else os.fsencode(str(self.root)) + '/src/money/の.py'.encode('utf-8'),
+                  'wb') as f:
+            f.write(b'n = 1\n')
+        c_locale = dict(LC_ALL='C', LANG='C', PYTHONCOERCECLOCALE='0', PYTHONUTF8='0')
+        refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'tool_input': {'command': 'git commit -am x'}},
+                            **c_locale)
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+        self.assertIn(b'BLOCKED', refused.stderr)
+        for name in ('SubagentStart', 'SubagentStop'):
+            self.hook('record_review.py', {'hook_event_name': name, 'agent_type': 'diff-reviewer', 'agent_id': 'a1',
+                                           'last_assistant_message': 'Verdict: Accept'}, **c_locale)
+        self.assertEqual(self.commit('git commit -am x').returncode, 0)
+
+    def test_a_single_quoted_setting_is_read(self):
+        (self.root / 'scripts/gate_config.sh').write_text("risky_paths='src/money/*'\n", encoding='utf-8')
+        self.git('add', 'scripts/gate_config.sh')
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'quoted')
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        self.assertEqual(self.commit().returncode, 2)
 
     def test_an_empty_or_unfilled_setting_turns_it_off(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

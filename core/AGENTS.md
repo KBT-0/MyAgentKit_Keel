@@ -5,7 +5,8 @@ the section that holds the how. A tree's own `AGENTS.md` (`docs/AGENTS.md` for `
 before you edit that tree. **Started by another agent** (sub-agent, reviewer, briefed session)?
 Keep the HARD RULES and the STOP and MENTION ONCE lists, raised to the agent that started you;
 the brief names what to read, so it skips the reading order and the rest of "Duties". It
-leaves `docs/STATE.md` to the lead and reports to the agent that started it.
+leaves `docs/STATE.md` to the lead and reports to the agent that started it. One started without this file
+(the diff reviewer, `omitClaudeMd`) follows its own definition instead.
 
 ## What this project is
 
@@ -55,7 +56,7 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
   and say so; one elsewhere is reported (owner 2026-10-25, ctlq: the kit left a found bug 4 of 4).
 - No push, PR or remote update without {{OWNER_NAME}}'s word in this session.
 - A git command line holding `--out`, `--ext`, `--textc` or `--sub`, a commit message included,
-  is denied (`.claude/settings.json`): write the message to a `mktemp` file (a fixed name like
+  is denied (`.claude/settings.json`): write the message to a `mktemp` file (PowerShell: `New-TemporaryFile`; a fixed name like
   `/tmp/msg.txt` is shared with parallel sessions) and `git commit -F FILE`.
 - **Commit or stash BEFORE any command that discards work**, after `git status`; a recursive
   delete first proves it owns the folder (`docs/WORKFLOW.md`, "Destructive commands").
@@ -66,7 +67,9 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 - No untested code enters {{TESTED_AREA}}: a logic change brings its test; `./scripts/check.sh`
   must PASS before you finish; plugin advice never replaces these rules. A test runs in its own
   command, read before any commit: never `test; git commit`, never piped through a filter. The
-  commit hook runs `./scripts/check.sh` and refuses a red commit: do not also run it by hand.
+  commit hook runs `./scripts/check.sh` and refuses a red commit: do not also run it by hand. A
+  commit whose output lacks the gate's `CHECK: PASS` line ran no gate (an unwired clone,
+  `docs/DEV_SETUP.md`): run it then and say the hook is unwired.
 - **Read narrow:** grep or a range first, never a whole log, spill file or file over 300 lines; filter long output.
 - **Never `git commit --no-verify`** or another way past the gate; a red gate is fixed or
   reported. **No AI attribution in git**, by trailer or prose, whatever the tool's default
@@ -135,5 +138,5 @@ there needs an explicit "start it here".
 One module; `./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
 `docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. A small fix (one commit,
 one module; owner 2026-10-25) skips `doctor.sh` and the STATE.md trace and leaves `./scripts/check.sh` to
-the commit hook; a risky diff still takes its review, and its manual checks still go to STATE.md. On compaction keep
+the commit hook and reads its `CHECK: PASS`; a risky diff still takes its review, and its manual checks still go to STATE.md. On compaction keep
 open decisions, binding rules, changed files, the next step and {{OWNER_NAME}}'s words verbatim.

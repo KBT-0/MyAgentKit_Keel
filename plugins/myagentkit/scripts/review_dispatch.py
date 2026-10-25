@@ -374,8 +374,8 @@ def note_reviewed(repo):
     (the git folder's myagentkit-reviewed, in record_review.py's format; owner 2026-10-25). A failure
     only means the guard asks for a diff-reviewer review."""
     def git(*args):
-        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=20,
-                              check=True).stdout
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=20, check=True).stdout
     try:
         head = git("rev-parse", "--verify", "-q", "HEAD").strip()
         names = (git("diff", "--name-only", "--no-renames", "-z", "HEAD")

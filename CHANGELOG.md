@@ -28,13 +28,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*` (see the kit's
   `core/scripts/gate_config.sh`); without it the guard is off. Run `sync-kit.sh . --merge` for the two hooks
   (`.claude/hooks/guard_risky_review.py`, `.claude/hooks/record_review.py`) and `.claude/settings.json`.
-- **ACTION** (`.claude/agents/diff-reviewer.md`, `.claude/agents/worker.md`, project-owned; lean kit, #307): run
+- **ACTION** (`.claude/agents/diff-reviewer.md`, project-owned; lean kit, #307): run
   `sync-kit.sh . --merge`. diff-reviewer runs on the session's model and effort (`model: inherit`) without CLAUDE.md
   (`omitClaudeMd: true`) and reads `docs/REVIEW_GATE.md` only, `docs/ARCHITECTURE.md` when the diff crosses a module
   boundary. `.claude/settings.json` turns the Artifact tool off (`enableArtifact: false`, about 12k tokens a request).
 - **ACTION** (`AGENTS.md`, `docs/REVIEW_GATE.md`, `docs/WORKFLOW.md`, project-owned; owner decisions 2026-10-25): run
-  `sync-kit.sh . --merge`. A small fix (one commit, one module) skips `doctor.sh` and the STATE.md trace and runs
-  `check.sh` once, before the commit. REVIEW_GATE "Invariant": a small risky diff (one task, under about 400 changed
+  `sync-kit.sh . --merge`. A small fix (one commit, one module) skips `doctor.sh` and the STATE.md trace and leaves
+  `check.sh` to the commit hook (below). REVIEW_GATE "Invariant": a small risky diff (one task, under about 400 changed
   lines, not a release) takes the diff-reviewer on the session's tier as its required review; a larger diff or a
   release keeps a stronger tier. A small diff touching a hook, a gate, a CI configuration or a check script takes one
   `scripts/review.sh` round instead. Round 2 runs for a Critical or High fix, as a fresh diff-reviewer.
@@ -43,7 +43,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   AGENTS.md also says a commit message holding `--out`, `--ext`, `--textc` or `--sub` is denied and goes through
   `git commit -F` (ctlq: no kit run of the `--out` feature task could commit), the file made by `mktemp`.
   AGENTS.md: a risky diff's review starts before the first commit attempt, and `./scripts/check.sh` is left to
-  the commit hook, never also run by hand (ctlq lean 14: 9 of 33 commit attempts refused unreviewed, 24 hand runs).
+  the commit hook, never also run by hand, and a commit output without the gate's `CHECK: PASS` line means an unwired
+  hook: run it then (ctlq lean 14: 9 of 33 commit attempts refused unreviewed, 24 hand runs). The exception for a
+  small hook or gate diff covers review tooling and tool settings too; the high-tier row and WORKFLOW point at it.
+- `guard_risky_review.py` and `review_dispatch.py` read git's output as UTF-8: a non-ASCII risky path under a
+  Windows code page or `LC_ALL=C` crashed the guard and refused every commit (leanrel review, High). The guard reads
+  `commit` only as git's subcommand (`git show HEAD:commit-style.md` passes), reads a single-quoted `risky_paths`, and
+  its refusal names the `scripts/review.sh` round for a hook or gate change. `test_guard_risky_review` joins the
+  locale matrix.
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
   output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after
