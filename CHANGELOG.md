@@ -118,6 +118,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   keep `promptCacheTtl: 1h`. Expected: most of leeway's $90 unused one-hour premium was the
   kit's old `subagentPromptCacheTtl: 1h` (in the overlay 10-13 to 10-18, gone in v0.12); this
   takes the rest, about Keel's $4 sub-agent share plus the workers' sub-agents.
+- L17 (leeway field report 5): `spawn_worker.sh NAME FILE ... --resume ID` on the bg host takes
+  over a session stuck at a usage limit (row `blocked`) or left by a gone daemon (`claude logs`
+  finds no job): `claude stop ID` (best effort), then the resume in place, where it said "still
+  runs: close it first" and `close_worker.sh` removed the worktree. A running session still
+  refuses. `watch_workers.sh`'s LIMIT line names that resume for a bg worker (SendMessage cannot
+  reach one) and, once the reset time has passed, says "reset passed: resume now".
 
 ## v0.13 — 2026-10-23
 

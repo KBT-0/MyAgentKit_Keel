@@ -2284,6 +2284,8 @@ rows = json.load(open(path)) if os.path.exists(path) else []
 def save():
     with open(path, 'w') as f:
         json.dump(rows, f)
+gone_path = os.path.join(state, 'gone')
+gone = open(gone_path).read().split() if os.path.exists(gone_path) else []
 if args == ['--help']:
     print(os.environ.get('SPAWN_HELP', '  --bg, --background                    Start the session in the background and'), flush=True)
     if os.environ.get('SPAWN_HELP_HANGS'):
@@ -2297,6 +2299,12 @@ elif args[:1] == ['agents']:
         rows = [dict(r, pid=None, state='done') for r in rows]
         save()
     print(json.dumps(rows))
+elif args[:1] == ['logs']:
+    # A session whose daemon is gone (L17: its control socket missing): logs and stop find no job.
+    print('Couldn\'t read logs for %s \u2014 job not found' % args[1] if args[1] in gone else 'its last screen')
+elif args[:1] == ['stop'] and args[1] in gone:
+    print('No job matching %s' % args[1], file=sys.stderr)
+    sys.exit(1)
 elif args[:1] in (['stop'], ['rm']):
     rows = [dict(r, pid=None, state='done') if r['id'] == args[1] else r for r in rows
             if args[0] == 'stop' or r['id'] != args[1]]
@@ -2313,6 +2321,8 @@ elif '--bg' in args:
         sys.exit(0)
     short = args[args.index('--resume') + 1][:8] if '--resume' in args else '1a2b3c4d'
     short = 'feedbeef' if os.environ.get('SPAWN_COPY') else short
+    if os.path.exists(gone_path):
+        os.remove(gone_path)  # a launch starts a new daemon
     rows = [r for r in rows if r['id'] != short] + [{'id': short, 'sessionId': short + '-5137-4293-88d5-c4339d1ce56c',
             'pid': 4242, 'state': 'working', 'kind': 'background', 'cwd': os.getcwd()}]
     save()
@@ -2658,6 +2668,48 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertIn('no full session id', result.stderr)
         self.assertFalse((self.state / 'launch.json').exists())
 
+    def test_a_resume_stops_a_session_blocked_at_its_usage_limit_and_resumes_it_in_place(self):
+        # L17: after the reset a limit-stopped bg worker's row stays blocked; the resume said "still
+        # runs: close it first", and close_worker.sh removes the worktree. A plain spawn of the name
+        # still refuses, naming the resume.
+        self.resumable(row={'pid': 99, 'state': 'blocked'})
+        result = self.spawn()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('usage limit', result.stderr)
+        self.assertIn('--resume', result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists())
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertLess(calls.index(['stop', '1a2b3c4d']), next(i for i, c in enumerate(calls) if '--bg' in c))
+        self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+        self.ended()
+
+    def test_a_resume_takes_over_a_session_whose_daemon_is_gone_but_never_a_running_one(self):
+        # Keel lead note: `claude stop` said "No job matching", `claude logs` found no job, and the
+        # row still read blocked (or working with no pid): the resume goes on past the failed stop.
+        for row in ({'pid': None, 'state': 'blocked'}, {'pid': None, 'state': 'working'}):
+            with self.subTest(row=row):
+                shutil.rmtree(self.workers, ignore_errors=True)
+                for f in ('launch.json', 'claude.log', 'agents-count'):
+                    (self.state / f).unlink(missing_ok=True)
+                self.resumable(row=row)
+                (self.state / 'gone').write_text('1a2b3c4d\n')
+                result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE,
+                                    SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
+                self.ended()
+        # A session starting or working with its daemon there is not taken over.
+        for row in ({'pid': None, 'state': 'working'}, {'pid': 99, 'state': 'working'}):
+            with self.subTest(row=row):
+                (self.state / 'launch.json').unlink(missing_ok=True)
+                (self.state / 'rows.json').write_text(json.dumps([dict({'id': '1a2b3c4d'}, **row)]))
+                result = self.spawn('--resume', '1a2b3c4d')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('still runs', result.stderr)
+                self.assertFalse((self.state / 'launch.json').exists())
+
     def test_a_session_still_starting_counts_as_running(self):
         # The first seconds of a session list it working with no pid (spike, check 4).
         self.workers.mkdir(parents=True)
@@ -2733,8 +2785,10 @@ class BackgroundHostTests(unittest.TestCase):
         stopped = run()
         self.assertEqual((stopped.returncode, stopped.stderr), (0, ''), stopped.stdout)
         self.assertEqual(stopped.stdout, "watch_workers: LIMIT: w1, its session stopped on a usage limit (You've hit "
-                         "your session limit \u00b7 resets 8:40pm (Europe/Istanbul)): resume it after the reset "
-                         "(SendMessage 'limit reset, continue', or spawn_worker.sh --resume)\n")
+                         "your session limit \u00b7 resets 8:40pm (Europe/Istanbul)): resume it after the reset: "
+                         "scripts/spawn_worker.sh w1 ANSWER_FILE <its spawn options> --resume "
+                         "1a2b3c4d-5137-4293-88d5-c4339d1ce56c (ANSWER_FILE says 'limit reset, continue'; the resume "
+                         "stops the blocked session first)\n")
 
     def test_the_bg_host_needs_no_tmux_script(self):
         spaced = self.tmp / 'a b'
