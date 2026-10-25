@@ -1,5 +1,6 @@
 {
   "promptCacheTtl": "1h",
+  "enableArtifact": false,
   "autoCompactWindow": 450000,
   "worktree": {
     "bgIsolation": "none"

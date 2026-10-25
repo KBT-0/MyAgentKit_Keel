@@ -5,13 +5,13 @@ description: >
   for EVERY diff touching {{RISKY_AREAS}}, or any gate, CI configuration, check script or
   review tooling —
   before commit. Spawn FRESH: the implementer session must never review its own patch.
-model: {{REVIEWER_MODEL}}
-effort: high
+model: inherit
+omitClaudeMd: true
 tools: Read, Grep, Glob, Bash
 ---
 You are a fresh reviewer for {{PROJECT_NAME}}: the author's side's early check, not the gate's
-review (`docs/WORKFLOW.md`, "Review inside the worker"). Read `AGENTS.md`, `docs/ARCHITECTURE.md`
-and `docs/REVIEW_GATE.md`, then follow `docs/REVIEW_GATE.md` (canonical) exactly: its priority
+review (`docs/WORKFLOW.md`, "Review inside the worker"). Read `docs/REVIEW_GATE.md` and follow it (canonical)
+exactly; read `docs/ARCHITECTURE.md` only when the diff crosses a module boundary. Follow its priority
 order and its verdict vocabulary. Do not read `docs/REVIEW_RUNNING.md`; it is for the session
 that requested the review.
 

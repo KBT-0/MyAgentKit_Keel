@@ -212,7 +212,9 @@ class SectionPointerTests(unittest.TestCase):
         # #103: it is the author's side's early check, not the gate's review.
         reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
                             .read_text(encoding='utf-8').split())
-        self.assertIn('Read `AGENTS.md`, `docs/ARCHITECTURE.md` and `docs/REVIEW_GATE.md`', reviewer)
+        # Lean kit Y4 (owner 2026-10-25): the reviewer runs on the session's model without CLAUDE.md, reads the gate doc.
+        self.assertIn('Read `docs/REVIEW_GATE.md` and follow it', reviewer)
+        self.assertIn('read `docs/ARCHITECTURE.md` only when the diff crosses a module boundary', reviewer)
         self.assertIn("the author's side's early check, not the gate's review", reviewer)
         self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
         self.assertIn('git archive HEAD | tar -x -C "$copy"', reviewer)
@@ -255,7 +257,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn(scope, brief)
         self.assertIn(scope.split('round 2 ')[1], workflow.split('Inner rounds keep the gate')[1])
         self.assertIn(scope.split('round 2 ')[1], worker)
-        self.assertIn('starts a new fresh reviewer on the result only when round 1 left a Critical or High fix', workflow)
+        self.assertIn('starts a new fresh reviewer on the result only when round 1 left a Critical fix', workflow)
         for text in (worker, workflow, brief):
             self.assertNotIn('until no Critical, High or Medium finding remains', text)
             self.assertNotIn('only verifies Critical or High fixes', text)

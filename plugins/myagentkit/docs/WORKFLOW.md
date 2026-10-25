@@ -1564,7 +1564,7 @@ Why: docs/WORKFLOW_RATIONALE.md, "Design before code".
   code.claude.com/docs/en/sub-agents, "Let subagents spawn their own subagents"). It starts
   a fresh diff reviewer as a sub-agent (the Claude Code overlay's
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
-  result only when round 1 left a Critical or High fix to verify (the cap below). This inner pass is the author's side's early check; the gate's review in a fresh
+  result only when round 1 left a Critical fix to verify (the cap below). This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
   to the author's side ("Worker cost", rule 2).
 - Each inner round's prompt carries the earlier inner rounds' findings and the worker's
@@ -1572,7 +1572,7 @@ Why: docs/WORKFLOW_RATIONALE.md, "Design before code".
 - The reviewer is a new sub-agent in every inner round, because the author never reviews its
   own change.
 - Inner rounds keep the gate's cap (`docs/REVIEW_GATE.md`, "Rounds"): at most two; round 2 runs
-  only when round 1 left a Critical or High fix, confirms every finding the dispositions claim
+  only when round 1 left a Critical fix, confirms every finding the dispositions claim
   fixed, a Medium included, and reports new Critical or High only. A Medium is fixed when a test
   verifies it, else named in the report; a Low goes to the report; what remains after round 2
   goes to the lead. A fresh reviewer nearly always finds another Medium, so "until clean"
