@@ -60,6 +60,22 @@ class AutopilotReportTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('working_mode.py autopilot', result.stderr)
 
+    def test_a_linked_worktree_reads_the_main_checkouts_record(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name) / 'main'
+        self.project.mkdir()
+        since = datetime.now().astimezone().replace(microsecond=0) - timedelta(hours=1)
+        self.git('init', '-q', '-b', 'main')
+        self.git('commit', '-q', '--allow-empty', '-m', 'night work')
+        self.git('worktree', 'add', '-q', str(Path(tmp.name) / 'wt'))
+        (self.project / '.myagentkit').mkdir()
+        (self.project / '.myagentkit/presence').write_text('away %s\n' % since.isoformat(), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(Path(tmp.name) / 'wt')],
+                                capture_output=True, text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('night work', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

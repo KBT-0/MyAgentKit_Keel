@@ -17,10 +17,13 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from working_mode import presence_record  # noqa: E402
+
 
 def stamps(project):
-    """(since, until or None) from .myagentkit/presence."""
-    words = (project / '.myagentkit/presence').read_text(encoding='utf-8').split()
+    """(since, until or None) from .myagentkit/presence, the main checkout's record in a linked worktree."""
+    words = presence_record(project).read_text(encoding='utf-8').split()
     if len(words) < 2:
         raise ValueError('no autopilot stamp in .myagentkit/presence; working_mode.py autopilot writes it')
     return words[1], (words[2] if len(words) > 2 else None)
