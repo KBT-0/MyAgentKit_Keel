@@ -317,7 +317,7 @@ def kit_rules(project):
             workflow = path.read_text(encoding='utf-8')
             rules = autopilot_rules(modes_section(workflow)) if '### Working modes, by name' in workflow else None
             if rules is not None:
-                return path, rules[0].replace('{{OWNER_NAME}}', 'the owner')
+                return path, re.sub(r'\{\{OWNER_NAME\}\}', 'the owner', rules[0])
     return None, None
 
 
@@ -328,7 +328,7 @@ def presence_record(project):
         try:
             # Made absolute here, not with --path-format (Git 2.31+): relative output is relative to PROJECT.
             common = subprocess.run(['git', '-C', str(project), 'rev-parse', '--git-common-dir'], capture_output=True,
-                                    text=True, timeout=15, check=True).stdout.strip()
+                                    text=True, encoding='utf-8', timeout=15, check=True).stdout.strip()
             common = (project / common).resolve() if common else None
             if common is not None and common.name == '.git' and common.is_dir():
                 return checked(common.parent, '.myagentkit/presence')

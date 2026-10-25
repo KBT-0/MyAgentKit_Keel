@@ -68,7 +68,7 @@ def main_checkout(root: Path):
     try:
         # Made absolute here, not with --path-format (Git 2.31+): relative output is relative to ROOT.
         common = subprocess.run(['git', '-C', str(root), 'rev-parse', '--git-common-dir'],
-                                capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+                                capture_output=True, text=True, encoding='utf-8', timeout=5, check=True).stdout.strip()
         common = (root / common).resolve() if common else None
     except (OSError, subprocess.SubprocessError):
         return None
