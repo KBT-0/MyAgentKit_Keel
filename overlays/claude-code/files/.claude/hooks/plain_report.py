@@ -25,6 +25,14 @@ question in the report; otherwise it says what to do in either case, since an ow
 without that record is not visible to a hook. This check needs no commit-msg grammar: a
 missing one turns off only the label check.
 
+It also bounces a final message with no fenced block that names the hand-off when the turn
+wrote a hand-off file (a Write or Edit of a file whose name holds "handoff" since the owner's
+last prompt, read from the transcript's tail): the owner opens the next session and needs the
+exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The trigger is that write, not the
+message's wording, which no pattern reads reliably. Not under the autopilot switch: nobody
+opens a session then. The hook runs after the owner has read the message, so the prompt
+arrives as one more short message; the rule text asks for it in the first one.
+
 Once per turn: `stop_hook_active` is true when the turn already continued because of a stop
 hook, and the hook steps aside (Claude Code also caps consecutive blocks at eight). A worker
 session started by `scripts/spawn_worker.sh` (MYAGENTKIT_ROLE=worker) writes for the lead and
@@ -69,21 +77,65 @@ NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen question
                               r'|\baçık (?:bir )?soru(?!n)\w*\W*(?:yok|kalmadı)', re.I)
 
 
-def without_code(text: str) -> str:
-    """Drop fences closed by the same character and at least the opening length."""
-    lines, opener = [], None
+HANDOFF = re.compile(r'hand-?off', re.I)
+RULE_DOCS = {'HANDOFF.md', 'HANDOFF_KIT.md'}  # the kit's own rule docs: editing them hands nothing off
+# shortcut: only the transcript's last 4 MB is read; a longer turn misses its hand-off write (no bounce), widen if seen.
+TAIL = 4 * 1024 * 1024
+
+
+def split_fences(text: str) -> tuple[str, str]:
+    """Text outside and inside fences closed by the same character and at least the opening length."""
+    outside, inside, opener = [], [], None
     for line in text.splitlines(keepends=True):
-        match = FENCE.fullmatch(line.rstrip('\r\n'))
+        bare = line.rstrip('\r\n')
         if opener is None:
+            match = FENCE.fullmatch(bare)
             if match:
                 opener = match[1]
-                lines.append(' ')
+                outside.append(' ')
             else:
-                lines.append(line)
-        elif re.fullmatch(r'[ \t>]*' + re.escape(opener[0]) + '{' + str(len(opener)) + r',}[ \t]*',
-                          line.rstrip('\r\n')):
+                outside.append(line)
+        elif re.fullmatch(r'[ \t>]*' + re.escape(opener[0]) + '{' + str(len(opener)) + r',}[ \t]*', bare):
             opener = None
-    return SPAN.sub(' ', ''.join(lines))
+        else:
+            inside.append(line)
+    return ''.join(outside), ''.join(inside)
+
+
+def without_code(text: str) -> str:
+    return SPAN.sub(' ', split_fences(text)[0])
+
+
+def wrote_handoff(transcript) -> bool:
+    """A Write or Edit of a file named *handoff* since the owner's last prompt, from the transcript's tail."""
+    try:
+        with open(transcript, 'rb') as file:
+            file.seek(max(0, os.fstat(file.fileno()).st_size - TAIL))
+            lines = file.read().splitlines()
+    except (OSError, TypeError, ValueError):
+        return False
+    for raw in reversed(lines):
+        try:
+            record = json.loads(raw)
+            content = record['message']['content']
+        except (ValueError, KeyError, TypeError):
+            continue
+        blocks = content if isinstance(content, list) else []
+        if record.get('type') == 'user' and not any(isinstance(b, dict) and b.get('type') == 'tool_result'
+                                                     for b in blocks):
+            return False  # the owner's prompt: the turn starts here
+        for block in blocks:
+            if isinstance(block, dict) and block.get('type') == 'tool_use' \
+                    and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
+                    and HANDOFF.search(name := Path(str((block.get('input') or {}).get('file_path', ''))).name) \
+                    and name not in RULE_DOCS:
+                return True
+    return False
+
+
+def handoff_without_prompt(text: str, transcript) -> bool:
+    """This turn wrote a hand-off file, and no fenced block in the final message names it."""
+    return not HANDOFF.search(split_fences(text)[1]) and wrote_handoff(transcript)
 
 
 def known_labels() -> set[str]:
@@ -212,6 +264,12 @@ def main() -> None:
                     'issue and say so in one line without a question mark. The owner has already read the '
                     'message: do not send it again (docs/COMMUNICATION.md, "Questions and approvals"; '
                     'core/docs/ in the kit).')
+    if not away() and handoff_without_prompt(text, data.get('transcript_path')):
+        said.append('BLOCKED: this turn wrote a hand-off file, and the message gives the owner no opening prompt. The owner '
+                    'has already read the message: do not send it again. Send one short line and a fenced code block '
+                    'with the exact text the owner pastes into the new session, in the chat language (the hand-off '
+                    'file to read and "go on"), and the model to open it on (full model id), and close every '
+                    'hand-off that way (docs/COMMUNICATION.md, "Handoff"; core/docs/ in the kit).')
     try:
         found = bare_labels(text)
     except Exception:  # noqa: BLE001 - no commit-msg grammar: only the label check is off

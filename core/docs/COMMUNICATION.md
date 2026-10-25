@@ -141,7 +141,11 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
 
 Two layers, in this order (`docs/HANDOFF.md`, "Owner summary"): a few lines for the owner
 in the chat language, then the technical brief for the next agent. The owner's layer
-carries no bare labels.
+carries no bare labels. The closing message that says the hand-off is ready ends with the
+opening prompt in a fenced code block: the exact text the owner pastes into the new session
+(the hand-off file to read and "go on", in the chat language), and the model to open it on
+(full model id). "The hand-off is ready" alone leaves the owner to compose it; the Claude Code
+overlay's `plain_report.py` Stop hook bounces that message once.
 
 ## Workers
 

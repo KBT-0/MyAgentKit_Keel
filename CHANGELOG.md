@@ -129,6 +129,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - Presence across checkouts (leeway L12, L13): one `.myagentkit/presence` per repository, the main checkout's: a linked worktree reads it and its `autopilot`/`present` switch writes it (also on Git before 2.31), and where it differs from the worktree's STATE.md Owner line it wins with a one-line note; a clone of a commit made while away (the `**Owner:** away` line, no record) shows `Owner: away` with a one-line note instead of exit 1, and the hooks follow that line until a switch records the presence there.
 - While away, a worker's context band line no longer tells it to update `docs/STATE.md` (L14); on POSIX the suggestions ledger lock fails open at once on a read-only folder instead of waiting 5 s (L15).
 - `review.sh` without `--reviewer` in solo runs the mode's own family (`family: codex` runs Codex, else Claude), whatever `DEFAULT_REVIEWER` says (L16, `docs/REVIEW_GATE.md`, "Invariant"); cross and saver keep `DEFAULT_REVIEWER`; a STATE.md without the mode line runs Claude (the kit runs on Claude alone). A Windows `\r\n` answer is read whole; a mode line the mode helper refuses, or a missing `scripts/working_mode.py`, stops with a `FAIL [review]:` line.
+- **A hand-off closes with the opening prompt** (`docs/COMMUNICATION.md`, "Handoff";
+  `AGENTS.md`, "A short yes to a proposed hand-off"): the message that says the hand-off is
+  ready ends with a fenced code block holding the exact text the owner pastes into the new
+  session, and the model to open it on. The `plain_report.py` Stop hook bounces once the final
+  message of a turn that wrote a hand-off file (a Write or Edit of a file named `*handoff*`,
+  read from the transcript) when no fenced block in it names the hand-off; the prompt then
+  follows as one short extra message. Not under the autopilot switch.
+- **ACTION** (`.claude/hooks/plain_report.py`, `AGENTS.md`, `docs/COMMUNICATION.md`,
+  project-owned): run `sync-kit.sh . --merge`; a project that never edited the hook takes the
+  kit's copy whole. Without the merge, add the kit's three sentences after "carries no bare
+  labels." in COMMUNICATION's "Handoff", and "end with the new session's opening prompt in a
+  code block (`docs/COMMUNICATION.md`, "Handoff")" before "and stop" in AGENTS.md's hand-off
+  sentence.
 
 ## v0.13 — 2026-10-23
 
