@@ -1,0 +1,32 @@
+name: Mod tests
+
+# The kit's Claude Code mod (plugin/): `claude plugin validate` and `claude plugin test`.
+# Separate from ci.yml so its job names and matrix stay as they are. The Claude Code version
+# is pinned to the one the kit tests with; it is the mod's minimum (CONTRIBUTING.md,
+# "The kit's Claude Code mod"). Raise it with a re-run of both commands.
+on:
+  push:
+    branches: [master]
+    paths: ['plugin/**', '.github/workflows/mod-tests.yml']
+  pull_request:
+    paths: ['plugin/**', '.github/workflows/mod-tests.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mod:
+    name: mod / validate + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm install -g @anthropic-ai/claude-code@2.1.310
+      - run: claude --version
+      - run: claude plugin validate plugin
+      # The docs say `plugin test` needs no login; this job's first run is the proof.
+      - run: claude plugin test plugin

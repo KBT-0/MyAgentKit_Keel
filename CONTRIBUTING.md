@@ -125,9 +125,13 @@ ones, so the kit check passing there proves part of the matrix only. Push the re
 then read the result instead of assuming it:
 
 ```sh
-gh run list --branch master --limit 1 --json databaseId,conclusion,headSha
-gh run view RUN_ID --json jobs -q '.jobs[] | "\(.name) \(.conclusion)"'    # all twelve: success
+gh run list --branch master --commit RELEASE_SHA --json databaseId,workflowName,conclusion
+gh run view RUN_ID --json jobs -q '.jobs[] | "\(.name) \(.conclusion)"'    # every job of the run: success
 ```
+
+The release commit starts two workflows, `Kit acceptance` and, because a release bumps
+`plugin/.claude-plugin/plugin.json`, `Mod tests`. The first command must list both with
+`success`; read the jobs of each run with the second.
 
 A red or cancelled job means the release is not out: fix the cause (`gh run view RUN_ID
 --log-failed`), push, and read the next run. v0.11 shipped with five jobs red and one cancelled
@@ -145,6 +149,22 @@ tmp=$(mktemp -d) && ./bootstrap.sh "$tmp" && cd "$tmp" && git init -q && git add
 
 A contribution that leaves the gate red, or leaves a gate that can no longer fail, is the
 one thing this kit cannot take.
+
+## The kit's Claude Code mod
+
+This is for the kit repo only (installed projects have no `plugin/`). The mod needs Claude Code
+2.1.310 or newer, the version `.github/workflows/mod-tests.yml` pins.
+
+- Every mod feature has a no-mod path; gates, guards, the done signal and rules never depend on a mod.
+- An observer hook fails open; a guard hook has `.catch` (`claude plugin validate` warns without it).
+- A band puts `next(e)` in its own tree, or the handlers after it never run.
+- After a Claude Code upgrade re-run `claude plugin validate plugin` and `claude plugin test plugin`.
+- Install warning: without managed settings or a Team/Enterprise login, another installed mod can answer
+  `tool.call` before the kit's PreToolUse hooks run, allow via `tool.check` past a deny or a hook block, or
+  change a sub-agent's model in `agent.spawn`.
+- Sources: https://code.claude.com/docs/en/permissions ("Precedence among rules, hooks, and mods"),
+  https://code.claude.com/docs/en/hooks (where settings hooks run in the order), https://code.claude.com/docs/en/sub-agents
+  (`agent.spawn` model), https://code.claude.com/docs/en/plugins (`plugin validate`, `plugin test`).
 
 ## Measured agent times
 
