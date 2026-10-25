@@ -877,5 +877,58 @@ class V012RoundTwoReviewTests(GuardCase):
         self.assertNotIn(b'an alias the hook cannot read', result.stderr)
 
 
+class V014FieldReportTests(GuardCase):
+    """leeway field reports (defect 3, L9): read-only commands refused as unreadable. Each
+    relaxation has a deny test beside it for the dangerous neighbour it must still refuse."""
+
+    def test_a_quoted_here_string_marker_is_data(self):
+        self.assertVerdict(["grep -c '^<<<<<<<' file; git diff --stat",
+                            "grep -rln '^<<<<<<<\\|^>>>>>>> kit' .; git status",
+                            'grep -c "^<<<<<<<" file && git diff --stat'], 0)
+
+    def test_an_unquoted_here_string_holding_git_is_still_unreadable(self):
+        self.assertVerdict([
+            "bash <<<'git clean -fd'", "grep -c '<<<' f; bash <<< 'git status'",
+            "ls # it's\ncat <<< 'git status' # it's", "echo $'\\'' ; cat <<< 'git status' ; echo '",
+            "echo \"$(bash <<< 'git status')\"", "grep -c '<<<' \"$(git status)\" <<< x",
+            "grep '<<X' f\nbash <<< 'git status'\nX",
+        ], 2)
+
+    def test_a_heredoc_body_for_a_file_is_data(self):
+        self.assertVerdict([
+            "cat > notes.md <<'EOF'\nrun git diff and look for <<<<<<< markers\ngit status\nEOF\ngit status",
+            "tee notes.sh <<'EOF' >/dev/null\ngit log \\\n  --oneline\nEOF\ngit status",
+        ], 0)
+
+    def test_a_heredoc_body_an_interpreter_or_shell_reads_is_still_judged(self):
+        self.assertVerdict([
+            "python3 - <<'EOF'\nsubprocess.run(\"bash <<< 'git status'\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nos.system(\"git log \\\n--oneline\")\nEOF",
+            "sh <<'EOF'\nbash <<< 'git status'\nEOF",
+            "sh <<'EOF'\ngit \\\nstatus\nEOF",
+        ], 2)
+
+    def test_awk_reading_git_output_through_a_pipe_is_data(self):
+        self.assertVerdict(["git status --short | awk '{print $2}'",
+                            "git log --format=%s | awk -F: -v n=1 '$1 ~ /fix/ {c++} END {print c+0}'"], 0)
+
+    def test_awk_that_runs_or_hides_its_program_is_still_unreadable(self):
+        self.assertVerdict([
+            "echo git reset --hard | awk '{system($0)}'", "git log | awk '{print | \"sh\"}'",
+            "git log | awk '{\"sh\" | getline}'", "git log | awk -f prog.awk", "git log | awk -f - x",
+            "p='{system($0)}'; echo git reset --hard | awk \"$p\"", "git log | awk --exec prog.awk",
+            "git log | xargs awk '{print}'", "git log | awk '@include \"x\"'", "git log | awk '{print}' | sh",
+        ], 2)
+
+    def test_a_single_quoted_decoy_elsewhere_does_not_make_awks_program_literal(self):
+        self.assertVerdict([
+            "echo '{$p($0)}'; p=system; echo git push --mirror | awk \"{$p(\"'$0)}'",
+            "p='$x'; git log | awk \"$x\"",
+        ], 2)
+
+    def test_a_crlf_heredoc_terminator_ends_the_body(self):
+        self.assertVerdict(["cat > n.md <<'EOF'\r\nx\r\nEOF\r\ngit stash drop"], 2)
+
+
 if __name__ == '__main__':
     unittest.main()
