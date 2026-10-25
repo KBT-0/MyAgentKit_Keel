@@ -21,7 +21,10 @@ decision 65). A lower tier's review
 of a higher tier's work is an extra opinion only, never the required review alone. One exception
 (owner, lean-kit decision Y4, 2026-10-25): a small risky diff (one task, under about 400 changed
 lines, not a release) takes the `diff-reviewer` agent on the session's tier, in its own fresh
-context, as its required review; a larger diff or a release keeps the rule above. Sources:
+context, as its required review, unless it touches a hook, a gate, a CI configuration or a check
+script: that diff takes one `scripts/review.sh` round, a fresh session whose evidence lands in
+`docs/reviews/` (owner, 2026-10-25). When round 1 left a Critical or High, round 2 is a fresh
+`diff-reviewer` on the fix, never a new label. A larger diff or a release keeps the rule above. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
 self-review was in the same session, not a fresh one (`docs/research/ai-review-workflows.md`,
 [1] and [25]); the tier order is the owner's choice (2026-10-19). This is the one place the

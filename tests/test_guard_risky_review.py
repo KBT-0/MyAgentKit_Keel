@@ -86,7 +86,8 @@ class RiskyReviewTests(unittest.TestCase):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
         for last in ('API Error: overloaded', 'placeholder', '', 'Verdict: Reject\n- High: x',
                      'Verdict: Reject\n\n- High: x\n\nAccept once the High is fixed.',
-                     'Verdict: Accept\n\n- High: src/money/round.py:1 rounds down. REPRODUCED'):
+                     'Verdict: Accept\n\n- High: src/money/round.py:1 rounds down. REPRODUCED',
+                     'Verdict: Accept\n\n1. High, REPRODUCED. x', 'Accept\nSeverity: Critical - x'):
             with self.subTest(last=last):
                 self.event('SubagentStart')
                 self.event('SubagentStop', last=last)

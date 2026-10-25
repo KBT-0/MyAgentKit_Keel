@@ -22,7 +22,7 @@ from guard_risky_review import changed, head, read_record, record_path  # noqa: 
 
 VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve)\b", re.I)
 HEADING = re.compile(r"\W*verdict\W*", re.I)
-BLOCKING = re.compile(r"^\W*(?:critical|high)\b", re.I | re.M)
+BLOCKING = re.compile(r"^\W*(?:\d+\W+)?(?:severity\W*)?(?:critical|high)\b", re.I | re.M)  # "1. High", "Severity: High"
 
 
 def accepted(message):
