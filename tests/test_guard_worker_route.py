@@ -30,6 +30,10 @@ class LongWaitRouteTests(unittest.TestCase):
             ('Agent', {'description': 'x', 'prompt': 'gh run watch 123, then report.'}),
             ('Agent', {'description': 'x', 'prompt': 'Run scripts/check.sh, then report.'}),
             ('Agent', {'subagent_type': 'fork', 'description': 'x', 'prompt': 'Wait for the review.sh round.'}),
+            # The kit writes identifiers in backticks; quoted job names are the same wait.
+            ('Agent', {'description': 'x', 'prompt': 'Fix them, then run `scripts/check.sh` and report.'}),
+            ('Agent', {'description': 'x', 'prompt': 'Push, then wait for `gh run` to finish.'}),
+            ('Agent', {'description': 'x', 'prompt': 'Run "scripts/check.sh" then report.'}),
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'), tool)
@@ -49,6 +53,7 @@ class LongWaitRouteTests(unittest.TestCase):
             {'subagent_type': 'diff-reviewer', 'description': 'Inner review round 2',
              'prompt': 'The author ran scripts/check.sh: PASS. Fix the review gate findings and commit.'},
             {'description': 'Review', 'prompt': 'Review the merge commit 1a2b3c.'},
+            {'description': 'Review', 'prompt': 'Review the  merge commit 1a2b3c.'},
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'))

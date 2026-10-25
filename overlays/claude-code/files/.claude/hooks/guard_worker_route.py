@@ -17,7 +17,8 @@ The reason for the choice is the lead's to tell the owner before the start; no h
 
 It also refuses a sub-agent, a fork included, whose description or prompt tells it to run or
 wait on a long job: a merge, `gh run watch`, or run/watch/wait for/wait on with a gate, CI, a
-pipeline, review.sh, check.sh or `gh run` among the next few words of the same line. Naming a
+pipeline, review.sh, check.sh or `gh run` among the next few words of the same line (backticks or
+quotes around the job do not hide it). Naming a
 job is not a wait: the kit's own task prompt (core/docs/HANDOFF.md, "Day-to-day task prompt")
 names the commit gate and CI, a reviewer reports that the author ran check.sh or reads "the
 merge commit"; none is refused. A sub-agent runs on the five-minute cache, so a wait past five
@@ -78,7 +79,9 @@ LONG_JOB = re.compile(
     r"\b(?:(?<!the )(?<!a )merg(?:e|es|ing)|gh[ \t]+run[ \t]+watch"
     r"|(?:run|runs|running|watch|watches|watching|wait(?:s|ing)?[ \t]+(?:for|on))[ \t]+"
     r"(?:[^\s.;:]+[ \t]+){0,3}?[\w./-]*?\b(?:gate|ci|pipeline|review\.sh|check\.sh|gh[ \t]+run))\b", re.I)
-jobs = sorted({m.group(0).lower() for m in LONG_JOB.finditer(text)})
+# Backticks and quotes dropped, blank runs made one space: "run `check.sh`" is the same wait.
+scan = re.sub(r"[ \t]+", " ", re.sub(r"[`\"']", "", text))
+jobs = sorted({m.group(0).lower() for m in LONG_JOB.finditer(scan)})
 if jobs and not re.search(r"^\s*No long wait:", text, re.M | re.I):
     print(
         "BLOCKED: this sub-agent names a long job (%s). A sub-agent runs on the five-minute cache, "
