@@ -126,7 +126,7 @@ reviewers() {
          NR > 1 && /^---/ { exit }
          NR > 1 && /^name:/ { if (tolower(substr($0, 6)) ~ /(^|[^a-z])review/) found = 1; exit }
          END { exit !found }' "$_f" &&
-      printf '%s\n' "  conflict: $_r (a second reviewer agent beside diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)"
+      printf '%s\n' "  reviewer: $_r (beside diff-reviewer.md: a duplicate of its whole-diff review keeps one of the two; a domain reviewer, scoped to one tree or concern, stays, its description naming that scope; the kit's docs/UPDATING.md)"
   done || :
   return 0
 }

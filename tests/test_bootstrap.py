@@ -203,7 +203,7 @@ class BootstrapTests(unittest.TestCase):
             result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
                                     capture_output=True, text=True, timeout=bootstrap_timeout(30))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  conflict: .claude/agents/gate-reviewer.md (a second reviewer agent', result.stdout)
+            self.assertIn('  reviewer: .claude/agents/gate-reviewer.md (beside diff-reviewer.md', result.stdout)
             self.assertEqual(own.read_text(), '---\nname: gate-reviewer\n---\nours\n')
             self.assertTrue((project / '.claude/agents/diff-reviewer.md').is_file())
 

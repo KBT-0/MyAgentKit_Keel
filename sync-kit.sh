@@ -69,6 +69,7 @@ target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 
 # The project's own reviewer agents beside the kit's diff-reviewer.md: two definitions for one
 # job leave the lead to pick either (#161). Listed for the owner, never moved or overwritten.
+# Which one it is the line says, not the script: a domain reviewer for one tree is no duplicate.
 # A reviewer is a .md under .claude/agents, subfolders too (Claude Code reads the folder
 # recursively and knows an agent by its front matter `name:` alone,
 # code.claude.com/docs/en/sub-agents), whose `name:` holds "review" as a word start (reviewer,
@@ -86,7 +87,7 @@ reviewers() {
          NR > 1 && /^---/ { exit }
          NR > 1 && /^name:/ { if (tolower(substr($0, 6)) ~ /(^|[^a-z])review/) found = 1; exit }
          END { exit !found }' "$_f" &&
-      printf '%s\n' "  conflict: $_r (a second reviewer agent beside diff-reviewer.md: keep one of the two, the kit's docs/UPDATING.md)"
+      printf '%s\n' "  reviewer: $_r (beside diff-reviewer.md: a duplicate of its whole-diff review keeps one of the two; a domain reviewer, scoped to one tree or concern, stays, its description naming that scope; the kit's docs/UPDATING.md)"
   done || :
   return 0
 }
@@ -149,16 +150,28 @@ put() {
 own_repo() {
   _prefix=$(git -C "$kit" rev-parse --show-prefix 2>/dev/null) && [ -z "$_prefix" ]
 }
-# owned_list — the project-owned files of the kit's HEAD under core/ (no KIT-OWNED header), one
-# path per line below core/, into $work_list. Read from the commit, never the working tree: a
-# kit checked out with autocrlf has CRLF docs, and against the LF blob of the base every line
-# read as changed (round 1).
+# owned_list — the project-owned files of the kit's HEAD under core/ and overlays/ (no
+# KIT-OWNED header), one kit path per line, into $work_list; owned_rel maps each to the project.
+# Read from the commit, never the working tree: a kit checked out with autocrlf has CRLF docs,
+# and against the LF blob of the base every line read as changed (round 1).
 owned_list() {
-  git -C "$kit" -c core.quotePath=false grep -lE '^(# |<!-- )KIT-OWNED:' HEAD -- core |
+  git -C "$kit" -c core.quotePath=false grep -lE '^(# |<!-- )KIT-OWNED:' HEAD -- core overlays |
     sed 's/^HEAD://' > "$copies.k"
-  git -C "$kit" -c core.quotePath=false ls-tree -r --name-only HEAD -- core > "$work_list" &&
-    grep -vxF -f "$copies.k" "$work_list" | sed 's|^core/||' > "$copies.k2" && mv -f "$copies.k2" "$work_list" ||
+  git -C "$kit" -c core.quotePath=false ls-tree -r --name-only HEAD -- core overlays > "$work_list" &&
+    { grep -vxF -f "$copies.k" "$work_list" || [ $? -eq 1 ]; } > "$copies.k2" && mv -f "$copies.k2" "$work_list" ||
     die "cannot list the kit's project-owned files"
+}
+# owned_rel KPATH — sets rel, the project's path of the kit path KPATH; false for an overlay the
+# project did not take ($taken) and an overlay's own README. Read core/ alone, --merge left
+# an overlay's project-owned hooks (context_size.py) on the old copy without a word (labricore C1).
+owned_rel() {
+  case "$1" in
+    core/*) rel=${1#core/} ;;
+    overlays/*/files/*)
+      rel=${1#overlays/*/files/} _o=${1#overlays/}
+      case "$taken" in *" ${_o%%/*} "*) ;; *) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
 }
 # value_names REL — the project values a script held in place before it was kit-owned (#94),
 # which scripts/gate_config.sh holds now: an alternation for awk, empty for any other file.
@@ -302,6 +315,7 @@ found=0
 conflict=0
 kit_conflict=0
 dirty=0
+held=0
 overlay_fix=''
 # Read the list line by line rather than through word splitting: a path containing a space
 # would otherwise be torn into two nonexistent paths and silently skipped.
@@ -321,12 +335,18 @@ relpath() {
   esac
 }
 # The overlays the project took: the presence of their files is the only record of it, so an
-# overlay with at least one of its kit-owned files in the project counts as taken.
+# overlay with at least one of its kit-owned files in the project counts as taken, and so does
+# one with a file of it below a folder of its own: the unity overlay holds no kit-owned file
+# and its project-owned ones were never merged (review High). A root file or one under .claude/
+# (a project's own CLAUDE.md, settings.json) is no record of an overlay.
+{ [ ! -d "$kit/overlays" ] || find "$kit/overlays" -type f; } > "$copies.o" || die "cannot list the kit's overlays"
 taken=" "
 while IFS= read -r src; do
   relpath "$src" && [ "$overlay" -eq 1 ] && [ -e "$target/$rel" ] || continue
+  case "$rel" in .claude/*) ;; */*) o=${src#"$kit/overlays/"}; taken="$taken${o%%/*} "; continue ;; esac
+  grep -qxF -- "$src" "$work_list" || continue
   o=${src#"$kit/overlays/"}; taken="$taken${o%%/*} "
-done < "$work_list"
+done < "$copies.o"
 while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
@@ -393,13 +413,15 @@ while IFS= read -r src; do
       dirty=1
       continue
     fi
+    : > "$copies.v"
+    adopted=0
     if [ -n "$adopt_base" ] && git -C "$kit" show "$adopt_base:$kpath" > "$copies.base" 2>/dev/null; then
       line2=$(sed -n 2p "$copies.base" | tr -d '\r')
-      : > "$copies.v"
       plain "$copies.base" "$names" "$line2" /dev/null > "$copies.b" &&
         plain "$target/$rel" "$names" "$line2" "$copies.v" > "$copies.p" ||
         die "cannot compare $rel with the kit's copy; version left at v$have"
       if cmp -s "$copies.b" "$copies.p"; then
+        adopted=1
         if [ -s "$copies.v" ]; then
           cat "$copies.v" >> "$copies.values" || die "cannot record the values of $rel; version left at v$have"
           printf '%s\n' "  adopted: $rel (unmodified copy; its values go to scripts/gate_config.sh)"
@@ -409,12 +431,21 @@ while IFS= read -r src; do
       else
         short=${adopt_base%"${adopt_base#???????}"}
         printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header and differs from the kit's copy at $short, so it holds the project's edits; see them: git -C '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")' show $short:$kpath | diff - $rel)"
-        conflict=1
-        kit_conflict=1
-        continue
       fi
     else
       printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
+      [ -z "$names" ] || plain "$target/$rel" "$names" "" "$copies.v" > /dev/null ||
+        die "cannot read the values of $rel; version left at v$have"
+    fi
+    if [ "$adopted" -eq 0 ]; then
+      # labricore C4: a conflicted check.sh or review.sh writes no gate_config.sh, so the values
+      # it holds are printed for the owner to carry over. Written, they would break the
+      # all-or-nothing stop, and an edited copy's values may be the edit itself.
+      if [ -s "$copies.v" ]; then
+        printf '%s\n' "          its values, for scripts/gate_config.sh:"
+        sed 's/^@name /# project name: /; s/^/            /' "$copies.v"
+        held=1
+      fi
       conflict=1
       kit_conflict=1
       continue
@@ -471,6 +502,16 @@ EOF
   edit) keeps no edit of yours: a value of check.sh or review.sh goes into
   scripts/gate_config.sh, a check of a reviewer's final report into scripts/project_validation.py
   (the kit's docs/UPDATING.md), anything else upstream (/myagentkit:kit-feedback).
+EOF
+  [ "$held" -eq 0 ] || cat <<EOF
+
+  No scripts/gate_config.sh is written while check.sh or review.sh is a conflict: the values
+  listed under its line go there. Once yours is moved aside, $(if [ -s "$copies.values" ]; then
+  echo "the rerun writes it from the adopted scripts' values; add the listed ones to it by hand."
+else
+  echo "the rerun adopts nothing, so copy
+  the kit's core/scripts/gate_config.sh to scripts/gate_config.sh and set them by hand."
+fi)
 EOF
   [ "$dirty" -eq 0 ] || cat <<EOF
 
@@ -635,8 +676,8 @@ else
 fi
 
 # --- tier 3, with --merge: the kit's changes merged into the project-owned files ---------
-# Each project-owned file of the kit's HEAD under core/ that the kit changed since the base
-# commit is merged with `git merge-file` (the project's copy, the kit's blob at the base, the
+# Each project-owned file of the kit's HEAD under core/, and under the overlays the project
+# took, that the kit changed since the base commit is merged with `git merge-file` (the project's copy, the kit's blob at the base, the
 # kit's blob at HEAD) and written whole with its mode; a file the kit did not change is not
 # opened. Both kit sides are blobs, never the kit's working tree (an autocrlf checkout made
 # every line differ), and a CRLF project copy is merged as LF and written back as CRLF.
@@ -647,20 +688,105 @@ fi
 # reads the kit's own changes in between as the project's. This run never records the
 # version: the merged files are read first (git diff), their conflicts resolved, then
 # --actions-applied records it.
+# learn KITFILE < PROJECTFILE — appends to $mdir/cands "NAME<tab>VALUE" for each placeholder of
+# the kit's text at the base whose line the project's copy holds filled: the same line around
+# it, found once, or for a placeholder alone on its line the project's lines between the same
+# neighbouring lines (a multi-line value, its lines joined by \037).
+learn() {
+  awk -v cands="$mdir/cands" '
+    function one(name, v) { if (v != "" && v !~ /[{][{]|[}][}]/) print name "\t" v >> cands }
+    FILENAME == ARGV[1] { b[++nb] = $0; next }
+    { p[++np] = $0 }
+    END {
+      for (i = 1; i <= nb; i++) {
+        l = b[i]
+        if (!match(l, /[{][{][A-Z0-9_]+[}][}]/)) continue
+        name = substr(l, RSTART + 2, RLENGTH - 4); pre = substr(l, 1, RSTART - 1); suf = substr(l, RSTART + RLENGTH)
+        if (index(suf, "{{")) continue
+        hit = 0
+        if (pre suf == "") {
+          for (a = i - 1; a > 0 && b[a] ~ /^[ \t]*$/; a--) ;
+          for (z = i + 1; z <= nb && b[z] ~ /^[ \t]*$/; z++) ;
+          if (a < 1 || z > nb || index(b[a] b[z], "{{")) continue
+          for (j = 1; j <= np; j++) if (p[j] == b[a]) { hit++; at = j }
+          if (hit != 1) continue
+          for (k = at + 1; k <= np && p[k] != b[z]; k++) ;
+          if (k > np) continue
+          for (s = at + 1; s < k && p[s] ~ /^[ \t]*$/; s++) ;
+          for (e = k - 1; e >= s && p[e] ~ /^[ \t]*$/; e--) ;
+          v = ""; for (k = s; k <= e; k++) v = v (k > s ? "\037" : "") p[k]
+          one(name, v); continue
+        }
+        # A short context ("{{OWNER_NAME}}:") matches lines that are no fill of it.
+        if (length(pre suf) < 8) continue
+        for (j = 1; j <= np; j++) {
+          q = p[j]
+          if (length(q) > length(pre suf) && substr(q, 1, length(pre)) == pre &&
+              substr(q, length(q) - length(suf) + 1) == suf) { hit++; v = substr(q, length(pre) + 1, length(q) - length(pre suf)) }
+        }
+        if (hit == 1) one(name, v)
+      }
+    }' "$1" -
+}
+# fill OURS < MERGED — MERGED with each placeholder the project's copy OURS does not hold
+# filled from $mdir/values (the value found most often); one left unfilled goes to $mdir/left
+# as "{{NAME}} line N (why)". A placeholder OURS still holds is the project's own, left to it,
+# and listed only on a line OURS does not hold (a new kit line, review Low).
+fill() {
+  : > "$mdir/left"
+  awk -v vals="$mdir/values" -v ours="$1" -v left="$mdir/left" '
+    function names(s) { while (match(s, /[{][{][A-Z0-9_]+[}][}]/)) { mine[substr(s, RSTART + 2, RLENGTH - 4)] = 1; s = substr(s, RSTART + RLENGTH) } }
+    BEGIN { while ((getline l < vals) > 0) { t = index(l, "\t"); val[substr(l, 1, t - 1)] = substr(l, t + 1) }
+            while ((getline l < ours) > 0) { names(l); had[l] = 1 } }
+    { s = $0; o = ""
+      if (s ~ /^[{][{][A-Z0-9_]+[}][}]$/) {
+        n = substr(s, 3, length(s) - 4)
+        if ((n in val) && !(n in mine)) { k = split(val[n], v, "\037"); for (i = 1; i <= k; i++) print v[i]; out += k; next }
+      }
+      while (match(s, /[{][{][A-Z0-9_]+[}][}]/)) {
+        n = substr(s, RSTART + 2, RLENGTH - 4)
+        if ((n in val) && !(n in mine) && !index(val[n], "\037")) r = val[n]
+        else {
+          r = substr(s, RSTART, RLENGTH)
+          why = (n in mine) ? "unfilled in the project\047s copy too" : (n in val) ? "its value spans lines" : "no value in the project\047s files"
+          if (!(n in mine) || !($0 in had)) printf "%s{{%s}} line %d (%s)", (c++ ? ", " : ""), n, out + 1, why > left
+        }
+        o = o substr(s, 1, RSTART - 1) r; s = substr(s, RSTART + RLENGTH)
+      }
+      print o s; out++ }'
+}
 if [ "$merge" -eq 1 ]; then
   owned_list
   cr=$(printf '\r')
+  # The placeholders the project filled at setup, read from its copies against the kit's at
+  # the base: merged kit text brought {{OWNER_NAME}} back into ten places (labricore C2, L5).
+  : > "$mdir/cands"
+  while IFS= read -r kp; do
+    owned_rel "$kp" && [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ] || continue
+    git -C "$kit" show "$base:$kp" 2>/dev/null | tr -d '\r' > "$mdir/base"
+    grep -q '{{[A-Z0-9_]*}}' "$mdir/base" || continue
+    tr -d '\r' < "$target/$rel" | learn "$mdir/base" || die "cannot read the placeholders of $rel"
+  done < "$work_list"
+  sort "$mdir/cands" | uniq -c | sort -k1,1nr -k2 |
+    awk '{ sub(/^ *[0-9]+ /, ""); n = substr($0, 1, index($0, "\t") - 1); if (!(n in seen)) { seen[n] = 1; print } }' > "$mdir/values" ||
+    die "cannot read the project's placeholder values"
+  # Every line of the kit's files at the base and now, and with the project's values filled in:
+  # what a conflict's project side holds beyond them is the project's own.
+  { git -C "$kit" -c grep.lineNumber=false -c grep.column=false grep -h -I -e '' "$base" -- core overlays &&
+    git -C "$kit" -c grep.lineNumber=false -c grep.column=false grep -h -I -e '' HEAD -- core overlays; } > "$mdir/kitraw" &&
+    fill /dev/null < "$mdir/kitraw" | cat "$mdir/kitraw" - > "$mdir/kitlines" || die "cannot read the kit's files"
   echo
   printf '%s\n' "PROJECT-OWNED files, the kit's changes since ${base%"${base#???????}"} merged in:"
   open=0
-  while IFS= read -r rel; do
+  while IFS= read -r kp; do
+    owned_rel "$kp" || continue
     # Written by tier 1 from the adopted scripts' values: the project's, with nothing to merge.
     [ "$rel" != scripts/gate_config.sh ] || [ -z "$config" ] || continue
     why=$(blocked "$rel")
     if [ -n "$why" ]; then
       printf '%s\n' "  skipped:  $rel ($why); merge it by hand"; open=1; continue
     fi
-    if ! git -C "$kit" show "$base:core/$rel" > "$mdir/base" 2>/dev/null; then
+    if ! git -C "$kit" show "$base:$kp" > "$mdir/base" 2>/dev/null; then
       if [ -e "$target/$rel" ]; then
         printf '%s\n' "  no base:  $rel (the kit had no such file at the base); merge it by hand"; open=1
       else
@@ -668,17 +794,29 @@ if [ "$merge" -eq 1 ]; then
       fi
       continue
     fi
-    git -C "$kit" show "HEAD:core/$rel" > "$mdir/now" || die "cannot read core/$rel in the kit"
-    # Removed by the project, or not changed by the kit: nothing to merge.
-    [ -e "$target/$rel" ] && ! cmp -s "$mdir/base" "$mdir/now" || continue
+    git -C "$kit" show "HEAD:$kp" > "$mdir/now" || die "cannot read $kp in the kit"
+    # Not changed by the kit: nothing to merge.
+    ! cmp -s "$mdir/base" "$mdir/now" || continue
+    if [ ! -e "$target/$rel" ]; then
+      printf '%s\n' "  absent:   $rel (not in the project; the kit changed it since the base, the changelog says whether to copy it)"
+      continue
+    fi
     if grep -q '^<<<<<<< ' "$target/$rel"; then
       printf '%s\n' "  unresolved: $rel (conflict markers of an earlier merge); resolve them first"; open=1; continue
+    fi
+    # The owner's file: an agent's write to it is refused, and conflict markers in it leave
+    # Claude Code with no hook (review Medium). The kit's change is shown, not merged.
+    if [ "$rel" = .claude/settings.json ]; then
+      printf '%s\n' "  by hand:  $rel (the owner's file, not merged; the kit's change: git -C '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")' diff ${base%"${base#???????}"} HEAD -- $kp)"
+      open=1; continue
     fi
     tr -d '\r' < "$target/$rel" > "$mdir/ours" || die "cannot read $rel"
     rc=0
     git merge-file -p -L project -L "kit base" -L "kit v$latest" \
       "$mdir/ours" "$mdir/base" "$mdir/now" > "$mdir/merged" || rc=$?
     [ "$rc" -lt 128 ] || die "could not merge $rel; it and the files after it are unchanged"
+    fill "$mdir/ours" < "$mdir/merged" > "$mdir/filled" && mv -f "$mdir/filled" "$mdir/merged" ||
+      die "could not fill the placeholders of $rel; it and the files after it are unchanged"
     # ponytail: CRLF is decided by the file's first line ending, as editors do; a mixed file comes back all CRLF.
     if head -n 1 "$target/$rel" | od -An -c | grep -q '\\r'; then
       sed "s/\$/$cr/" "$mdir/merged" > "$mdir/out" || die "cannot write $rel"
@@ -690,19 +828,34 @@ if [ "$merge" -eq 1 ]; then
       printf '%s\n' "  merged:   $rel"
     else
       open=1
-      printf '%s\n' "  conflict: $rel, lines $(awk '/^<<<<<<< /{s=NR} /^>>>>>>> /{printf "%s%d-%d", c, s, NR; c=", "}' "$target/$rel")"
+      # Per conflict, the project side's lines no kit file holds: the project's own content to
+      # keep, beside kit text it still has or moved (leeway L4).
+      printf '%s\n' "  conflict: $rel, lines $(awk '
+        function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+        function flush() { if (b) own = own (own != "" ? ", " : "") (b == e ? b : b "-" e); b = 0 }
+        FILENAME == ARGV[1] { if ((l = trim($0)) != "") kit[l] = 1; next }
+        /^<<<<<<< / { s = FNR; side = 1; own = ""; b = 0; next }
+        side && (/^=======\r?$/ || /^[|][|][|][|][|][|][|] /) { side = 0; next }
+        /^>>>>>>> / { flush(); printf "%s%d-%d", c, s, FNR; if (own != "") printf " (project-only %s)", own; c = ", "; side = 0; next }
+        side && (l = trim($0)) != "" && !(l in kit) { if (b && FNR == e + 1) e = FNR; else { flush(); b = e = FNR } }
+      ' "$mdir/kitlines" "$target/$rel")"
+    fi
+    if [ -s "$mdir/left" ]; then
+      printf '%s\n' "  placeholder: $rel: $(cat "$mdir/left"); fill by hand"
+      open=1
     fi
   done < "$work_list"
-  git -C "$kit" -c core.quotePath=false diff --name-only --no-renames --diff-filter=D "$base" HEAD -- core > "$work_list" ||
+  git -C "$kit" -c core.quotePath=false diff --name-only --no-renames --diff-filter=D "$base" HEAD -- core overlays > "$work_list" ||
     die "cannot list the files the kit removed"
   while IFS= read -r f; do
-    printf '%s\n' "  kit-removed: ${f#core/} (the kit deleted or renamed it since the base; the changelog says what to do)"
+    owned_rel "$f" || continue
+    printf '%s\n' "  kit-removed: $rel (the kit deleted or renamed it since the base; the changelog says what to do)"
   done < "$work_list"
   echo
   printf '%s\n' "sync-kit: version left at v$have. Read each merged file's diff (git diff) and account for"
   echo "          every removed line; resolve each conflict listed (read only those lines);"
   printf '%s\n' "          then rerun with --actions-applied, without --merge, to record v$latest."
-  [ "$open" -eq 0 ] || echo "          Files are listed above as conflict, unresolved, skipped or no base."
+  [ "$open" -eq 0 ] || echo "          Files are listed above as conflict, placeholder, unresolved, skipped, by hand or no base."
   exit 2
 fi
 
@@ -732,8 +885,8 @@ commit="" recorded=0
 if own_repo && commit=$(git -C "$kit" rev-parse -q --verify HEAD); then
   owned_list
   marked=""
-  while IFS= read -r rel; do
-    [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ] || continue
+  while IFS= read -r kp; do
+    owned_rel "$kp" && [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ] || continue
     if grep -qE '^(<<<<<<<|>>>>>>>)( |$)' "$target/$rel"; then marked="$marked
     $rel"; fi
   done < "$work_list"

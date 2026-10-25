@@ -52,12 +52,18 @@ copy at the kit commit the project came from (`docs/kit/.kit-commit`, else the r
 its version), and for `check.sh` and `review.sh` once their project values are set aside. Those
 values are written into a new `scripts/gate_config.sh` (one the project already set up is kept,
 and the values are printed to compare). An edited copy stays a conflict, and its line names
-the command that shows the edit.
+the command that shows the edit. An edited `check.sh` or `review.sh` writes no
+`scripts/gate_config.sh`: its values are printed under its line, for the owner to set in a copy
+of the kit's template once theirs is moved aside, or, when the other script was adopted, in the
+`scripts/gate_config.sh` the rerun writes from that script's values.
 
 An upgrade that adds a Claude Code agent definition (`.claude/agents/*.md`) next to one the
 project already has for the same job, such as its own reviewer beside `diff-reviewer.md`,
 keeps one of the two (the overlay's README says how). bootstrap.sh and sync-kit.sh list such
-a reviewer (front matter `name:` holding the word "review") as a conflict line; neither file is touched.
+a reviewer (front matter `name:` holding the word "review") on a `reviewer:` line; neither file
+is touched. A domain reviewer, scoped to one tree or one concern (a `pipeline-reviewer` for
+the pipeline folder), is no duplicate: it stays beside `diff-reviewer.md`, its description
+naming that scope so the lead routes to it.
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the gate's values (`scripts/gate_config.sh`),
@@ -150,10 +156,28 @@ exactly the habit the review gate exists to prevent.
 **Merging the project-owned files.** `sync-kit.sh . --merge` also merges the kit's changes
 into the project-owned files with `git merge-file`: the project's copy, the kit's copy at the
 base commit, the kit's copy now. A file the kit did not change since the base is not opened.
+The project-owned files of an overlay the project took (the Claude Code overlay's
+`.claude/hooks/context_size.py`, the Unity overlay's `unity/AGENTS.md`) are merged the same way,
+so a copy the project never edited takes the kit's whole. An overlay counts as taken when the
+project holds one of its kit-owned files, or one of its files below a folder of its own (not a
+root file such as `CLAUDE.md`, not one under `.claude/`). `.claude/settings.json` is the
+owner's file and is never merged: it is listed as `by hand:` with the `git diff` of the kit's
+change, since markers in it would leave Claude Code with no hook.
 A clean merge is written and listed as `merged:`. A conflicted one is written with its markers
 and listed with the line ranges of its conflicts, so a reader opens only those lines, never the
-whole file. Files the kit added since the base are listed as `kit-new:` for the changelog to
-decide. The base is the kit commit recorded in `docs/kit/.kit-commit`, which every sync that
+whole file. Beside each range, `project-only` names the lines of the project's side that no kit
+file holds (at the base or now, with the project's values filled in): the project's own
+content, to keep. The other lines of that side are kit text the project still has or the kit
+moved, so a hunk of 87 lines with `project-only` naming 3 is mostly kit text to take.
+Placeholders (`{{OWNER_NAME}}`) the merged kit text brings back are filled with the values the
+project's copies hold where the kit's text at the base had the placeholder: the same line
+around it, or for one alone on its line the project's lines between the same neighbours. A
+placeholder the project's own copy still holds is left as it is, and every one left is listed
+as `placeholder:` with its line and why (no value in the project's files, a value of several
+lines for a spot inside a line, or one the project's copy leaves unfilled too, listed on a line
+the project's copy does not hold), to fill by hand. Files the kit added since the
+base are listed as `kit-new:` for the changelog to decide, and a file the kit changed that the
+project does not have as `absent:`. The base is the kit commit recorded in `docs/kit/.kit-commit`, which every sync that
 records a version writes. A project synced before v0.12 has no record yet, so it passes
 `--base <commit>` once: the release commit that the changelog's upgrade section names. Use
 the commit the project really came from, because a later commit makes the kit's own changes in
