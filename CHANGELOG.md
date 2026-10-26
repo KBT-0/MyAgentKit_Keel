@@ -20,7 +20,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   argument prints its usage and exits 2; the sync's conflict hint names the two files a project step goes into.
   The side check's window keeps its tool calls under long owner messages (the oldest messages drop past 2400
   characters); a quoted verdict format sentence (`#ID: correct | wrong | partly`) is no longer read as a verdict.
-  A sync brings the hook, `claude plugin update myagentkit@myagentkit` the mod; nothing else to do.
+  `check.sh` runs `build_cache_inputs`, and `review.sh --self-test` runs `scripts/review_selftest.project.sh`,
+  without the git variables a hook exports (the C8 class). A sync brings the scripts and the hook,
+  `claude plugin update myagentkit@myagentkit` the mod.
+- **ACTION** (`.claude/hooks/after_compact.txt`, project-owned): after a compaction it named `docs/STATE.md` whole;
+  in yours, change "re-read docs/STATE.md," to "re-read docs/STATE.md's "Active work" and "Blocked" sections (never
+  the whole file)," (or copy the kit's file over one you never edited).
 - **Labricore field report 2026-10-26.** `doctor.sh` says MISSING when the reviewer's pin is still the template's
   empty `CLAUDE_MODEL=""` (or `CODEX_MODEL=""`) line and no `REVIEW_*_MODEL` is set, and an incomplete run ends with
   a line telling the agent to tell the owner the lines before any work. The review's "no model pinned" refusal

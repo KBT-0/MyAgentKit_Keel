@@ -424,7 +424,10 @@ class CheckGateTests(unittest.TestCase):
         hook = self.project / 'scripts/check.project.sh'
         hook.write_text(suite % 'project step')
         hook.chmod(0o755)
-        git('add', 'scripts/check.project.sh')
+        # Review 2fa1762e16f6 (Low): build_cache_inputs ran with the hook's GIT_DIR too.
+        with open(self.project / 'scripts/gate_config.sh', 'a', encoding='utf-8') as config:
+            config.write('build_cache_inputs=\'d=$(mktemp -d); git -C "$d" init -q; rm -rf "$d"; echo inputs\'\n')
+        git('add', 'scripts/check.project.sh', 'scripts/gate_config.sh')
         git('commit', '-q', '-m', 'project step')
         self.record_gated()
         hooks = self.tmp / 'hooks'
@@ -434,9 +437,10 @@ class CheckGateTests(unittest.TestCase):
         tree = self.tmp / 'tree'
         git('worktree', 'add', '-q', '-b', 'side', str(tree))
         (tree / 'code.c').write_text('int main(void) { return 1; }\n')
+        # check_kit's shield from the developer's global git config stays (#147; review d2ffa7231e4c).
         env = {k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_', 'GIT_'))
-               and k not in ('CDPATH', 'CI')}
-        env.update(GATE_TEST_BUILD=str(self.build), GATE_CACHE='off')
+               and k not in ('CDPATH', 'CI') or k in ('GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM')}
+        env.update(GATE_TEST_BUILD=str(self.build))
         run = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=' + str(hooks), *args], cwd=tree,
                                            env=env, capture_output=True, text=True)
         run('add', 'code.c')

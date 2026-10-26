@@ -150,7 +150,9 @@ if [ "${1:-}" = "--self-test" ]; then
     first=""; IFS= read -r first < "$hook" || true
     case $first in '#!'*) [ -x "$hook" ] || first="" ;; *) first="" ;; esac
     [ -n "$first" ] || die "scripts/review_selftest.project.sh cannot run: make #!/bin/sh its first line, then chmod +x it and git update-index --chmod=+x it"
-    "$hook" < /dev/null > "$test_log" 2>&1; hook_rc=$?
+    # Without the variables a git hook exports (check.sh's C8): its suites find their repository themselves.
+    # shellcheck disable=SC2046 # one name per line: split on purpose
+    ( unset $(git rev-parse --local-env-vars 2>/dev/null); exec "$hook" ) < /dev/null > "$test_log" 2>&1; hook_rc=$?
     cat "$test_log"
     [ "$hook_rc" -eq 0 ] || die "project self-tests failed (exit $hook_rc)"
     grep -qx 'PROJECT SELF-TEST: PASS' "$test_log" || die "project self-tests produced no completion evidence (PROJECT SELF-TEST: PASS)"

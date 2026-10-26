@@ -100,6 +100,25 @@ class ReviewUpgradeTests(unittest.TestCase):
                 self.assertIn(line, result.stdout)
                 self.assertIn('REVIEW SELF-TEST: PASS', result.stdout)
 
+    def test_project_self_tests_run_without_the_callers_git_variables(self):
+        # Review d2ffa7231e4c (pre-existing): a self-test started with GIT_DIR exported routed the
+        # project's suites at that repository, the class check.sh's C8 fix closed for the build.
+        with tempfile.TemporaryDirectory() as tmp:
+            scripts = Path(tmp) / 'scripts'
+            scripts.mkdir()
+            for name in ('review.sh', 'gate_config.sh'):
+                shutil.copyfile(ROOT / 'core/scripts' / name, scripts / name)
+            (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n')
+            hook = scripts / 'review_selftest.project.sh'
+            hook.write_text('#!/bin/sh\n[ -z "${GIT_DIR:-}${GIT_INDEX_FILE:-}" ] || { echo "leaked $GIT_DIR"; exit 1; }\n'
+                            'echo PROJECT SELF-TEST: PASS\n')
+            hook.chmod(0o755)
+            env = dict(os.environ, GIT_DIR=str(Path(tmp) / 'elsewhere.git'), GIT_INDEX_FILE=str(Path(tmp) / 'index'))
+            result = subprocess.run(['sh', str(scripts / 'review.sh'), '--self-test'], env=env,
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('PROJECT SELF-TEST: PASS', result.stdout)
+
     def test_a_dangling_project_self_test_link_fails_loud(self):
         # [ -e ] is false for a dangling symlink: the project's suites were skipped silently.
         with tempfile.TemporaryDirectory() as tmp:

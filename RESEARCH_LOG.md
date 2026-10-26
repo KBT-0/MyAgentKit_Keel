@@ -56,6 +56,19 @@ because the worker had no commit yet). Now a worker whose tip is its branch's cr
 and `--finished` leaves a worker while any live background session runs in its folder, records or not. Fable
 review v014-leeway8: Accept with Manual Checks, three Lows fixed. Sources: `.myagentkit/v014/leeway8-brief.md`.
 
+### 2026-10-24 — v0.14 gitenv: a commit hook's git variables never reach the project's commands
+
+Labricore field report 3, C8 (data loss). Git exports GIT_DIR and GIT_INDEX_FILE (and, for
+`git -c`, GIT_CONFIG_PARAMETERS) to a hook (git-scm.com/docs/githooks). In a linked worktree a
+suite's `git -C "$tmp" init` then re-initialised the worktree's repository instead of the temp
+folder: core.bare=true in the shared config and the suite's fixture committed on the branch.
+`check.sh` runs every project command (the build, `scripts/check.project.sh`, and since the
+follow-ups `build_cache_inputs`) without the names `git rev-parse --local-env-vars` lists, git's
+own list of repository-local variables, so git in those commands finds the repository from its
+working directory; `review.sh --self-test` runs `scripts/review_selftest.project.sh` the same way
+(reviews 2fa1762e16f6, d2ffa7231e4c). The kit's own scans keep the variables: they must read the
+commit's index. Sources: `.myagentkit/v014/labricore-field-report-3.md`, not in the repo.
+
 ### 2026-10-26 — v0.14 rtier: the author's own tier reviews by default
 
 Owner decision 2026-10-26 (handoff-49 Next 1). The v0.12 rule refused the author's tier below
@@ -69,6 +82,19 @@ named choice for a data-loss or gate risk, a release or security. A weaker tier 
 (`docs/research/claude-lead-codex.md`, findings 4 and 9). The exception, its one-round count and
 `top_tier_review` are replaced by one `own_tier_review` path. Fable review v014-rtier: one High
 (the Windows suite floor) and Lows, fixed. Sources: `.myagentkit/v014/rtier-brief.md`.
+
+### 2026-10-24 — v0.14 tokread: narrow reads, STATE.md by section, the brief once per session
+
+#307 cost audit over 14 days of transcripts (Keel and leeway). Whole-file reads were the largest
+avoidable input: `cat FILE` cost $69 in Keel and $41 in leeway, unranged Reads 3.2M and 2.9M
+tokens, spill files read back whole 0.85M and 0.6M. Leeway's 63k-character `docs/STATE.md` was
+read whole 207 times ($12), though a session needs only what is in flight and what is blocked;
+the lead re-read `docs/WORKFLOW.md` before every spawn (381 reads, $15 in Keel) for a block it
+needs once. So three rules: read narrow (grep or a range first; never a whole log, spill file or
+file over 300 lines), read STATE.md's "Active work" and "Blocked" sections, and read WORKFLOW's
+"The rules in brief" once per session and after a compaction. The compaction hook named STATE.md
+without its sections until the v0.14 follow-ups (review 320fdd776d2e). Sources: the #307 audit
+in `.myagentkit/v014/`, not in the repo; CHANGELOG "Narrow reads".
 
 ### 2026-10-24 — v0.14 gitguard: read the shell's quoting before refusing git in data
 

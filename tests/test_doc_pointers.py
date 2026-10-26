@@ -270,6 +270,9 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('"Worker cost", its first block "The rules in brief"', read('core/AGENTS.md'))
         self.assertIn('"Worker cost", its block "The rules in brief"',
                       read('overlays/claude-code/files/.claude/hooks/after_compact.txt'))
+        # Review 320fdd776d2e: the hook re-read STATE.md whole after every compaction.
+        self.assertIn('docs/STATE.md\'s "Active work" and "Blocked" sections',
+                      ' '.join(read('overlays/claude-code/files/.claude/hooks/after_compact.txt').split()))
 
     def test_plugin_commands_preapprove_only_the_commands_they_need(self):
         # A wildcard after git diff also approves --output=FILE, which overwrites a file.

@@ -984,6 +984,8 @@ fi
 # version wrote (an entry holds its gate's hash); fails when an input cannot be read. Python, not find(1): on native Windows a PATH can name Windows' own FIND.EXE first.
 build_cache_key() {
   inputs=$( ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+              # shellcheck disable=SC2086 # one name per line: split on purpose
+              unset $git_local_vars
               exec sh -c "$build_cache_inputs" ) 2>&1 ) || {
     printf '%s\n' "NOTE [build]: build_cache_inputs failed, so the build is not cached: $build_cache_inputs" >&2; return 1; }
   printf '%s\0%s\0%s' "$build_test_cmd" "${caller_lc_all_set:+set:$caller_lc_all}" "$inputs" |
