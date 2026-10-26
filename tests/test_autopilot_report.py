@@ -71,10 +71,15 @@ class AutopilotReportTests(unittest.TestCase):
         self.git('worktree', 'add', '-q', str(Path(tmp.name) / 'wt'))
         (self.project / '.myagentkit').mkdir()
         (self.project / '.myagentkit/presence').write_text('away %s\n' % since.isoformat(), encoding='utf-8')
+        # The workers' worktrees are the main checkout's (review f0563afda926, lead's Low), not the linked one's.
+        result_file = self.project / '.claude/worktrees/w1/RESULT-w1.md'
+        result_file.parent.mkdir(parents=True)
+        result_file.write_text('Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n', encoding='utf-8')
         result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(Path(tmp.name) / 'wt')],
                                 capture_output=True, text=True, encoding='utf-8', timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('night work', result.stdout)
+        self.assertIn('- .claude/worktrees/w1/RESULT-w1.md: Kind: completed', result.stdout)
 
 
 if __name__ == '__main__':

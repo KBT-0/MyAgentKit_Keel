@@ -6344,7 +6344,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 run = subprocess.run(
                     [sys.executable, '-B', str(ROOT / 'codex_bridge.py'), '--repo', str(self.repo),
                      '--model', 'fixture-codex-model', '--uncommitted'],
-                    env=dict(os.environ, REVIEW_CLI_BIN=str(self.build_fake_codex()), PROMPT_LOG=str(log),
+                    # Not the caller's REVIEW_* (a reviewer's shell exports REVIEW_DOCS): review f0563afda926.
+                    env=dict({k: v for k, v in os.environ.items() if not k.startswith('REVIEW_')},
+                             REVIEW_CLI_BIN=str(self.build_fake_codex()), PROMPT_LOG=str(log),
                              MYAGENTKIT_DELEGATION_DEPTH='0'), capture_output=True, text=True)
                 self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             prompt = log.read_text(encoding='utf-8')

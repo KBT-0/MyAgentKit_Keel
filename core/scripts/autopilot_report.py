@@ -42,14 +42,15 @@ def commits(project, since, until):
 
 def results(project, since, until):
     """The four header lines of each worker result written in the absence: in a worktree, or
-    moved under .myagentkit/workers/ by close_worker.sh."""
+    moved under .myagentkit/workers/ by close_worker.sh. Both are the main checkout's, as the record is."""
     start = datetime.fromisoformat(since).timestamp()
     end = datetime.fromisoformat(until).timestamp() if until else float('inf')
-    paths = [*project.glob('.claude/worktrees/*/RESULT-*.md'), *project.glob('.myagentkit/workers/RESULT-*.md')]
+    root = presence_record(project).parents[1]
+    paths = [*root.glob('.claude/worktrees/*/RESULT-*.md'), *root.glob('.myagentkit/workers/RESULT-*.md')]
     for path in sorted(paths):
         if start <= path.stat().st_mtime <= end:
             head = path.read_text(encoding='utf-8', errors='replace').splitlines()[:4]
-            yield '- ' + path.relative_to(project).as_posix() + ': ' + '; '.join(line.strip() for line in head)
+            yield '- ' + path.relative_to(root).as_posix() + ': ' + '; '.join(line.strip() for line in head)
 
 
 def cost(project):
