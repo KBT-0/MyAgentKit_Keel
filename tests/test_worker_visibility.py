@@ -5,7 +5,6 @@ No real terminal, no tmux server, no `claude`: tmux, the Windows Terminal launch
 never a file named *.exe: under WSL such a file is handed to Windows), osascript and uname
 are stubs on PATH. The panes are real captures (tests/fixtures/panes/, see the README there).
 """
-import datetime
 import importlib.util
 import json
 import os
@@ -683,8 +682,8 @@ def said(text):
 
 # The entry Claude Code 2.1.308 wrote when a worker hit its limit (the kitowned transcript, 2026-10-22, trimmed).
 LIMITED = dict(parentUuid='34828d51', isSidechain=False, type='assistant', uuid='8efce0ab',
-               # Written now: its reset (the next 8:40pm Istanbul) is still to come; PASSED's has come.
-               timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+               # No timestamp: its reset cannot be placed, so it never passes. "Now" at import crossed
+               # 8:40pm Istanbul during a run once a day (review 5abcce7efb20). PASSED's reset has come.
                message=dict(id='8f2278dd', model='<synthetic>', role='assistant', stop_reason='stop_sequence',
                             type='message', content=[dict(type='text', text="You've hit your session limit \u00b7 resets "
                                                                              "8:40pm (Europe/Istanbul)")]),
