@@ -359,7 +359,7 @@ class DoctorTests(unittest.TestCase):
                                for name in ('claude', 'claude.exe', 'claude.cmd'))]))
             # Nor does a reviewer or CLI this machine names: each case sets its own.
             for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN', 'REVIEW_CLAUDE_MODEL',
-                        'REVIEW_CODEX_MODEL'):
+                        'REVIEW_CODEX_MODEL', 'MYAGENTKIT_BACKEND'):
                 env.pop(key, None)
             git = lambda *a: subprocess.run(['git', *a], cwd=project, env=env, check=True)
             git('init', '-q')
@@ -386,6 +386,10 @@ class DoctorTests(unittest.TestCase):
             one_run = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
                                      env=dict(env, REVIEW_CLAUDE_MODEL='claude-opus-5-5'))
             self.assertEqual(one_run.returncode, 0, one_run.stdout + one_run.stderr)
+            # Fable v014-field3: a backend's file pins the Claude model, so a backend project is not red.
+            backend = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                     env=dict(env, MYAGENTKIT_BACKEND='glm'))
+            self.assertNotIn('no claude model pinned', backend.stdout)
             pins = project / 'scripts/gate_config.sh'
             pins.write_text(pins.read_text().replace('CODEX_MODEL=""', 'CODEX_MODEL="gpt-5.5"')
                             .replace('CLAUDE_MODEL=""', 'CLAUDE_MODEL="claude-opus-5-5"'))

@@ -7603,6 +7603,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         refused = self.run_wrapper('--uncommitted', '--check', REVIEW_DISPOSITIONS='- a.py:1 fixed: x', **env)
         self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
         self.assertIn('FAIL [review]: REVIEW_DISPOSITIONS', refused.stdout)
+        # Fable v014-field3: --check returned READY before the private-storage check the real run fails on.
+        ignore = (self.repo / '.gitignore').read_bytes()
+        (self.repo / '.gitignore').write_text('')
+        try:
+            exposed = self.run_wrapper('--uncommitted', '--check', **env)
+        finally:
+            (self.repo / '.gitignore').write_bytes(ignore)
+        self.assertNotEqual(exposed.returncode, 0, exposed.stdout + exposed.stderr)
+        self.assertIn('must be Git-ignored before review', exposed.stdout + exposed.stderr)
+        self.assertNotIn('READY [review]', exposed.stdout)
 
     def test_prior_rounds_returns_the_measured_fields_and_keeps_no_module_state(self):
         # BACKLOG item F (AGENTS.md: no static mutable state): MEASURED was a module dict that

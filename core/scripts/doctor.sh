@@ -230,7 +230,8 @@ reviewer=${REVIEW_REVIEWER:-$configured}
 # The template ships both pins empty (gate_config.sh says why); left so, the first review stops
 # with "no model pinned" (labricore 2026-10-26). Only the template's literal empty line counts.
 case "$reviewer" in
-  claude) pin_name=CLAUDE_MODEL pin_override=${REVIEW_CLAUDE_MODEL-} ;;
+  # A backend's file pins the Claude model (review_dispatch load_backend), so MYAGENTKIT_BACKEND counts as a pin.
+  claude) pin_name=CLAUDE_MODEL pin_override=${REVIEW_CLAUDE_MODEL-}${MYAGENTKIT_BACKEND-} ;;
   codex) pin_name=CODEX_MODEL pin_override=${REVIEW_CODEX_MODEL-} ;;
   *) pin_name='' pin_override='' ;;
 esac

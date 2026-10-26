@@ -56,7 +56,8 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
   and say so; one elsewhere is reported (owner 2026-10-25, ctlq: the kit left a found bug 4 of 4).
 - No push, PR or remote update without {{OWNER_NAME}}'s word in this session.
 - A git command line holding `--out`, `--ext`, `--textc` or `--sub`, a commit message included,
-  is denied (`.claude/settings.json`): write the message to a `mktemp` file (PowerShell: `New-TemporaryFile`; a fixed name like
+  is denied (`.claude/settings.json`): write the message, in a step of its own (the denial reads the whole
+  command line), to a `mktemp` file (PowerShell: `New-TemporaryFile`; a fixed name like
   `/tmp/msg.txt` is shared with parallel sessions) and `git commit -F FILE`.
 - **Commit or stash BEFORE any command that discards work**, after `git status`; a recursive
   delete first proves it owns the folder (`docs/WORKFLOW.md`, "Destructive commands").

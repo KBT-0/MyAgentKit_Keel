@@ -523,6 +523,9 @@ def main(argv=None):
     # Claude only: Codex has no turn limit to set. A Codex review that switches to Claude on a
     # used-up quota checks it then.
     turns = review_turns() if args.reviewer == "claude" or args.allow_fallback else None
+    # The main checkout's records, also for a round in a linked worktree (#293). Read-only, so --check runs it too.
+    store = claude_bridge.records_root(repo)
+    agent_usage.require_private_storage(store)
     if args.check:
         # labricore 2026-10-26: a misuse used to surface only after a full review's wait.
         number = re.match(r"This is review round (\d+)", carried)
@@ -530,9 +533,6 @@ def main(argv=None):
               % (names[args.reviewer], pins[args.reviewer], args.effort, scope, " " + ref if ref else "",
                  number.group(1) if number else 1), flush=True)
         return 0
-    # The main checkout's records, also for a round in a linked worktree (#293).
-    store = claude_bridge.records_root(repo)
-    agent_usage.require_private_storage(store)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id
     # An empty label is no label: kept as "", it was recorded as an id every later labelled
