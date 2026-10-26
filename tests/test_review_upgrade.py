@@ -100,6 +100,23 @@ class ReviewUpgradeTests(unittest.TestCase):
                 self.assertIn(line, result.stdout)
                 self.assertIn('REVIEW SELF-TEST: PASS', result.stdout)
 
+    def test_a_dangling_project_self_test_link_fails_loud(self):
+        # [ -e ] is false for a dangling symlink: the project's suites were skipped silently.
+        with tempfile.TemporaryDirectory() as tmp:
+            scripts = Path(tmp) / 'scripts'
+            scripts.mkdir()
+            for name in ('review.sh', 'gate_config.sh'):
+                shutil.copyfile(ROOT / 'core/scripts' / name, scripts / name)
+            (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n')
+            try:
+                os.symlink('gone.sh', scripts / 'review_selftest.project.sh')
+            except OSError:
+                self.skipTest('no symlinks here')
+            result = subprocess.run(['sh', str(scripts / 'review.sh'), '--self-test'],
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn('scripts/review_selftest.project.sh cannot run', result.stdout)
+
     def test_contract_suite_survives_project_owned_defaults(self):
         # Reproduce an installed project's Codex default and named pins, in its gate_config.sh
         # (#94). The shared fixture must isolate empty-pin/template cases without rewriting it.

@@ -398,6 +398,20 @@ class CheckGateTests(unittest.TestCase):
         code, out = gate(self.project, self.build, args=('--for-commit',))
         self.assertEqual(code, 0, out)
         self.assertNotIn('[project]', out)
+        # A dangling symlink is a step whose target is gone, not an absent step: it fails loud.
+        try:
+            os.symlink('gone.sh', hook)
+        except OSError:
+            return  # no symlinks here (Windows without developer mode)
+        code, out = gate(self.project, self.build, args=('--for-commit',))
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [project]: scripts/check.project.sh cannot run', out)
+
+    def test_an_extra_argument_is_a_usage_error(self):
+        # check.sh --for-commit stray ran the gate and dropped "stray" silently.
+        code, out = gate(self.project, self.build, args=('--for-commit', 'stray'))
+        self.assertEqual(code, 2, out)
+        self.assertIn('usage: check.sh', out)
 
     def test_a_commit_hooks_git_variables_never_reach_the_build_or_the_project_step(self):
         # Git exports GIT_DIR and GIT_INDEX_FILE to a hook; in a linked worktree a suite's

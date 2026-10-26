@@ -397,6 +397,7 @@ case "$lock_path" in
 esac
 
 for_commit="" for_merge="" no_build="" pass_note=""
+[ $# -le 1 ] || set -- --usage
 case "${1:-}" in
   "")           ;;
   --for-commit) for_commit=1 ;;
@@ -1182,7 +1183,8 @@ esac
 # commits, cached builds and --no-build included; its lines print as they are, a non-zero exit
 # fails the gate, and an absent file runs nothing. A file that cannot run (no #! line, which Git
 # for Windows never runs, or no execute bit) fails: a step that never runs enforces nothing.
-if [ -e scripts/check.project.sh ]; then
+# A dangling symlink is a step that cannot run, not an absent one: [ -L ] too.
+if [ -e scripts/check.project.sh ] || [ -L scripts/check.project.sh ]; then
   first=""; IFS= read -r first < scripts/check.project.sh || true
   case $first in
     '#!'*) [ -x scripts/check.project.sh ] || first="" ;;

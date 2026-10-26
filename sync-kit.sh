@@ -500,8 +500,10 @@ EOF
   .githooks/<same name>.project (executable, with a #! line) it keeps running, since the
   kit's hook runs it first with git's arguments. A kit script you edited (its line shows the
   edit) keeps no edit of yours: a value of check.sh or review.sh goes into
-  scripts/gate_config.sh, a check of a reviewer's final report into scripts/project_validation.py
-  (the kit's docs/UPDATING.md), anything else upstream (/myagentkit:kit-feedback).
+  scripts/gate_config.sh, a check of a reviewer's final report into scripts/project_validation.py,
+  a gate step into scripts/check.project.sh, a self-test suite into
+  scripts/review_selftest.project.sh (the kit's docs/UPDATING.md), anything else upstream
+  (/myagentkit:kit-feedback).
 EOF
   [ "$held" -eq 0 ] || cat <<EOF
 

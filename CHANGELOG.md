@@ -15,6 +15,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **Review follow-ups.** A dangling `scripts/check.project.sh` or `scripts/review_selftest.project.sh` symlink
+  fails the gate or the self-test as a step that cannot run (it was skipped silently); `check.sh` with an extra
+  argument prints its usage and exits 2; the sync's conflict hint names the two files a project step goes into.
+  No project action.
 - **Labricore field report 2026-10-26.** `doctor.sh` says MISSING when the reviewer's pin is still the template's
   empty `CLAUDE_MODEL=""` (or `CODEX_MODEL=""`) line and no `REVIEW_*_MODEL` is set, and an incomplete run ends with
   a line telling the agent to tell the owner the lines before any work. The review's "no model pinned" refusal

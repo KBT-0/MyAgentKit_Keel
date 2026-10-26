@@ -146,7 +146,7 @@ if [ "${1:-}" = "--self-test" ]; then
   # Its own file, not check.project.sh: the gate runs on every commit and must stay short.
   # Absent, nothing runs; present, it must run and print its own completion line.
   hook="$script_dir/review_selftest.project.sh"
-  if [ -e "$hook" ]; then
+  if [ -e "$hook" ] || [ -L "$hook" ]; then
     first=""; IFS= read -r first < "$hook" || true
     case $first in '#!'*) [ -x "$hook" ] || first="" ;; *) first="" ;; esac
     [ -n "$first" ] || die "scripts/review_selftest.project.sh cannot run: make #!/bin/sh its first line, then chmod +x it and git update-index --chmod=+x it"
