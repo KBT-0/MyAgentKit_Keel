@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-26 — v0.14 leeway8: a merge never closes a running worker with no commit of its own
+
+Backflow (leeway field report 6, item 8, HIGH). The post-merge hook ran `close_worker.sh --finished` on a running
+`claude --bg` worker: the merged lead branch's tip was the brief commit the worker had started from, so the
+worker's branch tip counted as merged, and close_worker saw no tmux session and unlocked the worktree (kept only
+because the worker had no commit yet). Now a worker whose tip is its branch's creation commit is no candidate,
+and `--finished` leaves a worker while any live background session runs in its folder, records or not. Fable
+review v014-leeway8: Accept with Manual Checks, three Lows fixed. Sources: `.myagentkit/v014/leeway8-brief.md`.
+
 ### 2026-10-26 — v0.14 rtier: the author's own tier reviews by default
 
 Owner decision 2026-10-26 (handoff-49 Next 1). The v0.12 rule refused the author's tier below

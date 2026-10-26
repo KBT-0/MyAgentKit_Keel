@@ -15,6 +15,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **A merge never closes a running worker that has no commit of its own** (leeway field report 6, item 8, HIGH,
+  2026-10-26: a merged lead branch's tip was the brief commit a running `claude --bg` worker started from, and the
+  post-merge hook closed it). `core/.githooks/post-merge` takes a kit worker as merged only when its branch tip
+  differs from the commit the branch was created at (its reflog's oldest entry; no reflog, no candidate), and
+  `close_worker.sh --finished` leaves a worker while any live Claude Code background session runs in its folder,
+  whatever its records say, or while that list cannot be read.
 - **ACTION** (`docs/REVIEW_GATE.md`, `docs/WORKFLOW.md`, `docs/REVIEW_RUNNING.md`, `docs/COMMUNICATION.md`,
   project-owned; owner 2026-10-26): run `sync-kit.sh . --merge`. The required review runs on the author's own tier
   in a fresh session by default (Opus reviews Opus); a stronger tier (Fable) when the lead names a data-loss or

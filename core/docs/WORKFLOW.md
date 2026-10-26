@@ -1321,7 +1321,8 @@ and Codex worker, so the lead passes `--result FILE` to `spawn_worker.sh` when t
 another result than `RESULT-NAME.md`; a progress result or a free-form file ends nothing. When
 the lead merges a kit worker's branch (`worktree-NAME`, whose worktree its spawn locked `kit
 worker NAME`) and that branch's tip is what the merge merged, not a base another worker built
-on, the post-merge hook runs `scripts/close_worker.sh --finished NAME`: it leaves a worker
+on nor the commit the worker started from (a worker with no commit of its own is never closed by
+a merge), the post-merge hook runs `scripts/close_worker.sh --finished NAME`: it leaves a worker
 whose session still runs without a `Kind: completed` result, marked
 `.myagentkit/workers/NAME.merged-running`, and a later merge closes it once it has finished. A refused close is printed, never a veto of the merge. The
 explicit `scripts/close_worker.sh NAME` stays for a session closed without a merge (work not

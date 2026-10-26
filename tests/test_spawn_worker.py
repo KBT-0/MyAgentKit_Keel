@@ -2368,14 +2368,14 @@ class BackgroundHostTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def spawn(self, *args, cwd=None, **extra):
+    def spawn(self, *args, cwd=None, timeout=60, **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))
                and k not in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')}
         env.update(PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                    KIT_WORKER_GRACE='0.2', KIT_PS=str(self.bin / 'ps-empty'), **LEAD_ENV)
         env.update(extra)
         return subprocess.run(['sh', str(SCRIPT), 'w1', str(self.brief), '--model', 'm', '--effort', 'high', *args],
-                              cwd=cwd or self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
+                              cwd=cwd or self.cwd, env=env, capture_output=True, text=True, timeout=timeout * SCALE)
 
     def calls(self):
         log = self.state / 'claude.log'
@@ -2627,7 +2627,7 @@ class BackgroundHostTests(unittest.TestCase):
         (self.cwd / 'QUESTION-w1.md').write_text('Which one?\n<!-- codex-worker: ready -->\n')
         (self.cwd / '.git/index.lock').write_text('')
         started = time.monotonic()
-        result = self.spawn('--resume', '1a2b3c4d')
+        result = self.spawn('--resume', '1a2b3c4d', timeout=150)  # the 100 s wait outlasts the default 60
         self.assertNotEqual(result.returncode, 0)
         # The script's clock is `date +%s` (whole seconds): its 100 s can be 99.x s of real time.
         self.assertGreaterEqual(time.monotonic() - started, 99)

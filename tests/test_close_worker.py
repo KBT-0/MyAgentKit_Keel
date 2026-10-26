@@ -221,7 +221,10 @@ class CloseWorkerTests(unittest.TestCase):
         stub(self.tmp / 'bin/tmux', TMUX, python=True, cmd=True)
         if NT:  # the tmux path of the script; windows() says MINGW again
             stub(self.tmp / 'bin/uname', '#!/bin/sh\necho Linux\n')
+        # No real `claude agents` list is read: the stub lists AGENTS_FILE's rows, none unless a test writes them.
+        stub(self.tmp / 'bin/claude', CLAUDE, python=True)
         self.env = dict(os.environ, PATH=str(self.tmp / 'bin') + os.pathsep + os.environ['PATH'],
+                        AGENTS_FILE=str(self.tmp / 'agents.json'),
                         CLOSE_STATE=str(self.tmp), CLEAN_WORKTREES_NOW=str(time.time() + 7200),
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', LC_ALL='C',
                         GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.invalid',
@@ -601,6 +604,27 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual(self.claude_calls(), [], out)
         self.assertTrue(path.is_dir(), out)
 
+    def test_a_merge_leaves_a_worker_whose_folder_runs_a_background_session_no_record_names(self):
+        # leeway 8 (2026-10-26): a `claude --bg` worker with no bg record was closed by a merge as
+        # if no session ran; a live row whose folder is the worktree's, by any name, keeps it.
+        path = self.worker('w1', session=False)
+        (self.tmp / 'agents.json').write_text(json.dumps([
+            agent('aaaa0001', 'other-name', path / 'sub', 'working', pid=5),
+            agent('bbbb0002', 'w1', self.tmp / 'elsewhere', 'working', pid=6)]))
+        out = self.close('--finished', 'w1')
+        self.assertIn('close_worker: w1: left as it is: a background session no record names runs in its folder '
+                      '(aaaa0001)', out)
+        self.assertEqual(self.claude_calls(), [], out)
+        self.assertTrue(path.is_dir(), out)
+        # An unreadable list proves nothing, so the merge leaves the worker too.
+        out = self.close('--finished', 'w1', AGENTS_ERROR='connect ECONNREFUSED')
+        self.assertIn("left as it is: its folder's background sessions cannot be listed", out)
+        self.assertTrue(path.is_dir(), out)
+        # A finished row (no pid) is no running session: the close goes on.
+        (self.tmp / 'agents.json').write_text(json.dumps([agent('aaaa0001', 'other-name', path, 'done')]))
+        out = self.close('--finished', 'w1')
+        self.assertFalse(path.exists(), out)
+
     def test_on_native_windows_a_codex_worker_closes_beside_another_checkouts_claude_session_of_the_name(self):
         # Round-1 review of #171: a Codex worker has no NAME.pid, and another project's `claude -n w1`
         # failed its close (and every merge's) as an unrecorded session of the name.
@@ -823,6 +847,37 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'worktree-w1'), tip)
         self.assertTrue(waiting.is_dir(), out)
         self.assertEqual(sorted(self.sessions()), ['own', 'w2'])
+
+    def test_a_merge_never_ends_a_worker_with_no_commit_of_its_own(self):
+        # leeway 8 (2026-10-26): a worker started from the lead branch's brief commit had no commit
+        # yet; merging the lead branch brought that commit, the worker branch's tip, and the hook
+        # closed the running worker. Its tip is still its branch's start, so it is no candidate.
+        self.hooked()
+        self.git('switch', '-q', '-c', 'lead')
+        (self.main / 'brief.md').write_text('brief\n')
+        self.git('add', 'brief.md')
+        self.git('commit', '-q', '-m', 'brief')
+        path = self.main / '.claude/worktrees/w1'
+        self.git('worktree', 'add', '-q', '--lock', '--reason', 'kit worker w1', str(path), '-b', 'worktree-w1', 'lead')
+        with open(self.tmp / 'sessions', 'a') as f:
+            f.write('w1\n')
+        self.result(path, 'w1', 'Kind: completed')  # even a result never stands for a commit
+        self.git('switch', '-q', '-')
+        out = self.merge('lead')
+        self.assertFalse([c for c in self.calls() if 'kill-session' in c], out)
+        self.assertNotIn('close_worker: w1', out)
+        self.assertTrue(path.is_dir(), out)
+        # Fable review leeway8: once gc expired the creation entry, the oldest entry is the worker's
+        # own commit, which equals the tip of a one-commit worker; it is still closed when merged.
+        (path / 'w1.txt').write_text('w1\n')
+        self.git('add', 'w1.txt', cwd=path)
+        self.git('commit', '-q', '-m', 'work in w1', cwd=path)
+        log = Path(self.git('rev-parse', '--git-common-dir')) / 'logs/refs/heads/worktree-w1'
+        log = log if log.is_absolute() else self.main / log
+        log.write_text(''.join(log.read_text().splitlines(True)[1:]))
+        out = self.merge('worktree-w1')
+        self.assertIn("['kill-session', '-t', '=w1']", self.calls(), out)
+        self.assertFalse(path.exists(), out)
 
     def test_a_merge_never_ends_a_worker_it_brings_in_only_as_a_dependency_or_still_working(self):
         # Codex r1 (fix56): w1 built on w2; merging w1 closed w2 while w2 still worked (Kind:

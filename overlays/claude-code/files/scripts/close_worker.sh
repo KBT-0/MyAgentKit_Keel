@@ -12,7 +12,7 @@
 # "Worker cost"). Left to the owner, finished sessions sat idle for hours and 39 worktrees
 # piled up; left to the lead, worker tabs stayed open for hours after their merge, so the
 # post-merge hook (core/.githooks/post-merge) now runs it, with --finished, for every kit worker
-# whose branch tip a merge merged, and for one an earlier merge left running (its
+# whose branch tip a merge merged, that tip a commit of the worker's own (leeway 8), and for one an earlier merge left running (its
 # .myagentkit/workers/NAME.merged-running, written here, #195). For each NAME, in order, each step on its own line:
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs. So is a worker whose worktree
@@ -480,6 +480,29 @@ agent_live() {
   case $bstate in absent|ambiguous) return 1 ;; working|blocked) return 0 ;; esac
   [ "${bpid:--}" != - ]
 }
+# inbg DIR: prints the ids of the live Claude Code background sessions whose folder is DIR or
+# below it, whatever the worker's records say (one started by hand, a record lost: leeway 8,
+# 2026-10-26, a merge closed such a running worker); fails, its words printed, when the list
+# cannot be read. Nothing without a `claude` command.
+inbg() {
+  command -v claude >/dev/null 2>&1 || return 0
+  d=$1; [ -z "$windows" ] || d=$(cygpath -m "$d")
+  # Its stdout alone is the list: a notice on stderr (an update) broke the parse (list_workers.sh).
+  json=$(claude agents --json --all 2>/dev/null) || { printf '%s' "claude agents --json --all failed"; return 1; }
+  printf '%s' "$json" | $kit_python -I -c 'import json, os, sys
+key = lambda p: os.path.normcase(os.path.realpath(p))
+d = key(sys.argv[1])
+try:
+    rows = json.loads(sys.stdin.read() or "[]")
+    assert isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
+except (ValueError, AssertionError):
+    sys.exit("claude agents --json --all printed no list of sessions")
+for r in rows:
+    c = r.get("cwd") and key(r["cwd"])
+    if c and (c == d or c.startswith(d.rstrip(os.sep) + os.sep)) and (
+            r.get("state") in ("working", "blocked") or r.get("pid") not in (None, "", 0)):
+        print(r.get("id") or r.get("sessionId") or "?")' "$d" 2>&1
+}
 # live NAME DIR: succeeds, printing what runs, while a session of the worker runs in DIR or
 # under NAME, or while that cannot be told.
 live() {
@@ -488,6 +511,10 @@ live() {
     [ "$bstate" != elsewhere ] || { printf '%s' "its background session was started on $bwait, whose session list this host cannot see"; return 0; }
     [ "$bhere" = y ] && agent_live || return 1
     printf '%s' "its background session $bid still runs ($bstate)"; return 0
+  fi
+  if [ "$2" != "$top" ]; then
+    p=$(inbg "$2") || { printf '%s' "its folder's background sessions cannot be listed ($p)"; return 0; }
+    [ -z "$p" ] || { printf '%s' "a background session no record names runs in its folder ($(echo $p))"; return 0; }
   fi
   if [ -n "$windows" ]; then
     if [ "$2" != "$top" ]; then

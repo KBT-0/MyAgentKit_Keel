@@ -92,6 +92,13 @@ if [ -f scripts/close_worker.sh ] && orig=$(git rev-parse -q --verify ORIG_HEAD 
     tip=$(git rev-parse -q --verify "refs/heads/$branch") || continue
     if [ ! -e ".myagentkit/workers/$name.merged-running" ]; then
       ! git merge-base --is-ancestor "$tip" "$orig" 2>/dev/null || continue
+      # A worker with no commit of its own is no candidate: its tip is still the commit its branch
+      # was created at (the reflog's creation entry), which a merged lead branch can bring in while
+      # the worker runs (leeway 8, 2026-10-26). With that entry expired (gc.reflogExpire) the
+      # oldest one is a later move, so the worker committed; no reflog proves nothing: no candidate.
+      oldest=$(git reflog show --format='%H %gs' "refs/heads/$branch" -- 2>/dev/null | tail -n 1)
+      [ -n "$oldest" ] || continue
+      case $oldest in *" branch: Created from "*) [ "${oldest%% *}" != "$tip" ] || continue ;; esac
       # A fast-forward to a worker's own merge commit is that worker's tip, not its parents'.
       [ "$tip" = "$head" ] || { [ -z "$(git for-each-ref --points-at HEAD 'refs/heads/worktree-*')" ] &&
         case $merged in *" $tip "*) true ;; *) false ;; esac; } || continue
