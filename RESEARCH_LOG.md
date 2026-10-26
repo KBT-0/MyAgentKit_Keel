@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-26 — v0.14 nohandoff: no hand-off while the session's own work runs
+
+Backflow (project_leeway kit-feedback 2026-10-26, the owner's rule, narrowed the same day). A lead handed off with a
+worker it had just spawned still running; the worker's done message went to a session that no longer existed. The
+owner's rule: while work runs, a hand-off is impossible; the lead says so and offers to finish or to wait and tell.
+Narrowed: a worker in its own session does not block, since the new lead announces itself to it (lean 22); only work
+inside the leaving session does (its background tasks, sub-agents, a review, gate or merge it runs). Implemented in
+the hook that already names the band (`context_size.py`), from the transcript's own records, so no new hook and no
+new state file; the review (Fable, own tier) found the kit's own worker watch counted as a job and a dead job
+surviving a resume, both fixed (`.myagentkit/v014/nohandoff-dispositions.md`). A guard on the hand-off step itself
+was not built: the owner's word must override it and the hook cannot read the owner's word.
+
 ### 2026-10-26 — v0.14 leeway8: a merge never closes a running worker with no commit of its own
 
 Backflow (leeway field report 6, item 8, HIGH). The post-merge hook ran `close_worker.sh --finished` on a running

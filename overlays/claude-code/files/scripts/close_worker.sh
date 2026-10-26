@@ -24,7 +24,8 @@
 #      still has the start time it was listed with (a reused pid is never signalled): a
 #      background tool command outlives the SIGHUP tmux sends, and one once kept a CPU core busy
 #      for hours (#298). Only that tree: an
-#      orphan whose parent was already gone cannot be told apart, and doctor.sh lists it. A
+#      orphan whose parent was already gone cannot be told apart; doctor.sh lists it once it is
+#      old and busy (two hours, over 5% of a CPU; #298), and a stale bg worker session too. A
 #      session that does not exist is reported, not an error, when tmux says so (no such session,
 #      no server); any other failure of `tmux has-session` (a socket it cannot read) fails the
 #      close with tmux's words, as the session may still run. Then it waits, up to 15 s, until

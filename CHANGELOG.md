@@ -15,6 +15,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **No hand-off while work started inside the session still runs** (leeway kit-feedback 2026-10-26, the owner's
+  rule). The Claude Code overlay's `context_size.py` keeps the session's running jobs from the transcript (a
+  background Bash task, an async sub-agent; ended by its `<task-id>` notification or a TaskStop; a watch on a
+  worker's result is no job, and a job with no end record for a day is dropped), and past the band says
+  "Hand-off blocked: N job(s) ... (names)", offering to finish them or to wait and tell the owner, instead of
+  recommending a hand-off. A worker in its own session never blocks: the new lead's announcement reaches it.
+  `HANDOFF.md`: the lead's hand-off paragraph carries the rule, and the hand-off file names each running worker
+  with its `claude stop ID` line (A(b)); WORKFLOW rule 8 too. **ACTION**: re-sync `.claude/hooks/context_size.py`.
+- `doctor.sh` lists a stale background worker session (`claude agents --json --all`: state working, under this
+  checkout, older than `DOCTOR_STALE_AGE`, default 8 h) as a NOTE with its `claude stop ID` line and never ends it
+  (leeway field report 6, A(a) and item 4: `close_worker.sh`'s header now says what doctor lists). No project action.
 - **A lead change is announced** (leeway field report 6, B and item 6, 2026-10-26). `master_writer.py claim` stores
   the session's name (`claude agents --json --all`, or `MYAGENTKIT_SESSION_NAME`) on the marker's second line and
   in the STATE line, and prints the line to send every peer lead and running worker ("new lead is NAME, send merge

@@ -69,8 +69,8 @@ class ContextHookTests(unittest.TestCase):
         def use(uid, name, **inp):
             return {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': uid, 'name': name, 'input': inp}]}}
 
-        def result(uid, **tur):
-            return {'type': 'user', 'toolUseResult': tur,
+        def result(uid, at='2026-10-26T10:00:00.000Z', **tur):
+            return {'type': 'user', 'toolUseResult': tur, 'timestamp': at,
                     'message': {'content': [{'type': 'tool_result', 'tool_use_id': uid, 'content': 'started'}]}}
 
         def ended(job):
@@ -94,6 +94,19 @@ class ContextHookTests(unittest.TestCase):
         self.assertIn('never a second /compact', said)
         turns += [use('t4', 'TaskStop', task_id='a2'), request(360_000)]
         self.assertIn('recommend a hand-off', self.run_hook(turns + [prompt()]))
+        # A watch on a worker's result is the worker's, not this session's (review v014-nohandoff, High);
+        # a job with no end record for a day died with an earlier session (Medium).
+        turns = [prompt(), use('t5', 'Bash', run_in_background=True, description='Watch w1',
+                               command="until [ a -nt b ] && grep -qF '<!-- codex-worker: ready -->' a; do sleep 30; done"),
+                 result('t5', backgroundTaskId='b5'), request(210_000)]
+        self.transcript.with_suffix('.context-step').unlink()
+        self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
+        turns += [use('t6', 'Bash', run_in_background=True, description='Run the gate', command='sh scripts/check.sh'),
+                  result('t6', backgroundTaskId='b6'), request(260_000)]
+        self.assertIn('still run (Run the gate)', self.run_hook(turns + [prompt()]))
+        turns += [prompt(), {'type': 'assistant', 'timestamp': '2026-10-27T10:00:01.000Z',
+                             'message': {'model': 'claude-x', 'usage': {'input_tokens': 310_000}}}]
+        self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
 
     def test_a_null_counter_is_zero(self):
         self.assertIn('Context is 210k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {
@@ -231,14 +244,15 @@ class ContextHookTests(unittest.TestCase):
         module.RECOUNT = 0
         first = json.dumps(request(210_000)) + '\n'
         self.transcript.write_bytes(first.encode())
-        self.assertEqual(module.scan(self.transcript), (210_000, 0, True, len(first), {}))
+        self.assertEqual(module.scan(self.transcript), (210_000, 0, True, len(first), {}, {}))
         with self.transcript.open('ab') as stream:
             stream.write((json.dumps(request(260_000)) + '\n' + '{"type": "system", "subtype": "compact_bou').encode())
         size = len(first) + len(json.dumps(request(260_000))) + 1
-        saved = {'offset': len(first), 'last': 1, 'compactions': 5, 'known': True, 'running': {'b9': 'old job'}}
+        saved = {'offset': len(first), 'last': 1, 'compactions': 5, 'known': True, 'running': {'b9': ['old job', 0]},
+                 'pending': {'t9': 'Run x'}}
         # The saved compaction count proves the prefix was not read again; a partial record waits.
-        self.assertEqual(module.scan(self.transcript, saved), (260_000, 5, True, size, {'b9': 'old job'}))
-        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (260_000, 0, True, size, {}))
+        self.assertEqual(module.scan(self.transcript, saved), (260_000, 5, True, size, {'b9': ['old job', 0]}, {'t9': 'Run x'}))
+        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (260_000, 0, True, size, {}, {}))
 
     def run_progress(self, records, **extra):
         self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')

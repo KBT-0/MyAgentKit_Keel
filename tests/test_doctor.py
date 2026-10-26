@@ -1,6 +1,7 @@
 """doctor.sh must go red on a machine trap and stay green on a ready synthetic machine."""
 import ast
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -1336,6 +1337,40 @@ def stray_section(windows, **env):
         script.write_text('windows_sh=%s\n%s' % ('1' if windows else '""', section), newline='\n')
         return subprocess.run(['sh', str(script)], capture_output=True, text=True, timeout=60 * SCALE,
                               env=dict(os.environ, **env))
+
+
+def stale_section(**env):
+    """doctor.sh's stale-session section alone, run from a project folder (leeway report 6, A(a))."""
+    doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+    section = doctor.split('# --- stale background sessions', 1)[1].split('\n', 1)[1]
+    section = section.split('# --- stray tool commands', 1)[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp) / 'proj'
+        (project / '.claude/worktrees/w1').mkdir(parents=True)
+        script = Path(tmp) / 'stale.sh'
+        script.write_text(section, newline='\n')
+        now = int(time.time() * 1000)
+        rows = [{'kind': 'background', 'state': 'working', 'cwd': str(project / '.claude/worktrees/w1'),
+                 'startedAt': now - 10 * 3600 * 1000, 'id': 'aa11', 'pid': 42, 'name': 'w1'},
+                {'kind': 'background', 'state': 'working', 'cwd': str(project), 'startedAt': now - 60_000, 'id': 'bb22'},
+                {'kind': 'background', 'state': 'done', 'cwd': str(project), 'startedAt': now - 10 ** 8, 'id': 'cc33'},
+                {'kind': 'background', 'state': 'working', 'cwd': str(Path(tmp) / 'other'),
+                 'startedAt': now - 10 ** 8, 'id': 'dd44'},
+                {'kind': 'interactive', 'cwd': str(project), 'startedAt': now - 10 ** 8, 'status': 'busy', 'pid': 7}]
+        (Path(tmp) / 'agents.json').write_text(env.pop('agents', None) or json.dumps(rows))
+        return subprocess.run(['sh', str(script)], cwd=project, capture_output=True, text=True, timeout=60 * SCALE,
+                              env=dict(os.environ, DOCTOR_AGENTS=str(Path(tmp) / 'agents.json'), **env))
+
+
+class StaleSessionTests(unittest.TestCase):
+    def test_an_old_working_bg_session_under_the_project_is_listed_with_its_stop_command_and_nothing_else(self):
+        result = stale_section()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count('NOTE:'), 1, result.stdout)
+        self.assertIn('NOTE: stale background session w1 (aa11, working 10.0 h, pid 42, in ', result.stdout)
+        self.assertIn('end it: claude stop aa11\n', result.stdout)
+        self.assertEqual(stale_section(DOCTOR_STALE_AGE='40000').stdout, '')  # 11.1 h: none is that old
+        self.assertIn('NOTE: stale-session check skipped', stale_section(agents='{"not": "a list"}').stdout)
 
 
 class StrayProcessTests(unittest.TestCase):

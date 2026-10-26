@@ -106,7 +106,8 @@ Bash tasks, its sub-agents, a review, gate or merge it runs (the overlay's `cont
 line says "hand-off blocked" and names them). It says the work runs and offers two ways, never
 the hand-off: finish the work, or wait and tell {{OWNER_NAME}} when the hand-off is ready. A
 worker in its own session does not block: the next lead's announcement reaches it (owner,
-2026-10-26). A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
+2026-10-26); the hand-off file names each such running worker (`scripts/list_workers.sh`: name, id,
+state) with its `claude stop ID` line, so {{OWNER_NAME}} can end one nobody waits for. A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
 `python3 scripts/master_writer.py release` (`python` on native Windows) before it ends and sends
 every peer lead of the project "I am leaving; the next lead will announce itself", and the
 next session runs `claim`, then sends every peer the line `claim` prints ("new lead is NAME, send

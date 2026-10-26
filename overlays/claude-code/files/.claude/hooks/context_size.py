@@ -31,9 +31,16 @@ While work started inside this session still runs (a background Bash task, an as
 started by a tool result's `backgroundTaskId` or `agentId`, ended by its `<task-id>` notification
 or a TaskStop), the band line says the hand-off is blocked and names the jobs instead of offering
 it (owner, 2026-10-26: finish the work, or wait and tell the owner when the hand-off is ready).
-A worker in its own session does not block: the next lead's announcement reaches it. The jobs
-survive a compaction, so the running list is kept in the step file and carried across one.
+A worker in its own session does not block: the next lead's announcement reaches it, so the
+background command that only watches its result (spawn_worker.sh's printed until-loop, a
+watch_workers.sh call) is no job here either. The jobs survive a compaction, so the running list
+and the labels of the calls still waiting for their result are kept in the step file and carried
+across one. A job that died with an ended session gets no notification (a resumed session
+appends to the same transcript): the line says a TaskStop clears it, and a job older than a day
+is dropped, as the kit's own watch gives up after 24 h. The field shapes were read from real
+transcripts of Claude Code 2.1.x on 2026-10-26 (.myagentkit/v014/nohandoff-dispositions.md).
 """
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -56,6 +63,9 @@ COMPACT = ("/compact keep the open decisions, the binding rules, the changed fil
            "and the owner's words verbatim")
 AUTOPILOT = 'docs/WORKFLOW.md, "autopilot, the owner-away switch"'
 TASK_ID = re.compile(r'<task-id>([^<\s]+)</task-id>')
+# A background command that only waits for a worker's result: the worker runs in its own session.
+WATCH = re.compile(r'codex-worker: ready|watch_workers\.sh')
+JOB_LIFE = 24 * 3600  # seconds; a job with no end record this old is taken as dead
 # STATE.md's Owner line while away, as scripts/working_mode.py writes it (OWNER_LINE and AWAY there).
 AWAY_LINE = re.compile(r'^[^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*away \(autopilot since \S+\)', re.M)
 # A hook cannot read meaning, so the lead judges (owner, 2026-10-22: what the owner says or
@@ -117,7 +127,7 @@ def band_word(ctx: int) -> str:
 
 def context(path: Path, *, require_request: bool = False) -> tuple[int, int]:
     """The last request's context (0 after a boundary), and the compaction count."""
-    last, compactions, known, _, _ = scan(Path(path))
+    last, compactions, known, _, _, _ = scan(Path(path))
     if require_request and not known:
         raise ValueError('no request or compaction boundary in transcript')
     return last, compactions
@@ -130,17 +140,27 @@ def text(content) -> str:
     return ' '.join(b.get('text', '') for b in content if isinstance(b, dict)) if isinstance(content, list) else ''
 
 
-def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, dict]:
-    """(last, compactions, known, offset, running): from the start, or from a saved record
-    boundary. RUNNING maps each job started in this session and not yet ended to its label."""
+def when(stamp) -> float:
+    """A record's timestamp as seconds, 0 when it has none."""
+    try:
+        return datetime.fromisoformat(str(stamp).replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, dict, dict]:
+    """(last, compactions, known, offset, running, pending): from the start, or from a saved
+    record boundary. RUNNING maps each job started in this session and not yet ended to
+    [label, start seconds]; PENDING maps a Bash or Agent call still without its result to its
+    label (None: a watch, no job), so the label survives a scan that saw only the call."""
     with open(path, 'rb') as stream:
         size = stream.seek(0, 2)
         start = (saved or {}).get('offset', 0)
         if start > size or size <= RECOUNT:
             start = 0  # a small or truncated transcript is read again whole
         last, compactions, known = (saved['last'], saved['compactions'], saved['known']) if start else (0, 0, False)
-        running = dict(saved['running']) if start else {}
-        described = {}  # tool_use id -> the Bash or Agent description, for the job's label
+        running, described = (dict(saved['running']), dict(saved['pending'])) if start else ({}, {})
+        latest = 0.0
         offset = stream.seek(start)
         for raw in stream:
             if not raw.endswith(b'\n'):
@@ -160,14 +180,16 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
                 continue
             msg = rec.get('message')
             content = msg.get('content') if isinstance(msg, dict) else None
+            latest = max(latest, when(rec.get('timestamp')))
             if rec.get('type') == 'user':
                 result = rec.get('toolUseResult')
+                uses = [b.get('tool_use_id') for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+                labels = [described.pop(u) for u in uses if u in described]
                 if isinstance(result, dict):
                     job = result.get('backgroundTaskId') or (
                         result.get('agentId') if result.get('status') == 'async_launched' else None)
-                    if isinstance(job, str) and job:
-                        uses = [b.get('tool_use_id') for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-                        running[job] = next((described[u] for u in uses if u in described), job)
+                    if isinstance(job, str) and job and None not in labels:
+                        running[job] = [labels[0] if labels else job, latest]
                 for ended in TASK_ID.findall(text(content)):
                     running.pop(ended, None)
                 continue
@@ -176,8 +198,11 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
                     inp = block.get('input') if isinstance(block.get('input'), dict) else {}
                     if block.get('name') == 'TaskStop':
                         running.pop(inp.get('task_id'), None)
-                    elif block.get('name') in ('Bash', 'Agent'):
-                        described[block.get('id')] = str(inp.get('description') or block['name'])
+                    elif block.get('name') == 'Bash' and inp.get('run_in_background'):
+                        described[block.get('id')] = None if WATCH.search(str(inp.get('command', ''))) else \
+                            str(inp.get('description') or 'Bash')
+                    elif block.get('name') == 'Agent':
+                        described[block.get('id')] = str(inp.get('description') or 'Agent')
             usage = msg.get('usage') if isinstance(msg, dict) else None
             if rec.get('type') != 'assistant' or rec.get('isSidechain') or not isinstance(usage, dict) \
                     or msg.get('model') == '<synthetic>':
@@ -186,7 +211,9 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
             last = sum(usage.get(k) or 0 for k in
                        ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
             known = True
-    return last, compactions, known, offset, running
+    for job in [j for j, (_, began) in running.items() if began and latest - began > JOB_LIFE]:
+        del running[job]  # dead with an ended session, or a watch the kit itself gives up on
+    return last, compactions, known, offset, running, described
 
 
 def notice(transcript: Path) -> str:
@@ -207,9 +234,9 @@ def notice(transcript: Path) -> str:
         except (OSError, ValueError):
             saved = None
         resume = saved if (isinstance(saved, dict) and type(saved.get('known')) is bool and isinstance(
-            saved.get('running'), dict) and all(
+            saved.get('running'), dict) and isinstance(saved.get('pending'), dict) and all(
             type(saved.get(key)) is int and saved[key] >= 0 for key in ('offset', 'last', 'compactions'))) else None
-        ctx, compactions, known, offset, running = scan(transcript, resume)
+        ctx, compactions, known, offset, running, pending = scan(transcript, resume)
         # Before the step became a record the state held only an integer step.
         legacy = type(saved) is int
         try:
@@ -225,7 +252,7 @@ def notice(transcript: Path) -> str:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({'step': max(now, said), 'compactions': compactions, 'offset': offset, 'last': ctx,
-                       'known': known, 'running': running}, stream)
+                       'known': known, 'running': running, 'pending': pending}, stream)
         try:
             os.replace(temporary, state)
         finally:
@@ -240,10 +267,13 @@ def notice(transcript: Path) -> str:
                 + ', then keep going; no band and no compaction, '
                 f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).')
     if running:
-        advice = (f'Hand-off blocked: {len(running)} job(s) started in this session still run '
-                  f"({', '.join(sorted(running.values()))}). In this turn's closing summary say so to the owner "
-                  'and offer two ways, never a hand-off: finish the jobs, or wait and tell the owner when the '
-                  'hand-off is ready. A worker in its own session does not block (docs/HANDOFF.md)'
+        names = ', '.join(sorted(label for label, _ in running.values()))
+        advice = (f'Hand-off blocked: {len(running)} job(s) started in this session still run ({names}). '
+                  "In this turn's closing summary say so to the owner and offer two ways: finish the jobs, or wait "
+                  'and tell the owner when the hand-off is ready; the hand-off itself waits for them'
+                  + (', the hand-off file is written now' if ctx >= CEILING else '')
+                  + '. A worker in its own session does not block (docs/HANDOFF.md); a job that died with an '
+                  'earlier session is cleared by a TaskStop on its id'
                   + ('; never a second /compact' if compactions else
                      f'; "{COMPACT}" stays open while the work in flight continues'))
     elif compactions:

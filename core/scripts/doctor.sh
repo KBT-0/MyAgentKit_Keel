@@ -560,6 +560,61 @@ elif [ -n "${SHELL:-}" ]; then
   fi
 fi
 
+# --- stale background sessions --------------------------------------------------------
+# A `claude --bg` worker still working after many hours has lost its lead more often than it
+# works: the lead that spawned it handed off, and the next lead rediscovers it hours later
+# (leeway field report 6, A(a)). Listed here, never ended: a background row of `claude agents
+# --json --all` in state working whose cwd is under this checkout and whose start is older than
+# DOCTOR_STALE_AGE seconds (default 8 h). Each line is a NOTE with `claude stop ID`, for the
+# owner to run; a worker in its own session is the owner's to end (`AGENTS.md`: running work
+# keeps running). The printed until-loop ends itself after 24 h (spawn_worker.sh), so no shell
+# loop is listed. DOCTOR_AGENTS (a file holding the JSON) exists for the test only.
+stale_age=${DOCTOR_STALE_AGE:-28800}
+if [ -n "${DOCTOR_AGENTS:-}" ]; then
+  agents=$(cat -- "$DOCTOR_AGENTS") || agents=""
+elif [ "${help_status-0}" = 0 ] && command -v claude >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 &&
+     agents_out=$(mktemp); then
+  # Not after a --help the CLI did not answer (help_status above; unset when the reviewer is
+  # codex). Bounded, captured into a file and, where setsid exists, killed with its process
+  # group, as the --help probe is: a CLI that hangs, or a child that keeps stdout open, must not
+  # hold the doctor. Its stdout alone is the list: a notice on stderr broke the parse (list_workers.sh).
+  if command -v setsid >/dev/null 2>&1; then
+    ( setsid sh -c 'timeout --foreground -k 1 "$1" claude agents --json --all; kill -s KILL 0' sh "$probe_seconds" \
+        </dev/null >"$agents_out" 2>/dev/null; : ) 2>/dev/null
+  else
+    timeout -k 1 "$probe_seconds" claude agents --json --all </dev/null >"$agents_out" 2>/dev/null || : >"$agents_out"
+  fi
+  agents=$(cat "$agents_out"); rm -f "$agents_out"
+else
+  agents=""
+fi
+if [ -n "$agents" ]; then
+  printf '%s' "$agents" | python3 -I -c 'import json, os, sys, time
+key = lambda p: os.path.normcase(os.path.realpath(p))
+top = key(os.getcwd()); age = float(sys.argv[1]); now = time.time() * 1000
+try:
+    rows = json.loads(sys.stdin.read() or "[]")
+    assert isinstance(rows, list)
+except (ValueError, AssertionError):
+    rows = None
+if rows is None:
+    print("NOTE: stale-session check skipped, claude agents --json --all printed no list of sessions")
+for r in rows or []:
+    if not isinstance(r, dict) or r.get("kind") != "background" or r.get("state") != "working":
+        continue
+    c = r.get("cwd"); c = c and key(c)
+    if not c or not (c == top or c.startswith(top.rstrip(os.sep) + os.sep)):
+        continue
+    start = r.get("startedAt")
+    if not isinstance(start, (int, float)) or now - start < age * 1000:
+        continue
+    sid = r.get("id") or r.get("sessionId") or "?"
+    print("NOTE: stale background session %s (%s, working %.1f h, pid %s, in %s): a worker rarely works that long; "
+          "its lead may be gone (scripts/list_workers.sh); if nobody waits for it, end it: claude stop %s"
+          % (r.get("name") or sid, sid, (now - start) / 3.6e6, r.get("pid") or "?", r.get("cwd"), sid))' "$stale_age" 2>/dev/null ||
+    echo "NOTE: stale-session check skipped, python3 could not read the session list"
+fi
+
 # --- stray tool commands --------------------------------------------------------------
 # An agent's `find /` passed the Bash tool's timeout, moved to the background, lost its session
 # and kept a CPU core busy for seven hours; every benchmark in that window was wrong (#298).
