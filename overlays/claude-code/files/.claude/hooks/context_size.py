@@ -64,7 +64,7 @@ COMPACT = ("/compact keep the open decisions, the binding rules, the changed fil
 AUTOPILOT = 'docs/WORKFLOW.md, "autopilot, the owner-away switch"'
 TASK_ID = re.compile(r'<task-id>([^<\s]+)</task-id>')
 # A background command that only waits for a worker's result: the worker runs in its own session.
-WATCH = re.compile(r'codex-worker: ready|watch_workers\.sh')
+WATCH = re.compile(r'codex-worker: ready|watch_workers\.sh|codex_worker\.py\s+--wait')
 JOB_LIFE = 24 * 3600  # seconds; a job with no end record this old is taken as dead
 # STATE.md's Owner line while away, as scripts/working_mode.py writes it (OWNER_LINE and AWAY there).
 AWAY_LINE = re.compile(r'^[^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*away \(autopilot since \S+\)', re.M)
@@ -267,13 +267,13 @@ def notice(transcript: Path) -> str:
                 + ', then keep going; no band and no compaction, '
                 f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).')
     if running:
-        names = ', '.join(sorted(label for label, _ in running.values()))
+        names = ', '.join(sorted(f'{label} ({job})' for job, (label, _) in running.items()))
         advice = (f'Hand-off blocked: {len(running)} job(s) started in this session still run ({names}). '
                   "In this turn's closing summary say so to the owner and offer two ways: finish the jobs, or wait "
                   'and tell the owner when the hand-off is ready; the hand-off itself waits for them'
                   + (', the hand-off file is written now' if ctx >= CEILING else '')
                   + '. A worker in its own session does not block (docs/HANDOFF.md); a job that died with an '
-                  'earlier session is cleared by a TaskStop on its id'
+                  'earlier session is cleared by a TaskStop on the id in brackets'
                   + ('; never a second /compact' if compactions else
                      f'; "{COMPACT}" stays open while the work in flight continues'))
     elif compactions:

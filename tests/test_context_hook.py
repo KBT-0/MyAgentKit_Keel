@@ -79,7 +79,7 @@ class ContextHookTests(unittest.TestCase):
         turns = [prompt(), use('t1', 'Bash', command='sh x', run_in_background=True, description='Run the gate'),
                  result('t1', backgroundTaskId='b1'), request(210_000)]
         said = self.run_hook(turns + [prompt()])
-        self.assertIn('Hand-off blocked: 1 job(s) started in this session still run (Run the gate)', said)
+        self.assertIn('Hand-off blocked: 1 job(s) started in this session still run (Run the gate (b1))', said)
         self.assertNotIn('recommend ONE', said)
         turns += [ended('b1'), request(260_000)]
         said = self.run_hook(turns + [prompt()])  # the state file resumes the scan with the job ended
@@ -90,7 +90,7 @@ class ContextHookTests(unittest.TestCase):
                   use('t3', 'Agent', prompt='y', description='Sync one'), result('t3', status='completed'),
                   {'type': 'system', 'subtype': 'compact_boundary'}, request(310_000)]
         said = self.run_hook(turns + [prompt()])  # the running list survives the compaction
-        self.assertIn('1 job(s) started in this session still run (Review the diff)', said)
+        self.assertIn('1 job(s) started in this session still run (Review the diff (a2))', said)
         self.assertIn('never a second /compact', said)
         turns += [use('t4', 'TaskStop', task_id='a2'), request(360_000)]
         self.assertIn('recommend a hand-off', self.run_hook(turns + [prompt()]))
@@ -98,12 +98,15 @@ class ContextHookTests(unittest.TestCase):
         # a job with no end record for a day died with an earlier session (Medium).
         turns = [prompt(), use('t5', 'Bash', run_in_background=True, description='Watch w1',
                                command="until [ a -nt b ] && grep -qF '<!-- codex-worker: ready -->' a; do sleep 30; done"),
-                 result('t5', backgroundTaskId='b5'), request(210_000)]
+                 result('t5', backgroundTaskId='b5'),
+                 use('t7', 'Bash', run_in_background=True, description='Wait w2',
+                     command='python3 scripts/codex_worker.py --wait R --since S --stale I --exit E'),
+                 result('t7', backgroundTaskId='b7'), request(210_000)]
         self.transcript.with_suffix('.context-step').unlink()
         self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
         turns += [use('t6', 'Bash', run_in_background=True, description='Run the gate', command='sh scripts/check.sh'),
                   result('t6', backgroundTaskId='b6'), request(260_000)]
-        self.assertIn('still run (Run the gate)', self.run_hook(turns + [prompt()]))
+        self.assertIn('still run (Run the gate (b6))', self.run_hook(turns + [prompt()]))
         turns += [prompt(), {'type': 'assistant', 'timestamp': '2026-10-27T10:00:01.000Z',
                              'message': {'model': 'claude-x', 'usage': {'input_tokens': 310_000}}}]
         self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
