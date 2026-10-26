@@ -515,7 +515,7 @@ live() {
   fi
   if [ "$2" != "$top" ]; then
     p=$(inbg "$2") || { printf '%s' "its folder's background sessions cannot be listed ($p)"; return 0; }
-    [ -z "$p" ] || { printf '%s' "a background session no record names runs in its folder ($(echo $p))"; return 0; }
+    [ -z "$p" ] || { printf '%s' "a background session no record names runs in its folder ($(printf '%s' "$p" | tr '\n' ' '))"; return 0; }
   fi
   if [ -n "$windows" ]; then
     if [ "$2" != "$top" ]; then

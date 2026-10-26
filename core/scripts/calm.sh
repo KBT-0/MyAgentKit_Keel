@@ -42,12 +42,12 @@ while :; do
   load=$1 cores=$2 heavy=$(heavy_now)
   max=${CALM_MAX_LOAD:-$(awk -v c="$cores" 'BEGIN { printf "%.1f", c / 5 }')}
   if [ "$heavy" = none ] && awk -v l="$load" -v m="$max" 'BEGIN { exit !(l < m) }'; then
-    echo "CALM load1=$load cores=$cores heavy=none"
+    printf '%s\n' "CALM load1=$load cores=$cores heavy=none"
     exit 0
   fi
   waited=$(( $(date +%s) - start ))
   if [ "$waited" -ge "$wait_s" ]; then
-    echo "NOT CALM load1=$load cores=$cores heavy=$heavy after $waited s"
+    printf '%s\n' "NOT CALM load1=$load cores=$cores heavy=$heavy after $waited s"
     exit 1
   fi
   sleep "$step_s"

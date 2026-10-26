@@ -183,7 +183,7 @@ case $hooks_path in
     if [ -d "$hooks_path" ] && [ "$(CDPATH= cd -- "$hooks_path" && pwd -P)" = "$(CDPATH= cd -- .githooks 2>/dev/null && pwd -P)" ]; then
       cfg=$(git rev-parse --git-common-dir 2>/dev/null)/config
       changed=$(stat -c %y "$cfg" 2>/dev/null || stat -f %Sm "$cfg" 2>/dev/null) || changed=unknown
-      echo "NOTE: core.hooksPath is the absolute path '$hooks_path', the same folder as .githooks, so the gate runs; Claude Code writes it when it makes a worktree (docs/GOTCHAS.md), and the next commit's hook sets it back to .githooks (.git/config last changed $changed)"
+      printf '%s\n' "NOTE: core.hooksPath is the absolute path '$hooks_path', the same folder as .githooks, so the gate runs; Claude Code writes it when it makes a worktree (docs/GOTCHAS.md), and the next commit's hook sets it back to .githooks (.git/config last changed $changed)"
     else
       miss "the commit gate is wired by the absolute path '$hooks_path', not .githooks" "git config core.hooksPath .githooks"
     fi ;;
