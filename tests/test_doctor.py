@@ -1254,6 +1254,11 @@ class DoctorTests(unittest.TestCase):
             # Told, never fixed: every record is still there.
             self.assertEqual(subprocess.run(['git', '-C', str(new), 'worktree', 'list'], capture_output=True,
                                             text=True).stdout.count('\n'), 4)
+            # Review gatehome (Medium): a folder that is there with its .git file gone is prunable too.
+            git('worktree', 'add', '-q', '-b', 'broken', str(new / '.claude/worktrees/broken'))
+            (new / '.claude/worktrees/broken/.git').unlink()
+            broken = next(l for l in run().splitlines() if 'worktrees/broken' in l)
+            self.assertIn("git worktree repair '%s'" % (new / '.claude/worktrees/broken').as_posix(), broken)
 
     def test_a_hook_file_the_committed_settings_do_not_register_is_not_ready(self):
         # #101: a sync copied five guards, settings.json was merged but not committed, and

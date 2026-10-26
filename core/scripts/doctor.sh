@@ -369,9 +369,14 @@ fi
 # again by `git worktree repair <its new path>` (git-scm.com/docs/git-worktree, "repair"); a
 # gone one's record goes with `git worktree prune`, a locked one after `git worktree unlock`.
 git worktree list --porcelain 2>/dev/null | {
-  main="" wt="" locked=""
+  main="" wt="" locked="" prunable=""
   tell() {
     [ -n "$wt" ] && [ "$wt" != "$main" ] || return 0
+    # A folder that is there but whose .git link is broken (deleted, or a copy) is prunable too.
+    if [ -n "$prunable" ] && [ -d "$wt" ]; then
+      printf '%s\n' "NOTE: git lists the worktree $wt as prunable, its folder is there but its .git link is broken; fix: git worktree repair '$wt'"
+      return 0
+    fi
     case $wt in
       "$main"/*) [ -d "$wt" ] && return 0 ;;
       */.claude/worktrees/*) ;;
@@ -390,8 +395,9 @@ git worktree list --porcelain 2>/dev/null | {
   }
   while IFS= read -r line; do
     case $line in
-      "worktree "*) tell; wt=${line#worktree } locked=""; [ -n "$main" ] || main=$wt ;;
+      "worktree "*) tell; wt=${line#worktree } locked="" prunable=""; [ -n "$main" ] || main=$wt ;;
       locked|"locked "*) locked=1 ;;
+      prunable|"prunable "*) prunable=1 ;;
     esac
   done
   tell
