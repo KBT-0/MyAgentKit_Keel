@@ -6,11 +6,13 @@ here is part of its prompt.
 ## Running it
 
 ```
-./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]...
+./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--check] [--backend NAME] [--allow-secret-file PATH]...
 ```
 
 It runs the reviewer over the change set in a throwaway copy, archives the report under
-`docs/reviews/` and prints it. In the background, run `review.sh` itself as the background command,
+`docs/reviews/` and prints it. `--check` runs every pre-flight check (pin, tier, label, earlier
+rounds, dispositions) and prints one `READY [review]:` line naming the reviewer, model, effort,
+scope and round, with no model called: run it before a long review. In the background, run `review.sh` itself as the background command,
 so its exit is the done signal (`docs/WORKFLOW.md`, "Worker cost", rule 4). A run started
 detached (`nohup ... > LOG 2>&1 &`) is waited on through its log, never a pid, which a Windows
 host's Git Bash cannot check: `until grep -q -e '^review dispatch: ' -e '^FAIL \[review\]: '
@@ -25,7 +27,7 @@ with a note to move it (KARARLAR D09 inv2#80).
 | Variable | Meaning |
 |---|---|
 | `MYAGENTKIT_TASK_ID` | the change's label; rounds under it carry the earlier ones, two at most (a review its dispatcher failed afterwards is carried but not counted: `docs/REVIEW_GATE.md`, "Rounds") |
-| `REVIEW_DISPOSITIONS` | answers to every earlier round (round 1 by default), one line per finding: `fixed:` / `disproved:` / `deferred:` |
+| `REVIEW_DISPOSITIONS` | the PATH of a file holding the answers to every earlier round (round 1 by default), one line per finding: `fixed:` / `disproved:` / `deferred:`; e.g. `REVIEW_DISPOSITIONS=.myagentkit/x-dispositions.md`, never the text itself |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
 | `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier (a small diff under the "Invariant" exception: one round, no focus); each focus gets the label's two rounds; a review without a focus counts toward every focus |

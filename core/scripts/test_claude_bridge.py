@@ -53,7 +53,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 287, 'test_agent_usage': 40, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 288, 'test_agent_usage': 40, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
 WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 260, 'test_agent_usage': 36, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
@@ -7575,10 +7575,13 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
         bad = self.root / 'latin1.md'
         bad.write_bytes(b'- file.py:1 fixed: caf\xe9\n')
-        for path in (self.root / 'absent.md', bad):
-            with self.subTest(path=path.name):
+        # labricore 2026-10-26: the lines themselves passed as the value gave Errno 36.
+        text = '- file.py:1 fixed: ' + 'x' * 300 + '\n- file.py:2 disproved: y'
+        for path, said in ((self.root / 'absent.md', 'is no file: it must be the path of a file'),
+                           (bad, 'cannot be read'), (text, 'not the text itself')):
+            with self.subTest(path=str(path)[:20]):
                 os.environ['REVIEW_DISPOSITIONS'] = str(path)
-                with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_DISPOSITIONS .* cannot be read'):
+                with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_DISPOSITIONS .*' + said):
                     bridge.prior_rounds(self.repo, 'unreadable-task', 'uncommitted', None, head, 'x')
                 result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
                                           REVIEW_CLAUDE_MODEL='claude-opus-5',
@@ -7586,6 +7589,20 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn('FAIL [review]: REVIEW_DISPOSITIONS', result.stdout)
                 self.assertNotIn('Traceback', result.stdout + result.stderr)
+
+    def test_check_runs_the_pre_flight_checks_and_calls_no_model(self):
+        # labricore 2026-10-26: a misuse surfaced only after a full review's wait; --check says
+        # READY or the same FAIL line at once, and no CLI runs (the one named here does not exist).
+        env = dict(CLAUDE_CLI_BIN=str(self.root / 'absent-cli'), REVIEW_CLAUDE_MODEL='claude-opus-5',
+                   MYAGENTKIT_TASK_ID='check-task')
+        result = self.run_wrapper('--uncommitted', '--check', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r'READY \[review\]: reviewer claude model claude-opus-5 effort \w+, '
+                                        r'scope uncommitted, round 1')
+        self.assertNotIn('about to run', result.stdout)
+        refused = self.run_wrapper('--uncommitted', '--check', REVIEW_DISPOSITIONS='- a.py:1 fixed: x', **env)
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        self.assertIn('FAIL [review]: REVIEW_DISPOSITIONS', refused.stdout)
 
     def test_prior_rounds_returns_the_measured_fields_and_keeps_no_module_state(self):
         # BACKLOG item F (AGENTS.md: no static mutable state): MEASURED was a module dict that

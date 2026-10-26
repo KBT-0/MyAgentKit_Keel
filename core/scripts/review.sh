@@ -122,7 +122,7 @@ DEFAULT_REVIEWER="claude" CODEX_MODEL="" CLAUDE_MODEL=""
 . "$script_dir/gate_config.sh"
 
 usage() {
-  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]... [--kit-verified [--kit DIR] [--kit-commit SHA]]"
+  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--check] [--backend NAME] [--allow-secret-file PATH]... [--kit-verified [--kit DIR] [--kit-commit SHA]]"
   echo "       review.sh --self-test"
   exit 2
 }
@@ -162,6 +162,7 @@ scope_flag="--uncommitted"
 scope_arg=""
 scope_seen=0
 fallback=""
+check=""
 reviewer="${REVIEW_REVIEWER:-}"
 backend="${MYAGENTKIT_BACKEND:-}"
 kit_verified=0
@@ -183,6 +184,8 @@ while [ $# -gt 0 ]; do
       reviewer="$2"; shift 2 ;;
     --fallback)
       fallback="--allow-fallback"; shift ;;
+    --check)
+      check="--check"; shift ;;
     --backend)
       [ $# -ge 2 ] || usage
       backend="$2"; shift 2 ;;
@@ -257,6 +260,6 @@ EOF
 fi
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
-exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
+exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback $check \
   --claude-model "${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}" \
   --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" "$@"

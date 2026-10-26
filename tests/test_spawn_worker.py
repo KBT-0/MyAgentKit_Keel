@@ -1075,7 +1075,7 @@ exit 0
                                  'completed is done; a LIMIT line instead: its usage limit stopped it): '
                                  "n=0; until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' %s || "
                                  '(CDPATH= cd %s && sh %s --limit w1) || [ $((n+=1)) -gt 2880 ]; do sleep 30; done; '
-                                 "[ $n -le 2880 ] || echo 'spawn_worker: GAVE UP: no result from w1 in 24 h; if it "
+                                 "[ $n -le 2880 ] || printf '%%s\\n' 'spawn_worker: GAVE UP: no result from w1 in 24 h; if it "
                                  "still runs (scripts/watch_workers.sh w1), start this watch again'; "
                                  '[ ! %s -nt %s ] || head -n 4 %s'
                                  % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, shq(top),

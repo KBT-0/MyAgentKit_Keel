@@ -178,13 +178,12 @@ hooks_path=$(git config core.hooksPath 2>/dev/null) || hooks_path=""
 case $hooks_path in
   .githooks) ;;
   /*|[A-Za-z]:/*|[A-Za-z]:\\*)
-    # leeway 2026-10-26: between sessions something (not a kit script) rewrote it to an absolute
-    # path five times. One that is this tree's .githooks still runs the gate; when .git/config
-    # changed is printed so the next sighting can name the writer.
+    # leeway 2026-10-27: Claude Code writes it when it makes a worktree (docs/GOTCHAS.md); the
+    # pre-commit hook sets it back. One that is this tree's .githooks still runs the gate.
     if [ -d "$hooks_path" ] && [ "$(CDPATH= cd -- "$hooks_path" && pwd -P)" = "$(CDPATH= cd -- .githooks 2>/dev/null && pwd -P)" ]; then
       cfg=$(git rev-parse --git-common-dir 2>/dev/null)/config
       changed=$(stat -c %y "$cfg" 2>/dev/null || stat -f %Sm "$cfg" 2>/dev/null) || changed=unknown
-      echo "NOTE: core.hooksPath is the absolute path '$hooks_path', the same folder as .githooks, so the gate runs; the kit writes .githooks (.git/config last changed $changed). To restore it: git config core.hooksPath .githooks"
+      echo "NOTE: core.hooksPath is the absolute path '$hooks_path', the same folder as .githooks, so the gate runs; Claude Code writes it when it makes a worktree (docs/GOTCHAS.md), and the next commit's hook sets it back to .githooks (.git/config last changed $changed)"
     else
       miss "the commit gate is wired by the absolute path '$hooks_path', not .githooks" "git config core.hooksPath .githooks"
     fi ;;
@@ -228,6 +227,16 @@ fi
 # An override set to empty is not unset: the adapters read it with os.environ.get and run
 # an empty command, so it is MISSING here, never read as the default.
 reviewer=${REVIEW_REVIEWER:-$configured}
+# The template ships both pins empty (gate_config.sh says why); left so, the first review stops
+# with "no model pinned" (labricore 2026-10-26). Only the template's literal empty line counts.
+case "$reviewer" in
+  claude) pin_name=CLAUDE_MODEL pin_override=${REVIEW_CLAUDE_MODEL-} ;;
+  codex) pin_name=CODEX_MODEL pin_override=${REVIEW_CODEX_MODEL-} ;;
+  *) pin_name='' pin_override='' ;;
+esac
+if [ -n "$pin_name" ] && [ -z "$pin_override" ] && grep -qx "$pin_name=\"\"" scripts/gate_config.sh 2>/dev/null; then
+  miss "no $reviewer model pinned: scripts/gate_config.sh has $pin_name=\"\", so the first review stops" "set $pin_name=\"<model id>\" in scripts/gate_config.sh (REVIEW_$pin_name sets it for one run)"
+fi
 # The probes below capture into temp files: an interrupt (Ctrl-C, a hook's time limit) in
 # the middle of one still removes them.
 help_out=; probe_out=
@@ -685,6 +694,8 @@ fi
 
 if [ "$missing" -gt 0 ]; then
   printf '%s\n' "DOCTOR: setup incomplete ($missing)"
+  # labricore 2026-10-26: the agent read the lines and went on to the work without telling.
+  printf '%s\n' "DOCTOR: tell the owner these $missing lines in your first visible message of this session and offer each fix, before any work"
   exit 1
 fi
 echo "DOCTOR: ready"

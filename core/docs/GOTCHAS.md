@@ -34,6 +34,7 @@ installed is listed in `docs/GOTCHAS_KIT.md`, "Contents".
 - PowerShell from the Microsoft Store leaves suspended processes behind
 - A variable the session set does not reach the git hook
 - A PowerShell probe whose Set-Location fails goes on in the current folder
+- Claude Code's worktree points every tree at the main checkout's hooks
 
 ---
 
@@ -113,3 +114,7 @@ Kit rules: docs/GOTCHAS_KIT.md, "A variable the session set does not reach the g
 ## A PowerShell probe whose Set-Location fails goes on in the current folder
 
 Kit rules: docs/GOTCHAS_KIT.md, "A PowerShell probe whose Set-Location fails goes on in the current folder".
+
+## Claude Code's worktree points every tree at the main checkout's hooks
+
+Kit rules: docs/GOTCHAS_KIT.md, "Claude Code's worktree points every tree at the main checkout's hooks".

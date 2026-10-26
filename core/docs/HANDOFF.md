@@ -49,6 +49,9 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    a fresh worktree has no build tree, dependency cache or virtual environment, and a sandboxed
    worker has no network and writes only in its worktree and the temporary directory. Name the
    downloads to stage and the user-profile paths to redirect.
+   A task that measures (a bench, a frame or wall time) runs each measurement behind
+   `sh scripts/calm.sh &&` and reports its `CALM` line beside the numbers; a number without it
+   is "measured under load N", never a cost (leeway 2026-10-26).
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
    area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets its tier's review
    (`docs/REVIEW_GATE.md`, "Risk tiers"); {{OWNER_NAME}}'s check or the manual check named here

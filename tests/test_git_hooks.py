@@ -41,6 +41,35 @@ class GitHookTests(unittest.TestCase):
         git('commit', '-q', '-m', 'base')
         return root, git
 
+    def test_an_absolute_hooks_path_to_the_main_hooks_is_set_back(self):
+        # leeway 2026-10-27: Claude Code writes core.hooksPath as main's absolute .githooks when it
+        # makes a worktree; the next commit's hook sets it back, and leaves any other path alone.
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
+            root, git = self.repo(tmp)
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', LC_ALL='C')
+            plain = lambda cwd, *args: subprocess.run(
+                ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', *args],
+                cwd=cwd, env=env, capture_output=True, text=True, encoding='utf-8')
+            tree = Path(elsewhere) / 'wt'
+            git('worktree', 'add', '-q', '-b', 'side', str(tree))
+            other = Path(elsewhere) / 'hooks'
+            shutil.copytree(root / '.githooks', other)
+            for path, kept in ((other, True), (root / '.githooks', False)):
+                with self.subTest(kept=kept):
+                    git('config', 'core.hooksPath', str(path.resolve()))
+                    (tree / 'f').write_text(str(kept), encoding='utf-8')
+                    plain(tree, 'add', 'f')
+                    done = plain(tree, 'commit', '-q', '-m', 'f ' + str(kept))
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    now = plain(root, 'config', 'core.hooksPath').stdout.strip()  # git() overrides it
+                    if kept:
+                        self.assertEqual(now, str(other.resolve()))
+                        self.assertNotIn('set back', done.stderr)
+                    else:
+                        self.assertEqual(now, '.githooks')
+                        self.assertIn('Claude Code writes it when it makes a worktree); set back to .githooks',
+                                      done.stderr)
+
     def test_a_clean_merge_into_a_red_tree_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)

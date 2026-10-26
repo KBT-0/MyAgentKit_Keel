@@ -358,7 +358,8 @@ class DoctorTests(unittest.TestCase):
                                os.path.exists(os.path.join(d, name))
                                for name in ('claude', 'claude.exe', 'claude.cmd'))]))
             # Nor does a reviewer or CLI this machine names: each case sets its own.
-            for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN'):
+            for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN', 'REVIEW_CLAUDE_MODEL',
+                        'REVIEW_CODEX_MODEL'):
                 env.pop(key, None)
             git = lambda *a: subprocess.run(['git', *a], cwd=project, env=env, check=True)
             git('init', '-q')
@@ -374,6 +375,20 @@ class DoctorTests(unittest.TestCase):
                                                 for p in project.glob(pattern)))
             doctor = lambda: subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
                                             capture_output=True, text=True)
+
+            # labricore 2026-10-26: the template's empty pin stopped the first review; doctor says it
+            # first, and the summary tells the agent to tell the owner before any work.
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: no claude model pinned: scripts/gate_config.sh has CLAUDE_MODEL=""', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            self.assertIn('DOCTOR: tell the owner these 1 lines in your first visible message', red.stdout)
+            one_run = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                     env=dict(env, REVIEW_CLAUDE_MODEL='claude-opus-5-5'))
+            self.assertEqual(one_run.returncode, 0, one_run.stdout + one_run.stderr)
+            pins = project / 'scripts/gate_config.sh'
+            pins.write_text(pins.read_text().replace('CODEX_MODEL=""', 'CODEX_MODEL="gpt-5.5"')
+                            .replace('CLAUDE_MODEL=""', 'CLAUDE_MODEL="claude-opus-5-5"'))
 
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
@@ -761,6 +776,7 @@ class DoctorTests(unittest.TestCase):
             absolute = doctor()
             self.assertEqual(absolute.returncode, 0, absolute.stdout)
             self.assertIn("NOTE: core.hooksPath is the absolute path '", absolute.stdout)
+            self.assertIn('Claude Code writes it when it makes a worktree', absolute.stdout)
             self.assertIn('.git/config last changed ', absolute.stdout)
             self.assertNotIn('last changed unknown', absolute.stdout)
             git('config', 'core.hooksPath', str(tmp.resolve()))

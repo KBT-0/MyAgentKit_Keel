@@ -36,6 +36,7 @@ entries it was installed with; one the kit added later is listed here.
 - PowerShell from the Microsoft Store leaves suspended processes behind
 - A variable the session set does not reach the git hook
 - A PowerShell probe whose Set-Location fails goes on in the current folder
+- Claude Code's worktree points every tree at the main checkout's hooks
 
 ---
 
@@ -301,7 +302,8 @@ machine: no gate, test suite, build or review running, and no process you cannot
 using a noticeable share of a core (`scripts/doctor.sh` lists stray tool commands and how to end
 them; ending one that is not yours is the owner's call). Write that record beside the number. A
 number without it is not a result, and a slower number is a regression only once a quiet rerun
-confirms it.
+confirms it. `sh scripts/calm.sh && <the measurement>` waits for that quiet and prints the
+`CALM load1=.. cores=.. heavy=none` line to write beside the number (leeway 2026-10-26).
 
 ## PowerShell from the Microsoft Store leaves suspended processes behind
 
@@ -345,3 +347,15 @@ worktree, under the throwaway author, and the lead had to rebase it out. Make a 
 stop on the first error (`$ErrorActionPreference = 'Stop'`, or `-ErrorAction Stop` on the
 `Set-Location`), and before the commit check that `git rev-parse --show-toplevel` names the
 throwaway folder.
+
+## Claude Code's worktree points every tree at the main checkout's hooks
+
+Each time Claude Code makes a worktree (a sub-agent with worktree isolation, `EnterWorktree`), it
+sets `core.hooksPath` to the main checkout's `.githooks` as an absolute path and logs "Configured
+worktree to use hooks from main repository". Without `extensions.worktreeConfig` the value lands in
+the shared `.git/config`, so the main checkout and every worktree run the main checkout's hooks: a
+branch that changes its gate is committed under the old one, and `scripts/doctor.sh` reports the
+wiring (project_leeway, seven times up to 2026-10-27; a hand reset held only until the next
+worktree). The kit's pre-commit hook sets such a value back to `.githooks` and says so on the
+commit's output; the commit it runs in still used the main checkout's hook, the next one uses the
+tree's own. Any other absolute path is left for the owner: `git config core.hooksPath .githooks`.

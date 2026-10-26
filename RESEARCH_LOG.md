@@ -21,6 +21,20 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-27 — v0.14 field batch: labricore 1-6, 8, calm machine, Claude Code's hooks path
+
+Backflow (labricore field report 4, leeway kit-feedback 2026-10-26 calm-machine, leeway lead 40 2026-10-27).
+Labricore's first review stopped on the template's empty model pin with a message that named no fix; the lines it
+needed were in doctor's reach, so doctor now says it and the refusal names the line. A dispositions value given as
+text failed with an OS error about file name length; the new refusal says what the value must be. `--check` exists
+because each misuse surfaced only after a review's full wait. Calm machine: the GOTCHAS rule already said "a timing
+on a busy machine is not a result" and was prose only; `calm.sh` turns it into one command and one line. The proposed
+warn-only hook was not built: the brief rule reaches every measurement a worker takes, and matching bench commands by
+pattern would guess. Hooks path: leeway found the string "Configured worktree to use hooks from main repository" in
+the Claude Code binary; each worktree it makes rewrites the shared value, so a hand reset cannot hold and doctor's
+NOTE alone (lean 22) only reported it. The hook mends it on the next commit; asking Anthropic for a setting stays the
+owner's call.
+
 ### 2026-10-26 — v0.14 nohandoff: no hand-off while the session's own work runs
 
 Backflow (project_leeway kit-feedback 2026-10-26, the owner's rule, narrowed the same day). A lead handed off with a

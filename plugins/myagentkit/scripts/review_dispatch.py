@@ -433,6 +433,7 @@ def main(argv=None):
     # Off by default: the requested reviewer is usually chosen because the other model
     # authored the patch, so a silent substitute could be the author reviewing itself.
     parser.add_argument("--allow-fallback", action="store_true")
+    parser.add_argument("--check", action="store_true")  # every pre-flight check, no review run
     # The Claude reviewer through an Anthropic-compatible endpoint, as reviewer claude@NAME.
     parser.add_argument("--backend")
     scope_args = parser.add_mutually_exclusive_group()
@@ -469,7 +470,9 @@ def main(argv=None):
         backend_env, pins["claude"] = load_backend(repo, args.backend)
         names["claude"] = "claude@" + args.backend
     if not pins[args.reviewer].strip():
-        raise ValueError("no model pinned for reviewer '%s'" % args.reviewer)
+        name = args.reviewer.upper() + "_MODEL"
+        raise ValueError("no model pinned for reviewer '%s': set %s=\"<model id>\" in scripts/gate_config.sh, "
+                         "or REVIEW_%s for one run" % (args.reviewer, name, name))
     if not pin_valid(args.reviewer, pins[args.reviewer], args.backend):
         raise ValueError("invalid primary model pin")
     # KARARLAR B01 (1): the author's session never reviews its own patch, and no weaker tier than
@@ -507,8 +510,8 @@ def main(argv=None):
     # The dispositions file is read here once and its text handed to every attempt: a
     # fallback attempt never reads a file that changed meanwhile.
     claims = claude_bridge.dispositions_text()
-    measured = claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
-                                          original[0], original[2], claims)[1]
+    carried, measured = claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
+                                                   original[0], original[2], claims)
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
@@ -520,6 +523,13 @@ def main(argv=None):
     # Claude only: Codex has no turn limit to set. A Codex review that switches to Claude on a
     # used-up quota checks it then.
     turns = review_turns() if args.reviewer == "claude" or args.allow_fallback else None
+    if args.check:
+        # labricore 2026-10-26: a misuse used to surface only after a full review's wait.
+        number = re.match(r"This is review round (\d+)", carried)
+        print("READY [review]: reviewer %s model %s effort %s, scope %s%s, round %s"
+              % (names[args.reviewer], pins[args.reviewer], args.effort, scope, " " + ref if ref else "",
+                 number.group(1) if number else 1), flush=True)
+        return 0
     # The main checkout's records, also for a round in a linked worktree (#293).
     store = claude_bridge.records_root(repo)
     agent_usage.require_private_storage(store)

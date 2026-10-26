@@ -119,7 +119,9 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
   matters, in plain words; two or three options, each with its consequence (what changes,
   how long in agent time (`docs/WORKFLOW.md`, "Task sizing"), how to undo); a line marked "Recommendation" with its reason; what happens with
   no answer. Several decisions are separate numbered questions, never "A and B?". An
-  internal id or a section title never stands in for the question.
+  internal id or a section title never stands in for the question. A question whose options
+  depend on another's answer is asked after that answer, or names the dependency; two dependent
+  questions never go in one call (labricore 2026-10-26).
 - While the owner is present, a decision goes through the tool's question feature (multiple
   choice, recommended option first), not as a question buried in chat text. Present, any
   ambiguity that changes the work stops it and is asked that way (`docs/HANDOFF.md`, item 7).

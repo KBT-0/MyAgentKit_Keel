@@ -30,6 +30,18 @@ case "${1:-}" in --merge|--master-writer) hook=pre-merge-commit ;; *) hook=pre-c
 here=$(git rev-parse --absolute-git-dir) && common=$(git rev-parse --git-common-dir) &&
   here=$(CDPATH= cd -- "$here" && pwd -P) && common=$(CDPATH= cd -- "$common" && pwd -P) &&
   marker="$(git rev-parse --show-toplevel)/.myagentkit/master-writer" || exit 1
+# Claude Code, making a worktree (sub-agent isolation, EnterWorktree), writes core.hooksPath as the
+# main checkout's absolute .githooks into the shared .git/config, so every worktree runs main's hooks,
+# not its own branch's (leeway 2026-10-27, seven times). Set back to .githooks, which each tree reads as
+# its own; this run is already main's hook, the next one is the tree's. Any other path is left alone.
+hooks_path=$(git config core.hooksPath 2>/dev/null) || hooks_path=
+case $hooks_path in /*|[A-Za-z]:/*|[A-Za-z]:\\*)
+  main_hooks=$(CDPATH= cd -- "$common/../.githooks" 2>/dev/null && pwd -P) || main_hooks=
+  if [ -n "$main_hooks" ] && [ "$(CDPATH= cd -- "$hooks_path" 2>/dev/null && pwd -P)" = "$main_hooks" ] &&
+    git config core.hooksPath .githooks; then
+    printf '%s\n' "$hook: core.hooksPath was the absolute '$hooks_path' (Claude Code writes it when it makes a worktree); set back to .githooks" >&2
+  fi ;;
+esac
 if [ "$here" = "$common" ] && [ -e "$marker" ]; then
   writer=$(sed -n '1s/[[:space:]]*$//p' "$marker" 2>/dev/null)
   name=$(sed -n '2s/[[:space:]]*$//p' "$marker" 2>/dev/null)

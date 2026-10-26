@@ -15,6 +15,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **Labricore field report 2026-10-26.** `doctor.sh` says MISSING when the reviewer's pin is still the template's
+  empty `CLAUDE_MODEL=""` (or `CODEX_MODEL=""`) line and no `REVIEW_*_MODEL` is set, and an incomplete run ends with
+  a line telling the agent to tell the owner the lines before any work. The review's "no model pinned" refusal
+  names the line to set. `REVIEW_DISPOSITIONS` given the text instead of a file's path is refused with that
+  sentence (it was `Errno 36 File name too long`). `review.sh --check` runs every pre-flight check and prints one
+  `READY [review]:` line (reviewer, model, effort, scope, round) without calling a model. `COMMUNICATION.md`: a
+  question that depends on another's answer waits for it, never in one call. The side check's note addresses the
+  main agent, never the owner. No project action: set the pin when doctor asks.
+- **The commit hook mends the hooks path Claude Code breaks** (leeway 2026-10-27, seven times). Claude Code sets
+  `core.hooksPath` to the main checkout's absolute `.githooks` in the shared `.git/config` whenever it makes a
+  worktree, so every worktree ran the main checkout's hooks. `pre-commit` (also run by `pre-merge-commit`) sets
+  that value back to `.githooks` and says so; any other path is left alone. `doctor.sh`'s NOTE names the writer;
+  `GOTCHAS_KIT.md` has the entry. No project action: a sync brings the hook.
+- **A measurement waits for a calm machine** (leeway kit-feedback 2026-10-26, a frame time taken at load 13-16 on
+  20 cores). New `scripts/calm.sh` waits (up to `CALM_WAIT`, 20 min) until the 1-minute load is under cores / 5
+  and no build, generator or gate runs (`CALM_HEAVY`, a regular expression a project may widen), then prints
+  `CALM load1=.. cores=.. heavy=none`; otherwise `NOT CALM ...` and exit 1. `HANDOFF.md`: a brief's measurement
+  runs behind it. No project action. The proposed warn-only hook is left out: a brief rule reaches every
+  measurement a worker takes, and a pattern match on bench commands would guess.
 - **No hand-off while work started inside the session still runs** (leeway kit-feedback 2026-10-26, the owner's
   rule). The Claude Code overlay's `context_size.py` keeps the session's running jobs from the transcript (a
   background Bash task, an async sub-agent; ended by its `<task-id>` notification or a TaskStop; a watch on a
