@@ -52,7 +52,8 @@ KNOWN = 20  # the topics the gate hands the side check: the most recent, so its 
 # The agent may write the verdict in the chat's language (ctlq rO, 2026-10-26: "kısmen doğru" twice, both unread).
 # Longest first: "doğru değil" (not correct) must not read as "doğru".
 WORDS = {'kısmen doğru': 'partly', 'kısmen': 'partly', 'doğru değil': 'wrong', 'doğru': 'correct', 'yanlış': 'wrong'}
-VERDICT = re.compile(r'myagentkit-suggestion #(\d+): (correct|wrong|partly|not useful|%s)\b' % '|'.join(WORDS), re.I)
+# Not before " |": the format sentence "#ID: correct | wrong | partly" quoted back is no verdict.
+VERDICT = re.compile(r'myagentkit-suggestion #(\d+): (correct|wrong|partly|not useful|%s)\b(?!\s*\|)' % '|'.join(WORDS), re.I)
 
 
 def folded(word: str) -> str:

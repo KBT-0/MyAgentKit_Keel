@@ -194,6 +194,17 @@ test('the window keeps the request whole, drops the oldest calls and stays under
   expect(text).not.toContain('-> ' + 'y'.repeat(304) + '\n') // the oldest of the last ten
 })
 
+test('long owner messages leave room for the tool calls: the oldest messages drop first', async () => {
+  const prompts = Array.from({ length: 8 }, (_, i) => ('message ' + i + ' ').repeat(80).slice(0, 600)).join('\n---\n')
+  const calls = Array.from({ length: 10 }, () => ({ tool: 'Bash', args: 'x'.repeat(300), head: 'y'.repeat(300),
+    isError: false }))
+  const text = windowText(prompts, calls, 't'.repeat(2500), 's'.repeat(1200))
+  expect(text.length).toBeLessThanOrEqual(10000)
+  expect(text).toContain('message 7 ')
+  expect(text).not.toContain('message 0 ')
+  expect(Number(/The agent's last (\d+) tool calls/.exec(text)?.[1])).toBeGreaterThanOrEqual(5)
+})
+
 test('two hundred known topics stay inside the 10000 characters, the most recent kept', async ($, on) => {
   const c = fresh()
   const known = Array.from({ length: 200 }, (_, i) => 'topic ' + i + ' ' + 'k'.repeat(50))

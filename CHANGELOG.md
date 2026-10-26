@@ -18,7 +18,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Review follow-ups.** A dangling `scripts/check.project.sh` or `scripts/review_selftest.project.sh` symlink
   fails the gate or the self-test as a step that cannot run (it was skipped silently); `check.sh` with an extra
   argument prints its usage and exits 2; the sync's conflict hint names the two files a project step goes into.
-  No project action.
+  The side check's window keeps its tool calls under long owner messages (the oldest messages drop past 2400
+  characters); a quoted verdict format sentence (`#ID: correct | wrong | partly`) is no longer read as a verdict.
+  A sync brings the hook, `claude plugin update myagentkit@myagentkit` the mod; nothing else to do.
 - **Labricore field report 2026-10-26.** `doctor.sh` says MISSING when the reviewer's pin is still the template's
   empty `CLAUDE_MODEL=""` (or `CODEX_MODEL=""`) line and no `REVIEW_*_MODEL` is set, and an incomplete run ends with
   a line telling the agent to tell the owner the lines before any work. The review's "no model pinned" refusal
@@ -302,7 +304,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `last_assistant_message`; the transcript could get that block after the hook read it, and the agent was asked
   for a verdict it had already written (field report, leeway). Sync alone is enough.
 - myagentkit-suggestion mod: the side check sees every owner message since its last check, one typed while a turn
-  ran too, not only the latest one (a note flagged work an earlier message had asked for). Sync alone is enough.
+  ran too, not only the latest one (a note flagged work an earlier message had asked for). The mod comes with the
+  plugin, not the sync: `claude plugin update myagentkit@myagentkit` brings it.
 
 ## v0.13 — 2026-10-23
 

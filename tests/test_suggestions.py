@@ -131,6 +131,13 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict') if r['id'] > 3],
                          [(4, 'wrong'), (5, 'partly'), (6, 'wrong')])
 
+    def test_the_quoted_format_sentence_is_not_a_verdict(self):
+        # Review b8030746c27a (Low): "#1: correct | wrong | partly" in a quoted instruction read as 'correct'.
+        self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'})
+        self.run_hook('stop', self.event(last_assistant_message=
+                      'I will write "myagentkit-suggestion #1: correct | wrong | partly, because ..." once I checked.'))
+        self.assertEqual(self.rows('verdict'), [])
+
     def test_a_reminder_rides_with_a_new_note(self):
         self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'}, {'kind': 'due', 'id': 1, 'session': 's1'},
                    note(2))

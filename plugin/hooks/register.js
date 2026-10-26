@@ -46,6 +46,7 @@ const REPLY_TOKENS = 400
 const KEPT_PROMPTS = 3
 const PROMPTS = KEPT_PROMPTS + 5 // at most 5 since the last check, the 3 before always kept
 const SAID = 3
+const PROMPTS_CHARS = 2400 // the owner's messages together: the oldest drop past it, so the tool calls keep room
 
 // A note field's length cap; a field is one line, and one that carries the delivery frame's own
 // markers drops the note (a tool result in the window can steer the reply).
@@ -168,10 +169,13 @@ function head(result) {
   return oneLine(typeof value === 'string' ? value : JSON.stringify(value) ?? '', 300)
 }
 
-// The window the side check reads, newest call last. The owner's messages (each capped at 600), the agent's
-// text (each capped at 400) and the tail (known topics, recent notes, the trigger) stay whole; the oldest calls
-// drop until it fits WINDOW_CHARS.
+// The window the side check reads, newest call last. The owner's messages (each capped at 600, the oldest
+// dropped past PROMPTS_CHARS, the newest always kept), the agent's text (each capped at 400) and the tail (known
+// topics, recent notes, the trigger) stay whole; the oldest calls drop until it fits WINDOW_CHARS.
 export function windowText(prompt, calls, tail = '', said = '') {
+  const asked = prompt.split('\n---\n')
+  while (asked.length > 1 && asked.join('\n---\n').length > PROMPTS_CHARS) asked.shift()
+  prompt = asked.join('\n---\n')
   const last = calls.slice(-WINDOW_CALLS)
   const earlier = calls.slice(0, Math.max(0, calls.length - WINDOW_CALLS))
   const files = (c) => (c.args + ' ' + c.head).match(FILE) ?? []
