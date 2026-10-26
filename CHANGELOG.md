@@ -21,8 +21,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   The side check's window keeps its tool calls under long owner messages (the oldest messages drop past 2400
   characters); a quoted verdict format sentence (`#ID: correct | wrong | partly`) is no longer read as a verdict.
   `check.sh` runs `build_cache_inputs`, and `review.sh --self-test` runs `scripts/review_selftest.project.sh`,
-  without the git variables a hook exports (the C8 class). A sync brings the scripts and the hook,
-  `claude plugin update myagentkit@myagentkit` the mod.
+  without the git variables a hook exports (the C8 class). A failed build that prints from its first test-failure
+  block prints first the earlier lines that name an error or a failure (a lint step before the tests). A sync
+  brings the scripts and the hook, `claude plugin update myagentkit@myagentkit` the mod.
 - **ACTION** (`.claude/hooks/after_compact.txt`, project-owned): after a compaction it named `docs/STATE.md` whole;
   in yours, change "re-read docs/STATE.md," to "re-read docs/STATE.md's "Active work" and "Blocked" sections (never
   the whole file)," (or copy the kit's file over one you never edited).

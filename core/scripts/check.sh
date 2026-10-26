@@ -1162,7 +1162,13 @@ print(len(fields) // 2)
         fail=1
       elif [ -n "$failures_at" ]; then
         printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its failures and summary follow, from line $failures_at;"
-        printf '%s\n' "              the passing output above them and the whole output are in $build_log"
+        printf '%s\n' "              the output above them and the whole output are in $build_log"
+        # An earlier step of a command of several ("lint; tests") fails above the first block: its
+        # lines that name an error or a failure, not a passing test's, print first (the last 20).
+        awk -v n="$failures_at" 'NR >= n { exit } { line = tolower($0) }
+          line ~ /error|fail/ && line !~ /(\.\.\.|:) ok\r?$/ { held[++k] = $0 }
+          END { if (k) { print "Earlier lines that name an error or a failure:"
+                         for (i = (k > 20 ? k - 19 : 1); i <= k; i++) print held[i]; print "---" } }' "$build_log"
         tail -n "+$failures_at" "$build_log"
         fail=1
       elif [ "$rc" -ne 0 ]; then

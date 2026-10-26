@@ -201,12 +201,14 @@ class GateCheckTests(unittest.TestCase):
                        'echo "E   assert 1 == 2"; echo "======= 1 failed, 300 passed in 1.00s ======="\n',
                        '___ test_a ___', '1 failed, 300 passed'),
         }
+        # Review 520392d33a7b (Low): an earlier step's failure ("lint; tests") reached only the log.
+        earlier = 'echo "lint: error in a.js"\n'
         for runner, (failures, first, summary) in runners.items():
             with self.subTest(runner=runner):
-                write(self.build, passing + failures + 'exit 1\n')
+                write(self.build, earlier + passing + failures + 'exit 1\n')
                 out = self.assert_red('FAIL [build]: the build/test command exited 1. Its failures and summary follow',
                                       CI='', MYAGENTKIT_CHECK_VERBOSE='')
-                for line in (first, '  frame 0', '  frame 199', summary):
+                for line in (first, '  frame 0', '  frame 199', summary, 'lint: error in a.js'):
                     self.assertIn(line, out)
                 self.assertNotIn('test_0 ... ok', out)
                 self.assertIn('.git/check-build.log', out)
