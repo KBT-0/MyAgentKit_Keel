@@ -154,7 +154,12 @@ carries no bare labels. The closing message that says the hand-off is ready ends
 opening prompt in a fenced code block: the exact text the owner pastes into the new session
 (the hand-off file to read and "go on", in the chat language), and the model to open it on
 (full model id). "The hand-off is ready" alone leaves the owner to compose it; the Claude Code
-overlay's `plain_report.py` Stop hook bounces that message once.
+overlay's `plain_report.py` Stop hook bounces that message once. The owner skips the routine
+model line, so a model other than the project's default lead (a stronger tier for a very
+critical task) gets its own bold line above the code block, with its one-line reason, and is
+the hand-off file's first line. After any further talk that follows a hand-off proposal, every
+reply ends with the full, final opening prompt again, unasked, never "the prompt above" (owner,
+2026-10-26).
 
 ## Workers
 
@@ -181,6 +186,10 @@ worktree policy"):
 
 The commit hooks' master-writer refusal prints the MERGE REQUEST line above as it stands here:
 this line is the one place its shape lives.
+
+A report to another project's lead (a field report, kit feedback) goes into a file; the message
+carries only its path and one line on what it holds. A pasted report filled a lead's context
+with about 14k tokens of peer messages in one session (owner, 2026-10-26).
 
 ## Per-model notes
 

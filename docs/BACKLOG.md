@@ -58,9 +58,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - fullrev-review L: a past-mode `--commit` of an older commit on a dirty tree is refused for a
   secret-looking or filtered file in the working tree the review never reads; the message blames
   the file, not the dirty tree (`claude_bridge.py` past mode).
-- fullrev-review L: `review_dispatch.judge`, same-tier branch: a bad `MYAGENTKIT_AUTHOR_EFFORT`
-  passes silently under the exception (effort is forced high, so the floor holds; the typo is
-  not named).
 - fullrev-review L: `agent_process.py:251` the checkout watch stops after one slow look and the
   record does not say so.
 - fullrev-hooks M1: `guard_destructive_git.py` does not route `git checkout -B` / `git switch -C`

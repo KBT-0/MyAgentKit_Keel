@@ -21,6 +21,20 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-26 — v0.14 rtier: the author's own tier reviews by default
+
+Owner decision 2026-10-26 (handoff-49 Next 1). The v0.12 rule refused the author's tier below
+the family's top unless `REVIEW_SAME_TIER_EXCEPTION` named a reason, so every Opus-authored kit
+change ran under that exception or on Fable. A Fable round cost $3-5 and an Opus round $0.33
+(Keel review records, 2026-10-26); no source measured a stronger tier of the same family reviewing
+better (`docs/research/ai-review-workflows.md`), while Anthropic's guidance is a separate writer and
+reviewer session ([1]), and the zero gain measured for self-review was in the same session ([25]).
+Now the author's own tier in a fresh session is the default required review; Fable is the lead's
+named choice for a data-loss or gate risk, a release or security. A weaker tier stays refused
+(`docs/research/claude-lead-codex.md`, findings 4 and 9). The exception, its one-round count and
+`top_tier_review` are replaced by one `own_tier_review` path. Fable review v014-rtier: one High
+(the Windows suite floor) and Lows, fixed. Sources: `.myagentkit/v014/rtier-brief.md`.
+
 ### 2026-10-24 — v0.14 gitguard: read the shell's quoting before refusing git in data
 
 Backflow (leeway field reports, defect 3 and L9). The v0.12 known limit ("git inside a quote,

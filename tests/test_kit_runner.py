@@ -63,7 +63,7 @@ class KitRunnerTests(unittest.TestCase):
     def test_the_kit_article_describes_the_weaker_and_author_tier_refusal(self):
         # This article belongs to the kit, not to a bootstrapped project's docs.
         page = ' '.join((ROOT / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
-        self.assertIn("refuses a reviewer of a weaker tier, or of the author's tier below the family's top", page)
+        self.assertIn("refuses a reviewer of a weaker tier than the author's", page)
         self.assertNotIn('planned work', page)
 
     def test_review_shards_require_complete_unique_successful_reports(self):

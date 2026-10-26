@@ -15,6 +15,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **ACTION** (`docs/REVIEW_GATE.md`, `docs/WORKFLOW.md`, `docs/REVIEW_RUNNING.md`, `docs/COMMUNICATION.md`,
+  project-owned; owner 2026-10-26): run `sync-kit.sh . --merge`. The required review runs on the author's own tier
+  in a fresh session by default (Opus reviews Opus); a stronger tier (Fable) when the lead names a data-loss or
+  gate risk, a release or security, with a one-line reason. `review.sh` no longer refuses the author's tier, only a
+  weaker one; `REVIEW_SAME_TIER_EXCEPTION` and its one-round limit are gone, and the chain records
+  `own_tier_review` in place of `top_tier_review`. COMMUNICATION "Handoff": a non-default lead model gets its own
+  bold line above the opening prompt and the hand-off file's first line, and every reply after a hand-off proposal
+  ends with the full prompt again; a report to another project's lead goes into a file, the message carries its
+  path.
 - **ACTION** (Claude Code overlay, owner 2026-10-26: an autopilot session cannot hand off): copy the new
   `.claude/hooks/before_compact.py`, and from the overlay's `.claude/settings.json` add the `PreCompact` entry and
   the second half of the `SessionStart` (`compact`) command (`; cat ".myagentkit/compact-note.md" ... && rm -f ...; true`)
@@ -1027,6 +1036,7 @@ file the kit changed reaches the project through these items.
     `REVIEW_SAME_TIER_EXCEPTION=<reason>` names the owner's exception, which needs
     `REVIEW_RISK=high` and effort high, holds one round per label and focus, and is recorded
     (`same_tier_exception`). The v0.11 solo setup of an Opus author reviewed by Opus needs it.
+    Replaced in v0.14: the author's own tier is the default review, and the exception is gone.
   - The review runs at the author's effort (`MYAGENTKIT_AUTHOR_EFFORT`; unset counts as high),
     high at most; an effort named below it is refused.
   A used-up quota switches to another tier of the author's family; a round 2 over the fix
@@ -1044,7 +1054,7 @@ file the kit changed reaches the project through these items.
   the first change, as `stale_checkout`: edit nothing in the reviewed checkout while its review
   runs. The chain record names the attempt that follows (`next_attempt`: a capacity retry, a
   quota switch, a fallback), and a review is finished only without it; it also gains
-  `top_tier_review`, `same_tier_exception` and `checkout_unverified`, and a usage record's
+  `top_tier_review` (v0.14: `own_tier_review`), `same_tier_exception` (gone in v0.14) and `checkout_unverified`, and a usage record's
   `automatic_retry` may be `null`. A Codex review loads no project doc as instructions
   (`project_doc_max_bytes=0`); `AGENTS.md` stays evidence the prompt names. An Accept that its
   own findings contradict is read as the stricter verdict in both adapters: Reject when an item

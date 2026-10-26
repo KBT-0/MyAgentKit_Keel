@@ -11,8 +11,11 @@ the timing is written. The reviewer reads this file; running a review is
 
 **The session that wrote a patch never reviews or approves it.** The review runs in a FRESH
 session, and the working mode's table names who takes it (`docs/WORKFLOW.md`, "Working modes,
-by name"): in solo, a tier of the same family at least the author's: a stronger tier, or, when
-the author is the family's top tier, that tier again in a fresh session; in cross, the other
+by name"): in solo, the author's own tier in a fresh session by default, or a stronger tier of
+the family: Fable when the lead judges a miss could lose data or silently open the gate (a
+destructive-git guard, the commit gate, a worktree removal), and for a release or a security
+change, the lead writing the one-line reason (owner, 2026-10-26: a Fable round cost $3-5, an
+Opus round $0.33, and no source measured a stronger tier reviewing better); in cross, the other
 family by the direction rule. Every required review runs at an effort equal to or above the
 author's, high at most, since a review never runs at xhigh or max (owner decisions 64 and 65,
 2026-10-19), and an author's effort nobody named counts as high (owner decision 66,
@@ -32,8 +35,7 @@ rule is written; other documents point here. One family is enough; a second vend
 (`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. No published
 measurement says how much a second tier of the same family adds. The lead names the author's
 model in `MYAGENTKIT_AUTHOR` and its effort in `MYAGENTKIT_AUTHOR_EFFORT` (high when unset);
-`scripts/review.sh` then refuses a reviewer pin of the author's tier (the top tier excepted) or
-of a weaker tier, and a review named below the author's effort (with none named, the review runs
+`scripts/review.sh` then refuses a reviewer pin of a weaker tier than the author's, and a review named below the author's effort (with none named, the review runs
 at it, high at most), blocks such a substitute, and records the author in the chain and the usage record. Without the variable the
 lead checks independence before launch. A project's copy states this rule here only: an
 upgrade replaces this whole section and deletes every other statement of who reviews whom,

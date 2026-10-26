@@ -179,9 +179,8 @@ def tier_name(family, name):
 def judge(model, author, effort):
     """How reviewer `model` at `effort` stands to the patch's author (docs/REVIEW_GATE.md,
     "Invariant", owner decision 63): ("below", why) for a weaker tier of the author's family, an
-    extra opinion only; ("same", why) for the author's tier below the top, the
-    REVIEW_SAME_TIER_EXCEPTION case; ("top", why) for the author's top tier, a fresh session's
-    review, why None when the effort is the author's or above, capped at high, since a review never
+    extra opinion only; ("own", why) for the author's own tier, the default required review
+    (owner 2026-10-26), in a fresh session, why None when the effort is the author's or above, capped at high, since a review never
     runs at xhigh or max (owner decision 64); ("effort", why) for any other review below that effort,
     since the floor holds for every required review (owner decision 65); (None, None) for any other.
     An unnamed author effort counts as high, the cap (owner decision 66)."""
@@ -193,21 +192,13 @@ def judge(model, author, effort):
            and "review effort %s is below author %s's effort %s: the required review runs at the author's "
            "effort or above, at high for an author above it (a review runs at low, medium or high; "
            "docs/REVIEW_GATE.md, \"Invariant\")" % (effort, author, named))
-    if tier(model) == tier(author) and theirs and theirs[1] == theirs[2]:
-        return "top", (low and low + "; the top tier reviews its own in a fresh session, or the other "
-                       "family reviews it (--reviewer)" or None)
     if tier(model) == tier(author):
-        stronger = [tier_name(theirs[0], name) for name in TIER_LADDERS[theirs[0]][theirs[1] + 1:]
-                    ] if theirs else ["another tier"]
-        return "same", ("author %s is the tier (%s) reviewer model %s would run: the author never reviews "
-                        "its own patch (docs/REVIEW_GATE.md, \"Invariant\"). Pin a stronger tier (%s) or "
-                        "the other family (--reviewer). A high-tier change on a plan with no tier above "
-                        "the author's sets REVIEW_SAME_TIER_EXCEPTION=<reason>"
-                        % (author, tier(author), model, " or ".join(stronger)))
+        return "own", (low and low + "; the author's tier reviews its own in a fresh session, or the "
+                       "other family reviews it (--reviewer)" or None)
     if mine and theirs and mine[0] == theirs[0] and mine[1] < theirs[1]:
         ladder = [tier_name(theirs[0], name) for name in TIER_LADDERS[theirs[0]]]
-        allowed = ("%s at %s's effort or above (high at most), in a fresh session" % (ladder[-1], author)
-                   if theirs[1] == theirs[2] else " or ".join(ladder[theirs[1] + 1:]))
+        allowed = "%s at %s's effort or above (high at most), in a fresh session" % (
+            " or ".join(ladder[theirs[1]:]), author)
         return "below", ("reviewer model %s is a weaker tier than author %s: a lower tier's review of a "
                          "higher tier's work is an extra opinion only, never the required review "
                          "(docs/REVIEW_GATE.md, \"Invariant\"). Pin %s, or the other family (--reviewer); "
@@ -481,8 +472,8 @@ def main(argv=None):
         raise ValueError("no model pinned for reviewer '%s'" % args.reviewer)
     if not pin_valid(args.reviewer, pins[args.reviewer], args.backend):
         raise ValueError("invalid primary model pin")
-    # KARARLAR B01 (1): the author never reviews its own patch, and the default excludes the
-    # author's tier. Only the lead knows the author; when it says so, the pin is checked here.
+    # KARARLAR B01 (1): the author's session never reviews its own patch, and no weaker tier than
+    # the author's is the required review. Only the lead knows the author; when it says so, the pin is checked here.
     author = os.environ.get("MYAGENTKIT_AUTHOR", "").strip() or None
     if author and author_tier(author) is None:
         raise ValueError("MYAGENTKIT_AUTHOR %r names no model tier, so the author's tier cannot be checked: "
@@ -494,32 +485,12 @@ def main(argv=None):
         if author and author_effort() in EFFORTS:
             args.effort = EFFORTS[max(EFFORTS.index(args.effort), min(EFFORTS.index(author_effort()), 2))]
     authors = [author] if author else []
-    # The owner's exception (docs/WORKFLOW.md, solo; 2026-10-16): on a plan with no tier above the
-    # author's, a high-tier change is reviewed by the author's tier in a fresh session at high
-    # effort, and the owner's diff read is the second check. Named, never inferred (#179).
-    exception = os.environ.get("REVIEW_SAME_TIER_EXCEPTION", "").strip() or None
-    if exception and (os.environ.get("REVIEW_RISK") != "high" or args.effort != "high"):
-        raise ValueError("REVIEW_SAME_TIER_EXCEPTION is for a high-tier change only: it needs "
-                         "REVIEW_RISK=high and effort high (docs/WORKFLOW.md, \"Working modes, by name\", solo)")
-    # Owner decision 63 (#290): the reviewer is at least the author's tier; the top tier reviews its
-    # own tier in a fresh session at the author's effort or above, with no exception named.
+    # Owner decision 63 (#290), 2026-10-26: the reviewer is at least the author's tier; the author's
+    # own tier reviews in a fresh session at the author's effort or above.
     kind, why = judge(pins[args.reviewer], author, args.effort) if author else (None, None)
     # A shadow run closes nothing, so neither a weaker tier nor a lower effort blocks it.
-    if (kind in ("below", "effort") and os.environ.get("REVIEW_SHADOW") != "1" or kind == "top" and why
-            or kind == "same" and not exception):
+    if kind in ("below", "effort") and os.environ.get("REVIEW_SHADOW") != "1" or kind == "own" and why:
         raise ValueError(why)
-    same = authors if kind == "same" else []
-    # Which reviewer runs under the exception, for the attempt's usage record and the one-round
-    # check in prior_rounds(); never inherited.
-    under = {args.reviewer: exception if same else None}
-
-    def mark(provider):
-        if under.get(provider):
-            os.environ[claude_bridge.SAME_TIER_ENV] = under[provider]
-        else:
-            os.environ.pop(claude_bridge.SAME_TIER_ENV, None)
-
-    mark(args.reviewer)
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     # Claude reviews a --commit that is not HEAD from its archive (#114); Codex cannot.
     past_ok = args.reviewer == "claude"
@@ -571,27 +542,17 @@ def main(argv=None):
     if args.kit_verified:
         chain["kit_verified"] = verified
 
-    def top_tier(provider):
-        # The top tier's own review (owner decision 63): recorded and printed, for whichever runs.
-        chain["top_tier_review"] = {"author_effort": author_effort(),
+    def own_tier(provider):
+        # The author's own tier reviews (owner decision 63): recorded and printed, for whichever runs.
+        chain["own_tier_review"] = {"author_effort": author_effort(),
                                     "effort": args.effort}
-        print("REVIEW [top tier]: author %s is the top tier of its family, so reviewer %s model %s, "
-              "its own tier, reviews it in a fresh session at effort %s (the author's: %s)."
-              % (author, names[provider], pins[provider], args.effort, chain["top_tier_review"]["author_effort"]),
+        print("REVIEW [own tier]: reviewer %s model %s is author %s's own tier and reviews it in a "
+              "fresh session at effort %s (the author's: %s)."
+              % (names[provider], pins[provider], author, args.effort, chain["own_tier_review"]["author_effort"]),
               flush=True)
 
-    if kind == "top":
-        top_tier(args.reviewer)
-    def same_tier(provider, same):
-        # For whichever reviewer runs: a substitute of the author's tier (the quota switch,
-        # --fallback) runs under the exception as the primary does, recorded and printed.
-        chain["same_tier_exception"] = exception
-        print("REVIEW [same tier]: author %s and reviewer %s model %s are one tier, under "
-              "REVIEW_SAME_TIER_EXCEPTION (%s); the owner reads the diff before the merge."
-              % (", ".join(same), names[provider], pins[provider], exception), flush=True)
-
-    if same:
-        same_tier(args.reviewer, same)
+    if kind == "own":
+        own_tier(args.reviewer)
     if os.environ.get("REVIEW_SHADOW") == "1":
         # Marked where a later reader looks: the chain record and the console. A variable left
         # exported after a shadow run turns every later review into one, so the line says so.
@@ -616,7 +577,6 @@ def main(argv=None):
     while queue:
         provider = queue.pop(0)
         os.environ["MYAGENTKIT_REVIEW_ATTEMPT"] = str(len(chain["attempts"]) + 1)
-        mark(provider)
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
                    "--" + scope] + ([ref] if ref else [])
@@ -749,27 +709,9 @@ def main(argv=None):
         # Claude author's Codex review that ran out of quota goes to another Claude tier (#225).
         # A substitute stands to the author as the primary does (owner decision 63).
         sub_kind, sub_why = judge(pins[other], author, args.effort) if eligible else (None, None)
-        if sub_kind in ("below", "effort") and os.environ.get("REVIEW_SHADOW") != "1" or sub_kind == "top" and sub_why:
+        if sub_kind in ("below", "effort") and os.environ.get("REVIEW_SHADOW") != "1" or sub_kind == "own" and sub_why:
             chain["fallback_blocked"] = "other reviewer %s: %s" % (names[other], sub_why)
             eligible = False
-        if eligible and not exception and sub_kind == "same":
-            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (%s)"
-                                         % (names[other], pins[other], author))
-            eligible = False
-        substitute_same = authors if eligible and sub_kind == "same" else []
-        if substitute_same:
-            # The exception is one round per label: a substitute under it is refused here, as
-            # the primary was before launch, when an earlier round already used it.
-            under[other] = exception
-            mark(other)
-            try:
-                claude_bridge.prior_rounds(repo, os.environ["MYAGENTKIT_TASK_ID"], scope, original[3],
-                                           original[0], original[2], claims)
-            except claude_bridge.BridgeError as refused:
-                chain["fallback_blocked"] = str(refused)
-                eligible, substitute_same = False, []
-        if substitute_same:
-            chain["same_tier_exception"] = exception  # in the checkpoint before the substitute runs
         # A lead reading the records after a cut-off sees that another attempt follows: the retry
         # sleeps first, and the quota switch runs without --fallback (#121).
         chain.pop("next_attempt", None)
@@ -808,16 +750,13 @@ def main(argv=None):
             print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
                   "passed, so configured %s model %s runs once instead."
                   % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
-        if substitute_same:
-            same_tier(other, substitute_same)
         # The record describes the review that runs, never the failed primary's pin.
-        chain.pop("top_tier_review", None)
-        if sub_kind == "top":
-            top_tier(other)
+        chain.pop("own_tier_review", None)
+        if sub_kind == "own":
+            own_tier(other)
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
         queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)
-    os.environ.pop(claude_bridge.SAME_TIER_ENV, None)
     print("review dispatch: " + json.dumps(chain))
     if chain["status"] != "completed":
         print("FAIL [review]: requested reviewer %s did not produce a review (%s)%s"
@@ -857,14 +796,9 @@ def main(argv=None):
                   "diff it names. Leave this checkout untouched until review.sh exits: keep "
                   "working in another worktree, or wait for it, then run the review again.")
         if chain["failure_kind"] == "checkout_unverified":
-            # A rerun under the exception is refused (prior_rounds): that round was its one.
-            again = ("It was this label's one round under REVIEW_SAME_TIER_EXCEPTION: mend the cause, "
-                     "then the next round of this focus goes to the other family or the owner's diff "
-                     "read (docs/WORKFLOW.md, \"Model routing\", rule 7)." if under.get(provider)
-                     else "Mend the cause, then run the review again.")
             print("FAIL [review]: the checkout could not be read after the review (%s), so the "
                   "result cannot be tied to the diff it names; the completed review still counts "
-                  "as a round. %s" % (chain["checkout_unverified"], again))
+                  "as a round. Mend the cause, then run the review again." % chain["checkout_unverified"])
     elif chain.get("selected_reviewer") != names[args.reviewer]:
         print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
               "author the patch." % (chain["selected_reviewer"], names[args.reviewer]))

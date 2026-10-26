@@ -598,7 +598,7 @@ choice, 2026-10-19; rule 2 says when the top model takes an errand itself).
 | 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5, medium effort |
 | 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, high effort, only for design-bearing work |
 | 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, high effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.1 when the lead picks it |
-| Review | The required review of any change, chosen per task like a worker | at least the author's tier: a stronger one; for an Astra author, Astra again in a fresh session | the same rule: for a Fable author, Fable in a fresh session |
+| Review | The required review of any change, chosen per task like a worker | at least the author's tier: the author's own in a fresh session by default, a stronger one when the lead names why (`docs/REVIEW_GATE.md`, "Invariant") | the same rule: Fable for a data-loss or gate risk, a release or security |
 
 The review row is `docs/REVIEW_GATE.md`, "Invariant", with its sources (Anthropic's separate
 writer and reviewer sessions, `docs/research/ai-review-workflows.md` [1]; self-review's zero
@@ -778,7 +778,7 @@ side it runs on.
 
 | Mode | Writes | Reviews | Fixes the findings |
 |---|---|---|---|
-| `solo` | one model family's workers, by tier | a fresh session of a stronger tier of the same family; the top tier's own work, that tier in a fresh session | the author's side ("Worker cost", rule 2) |
+| `solo` | one model family's workers, by tier | a fresh session of the author's tier by default, or of a stronger tier of the same family | the author's side ("Worker cost", rule 2) |
 | `cross` | both families, each task by fit | the other family by the direction rule, in a fresh session | the author's side ("Worker cost", rule 2) |
 | `saver` | the side that is not low | the low side, within a small budget, at low and medium tier; a high or critical change as in cross | the side that is not low |
 
@@ -799,14 +799,9 @@ review cost 1.7 to 2.3 times, and its gain depends on the direction).
   for that family.
 - **Reviews and fixes:** the author and the reviewer each run in a fresh bridged session with
   no shared context, and the reviewer is at least the author's tier ("Model routing", the
-  review row): Sonnet authors and Opus or Fable reviews it, Opus authors and Fable reviews it,
-  and Fable, the top tier, authors and Fable reviews it in a fresh session; the review's
-  effort follows `docs/REVIEW_GATE.md`, "Invariant". A second session of the author's own tier below the top
-  is never the review, with one exception: on a plan with no tier above the author's (Opus
-  without Fable), a high-tier or critical change gets Opus in a fresh session, at high effort,
-  one round, plus {{OWNER_NAME}}'s diff read (owner decision, 2026-10-16; the same-model review
-  alone added 0 points at 1.7 times the cost, `docs/research/claude-lead-codex.md`, finding 4,
-  so the diff read carries the weight). Findings go to the author's side ("Worker cost", rule 2), and the
+  review row): by default the author's own tier in a fresh session (Sonnet reviews Sonnet,
+  Opus reviews Opus), Fable when the lead names a data-loss or gate risk, a release or
+  security (owner, 2026-10-26); the review's effort follows `docs/REVIEW_GATE.md`, "Invariant". Findings go to the author's side ("Worker cost", rule 2), and the
   next round reviews the fix. Two tiers decorrelate less than two vendors (Goel et al.,
   ICML 2025, arxiv.org/abs/2502.04313: model errors overlap more as capability grows; one
   measured Claude-to-Claude review added 0 points at 1.7 times the cost,

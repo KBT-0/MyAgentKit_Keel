@@ -24,10 +24,10 @@ because it spends budget beyond the gate. Agents do not start it on their own.
 `--reviewer codex`; the project's configured default is at the top of that script, and in
 the solo mode `REVIEW_CLAUDE_MODEL` pins the Claude tier that reviews. A
 second vendor is pluggable, never required. **You may be the author here.** If this session
-wrote the diff, the reviewer is at least your tier, whatever the default says: a stronger
-tier, or your own top tier in a fresh session (`docs/REVIEW_GATE.md`, "Invariant"); set the
-reviewer model pin and check it before launch. With `MYAGENTKIT_AUTHOR` set, `review.sh`
-refuses any other pin and a review below your effort (`MYAGENTKIT_AUTHOR_EFFORT`, high when
+wrote the diff, the reviewer is at least your tier, whatever the default says: your own tier
+in a fresh session, or a stronger one when a miss could lose data or open the gate
+(`docs/REVIEW_GATE.md`, "Invariant"); set the reviewer model pin and check it before launch.
+With `MYAGENTKIT_AUTHOR` set, `review.sh` refuses a weaker pin and a review below your effort (`MYAGENTKIT_AUTHOR_EFFORT`, high when
 unset). Failing
 over to the other configured reviewer happens only when the owner asked for it and
 `--fallback` is passed; the default is no failover. Without `--fallback` the review simply

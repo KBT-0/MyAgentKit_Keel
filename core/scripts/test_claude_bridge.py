@@ -44,10 +44,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
                       # The lead's author claim: an exported one refused the fixtures' reviewer pin.
-                      'MYAGENTKIT_AUTHOR', 'MYAGENTKIT_AUTHOR_EFFORT', 'REVIEW_SAME_TIER_EXCEPTION', 'MYAGENTKIT_ALLOW_SECRET_FILES',
-                      # Set by the dispatcher for a reviewer under the exception: its own test run
-                      # marked the fixture rounds and refused their second one.
-                      'MYAGENTKIT_REVIEW_SAME_TIER',
+                      'MYAGENTKIT_AUTHOR', 'MYAGENTKIT_AUTHOR_EFFORT', 'MYAGENTKIT_ALLOW_SECRET_FILES',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
                       'REVIEW_TASK_FILE',
                       # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
@@ -56,9 +53,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 292, 'test_agent_usage': 40, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 287, 'test_agent_usage': 40, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 265, 'test_agent_usage': 36, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 260, 'test_agent_usage': 36, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -831,8 +828,9 @@ class BridgeTests(unittest.TestCase):
             report(dict(status='completed', failure_kind=None, evidence='fixture', usage_record='fixture'))
             return 0
 
-        for author, model, allowed in (('codex/gpt-6', 'gpt-6', False),
-                                       ('codex/gpt-6', 'openai/gpt-6', False),
+        # Owner 2026-10-26: the author's own tier is the default reviewer, so it substitutes too.
+        for author, model, allowed in (('codex/gpt-6', 'gpt-6', True),
+                                       ('codex/gpt-6', 'openai/gpt-6', True),
                                        ('codex/gpt-6', 'unknown-model', False),
                                        ('codex/gpt-6', 'claude-opus-5', True),
                                        ('claude/claude-sonnet-5', 'gpt-6', True)):
@@ -851,9 +849,8 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(fallback.call_count, int(allowed))
                 self.assertEqual(len(chain['attempts']), 2 if allowed else 1)
                 if not allowed:
-                    # #225: the author's tier is refused, a model of no known family stays unknown.
-                    self.assertIn('unknown family' if model == 'unknown-model' else "the author's tier",
-                                  chain['fallback_blocked'])
+                    # #225: a model of no known family stays unknown.
+                    self.assertIn('unknown family', chain['fallback_blocked'])
                     self.assertNotIn('selected_reviewer', chain)
         # #181: an author that names no model tier is refused before any reviewer runs.
         with patch.dict(os.environ, self.review_env(MYAGENTKIT_AUTHOR='unknown-author')), \
@@ -932,8 +929,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn('--allow-secret-file site.key', str(caught.exception))
 
     def test_quota_fallback_refuses_an_unknown_author(self):
-        # #225: the author's tier is refused, not its family (test_a_substitute_of_the_author_tier_
-        # is_blocked); another Claude tier switches (test_a_used_up_codex_quota_switches_...).
+        # #225: the tier counts, not the family (test_a_substitute_of_the_author_tier_runs_as_its_
+        # own_tier_review); another Claude tier switches (test_a_used_up_codex_quota_switches_...).
         result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
                                              MYAGENTKIT_AUTHOR='')
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -6221,9 +6218,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # KARARLAR B01 (1): the docs say what review_dispatch now does with MYAGENTKIT_AUTHOR.
         gate = ' '.join((ROOT.parent / 'docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn("`scripts/review.sh` then refuses a reviewer pin of the author's tier", gate)
+        self.assertIn("`scripts/review.sh` then refuses a reviewer pin of a weaker tier than the author's", gate)
         self.assertNotIn("does not exclude the author's tier automatically", gate)
-        self.assertIn("a reviewer pin of the author's tier is refused with exit 2", running)
+        self.assertIn("a reviewer pin of a weaker tier of the author's family is refused with exit 2", running)
         self.assertNotIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
 
     def test_capacity_documentation_says_what_the_dispatcher_retries(self):
@@ -7618,16 +7615,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertNotIn('shadow', chain)
         self.assertNotIn('REVIEW [shadow]', result.stdout)
 
-    def test_the_author_tier_never_reviews_and_the_record_names_the_author(self):
-        # KARARLAR B01 (1): review.sh's default excludes the author's tier. With MYAGENTKIT_AUTHOR
-        # naming the tier the selected reviewer would run, the review is refused before any
-        # model or record; another tier runs, and the chain and the usage record name the author.
+    def test_a_weaker_tier_never_reviews_and_the_record_names_the_author(self):
+        # KARARLAR B01 (1), owner 2026-10-26: with MYAGENTKIT_AUTHOR naming a tier above the
+        # reviewer's, the review is refused before any model or record; the author's tier or a
+        # stronger one runs, and the chain and the usage record name the author.
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
-        for author in ('claude-opus-5', 'claude/claude-opus-5-5', 'CLAUDE-OPUS-5-20261001'):
+        for author in ('claude-fable-5-1', 'claude/claude-fable-5-1', 'CLAUDE-FABLE-5-20261001'):
             with self.subTest(author=author):
                 result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn('the author never reviews its own patch', result.stdout)
+                self.assertIn('is a weaker tier than author', result.stdout)
                 self.assertIn('docs/REVIEW_GATE.md', result.stdout)
                 self.assertFalse((self.repo / '.myagentkit/usage').exists())
         result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR='claude-sonnet-5', MYAGENTKIT_AUTHOR_EFFORT='low', **env)
@@ -7642,15 +7639,15 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertNotIn('author', chain)
         self.assertNotIn('author', json.loads(Path(chain['attempts'][0]['usage_record']).read_text())['task'])
 
-    def test_the_reviewer_is_at_least_the_author_tier_and_the_top_tier_reviews_its_own(self):
+    def test_the_reviewer_is_at_least_the_author_tier_and_the_own_tier_reviews_its_own(self):
         # #290, owner decision 63: a weaker tier is refused as the required review, the refusal
-        # naming the allowed pins; the top tier's own review runs in a fresh session at the
+        # naming the allowed pins; the author's own tier reviews in a fresh session at the
         # author's effort or above and is recorded; a lower tier runs only as a shadow opinion.
         fable = dict(CLAUDE_CLI_BIN=str(self.fixture), MYAGENTKIT_AUTHOR='claude-fable-5-1')
         for extra, named in ((dict(REVIEW_CLAUDE_MODEL='claude-opus-5-5', MYAGENTKIT_AUTHOR_EFFORT='high'),
                               'Pin claude-fable at claude-fable-5-1\'s effort or above'),
                              (dict(REVIEW_CLAUDE_MODEL='claude-sonnet-5', MYAGENTKIT_AUTHOR='claude-opus-5'),
-                              'Pin claude-fable,'),
+                              'Pin claude-opus or claude-fable at'),
                              # Owner decision 66: an unnamed author effort counts as high.
                              (dict(REVIEW_CLAUDE_MODEL='claude-fable-5-1', REVIEW_EFFORT='medium'),
                               "review effort medium is below author claude-fable-5-1's effort high"),
@@ -7674,10 +7671,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-fable-5-1',
                                   MYAGENTKIT_AUTHOR_EFFORT='medium', REVIEW_EFFORT='high', **fable)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('REVIEW [top tier]:', result.stdout)
+        self.assertIn('REVIEW [own tier]:', result.stdout)
         chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
-        self.assertEqual(chain['top_tier_review'], {'author_effort': 'medium', 'effort': 'high'})
-        self.assertNotIn('same_tier_exception', chain)
+        self.assertEqual(chain['own_tier_review'], {'author_effort': 'medium', 'effort': 'high'})
         usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
         self.assertEqual((usage['task']['author'], usage['task']['author_effort']), ('claude-fable-5-1', 'medium'))
         # Owner decision 64: the requirement is capped at high, so an xhigh or max author's own tier
@@ -7688,7 +7684,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                       **fable)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
-            self.assertEqual(chain['top_tier_review'], {'author_effort': author_effort, 'effort': 'high'})
+            self.assertEqual(chain['own_tier_review'], {'author_effort': author_effort, 'effort': 'high'})
         # Owner decision 66: with the author's effort unnamed and no review effort named, the
         # required review runs at high, not refused; for a top-tier author too.
         for author, label in (('claude-opus-5-5', 'unnamed-opus'), ('claude-fable-5-1', 'unnamed-fable')):
@@ -7697,7 +7693,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('REVIEW [about to run]: claude model claude-fable-5-1, effort high', result.stdout)
             chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
-            self.assertEqual(chain.get('top_tier_review'), {'author_effort': 'high', 'effort': 'high'}
+            self.assertEqual(chain.get('own_tier_review'), {'author_effort': 'high', 'effort': 'high'}
                              if author == 'claude-fable-5-1' else None)
         result = self.run_wrapper('--uncommitted', REVIEW_CLAUDE_MODEL='claude-opus-5-5', REVIEW_SHADOW='1',
                                   MYAGENTKIT_TASK_ID='extra-opinion', **fable)
@@ -7706,7 +7702,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
     def test_a_substitute_stands_to_the_author_as_the_primary_does(self):
         # #290: the quota switch to Claude is blocked for a weaker tier than the author's, and the
-        # top tier's own substitute runs at the author's effort or above, recorded.
+        # own tier's substitute runs at the author's effort or above, recorded.
         fable = dict(CODEX_FIXTURE_CASE='quota', MYAGENTKIT_AUTHOR='claude-fable-5-1', MYAGENTKIT_AUTHOR_EFFORT='high',
                      REVIEW_EFFORT='high')
         result, chain = self.dispatch_result('codex', fallback=False, MYAGENTKIT_TASK_ID='sub-below', **fable)
@@ -7717,8 +7713,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                              REVIEW_CLAUDE_MODEL='claude-fable-5-1', **fable)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
-        self.assertEqual(chain['top_tier_review'], {'author_effort': 'high', 'effort': 'high'})
-        self.assertIn('REVIEW [top tier]:', result.stdout)
+        self.assertEqual(chain['own_tier_review'], {'author_effort': 'high', 'effort': 'high'})
+        self.assertIn('REVIEW [own tier]:', result.stdout)
         # rsel3: a top-tier substitute below the author's effort (named, or unnamed and so high,
         # decision 66) is blocked with its reason, never run. Only a shadow primary reaches it:
         # decision 65 refuses a required primary at that effort before it runs.
@@ -7732,52 +7728,51 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertNotIn('Traceback', result.stdout + result.stderr)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
                 self.assertIn('review effort medium is below', chain['fallback_blocked'])
-                self.assertNotIn('top_tier_review', chain)
-        # rsel3: when the top tier's own review fails and the other family substitutes, the record
+                self.assertNotIn('own_tier_review', chain)
+        # rsel3: when the own tier's review fails and the other family substitutes, the record
         # describes the substitute, not the failed primary.
         result, chain = self.dispatch_result('claude', MYAGENTKIT_TASK_ID='sub-other', REVIEW_CLAUDE_MODEL='claude-fable-5-1',
                                              **dict(fable, FIXTURE_CASE='quota', CODEX_FIXTURE_CASE='accept'))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude', 'codex'])
-        self.assertNotIn('top_tier_review', chain)
+        self.assertNotIn('own_tier_review', chain)
 
     def test_one_ladder_tier_in_any_version_is_one_tier(self):
-        # Owner decision 65: gpt-6-astra and gpt-6.1-astra are one tier, so the top tier's effort
-        # floor and the same-tier refusal hold across a version bump; Claude ids go by family name.
+        # Owner decision 65: gpt-6-astra and gpt-6.1-astra are one tier, so the own tier's effort
+        # floor and the own-tier review hold across a version bump; Claude ids go by family name.
         from unittest.mock import patch
         import review_dispatch
         with patch.dict(os.environ, MYAGENTKIT_AUTHOR_EFFORT='high'):
             self.assertEqual(review_dispatch.tier('gpt-6.1-astra'), review_dispatch.tier('openai/gpt-6-astra'))
             self.assertEqual(review_dispatch.tier('gpt-5.5'), 'gpt-5.5')
-            self.assertEqual(review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'high'), ('top', None))
+            self.assertEqual(review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'high'), ('own', None))
             kind, why = review_dispatch.judge('gpt-6.1-astra', 'gpt-6-astra', 'low')
-            self.assertEqual(kind, 'top')
+            self.assertEqual(kind, 'own')
             self.assertIn('review effort low is below', why)
-            self.assertEqual(review_dispatch.judge('gpt-6-sol', 'gpt-6.1-sol', 'high')[0], 'same')
-            self.assertEqual(review_dispatch.judge('claude-opus-5', 'claude-opus-5-5', 'high')[0], 'same')
+            self.assertEqual(review_dispatch.judge('gpt-6-sol', 'gpt-6.1-sol', 'high'), ('own', None))
+            self.assertEqual(review_dispatch.judge('claude-opus-5', 'claude-opus-5-5', 'high'), ('own', None))
             self.assertEqual(review_dispatch.judge('gpt-6-astra', 'gpt-6.1-sol', 'high'), (None, None))
 
-    def test_a_substitute_of_the_author_tier_is_blocked(self):
-        # KARARLAR B01 (1) with lead decision 7: a used-up Codex quota switches to Claude, but never
-        # to the author's family; --fallback is blocked the same way.
+    def test_a_substitute_of_the_author_tier_runs_as_its_own_tier_review(self):
+        # Owner 2026-10-26: the author's tier is the default reviewer, so a used-up Codex quota or
+        # --fallback switches to it, recorded as the own-tier review.
         for fallback in (False, True):
             with self.subTest(fallback=fallback):
                 result, chain = self.dispatch_result('codex', fallback=fallback, CODEX_FIXTURE_CASE='quota',
                                                      MYAGENTKIT_AUTHOR='claude-opus-5',
                                                      MYAGENTKIT_TASK_ID='author-sub-%s' % fallback)
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
-                self.assertIn("the author's tier", chain['fallback_blocked'])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
+                self.assertEqual(chain['own_tier_review'], {'author_effort': 'low', 'effort': 'medium'})
 
     def test_author_aliases_resolve_to_their_tier_and_a_bare_family_is_refused(self):
         # #181: an alias or a vendor-prefixed id of the pinned tier is refused like the id; a
         # value naming no model tier is refused too, since it compared equal to no pin.
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        import review_dispatch
         for author in ('opus', 'Opus 5.5', 'claude/opus', 'us.anthropic.claude-opus-5-v1:0'):
             with self.subTest(author=author):
-                result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn('the author never reviews its own patch', result.stdout)
+                self.assertEqual(review_dispatch.judge('claude-opus-5', author, 'high'), ('own', None))
         for author in ('claude', 'anthropic', 'claude-code', 'codex', 'openai', 'claude/fixture-author',
                        'claude-cli', 'claude-desktop', 'claude-agent'):
             with self.subTest(author=author):
@@ -7785,131 +7780,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn('names no model tier', result.stdout)
         self.assertFalse((self.repo / '.myagentkit/usage').exists())
-        # A Codex id inside a longer value is that id's tier, so the author's own Codex pin is refused.
-        import review_dispatch
+        # A Codex id inside a longer value is that id's tier.
         for author in ('codex gpt-5.5', 'gpt-5.5 xhigh', 'openai/gpt-5.5', 'GPT-5.5'):
             with self.subTest(author=author):
                 self.assertEqual(review_dispatch.author_tier(author), review_dispatch.tier('gpt-5.5'))
-
-    def test_the_same_tier_exception_runs_only_for_a_named_high_tier_review(self):
-        # #179: the owner's exception (a plan with no tier above the author's) is named in the
-        # run, high tier and high effort only, and recorded in the chain.
-        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
-                   MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_SAME_TIER_EXCEPTION='plan without Fable')
-        for extra in ({}, {'REVIEW_RISK': 'high', 'REVIEW_EFFORT': 'medium'}):
-            with self.subTest(extra=extra):
-                result = self.run_wrapper('--uncommitted', **env, **extra)
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn('for a high-tier change only', result.stdout)
-        result = self.run_wrapper('--uncommitted', REVIEW_RISK='high', **env)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('REVIEW [same tier]:', result.stdout)
-        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
-        self.assertEqual(chain['same_tier_exception'], 'plan without Fable')
-
-    def test_a_substitute_of_the_author_tier_runs_under_the_exception_recorded_and_printed(self):
-        # #179 r1: the quota switch and --fallback to the author's tier run under the exception,
-        # so the chain records it and the console says so, as for the primary reviewer.
-        for fallback, case in ((False, 'quota'), (True, 'mcp_exit')):
-            with self.subTest(fallback=fallback):
-                result, chain = self.dispatch_result('codex', fallback=fallback, CODEX_FIXTURE_CASE=case,
-                                                     MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
-                                                     REVIEW_SAME_TIER_EXCEPTION='plan without Fable',
-                                                     MYAGENTKIT_TASK_ID='same-sub-%s' % fallback)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
-                self.assertEqual(chain['same_tier_exception'], 'plan without Fable')
-                self.assertIn('REVIEW [same tier]: author claude-opus-5-5 and reviewer claude model '
-                              'claude-opus-5', result.stdout)
-
-    def test_the_same_tier_exception_is_one_round_per_label(self):
-        # Owner decision 2026-10-19 (docs/WORKFLOW.md, "Model routing", rule 7: "one round"): a
-        # second round under the exception for the label is refused, for the requested reviewer
-        # and a quota-switch substitute alike, REVIEW_ROUND_EXCEPTION (set by dispatch_result) too.
-        # Another tier still reviews the fix under the label.
-        refused = 'already had its round under REVIEW_SAME_TIER_EXCEPTION'
-        exception = dict(MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
-                         REVIEW_SAME_TIER_EXCEPTION='plan without Fable', MYAGENTKIT_TASK_ID='same-once')
-        result, chain = self.dispatch_result('claude', fallback=False, **exception)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
-        self.assertEqual(usage['task']['same_tier_exception'], 'plan without Fable')
-        result, chain = self.dispatch_result('claude', fallback=False, **exception)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIsNone(chain)
-        self.assertIn(refused, result.stdout)
-        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota', **exception)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
-        self.assertIn(refused, chain['fallback_blocked'])
-        self.assertNotIn('same_tier_exception', chain)
-        result, chain = self.dispatch_result('codex', fallback=False, **exception)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
-        self.assertNotIn('same_tier_exception', usage['task'])
-
-    def test_the_same_tier_exception_is_one_round_per_label_and_focus(self):
-        # Owner decision 56 (2026-10-19), rtier review r1 High: a round under the exception counts
-        # for its own focus, one without a focus for every focus. The two focus reviewers run under
-        # it one after the other or in parallel; a second round of either, or a run without a
-        # focus, is refused. A round the 98591eb dispatcher marked only in its chain checkpoint
-        # counts too.
-        from unittest.mock import patch
-        refused = 'already had its round under REVIEW_SAME_TIER_EXCEPTION'
-        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
-
-        def preflight(label, focus):  # the dispatcher's check before an attempt under the exception
-            with patch.dict(os.environ, {bridge.SAME_TIER_ENV: 'plan without Fable'}):
-                os.environ.pop('REVIEW_FOCUS', None)
-                if focus:
-                    os.environ['REVIEW_FOCUS'] = focus
-                bridge.prior_rounds(self.repo, label, 'uncommitted', None, head, '')
-        marked = {bridge.SAME_TIER_ENV: 'plan without Fable', 'MYAGENTKIT_TASK_ID': 'same-focus'}
-        preflight('same-focus', 'logic')  # in parallel, both pass before either round is recorded
-        preflight('same-focus', 'portability')
-        for focus in ('logic', 'portability'):
-            code, result = self.run_bridge('reject', env_extra=dict(marked, REVIEW_FOCUS=focus))
-            self.assertEqual(code, 0, result)
-        for focus in ('logic', 'portability', None):
-            with self.subTest(focus=focus), self.assertRaisesRegex(bridge.BridgeError, refused):
-                preflight('same-focus', focus)
-        code, result = self.run_bridge('reject', env_extra=dict(marked, MYAGENTKIT_TASK_ID='same-plain'))
-        self.assertEqual(code, 0, result)
-        with self.assertRaisesRegex(bridge.BridgeError, refused):
-            preflight('same-plain', 'logic')
-        legacy = dict(MYAGENTKIT_TASK_ID='same-legacy', MYAGENTKIT_REVIEW_CHAIN_ID='legacy',
-                      MYAGENTKIT_REVIEW_ATTEMPT='1')
-        code, result = self.run_bridge('reject', env_extra=legacy)
-        self.assertEqual(code, 0, result)
-        preflight('same-legacy', None)
-        (self.repo / '.myagentkit/usage/chains').mkdir(exist_ok=True)
-        (self.repo / '.myagentkit/usage/chains/legacy-1.json').write_text(json.dumps(
-            {'status': 'completed', 'attempts': [{'status': 'completed'}],
-             'same_tier_exception': 'plan without Fable'}), encoding='utf-8')
-        with self.assertRaisesRegex(bridge.BridgeError, refused):
-            preflight('same-legacy', None)
-
-    def test_a_focus_without_its_exception_round_takes_a_substitute_of_the_author_tier(self):
-        # rtier review r1 Medium: logic used its round under the exception and portability did
-        # not, so portability's quota switch to the author's tier runs; its next substitute
-        # (--fallback this time) is refused.
-        refused = 'already had its round under REVIEW_SAME_TIER_EXCEPTION'
-        exception = dict(MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
-                         REVIEW_SAME_TIER_EXCEPTION='plan without Fable', MYAGENTKIT_TASK_ID='same-medium')
-        result, chain = self.dispatch_result('claude', fallback=False, REVIEW_FOCUS='logic', **exception)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result, chain = self.dispatch_result('codex', fallback=False, REVIEW_FOCUS='portability', **exception)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
-                                             REVIEW_FOCUS='portability', **exception)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
-        self.assertEqual(chain['same_tier_exception'], 'plan without Fable')
-        result, chain = self.dispatch_result('codex', fallback=True, CODEX_FIXTURE_CASE='mcp_exit',
-                                             REVIEW_FOCUS='portability', **exception)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
-        self.assertIn(refused, chain['fallback_blocked'])
 
     def test_a_used_up_codex_quota_switches_to_another_tier_of_a_claude_author(self):
         # #225: the switch checks the tier, so a Claude author's review goes to another Claude
@@ -7940,11 +7814,6 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             (bridge.GitFailed('git diff failed: index cannot be read'), 'checkout_unverified'),
             (bridge.BridgeError('reference reviews require a clean checkout; use --uncommitted'),
              'stale_checkout'))]
-        # rtier review r1: under the same-tier exception that round was the label's one, so the
-        # FAIL line names the next reviewer, not a rerun the tooling refuses.
-        cases.append(('claude', bridge.GitFailed('git diff failed: index cannot be read'), 'checkout_unverified',
-                      dict(MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_RISK='high',
-                           REVIEW_SAME_TIER_EXCEPTION='plan without Fable')))
         for provider, error, kind, exception in cases:
             with self.subTest(provider=provider, kind=kind, exception=bool(exception)):
                 ran = []
@@ -7977,9 +7846,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.assertTrue(counted)
                     self.assertIn('still counts as a round', out.getvalue())
                     self.assertIn('index cannot be read', out.getvalue())
-                    self.assertEqual('then run the review again' in out.getvalue(), not exception)
-                    self.assertEqual("the other family or the owner's diff read" in out.getvalue(),
-                                     bool(exception))
+                    self.assertIn('then run the review again', out.getvalue())
                 else:
                     self.assertIs(chain.get('checkout_changed'), True)
                     self.assertNotIn('checkout_unverified', chain)

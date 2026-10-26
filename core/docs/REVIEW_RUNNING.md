@@ -27,7 +27,6 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `MYAGENTKIT_TASK_ID` | the change's label; rounds under it carry the earlier ones, two at most (a review its dispatcher failed afterwards is carried but not counted: `docs/REVIEW_GATE.md`, "Rounds") |
 | `REVIEW_DISPOSITIONS` | answers to every earlier round (round 1 by default), one line per finding: `fixed:` / `disproved:` / `deferred:` |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
-| `REVIEW_SAME_TIER_EXCEPTION` | reason the author's tier reviews a high-tier change on a plan with no tier above it (`REVIEW_RISK=high`, effort high), kept in the record; one round per label and focus (a round without a focus uses it for every focus), so a second round under it is refused, a substitute's included and `REVIEW_ROUND_EXCEPTION` notwithstanding (`docs/WORKFLOW.md`, "Model routing", rule 7); a Critical or High fix's round 2 is a fresh `diff-reviewer`, outside `review.sh`, so this refusal does not touch it (`docs/REVIEW_GATE.md`, "Invariant") |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
 | `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier (a small diff under the "Invariant" exception: one round, no focus); each focus gets the label's two rounds; a review without a focus counts toward every focus |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused. The brief may live in any checkout: the diff is the reviewed one's, the checkout `review.sh` runs in when that is a worktree of the script's repository (#302) |
@@ -38,14 +37,14 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
 
 `MYAGENTKIT_AUTHOR` names the author's model (`claude-opus-5`, or `claude/claude-opus-5`):
-a reviewer pin of the author's tier is refused with exit 2 before any model runs, and so is a
-weaker tier of the author's family, whose review runs only as an extra opinion
-(`REVIEW_SHADOW=1`); a substitute of either is blocked, and the chain and the usage record
+a reviewer pin of a weaker tier of the author's family is refused with exit 2 before any model
+runs, its review running only as an extra opinion (`REVIEW_SHADOW=1`); such a substitute is
+blocked, and the chain and the usage record
 carry it as `author`. With it `MYAGENTKIT_AUTHOR_EFFORT` names the author's effort, high when
 unset; a review with no effort named runs at it (high at most), and one named below it is
 refused (the effort rule is `docs/REVIEW_GATE.md`, "Invariant"); a shadow run closes nothing
-and is not checked. When the author is its family's top tier and its
-own tier reviews, the chain records the pair as `top_tier_review` and the usage record as
+and is not checked. When the author's own tier
+reviews, the chain records the pair as `own_tier_review` and the usage record as
 `author_effort`. Without `MYAGENTKIT_AUTHOR` the lead checks the author's model before launch
 (`docs/REVIEW_GATE.md`, "Invariant").
 
