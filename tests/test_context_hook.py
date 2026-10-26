@@ -346,7 +346,7 @@ class BeforeCompactTests(unittest.TestCase):
             env = {**os.environ, 'CLAUDE_PROJECT_DIR': tmp}
             hook = OVERLAY / '.claude/hooks/before_compact.py'
             run = subprocess.run([sys.executable, str(hook)], input=json.dumps({'trigger': 'auto', 'cwd': tmp}),
-                                 capture_output=True, text=True, env=env, timeout=30)
+                                 capture_output=True, text=True, encoding='utf-8', env=env, timeout=30)
             self.assertEqual((run.returncode, run.stdout, run.stderr), (0, '', ''))
             note = (root / '.myagentkit/compact-note.md').read_text(encoding='utf-8')
             self.assertIn('branch: night, HEAD ', note)
@@ -358,17 +358,17 @@ class BeforeCompactTests(unittest.TestCase):
             command = settings['hooks']['SessionStart'][0]['hooks'][0]['command']
             (root / '.claude/hooks').mkdir(parents=True)
             (root / '.claude/hooks/after_compact.txt').write_text('re-read the rules\n', encoding='utf-8')
-            printed = subprocess.run(['sh', '-c', command], capture_output=True, text=True, env=env, timeout=30)
+            printed = subprocess.run(['sh', '-c', command], capture_output=True, text=True, encoding='utf-8', env=env, timeout=30)
             self.assertEqual(printed.returncode, 0)
             self.assertIn('re-read the rules', printed.stdout)
             self.assertIn('first step', printed.stdout)
             # Printed once: a PreCompact that never ran (no Python) cannot bring the last note back.
-            again = subprocess.run(['sh', '-c', command], capture_output=True, text=True, env=env, timeout=30)
+            again = subprocess.run(['sh', '-c', command], capture_output=True, text=True, encoding='utf-8', env=env, timeout=30)
             self.assertEqual(again.returncode, 0)
             self.assertIn('re-read the rules', again.stdout)
             self.assertNotIn('first step', again.stdout)
             (root / '.myagentkit/compact-note.md').write_text('stale', encoding='utf-8')
-            broken = subprocess.run([sys.executable, str(hook)], input='not json', capture_output=True, text=True,
+            broken = subprocess.run([sys.executable, str(hook)], input='not json', capture_output=True, text=True, encoding='utf-8',
                                     env=env, timeout=30)
             self.assertEqual(broken.returncode, 0)
             self.assertIn('first step', (root / '.myagentkit/compact-note.md').read_text(encoding='utf-8'))

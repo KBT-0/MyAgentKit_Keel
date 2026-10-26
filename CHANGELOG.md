@@ -27,7 +27,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `core.hooksPath` to the main checkout's absolute `.githooks` in the shared `.git/config` whenever it makes a
   worktree, so every worktree ran the main checkout's hooks. `pre-commit` (also run by `pre-merge-commit`) sets
   that value back to `.githooks` and says so; any other path is left alone. `doctor.sh`'s NOTE names the writer;
-  `GOTCHAS_KIT.md` has the entry. No project action: a sync brings the hook.
+  `GOTCHAS_KIT.md` has the entry; a sync brings the hook. **ACTION** (`docs/GOTCHAS.md`, project-owned): add
+  "- Claude Code's worktree points every tree at the main checkout's hooks" to the end of "## Contents" and, at the
+  end of the file, a section of that name holding one line, `Kit rules: docs/GOTCHAS_KIT.md, "Claude Code's
+  worktree points every tree at the main checkout's hooks".` (or run `sync-kit.sh . --merge`).
 - **A measurement waits for a calm machine** (leeway kit-feedback 2026-10-26, a frame time taken at load 13-16 on
   20 cores). New `scripts/calm.sh` waits (up to `CALM_WAIT`, 20 min) until the 1-minute load is under cores / 5
   and no build, generator or gate runs (`CALM_HEAVY`, a regular expression a project may widen), then prints
