@@ -1142,7 +1142,9 @@ def dispositions_text() -> str | None:
     notes = os.environ.get("REVIEW_DISPOSITIONS")
     if not notes:
         return None
-    if not Path(notes).is_file():  # labricore 2026-10-26: the text itself was passed, Errno 36
+    # labricore 2026-10-26: the text itself was passed (Errno 36). os.path.isfile, not Path.is_file:
+    # before Python 3.14 the latter raises ENAMETOOLONG instead of answering False.
+    if not os.path.isfile(notes):
         raise BridgeError("REVIEW_DISPOSITIONS %r is no file: it must be the path of a file holding the lines, "
                           "not the text itself (e.g. REVIEW_DISPOSITIONS=.myagentkit/x-dispositions.md)" % notes[:60])
     try:
