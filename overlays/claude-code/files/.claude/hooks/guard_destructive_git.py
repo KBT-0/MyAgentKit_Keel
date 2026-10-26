@@ -54,7 +54,8 @@ as shell: backticks, `$(...)`, `eval`, `sh -c` strings, a here-document a shell 
 (these with every folder and variable the line reaches), a `!` alias and `submodule foreach`
 (in folders it does not name, so judged dirty). Text the hook cannot
 parse as shell (any interpreter argument or here-document: python*, node, deno, bun, perl, ruby,
-php, PowerShell ...; any argument of another program: a wrapper such as sudo or xargs may run it,
+php, PowerShell ...; the part of a here-document only a shell elsewhere on its line may run that
+follows a quote it never closes, such as prose with an apostrophe; any argument of another program: a wrapper such as sudo or xargs may run it,
 data such as a gh title never does) has each `git ...` in it judged as the command it would be,
 so a mention of a safe command passes and a loss-certain one is refused (#77); a quoted `'git'`
 starts an argv list read to its closing bracket, across lines, a bare item being a variable. Refused as
@@ -288,55 +289,72 @@ def plain_awk(args, text):
 
 def strip_heredocs(text):
     """(the text without here-document bodies, [(read_by_a_shell, body)]). A body that holds git
-    is listed when any command is a shell (its body is judged as shell), or when its receiving
-    command/pipeline contains an interpreter (`cat <<EOF | python`: judged as loose text).
-    A quoted or commented `<<` is an argument, not a here-document."""
-    bodies, pos = [], 0
+    is listed by its receiving command/pipeline first: a shell's is judged as shell, an
+    interpreter's (`cat <<EOF | python`) as loose text. Any other is judged as shell when a
+    command elsewhere is a shell (it may run the file the body writes), up to a quote that never
+    closes. A quoted or commented `<<` is an argument, not a here-document. Every body is cut
+    first, so one body's apostrophes never read as a quote while another's readers are found."""
+    cut, pos, marker = [], 0, "__guard_heredoc_input__"
     while True:
         m = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2").search(text, pos)
         if not m:
-            return text, bodies
+            break
         blank = unquoted(text)
         if blank is not None and blank[m.start()] != "<":
             pos = m.end()
             continue
         start = text.find("\n", m.end())
         if start < 0:
-            return text[:m.start()] + text[m.end():], bodies
+            text = text[:m.start()] + text[m.end():]
+            break
         end = start + 1
         lines = text[start + 1:].split("\n")
         for line in lines:
             end += len(line) + 1
             if (line.lstrip("\t") if m.group(1) else line).removesuffix("\r") == m.group(3):
                 break
-        body, outside = text[start:end], text[:start] + "\n" + text[end:]
-        # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
-        commands = [w for seg in segments(outside) if base(seg[0]) not in CALM | {"git"} for w in seg]
-        if GIT_WORD.search(body):
-            if any(base(w) in SHELLS and not interpreter(base(w)) for w in commands):
-                bodies.append((True, body))
-                text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
-                continue
-            marker = "__guard_heredoc_input__"
-            line = text.rfind("\n", 0, m.start()) + 1
-            header = text[line:m.start()] + " " + marker + " " + text[m.end():start]
-            try:
-                headers = list(segments(header, with_endings=True, strict=True))
-            except Unreadable:
-                # A heredoc in "$(...)" has an outer quote that closes AFTER its body.
-                # Parse the substitution's command, not the incomplete enclosing argument.
-                inside = substitutions(header)
-                if not inside:
-                    raise
-                headers = list(segments(inside[-1], with_endings=True, strict=True))
-            receiving = False
-            for seg, ending in headers:
-                receiving = receiving or marker in seg
-                if receiving and base(seg[0]) not in CALM | {"git"} and any(interpreter(base(w)) for w in seg):
+        line = text.rfind("\n", 0, m.start()) + 1
+        cut.append((text[line:m.start()] + " " + marker + " " + text[m.end():start], text[start:end]))
+        text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
+    cut = [(header, body) for header, body in cut if GIT_WORD.search(body)]
+    # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
+    commands = [w for seg in segments(text) if base(seg[0]) not in CALM | {"git"} for w in seg] if cut else []
+    shell_reads = any(base(w) in SHELLS and not interpreter(base(w)) for w in commands)
+    bodies = []
+    for header, body in cut:
+        try:
+            headers = list(segments(header, with_endings=True, strict=True))
+        except Unreadable:
+            # A heredoc in "$(...)" has an outer quote that closes AFTER its body.
+            # Parse the substitution's command, not the incomplete enclosing argument.
+            inside = substitutions(header)
+            if not inside:
+                raise
+            headers = list(segments(inside[-1], with_endings=True, strict=True))
+        receiving = False
+        for seg, ending in headers:
+            receiving = receiving or marker in seg
+            if receiving and base(seg[0]) not in CALM | {"git"}:
+                if any(base(w) in SHELLS and not interpreter(base(w)) for w in seg):
+                    bodies.append((True, body))  # its own reader is a shell: judged (and refused) as shell
+                    break
+                if any(interpreter(base(w)) for w in seg):
                     bodies.append((False, body))
                     break
-                receiving = receiving and ending in {"|", "|&"}
-        text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
+            receiving = receiving and ending in {"|", "|&"}
+        else:
+            if shell_reads:
+                # A shell elsewhere on the line may run the file this body writes. A shell runs it up to
+                # a quote it never closes (prose: `the worker's`), so that part is judged as shell; the
+                # rest never runs, and each git in it is judged as code is.
+                start = next((m.start() for m in UNCLOSED.finditer(body) if m.group("open")), None)
+                bodies.append((True, body[:start]))
+                if start is not None:
+                    bodies.append((False, body[start:]))
+    return text, bodies
+
+
+UNCLOSED = re.compile(QUOTED.pattern + r"""|(?P<open>['"])""", re.S)
 
 
 def substitutions(text):
@@ -580,6 +598,8 @@ def hooks_config_allowed(g):
     for arg in g.args:
         if not literal and arg == "--":
             literal = True
+        elif not literal and arg in {"--show-origin", "--show-scope", "--null", "-z"}:
+            continue  # output form only: it neither reads nor writes a value
         elif not literal and arg in {"--local", "--worktree", "--global", "--system"}:
             if scope is not None:
                 return False

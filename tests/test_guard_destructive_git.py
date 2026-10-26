@@ -926,6 +926,46 @@ class V014FieldReportTests(GuardCase):
             "p='$x'; git log | awk \"$x\"",
         ], 2)
 
+    def test_a_later_heredoc_body_is_not_read_as_shell_quotes(self):
+        self.assertVerdict([
+            "python3 - <<'EOF'\nprint(1)\nEOF\ncat > n.md <<'EOF'\nthe worker's git reflog show\nEOF",
+            "cat > a.md <<'EOF'\nit's git\nEOF\ncat > b.md <<'EOF'\ndon't git\nEOF\ngit status",
+        ], 0)
+
+    def test_a_later_heredoc_still_judges_each_body_by_its_reader(self):
+        self.assertVerdict([
+            "cat > n.md <<'EOF'\nit's\nEOF\npython3 - <<'EOF'\nos.system('git push --mirror')\nEOF",
+            "cat > n.md <<'EOF'\nit's\nEOF\nsh <<'EOF'\ngit stash drop\nEOF",
+            "python3 - <<'EOF'\nprint(1)\nEOF\nbash <<'EOF'\ngit stash clear\nEOF",
+            "sh <<'EOF'\necho it's\ngit status\nEOF", "cat <<'EOF' | sh\necho it's\ngit status\nEOF",
+            "cat > x.sh <<'EOF'\n# it's\ngit stash drop\nEOF\nsh x.sh",
+            "cat > x.sh <<'EOF'\n# it's\ngit \\\nstatus\nEOF\nsh x.sh",
+            "cat > x.sh <<'EOF'\n# it's\nbash <<< 'git status'\nEOF\nsh x.sh",
+            # review v014-guardfp: a shell runs the lines before a quote it never closes
+            "cat > x.sh <<'EOF'\nHUSKY=0 git commit -m x\necho it's\nEOF\nsh x.sh",
+            "cat > x.sh <<'EOF'\ng=git; $g stash drop\necho it's\nEOF\nsh x.sh",
+            "cat > x.sh <<'EOF'\necho it's\ngit stash drop\nEOF\nsh x.sh",
+            # an interpreter's body is its code, whatever shell runs elsewhere on the line
+            "python3 - <<'EOF'\nos.system(\"git stash drop\")\nEOF\nnohup sh run.sh &",
+            "python3 - <<'EOF'\nsubprocess.run([\"git\", \"stash\", \"drop\"])\nEOF\nnohup sh run.sh &",
+        ], 2)
+
+    def test_prose_written_to_a_file_beside_an_unrelated_shell_passes(self):
+        self.assertVerdict([
+            "python3 - <<'EOF'\np.write_text(\"a merged branch's tip\")\nEOF\n"
+            "cat > brief.md <<'EOF'\nthe worker's git reflog show refs/heads/x\nEOF\nnohup sh core/run.sh &",
+        ], 0)
+
+    def test_config_output_flags_on_a_hookspath_read_pass(self):
+        self.assertVerdict(['git config --show-origin --get-all core.hooksPath',
+                            'git config --show-scope --get core.hooksPath',
+                            'git config -z --show-origin core.hooksPath', 'git config --null --get core.hooksPath'], 0)
+
+    def test_config_output_flags_on_a_hookspath_write_still_refuse(self):
+        self.assertVerdict(['git config --show-origin core.hooksPath /dev/null',
+                            'git config --show-scope --global core.hooksPath .githooks',
+                            'git config -z --unset core.hooksPath', 'git config --null core.hooksPath x'], 2)
+
     def test_a_crlf_heredoc_terminator_ends_the_body(self):
         self.assertVerdict(["cat > n.md <<'EOF'\r\nx\r\nEOF\r\ngit stash drop"], 2)
 

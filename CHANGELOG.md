@@ -116,6 +116,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   literal program with no `system`, pipe, `@include` or `-f`: every raw word that reads as the
   program is single-quoted, so a quoted decoy elsewhere cannot vouch for `awk "$p"`. A heredoc
   terminator ending in CR ends the body.
+- `guard_destructive_git.py` no longer refuses two more read-only forms (leeway field report 6, item 3, and the
+  kit's own lead, 2026-10-26): `git config --show-origin --get-all core.hooksPath` (`--show-origin`,
+  `--show-scope`, `--null`, `-z` only shape the output; a write with them is still refused), and a line with two
+  here-documents whose later body holds an apostrophe (every body is cut before the line is read, so one body's
+  text never reads as another's quote). Each body is judged by its own reader first: an interpreter's as code
+  (also when a shell runs elsewhere on the line; `os.system("git stash drop")` there was passed), a shell's as
+  shell. A body only a shell elsewhere may run is shell up to a quote it never closes, and each git after it is
+  judged as code is.
 - **ACTION** (`.claude/hooks/guard_destructive_git.py`, project-owned): run `sync-kit.sh . --merge`;
   without it, copy the kit's `overlays/claude-code/files/.claude/hooks/guard_destructive_git.py` over
   yours, then re-apply any local change you made to it.
