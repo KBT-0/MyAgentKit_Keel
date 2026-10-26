@@ -15,19 +15,20 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
-- **Review follow-ups.** A dangling `scripts/check.project.sh` or `scripts/review_selftest.project.sh` symlink
-  fails the gate or the self-test as a step that cannot run (it was skipped silently); `check.sh` with an extra
-  argument prints its usage and exits 2; the sync's conflict hint names the two files a project step goes into.
-  The side check's window keeps its tool calls under long owner messages (the oldest messages drop past 2400
-  characters); a quoted verdict format sentence (`#ID: correct | wrong | partly`) is no longer read as a verdict.
-  `check.sh` runs `build_cache_inputs`, and `review.sh --self-test` runs `scripts/review_selftest.project.sh`,
-  without the git variables a hook exports (the C8 class). A failed build that prints from its first test-failure
-  block prints first the earlier lines that name an error or a failure (a lint step before the tests). A `spawn_worker.sh --resume` takes a blocked background session over only when
-  its transcript ends on a usage limit (one waiting on a permission prompt is left to the lead), probes a frozen row
-  with a pid for a gone daemon, and its hint names the session id. `autopilot_report.py` run from a linked worktree lists the workers' results of the
-  main checkout. `guard_worker_route.py` lets a prohibition ("Do not run the gate."), a noun merge ("the author's
-  merge", "Merge-sort") and ci inside a name ("CI/CD", "ci.yml") pass, and reads a non-breaking space as a blank. A sync
-  brings the scripts and the hook, `claude plugin update myagentkit@myagentkit` the mod.
+- **Review follow-ups.** A dangling `scripts/check.project.sh` or `scripts/review_selftest.project.sh` symlink fails the
+  gate or the self-test as a step that cannot run (it was skipped silently); `check.sh` with an extra argument prints
+  its usage and exits 2; the sync's conflict hint names the two files a project step goes into. The side check's window
+  keeps its tool calls under long owner messages (the oldest messages drop past 2400 characters); a quoted verdict
+  format sentence (`#ID: correct | wrong | partly`) is no longer read as a verdict. `check.sh` runs
+  `build_cache_inputs`, and `review.sh --self-test` runs `scripts/review_selftest.project.sh`, without the git variables
+  a hook exports (the C8 class). A failed build that prints from its first test-failure block prints first the earlier
+  lines that name an error or a failure (a lint step before the tests). A `spawn_worker.sh --resume` takes a blocked
+  background session over only when its transcript ends on a usage limit (one waiting on a permission prompt is left to
+  the lead), probes a frozen row with a pid for a gone daemon, and its hint names the session id. `autopilot_report.py`
+  run from a linked worktree lists the workers' results of the main checkout. `guard_worker_route.py` lets a prohibition
+  ("Do not run the gate."), a noun merge ("the author's merge", "Merge-sort") and ci inside a name ("CI/CD", "ci.yml")
+  pass, and reads a non-breaking space as a blank. A sync brings the scripts and the hook, `claude plugin update
+  myagentkit@myagentkit` the mod.
 - **ACTION** (`.claude/hooks/after_compact.txt`, project-owned): after a compaction it named `docs/STATE.md` whole;
   in yours, change "re-read docs/STATE.md," to "re-read docs/STATE.md's "Active work" and "Blocked" sections (never
   the whole file)," (or copy the kit's file over one you never edited).

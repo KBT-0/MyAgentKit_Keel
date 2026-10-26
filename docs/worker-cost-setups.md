@@ -72,9 +72,8 @@ is for visibility. Both runs were at effort high.
 | The job is under five minutes | 1 is fine | Nothing expires; do not add machinery for a wait the cache covers |
 | A different host agent with its own cache rules | Measure first with the method above (same task, each setup, transcripts deduplicated by request id), then fill this table for that host | The numbers here are Claude Code's; the shape (waits times context) transfers, the figures may not |
 
-The `experimental.cacheTtl` definition field is ignored while a subscription uses usage
-credits; the kit's `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable is not subject to that
-exception. Check the recorded write buckets before choosing a fallback
+A worker definition's `experimental.cacheTtl: 1h` is ignored while a subscription draws usage
+credits, and the `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable outranks it in any case. Check the recorded write buckets before choosing a fallback
 (KARARLAR D06 inv1#161; [Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
 checked 2026-10-16).
 
