@@ -18,7 +18,9 @@ STATE = '# STATE\n\n**Working mode:** solo (`docs/WORKFLOW.md`).\n\n## Active wo
 
 def clean_env(**extra):
     env = {k: v for k, v in os.environ.items() if k not in ('CLAUDE_CODE_SESSION_ID', 'MYAGENTKIT_SESSION_ID')}
-    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_EDITOR='true', LC_ALL='C', **extra)
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_EDITOR='true', LC_ALL='C',
+               MYAGENTKIT_SESSION_NAME='lead-7')  # never the real `claude agents` list
+    env.update(extra)
     return env
 
 
@@ -51,9 +53,9 @@ class HookTests(unittest.TestCase):
         path = self.root / '.git/gate-runs'
         return path.read_text(encoding='utf-8').count('ran') if path.exists() else 0
 
-    def claim(self, writer):
+    def claim(self, writer, name=''):
         (self.root / '.myagentkit').mkdir(exist_ok=True)
-        (self.root / '.myagentkit/master-writer').write_text(writer + '\n', encoding='utf-8')
+        (self.root / '.myagentkit/master-writer').write_text(writer + '\n' + name, encoding='utf-8')
 
     def commit(self, name, cwd=None, **extra):
         (Path(cwd or self.root) / name).write_text(name + '\n', encoding='utf-8')
@@ -61,12 +63,12 @@ class HookTests(unittest.TestCase):
         return self.git('commit', '-q', '-m', 'add ' + name, cwd=cwd, check=False, **extra)
 
     def test_a_foreign_session_is_refused_in_the_main_checkout_before_the_gate(self):
-        self.claim('writer-1')
+        self.claim('writer-1', 'lead-7\n')
         before = self.runs()
         result = self.commit('a', CLAUDE_CODE_SESSION_ID='other-2')
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.runs(), before, 'the gate ran before the refusal')
-        self.assertIn('writer-1', result.stderr)
+        self.assertIn('writer-1 (session name lead-7)', result.stderr)
         self.assertIn('other-2', result.stderr)
         self.assertIn('MERGE REQUEST: `branch, base commit, review evidence path, the Owns list, '
                       '"tests green at <sha>"`', result.stderr)
@@ -140,7 +142,7 @@ class ScriptTests(unittest.TestCase):
                               capture_output=True, text=True, encoding='utf-8')
 
     def marker(self):
-        return (self.root / '.myagentkit/master-writer').read_text(encoding='utf-8').strip()
+        return (self.root / '.myagentkit/master-writer').read_text(encoding='utf-8').splitlines()[0]
 
     def test_claim_writes_the_marker_and_the_state_line_and_release_clears_both(self):
         result = self.run_script('claim', CLAUDE_CODE_SESSION_ID='writer-1')
@@ -148,9 +150,13 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(self.marker(), 'writer-1')
         state = (self.root / 'docs/STATE.md').read_text(encoding='utf-8')
         lines = state.splitlines()
-        self.assertTrue(lines[3].startswith('**Master writer:** writer-1 '), state)
+        self.assertTrue(lines[3].startswith('**Master writer:** writer-1 (lead-7, claimed '), state)
         self.assertEqual(lines[2], '**Working mode:** solo (`docs/WORKFLOW.md`).')
-        self.assertIn('writer-1', self.run_script('show').stdout)
+        self.assertIn('new lead is lead-7, send merge requests there', result.stdout)
+        self.assertEqual((self.root / '.myagentkit/master-writer').read_text(encoding='utf-8'), 'writer-1\nlead-7\n')
+        for action in ('show', 'status'):
+            self.assertIn('Master writer: writer-1 (session name lead-7)', self.run_script(action).stdout)
+        self.assertIn('(this session)', self.run_script('status', CLAUDE_CODE_SESSION_ID='writer-1').stdout)
         # Another session is refused; the owner's word (--force) takes it over.
         refused = self.run_script('claim', CLAUDE_CODE_SESSION_ID='other-2')
         self.assertNotEqual(refused.returncode, 0)
@@ -164,6 +170,23 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / '.myagentkit/master-writer').exists())
         self.assertIn('**Master writer:** none\n', (self.root / 'docs/STATE.md').read_text(encoding='utf-8'))
+
+    @unittest.skipIf(os.name == 'nt', 'a sh stub named claude is not a Windows command')
+    def test_claim_reads_its_name_from_the_session_list_and_survives_a_broken_one(self):
+        bin_dir = self.root.parent / 'bin'
+        bin_dir.mkdir()
+        stub = bin_dir / 'claude'
+        path = str(bin_dir) + os.pathsep + os.environ.get('PATH', '')
+        for listing, name in (('[{"sessionId": "other", "name": "x"}, {"sessionId": "writer-1", "name": "lead-9"}]',
+                               'lead-9'), ('not json', ''), ('null', ''), ('5', ''),
+                              ('[{"sessionId": "writer-1", "name": "a b"}]', '')):
+            stub.write_text("#!/bin/sh\nprintf '%s' '" + listing + "'\n", encoding='utf-8')
+            stub.chmod(0o755)
+            result = self.run_script('claim', CLAUDE_CODE_SESSION_ID='writer-1', MYAGENTKIT_SESSION_NAME='', PATH=path)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            marker = (self.root / '.myagentkit/master-writer').read_text(encoding='utf-8')
+            self.assertEqual(marker, 'writer-1\n' + (name + '\n' if name else ''), listing)
+    test_claim_reads_its_name_from_the_session_list_and_survives_a_broken_one._kit_platform_skip = os.name == 'nt'
 
     def test_claim_without_an_identity_or_in_a_worktree_is_refused(self):
         self.assertNotEqual(self.run_script('claim').returncode, 0)

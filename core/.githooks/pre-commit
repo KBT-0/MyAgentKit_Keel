@@ -32,12 +32,13 @@ here=$(git rev-parse --absolute-git-dir) && common=$(git rev-parse --git-common-
   marker="$(git rev-parse --show-toplevel)/.myagentkit/master-writer" || exit 1
 if [ "$here" = "$common" ] && [ -e "$marker" ]; then
   writer=$(sed -n '1s/[[:space:]]*$//p' "$marker" 2>/dev/null)
+  name=$(sed -n '2s/[[:space:]]*$//p' "$marker" 2>/dev/null)
   me=${MYAGENTKIT_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}
   if [ -n "$writer" ] && [ -z "$me" ]; then
     printf '%s\n' "$hook: no session id, so taken for the owner's terminal and let through; the master writer is $writer." >&2
   elif [ -z "$writer" ] || [ "$me" != "$writer" ]; then
     shape=$(sed -n '/^- MERGE REQUEST: /{s///;s/[.[:space:]]*$//;p;}' "$(dirname -- "$marker")/../docs/COMMUNICATION.md" 2>/dev/null)
-    printf '%s\n' "$hook: refused before the gate ran: .myagentkit/master-writer names ${writer:-nothing readable} as the" \
+    printf '%s\n' "$hook: refused before the gate ran: .myagentkit/master-writer names ${writer:-nothing readable}${name:+ (session name $name)} as the" \
       "  one session that commits and merges in this main checkout, and this is ${me:-a session without an id}." \
       "  Commit on your own branch in your own worktree, then send the master writer" \
       "  MERGE REQUEST: ${shape:-the shape in docs/COMMUNICATION.md, \"Workers\"} (base commit: $(git rev-parse -q --verify HEAD))" \

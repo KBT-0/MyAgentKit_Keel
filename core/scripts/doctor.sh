@@ -175,9 +175,22 @@ fi
 
 # --- git wiring and identity ---------------------------------------------------------
 hooks_path=$(git config core.hooksPath 2>/dev/null) || hooks_path=""
-if [ "$hooks_path" != .githooks ]; then
-  miss "the commit gate is not wired (core.hooksPath is '${hooks_path:-unset}'; a hook of the project's own belongs beside the kit's as .githooks/<name>.project)" "git config core.hooksPath .githooks"
-fi
+case $hooks_path in
+  .githooks) ;;
+  /*|[A-Za-z]:/*|[A-Za-z]:\\*)
+    # leeway 2026-10-26: between sessions something (not a kit script) rewrote it to an absolute
+    # path five times. One that is this tree's .githooks still runs the gate; when .git/config
+    # changed is printed so the next sighting can name the writer.
+    if [ -d "$hooks_path" ] && [ "$(CDPATH= cd -- "$hooks_path" && pwd -P)" = "$(CDPATH= cd -- .githooks 2>/dev/null && pwd -P)" ]; then
+      cfg=$(git rev-parse --git-common-dir 2>/dev/null)/config
+      changed=$(stat -c %y "$cfg" 2>/dev/null || stat -f %Sm "$cfg" 2>/dev/null) || changed=unknown
+      echo "NOTE: core.hooksPath is the absolute path '$hooks_path', the same folder as .githooks, so the gate runs; the kit writes .githooks (.git/config last changed $changed). To restore it: git config core.hooksPath .githooks"
+    else
+      miss "the commit gate is wired by the absolute path '$hooks_path', not .githooks" "git config core.hooksPath .githooks"
+    fi ;;
+  "") miss "the commit gate is not wired (core.hooksPath is unset)" "git config core.hooksPath .githooks" ;;
+  *) miss "the commit gate is not wired (core.hooksPath is '$hooks_path', expected .githooks; a hook of the project's own belongs beside the kit's as .githooks/<name>.project)" "git config core.hooksPath .githooks" ;;
+esac
 [ -n "$(git config user.name 2>/dev/null)" ] && [ -n "$(git config user.email 2>/dev/null)" ] ||
   miss "git identity (user.name / user.email)" "git config user.name '<name>' && git config user.email '<email>'"
 # With the hooks path at .githooks git never runs the LFS hooks in .git/hooks: a push uploaded

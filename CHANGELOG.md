@@ -15,6 +15,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **A lead change is announced** (leeway field report 6, B and item 6, 2026-10-26). `master_writer.py claim` stores
+  the session's name (`claude agents --json --all`, or `MYAGENTKIT_SESSION_NAME`) on the marker's second line and
+  in the STATE line, and prints the line to send every peer lead and running worker ("new lead is NAME, send merge
+  requests there");
+  `show` names it and `status` is `show`; the commit hooks' refusal names it. HANDOFF.md: the leaving master writer
+  tells its peers "I am leaving; the next lead will announce itself", the next one announces itself after `claim`.
+- `spawn_worker.sh`'s printed until-loop gives up after 24 h with a `GAVE UP` line (leeway field report 6, A(c): two
+  loops on results written elsewhere waited two days). Re-arm it while the worker still runs.
+- `doctor.sh`: a `core.hooksPath` that is an absolute path to the tree's own `.githooks` runs the gate, so it is a
+  NOTE saying when `.git/config` last changed, not MISSING (leeway field report 6, items 1 and 2: something rewrote
+  it five times between sessions); an absolute path elsewhere is "wired by the absolute path ..., not .githooks".
+  No project action.
 - **A merge never closes a running worker that has no commit of its own** (leeway field report 6, item 8, HIGH,
   2026-10-26: a merged lead branch's tip was the brief commit a running `claude --bg` worker started from, and the
   post-merge hook closed it). `core/.githooks/post-merge` takes a kit worker as merged only when its branch tip

@@ -754,6 +754,21 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('MISSING: the commit gate is not wired (core.hooksPath', red.stdout)
             git('config', 'core.hooksPath', '.githooks')
 
+            # leeway 2026-10-26: an absolute path to this tree's .githooks still runs the gate (a NOTE
+            # saying when .git/config changed); one to another folder is named plainly.
+            git('config', 'core.hooksPath', str((project / '.githooks').resolve()))
+            absolute = doctor()
+            self.assertEqual(absolute.returncode, 0, absolute.stdout)
+            self.assertIn("NOTE: core.hooksPath is the absolute path '", absolute.stdout)
+            self.assertIn('.git/config last changed ', absolute.stdout)
+            self.assertNotIn('last changed unknown', absolute.stdout)
+            git('config', 'core.hooksPath', str(tmp.resolve()))
+            elsewhere = doctor()
+            self.assertEqual(elsewhere.returncode, 1, elsewhere.stdout)
+            self.assertIn("MISSING: the commit gate is wired by the absolute path '", elsewhere.stdout)
+            self.assertNotIn('<name>.project', elsewhere.stdout)
+            git('config', 'core.hooksPath', '.githooks')
+
             # Executable on disk, 100644 in the index: CI and the next clone get exit 126.
             git('update-index', '--chmod=-x', '.claude/hooks/gate_on_stop.sh')
             red = doctor()

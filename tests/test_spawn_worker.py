@@ -1073,8 +1073,11 @@ exit 0
                 self.assertEqual(lines[started + 2],
                                  'spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: '
                                  'completed is done; a LIMIT line instead: its usage limit stopped it): '
-                                 "until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' %s || "
-                                 '(CDPATH= cd %s && sh %s --limit w1); do sleep 30; done; [ ! %s -nt %s ] || head -n 4 %s'
+                                 "n=0; until [ %s -nt %s ] && grep -qF '<!-- codex-worker: ready -->' %s || "
+                                 '(CDPATH= cd %s && sh %s --limit w1) || [ $((n+=1)) -gt 2880 ]; do sleep 30; done; '
+                                 "[ $n -le 2880 ] || echo 'spawn_worker: GAVE UP: no result from w1 in 24 h; if it "
+                                 "still runs (scripts/watch_workers.sh w1), start this watch again'; "
+                                 '[ ! %s -nt %s ] || head -n 4 %s'
                                  % (report, shq(top + '/.myagentkit/workers/w1.result-path'), report, shq(top),
                                     shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))), report,
                                     shq(top + '/.myagentkit/workers/w1.result-path'), report))
@@ -2761,7 +2764,7 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.ended()
         line = next(l for l in result.stdout.splitlines() if 'the plainest done signal' in l)
-        loop = line[line.index('until '):]
+        loop = line[line.index('n=0; until '):]
         env = dict(os.environ, CLAUDE_CONFIG_DIR=str(config))
 
         def run():
@@ -2789,6 +2792,13 @@ class BackgroundHostTests(unittest.TestCase):
                          "scripts/spawn_worker.sh w1 ANSWER_FILE <its spawn options> --resume "
                          "1a2b3c4d-5137-4293-88d5-c4339d1ce56c (ANSWER_FILE says 'limit reset, continue'; the resume "
                          "stops the blocked session first)\n")
+        # It gives up at its deadline (leeway 2026-10-26: two loops waited two days), here after two polls.
+        shutil.rmtree(folder)
+        loop = loop.replace('-gt 2880', '-gt 1').replace('-le 2880', '-le 1').replace('sleep 30', 'sleep 0')
+        gave_up = run()
+        self.assertEqual((gave_up.returncode, gave_up.stderr), (0, ''), gave_up.stdout)
+        self.assertEqual(gave_up.stdout, "spawn_worker: GAVE UP: no result from w1 in 24 h; if it still runs "
+                         "(scripts/watch_workers.sh w1), start this watch again\n")
 
     def test_the_bg_host_needs_no_tmux_script(self):
         spaced = self.tmp / 'a b'

@@ -102,9 +102,11 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
 A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
-`python3 scripts/master_writer.py release` (`python` on native Windows) before it ends, and the
-next session runs `claim`. After a crash the marker still names the old session: the successor
-runs `claim --force` and tells {{OWNER_NAME}} so in one line.
+`python3 scripts/master_writer.py release` (`python` on native Windows) before it ends and sends
+every peer lead of the project "I am leaving; the next lead will announce itself", and the
+next session runs `claim`, then sends every peer the line `claim` prints ("new lead is NAME, send
+merge requests there"). After a crash the marker still names the old session: the successor
+runs `claim --force`, tells {{OWNER_NAME}} so in one line and announces itself the same way.
 
 The result file starts with four lines, exact keys, in this order:
 
