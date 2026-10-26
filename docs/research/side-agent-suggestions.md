@@ -535,6 +535,21 @@ Aynı spike'ta canlı doğrulananlar (bölüm 8): Stop hook'unun `additionalCont
 `description`'ını da taşır, bu yüzden tekrar anahtarı ikisini dışarıda bırakır; yerleşik aracın sonucu
 `{ result, text, ... }`, ajanın okuduğu metin `text`.
 
+### 7.12 Saha verisi ve düzeltme (v0.14, 2026-10-26, sahip)
+
+İki projenin defteri ve oturum kayıtları (project_leeway, labricore_web; ikisinde de sahip kapatmıştı): 46 kontrol,
+14 not, 13 teslim, 12 hüküm: 4 correct, 3 partly, 5 wrong (leeway %33, labricore %83). Kontrolün kendi bedeli
+~3k girdi (toplam 137k girdi, 11k çıktı). Asıl bedel Stop hatırlatmasıydı: 13 notun 12'sinde ajan hükmü kendiliğinden
+yazmadı ve Stop'un `additionalContext`'i turu sürdürdü (7.11'deki ölçüm): her biri 1-10 ek asistan mesajı, toplam
+~7.9M girdi (çoğu önbellek okuması) ve ~22k çıktı (bazı devamlar başka iş de yaptı: üst sınır). Beş yanlış notun
+beşi de pencerenin dışında kalan bağlamı kaçırdı: sahibin daha önceki isteği (kit güncellemesi), ajanın kendi
+yazdığı plan ya da açıklama (iki not), önceki bir çağrı, ajanın önceden yaptığı kontrol.
+
+Düzeltme: hatırlatma Stop'tan kalktı; Stop eksik hükmü `due` diye yazar, bir sonraki araç sonucu ya da prompt
+bir kez sorar (ek tur yok). Pencere sahibin son kontrolden önceki üç mesajını tutar ve `turn.step` sonucundan
+ajanın son üç görünür metnini (her biri 400 karakter) ekler; sınır 8000 karakter. Varsayılan kapalı (sahip):
+`/myagentkit:suggestions on` açar.
+
 ---
 
 ## 8) Spike'ta doğrulanacak noktalar (belgede yok ya da belirsiz)

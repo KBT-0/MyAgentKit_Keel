@@ -29,6 +29,7 @@ class LedgerTests(unittest.TestCase):
         self.project = Path(tmp.name)
         (self.project / '.myagentkit').mkdir()
         self.ledger = self.project / '.myagentkit/suggestions.jsonl'
+        (self.project / '.myagentkit/suggestions.json').write_text('{"enabled": true}\n', encoding='utf-8')
         self.transcript = self.project / 'transcript.jsonl'
         self.transcript.write_text('', encoding='utf-8')
 
@@ -88,15 +89,40 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.context(self.run_hook('post-tool', self.event(), MYAGENTKIT_ROLE='worker')), '')
         self.assertIn('#2', self.context(self.run_hook('prompt', self.event())))
 
-    def test_stop_records_verdicts_and_reminds_only_once(self):
+    def test_stop_records_verdicts_and_the_next_call_reminds_only_once(self):
         self.write(note(1), note(2), {'kind': 'delivered', 'id': 1, 'session': 's1'},
                    {'kind': 'delivered', 'id': 2, 'session': 's1'})
         self.say('myagentkit-suggestion #1: wrong, because the assertion was already ">= 1" before the edit.')
-        said = self.context(self.run_hook('stop', self.event(stop_hook_active=False)))
-        self.assertIn('#2', said)
-        self.assertNotIn('#1', said)
+        # Field (v0.14): a Stop reminder continued the turn, an extra model turn for 12 of 13 notes; Stop stays silent.
+        self.assertEqual(self.run_hook('stop', self.event(stop_hook_active=False)).stdout.strip(), '')
         self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(1, 'wrong')])
-        self.assertEqual(self.context(self.run_hook('stop', self.event(stop_hook_active=False))), '')
+        self.assertEqual([r['id'] for r in self.rows('due')], [2])
+        self.assertEqual(self.context(self.run_hook('post-tool', self.event(session_id='other'))), '')
+        # A prompt may run no model turn (a mod-answered command): only a tool result carries the reminder.
+        self.assertEqual(self.context(self.run_hook('prompt', self.event())), '')
+        said = self.context(self.run_hook('post-tool', self.event()))
+        self.assertIn('No verdict line yet for myagentkit-suggestion #2', said)
+        self.assertNotIn('#1', said)
+        self.assertEqual(self.context(self.run_hook('post-tool', self.event())), '')
+        self.run_hook('stop', self.event())
+        self.assertEqual(self.context(self.run_hook('post-tool', self.event())), '')
+        self.assertEqual([r['id'] for r in self.rows('due')], [2])
+
+    def test_a_verdict_written_after_stop_is_read_not_reminded(self):
+        # Review v014-suggestfix (Medium): another Stop hook continued the turn and the agent wrote its verdict.
+        self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'})
+        self.run_hook('stop', self.event())
+        self.say('myagentkit-suggestion #1: partly, because only one of the two paths was loosened.')
+        self.assertEqual(self.context(self.run_hook('post-tool', self.event())), '')
+        self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(1, 'partly')])
+        self.assertEqual(self.rows('reminded'), [])
+
+    def test_a_reminder_rides_with_a_new_note(self):
+        self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'}, {'kind': 'due', 'id': 1, 'session': 's1'},
+                   note(2))
+        said = self.context(self.run_hook('post-tool', self.event()))
+        self.assertIn('[myagentkit-suggestion #2,', said)
+        self.assertIn('No verdict line yet for myagentkit-suggestion #1', said)
 
     def test_stop_reads_the_last_message_the_transcript_has_not_flushed_yet(self):
         # Field (leeway, 2026-10-24): the final text block landed in the transcript 68 ms after the Stop hook read
@@ -108,12 +134,7 @@ class LedgerTests(unittest.TestCase):
             last_assistant_message='myagentkit-suggestion #5: wrong, because the change was already in.')))
         self.assertEqual(said, '')
         self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(5, 'wrong')])
-        self.assertEqual(self.rows('reminded'), [])
-
-    def test_stop_hook_active_never_reminds(self):
-        self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'})
-        self.assertEqual(self.context(self.run_hook('stop', self.event(stop_hook_active=True))), '')
-        self.assertEqual(self.rows('reminded'), [])
+        self.assertEqual(self.rows('due'), [])
 
     def test_not_useful_counts_wrong_and_becomes_a_known_topic(self):
         self.write(note(1, topic='loose test'), {'kind': 'delivered', 'id': 1, 'session': 's1'})
@@ -155,6 +176,13 @@ class LedgerTests(unittest.TestCase):
         self.assertIn('#1', self.context(self.run_hook('post-tool', self.event())))
         self.assertEqual(self.run_hook('stop', 'not json').returncode, 0)
 
+
+    def test_no_switch_file_is_off(self):
+        (self.project / '.myagentkit/suggestions.json').unlink()
+        self.write(note(1))
+        self.assertEqual(self.context(self.run_hook('post-tool', self.event())), '')
+        self.assertEqual(json.loads(self.run_hook('gate').stdout)['enabled'], False)
+        self.assertIn('suggestions: off', self.run_hook('status').stdout)
 
     def test_off_silences_every_hook_and_on_brings_it_back(self):
         self.write(note(1))

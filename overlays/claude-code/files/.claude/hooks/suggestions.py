@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-"""myagentkit-suggestion ledger: deliver a side check's note once, read the verdict, remind once, throttle.
+"""myagentkit-suggestion ledger: deliver a side check's note once, read the verdict, remind once (never from Stop), throttle.
 
 A note is an unverified claim (docs/research/side-agent-suggestions.md, 7.6): the agent verifies
 it with its own read-only means (the note's check is a suggestion, not a command to run blindly),
@@ -12,7 +12,8 @@ per line, append only:
   check      a side check that abstained or whose note was dropped (with the reason), with its usage
   delivered  the note went to the agent: next to a tool result (`post-tool`) or the next prompt (`prompt`)
   verdict    the agent's verdict line, read at `stop` from the transcript and the hook's last_assistant_message
-  reminded   `stop` asked once for a missing verdict; a second missing one stays verdictless
+  due        `stop` found no verdict for a delivered note
+  reminded   the next tool result asked once for a due verdict (not one already in the transcript); a second missing one stays verdictless
   throttle   `stop` told the owner that delivery stopped
   lifted     the owner's `on` lifted a precision stop: the judged window starts afresh
 
@@ -31,7 +32,8 @@ nothing. Silent on any error (fail open, 7.6: a review gate that blocked on its 
                                              check, a known topic or a forged frame is dropped
   suggestions.py report                      what the owner reads after a few days
   suggestions.py on | off | status           the owner's switch, kept per project in
-                                             `.myagentkit/suggestions.json`; off = no side check,
+                                             `.myagentkit/suggestions.json`, off when missing
+                                             (owner, 2026-10-26); off = no side check,
                                              no delivery, no reminder; on also lifts a precision
                                              stop (the mod's /myagentkit:suggestions runs these)
   suggestions.py gate                        JSON for the mod: enabled, stopped, interval,
@@ -67,7 +69,7 @@ def enabled() -> bool:
     try:
         return json.loads(switch_path().read_text(encoding='utf-8')).get('enabled') is not False
     except (OSError, ValueError, AttributeError):
-        return True  # on unless the owner turned it off
+        return False  # off until the owner turns it on (owner, 2026-10-26)
 
 
 def read_rows(path: Path) -> list:
@@ -123,7 +125,7 @@ def append(path: Path, *rows) -> None:
 
 
 def state(rows: list) -> dict:
-    notes, done, reminded, verdicts, fresh, lifted, said_stop = {}, set(), set(), {}, {}, None, False
+    notes, done, due, reminded, verdicts, fresh, lifted, said_stop = {}, set(), set(), set(), {}, {}, None, False
     for row in rows:
         if row.get('kind') == 'lifted':
             fresh, lifted, said_stop = {}, row.get('ts'), False
@@ -133,6 +135,8 @@ def state(rows: list) -> dict:
             notes.setdefault(row['id'], row)
         elif row.get('kind') == 'delivered':
             done.add(row['id'])
+        elif row.get('kind') == 'due':
+            due.add(row['id'])
         elif row.get('kind') == 'reminded':
             reminded.add(row['id'])
         elif row.get('kind') == 'verdict':
@@ -142,7 +146,7 @@ def state(rows: list) -> dict:
     hits = sum(v != 'wrong' for v in judged)
     precision = hits / len(judged) if judged else None
     throttled = len(judged) >= MIN_JUDGED
-    return {'notes': notes, 'delivered': done, 'reminded': reminded, 'verdicts': verdicts, 'judged': judged,
+    return {'notes': notes, 'delivered': done, 'due': due, 'reminded': reminded, 'verdicts': verdicts, 'judged': judged,
             'hits': hits, 'precision': precision,
             'stopped': throttled and precision < 0.25,
             'interval': 2 if throttled and precision < 0.5 else 1,
@@ -167,17 +171,38 @@ def deliver(data: dict, via: str, event: str):
         return None
     with locked(path):
         s = state(read_rows(path))
-        pending = [r for n, r in sorted(s['notes'].items())
-                   if n not in s['delivered'] and r.get('session') == data.get('session_id')]
-        if s['stopped'] or not pending:
+        session = data.get('session_id')
+        pending = [] if s['stopped'] else [r for n, r in sorted(s['notes'].items())
+                                           if n not in s['delivered'] and r.get('session') == session]
+        # A tool result always reaches the model; a prompt may run no model turn (a mod-answered command).
+        due = [n for n in sorted(s['due']) if n not in s['reminded'] and n not in s['verdicts']
+               and s['notes'].get(n, {}).get('session') == session] if via == 'tool' else []
+        if due:
+            # Another Stop hook can continue the turn after Stop wrote `due`: a verdict written since is in the transcript.
+            said = said_verdicts(Path(data['transcript_path'])) if data.get('transcript_path') else {}
+            append(path, *verdict_rows(said, due, session))
+            due = [n for n in due if n not in said]
+        if not pending and not due:
             return None
-        append(path, *({'kind': 'delivered', 'id': r['id'], 'session': r['session'], 'via': via} for r in pending))
-    return {'hookSpecificOutput': {'hookEventName': event,
-                                   'additionalContext': '\n\n'.join(framed(r) for r in pending)}}
+        append(path, *({'kind': 'delivered', 'id': r['id'], 'session': r['session'], 'via': via} for r in pending),
+               *({'kind': 'reminded', 'id': n, 'session': session} for n in due))
+    texts = [framed(r) for r in pending]
+    if due:
+        texts.append('No verdict line yet for %s. Verify each note with your own read-only means, then write '
+                     '"myagentkit-suggestion #ID: correct | wrong | partly, because ..." on a visible line (once; '
+                     'this is not asked again).' % ', '.join('myagentkit-suggestion #%d' % n for n in due))
+    return {'hookSpecificOutput': {'hookEventName': event, 'additionalContext': '\n\n'.join(texts)}}
+
+
+def verdict_rows(said: dict, ids: list, session) -> list:
+    return [{'kind': 'verdict', 'id': n, 'verdict': 'wrong' if said[n] == 'not useful' else said[n], 'session': session}
+            for n in ids if n in said]
 
 
 def said_verdicts(transcript: Path) -> dict:
     found = {}
+    if not transcript.is_file():
+        return found
     with open(transcript, encoding='utf-8', errors='replace') as stream:
         for line in stream:
             if '"assistant"' not in line or 'myagentkit-suggestion #' not in line:
@@ -211,8 +236,7 @@ def _stop(path: Path, data: dict):
         # The final text block can reach the transcript after Stop reads it (measured: 68 ms late); the
         # hook input carries it whole.
         said.update((int(n), v.lower()) for n, v in VERDICT.findall(data.get('last_assistant_message') or ''))
-        rows = [{'kind': 'verdict', 'id': n, 'verdict': 'wrong' if said[n] == 'not useful' else said[n],
-                 'session': session} for n in open_ids if n in said]
+        rows = verdict_rows(said, open_ids, session)
         if rows:
             append(path, *rows)
         s = state(read_rows(path))
@@ -223,13 +247,11 @@ def _stop(path: Path, data: dict):
                                 'judged notes is below 25%%. Run `python .claude/hooks/suggestions.py report`; '
                                 '/myagentkit:suggestions on lifts the stop.'
                                 % (round(100 * s['precision']), len(s['judged'])))
-    missing = [n for n in open_ids if n not in s['verdicts'] and n not in s['reminded']]
-    if missing and not data.get('stop_hook_active'):
-        append(path, *({'kind': 'reminded', 'id': n, 'session': session} for n in missing))
-        out['hookSpecificOutput'] = {'hookEventName': 'Stop', 'additionalContext': (
-            'No verdict line yet for %s. Verify each note with your own read-only means, then write '
-            '"myagentkit-suggestion #ID: correct | wrong | partly, because ..." on a visible line (once; this is '
-            'not asked again).' % ', '.join('myagentkit-suggestion #%d' % n for n in missing))}
+    # A reminder from Stop continued the turn: a whole extra model turn, for 12 of 13 notes in the field
+    # (docs/research/side-agent-suggestions.md, 7.12). The next tool result or prompt carries it instead.
+    missing = [n for n in open_ids if n not in s['verdicts'] and n not in s['due']]
+    if missing:
+        append(path, *({'kind': 'due', 'id': n, 'session': session} for n in missing))
     return out or None
 
 

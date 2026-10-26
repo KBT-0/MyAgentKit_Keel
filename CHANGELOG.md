@@ -15,6 +15,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **ACTION** (myagentkit-suggestion, owner 2026-10-26): the side check is **off by default**; a project without
+  `.myagentkit/suggestions.json` no longer runs it. To keep it, run `/myagentkit:suggestions on` once. A missing
+  verdict line is asked for beside the next tool result or prompt, not by the Stop hook (field: that reminder ran an
+  extra model turn for 12 of 13 notes in two projects). The side check's window adds the first lines of the agent's
+  last three visible texts and keeps the owner's three messages before the last check (all five wrong field notes
+  missed such context); at most 8000 characters. `sync-kit.sh` brings `.claude/hooks/suggestions.py`; the plugin
+  update brings the mod.
 - **A risky diff's review is enforced** (Claude Code overlay, #307): `guard_risky_review.py` (PreToolUse, shell
   tools) refuses a `git commit` that changes a `risky_paths` file the diff-reviewer agent has not seen since HEAD;
   `record_review.py` (SubagentStart, SubagentStop and a PostToolUse on SubagentHandback, diff-reviewer) records in
@@ -439,7 +446,7 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
 - New kit-owned `.claude/hooks/suggestions.py` (Claude Code overlay): the myagentkit-suggestion
   ledger, `.myagentkit/suggestions.jsonl`. It delivers a side check's note once (next to a tool
   result or with the next prompt), reads the verdict lines at Stop and asks once for a missing
-  one (`stop_hook_active` respected), throttles on precision over the last 20 judged notes
+  one (`stop_hook_active` respected; v0.14 moves the reminder off Stop and turns the switch off by default), throttles on precision over the last 20 judged notes
   (below 50% doubles the interval, below 25% stops delivery and says so; `on` lifts the stop and
   judges afresh), skips workers and sub-agents, and fails open; `suggestions.py report` prints
   the precision. Each note field is one line under a cap, a note that forges the delivery frame
@@ -453,7 +460,7 @@ failed). The sync brings the changed kit-owned files; the ACTION items below nam
   check over a window of the lead's work, not the whole conversation (owner, 2026-10-22: a fork
   rereads the session on every check, so its cost grows with the session): the last 10
   main-loop tool calls with trimmed arguments and result heads, the prompt's first lines, the
-  20 most recent known topics and the recent notes, at most 6000 characters all told (the
+  20 most recent known topics and the recent notes (v0.14 adds the agent's text and 8000 characters), at most 6000 characters all told (the
   request's lines always stay; the oldest calls drop to fit), a reply of at most 400 tokens. It runs
   every 10 main-loop tool calls, at once on the same call (tool and arguments) or error 3 times,
   and at the end of a long turn; it abstains unless it can quote evidence, shows a note as a dim

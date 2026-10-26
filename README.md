@@ -24,8 +24,9 @@ A codebase written by agents decays in four ways, and a better prompt fixes none
 
 ## A second pair of eyes
 
-While the lead works, a side check reads a small window of what it just did (the last ten tool
-calls, the prompt's first lines, the topics of earlier notes) and stays silent unless it can
+Once turned on (`/myagentkit:suggestions on`; off by default), while the lead works, a side check
+reads a small window of what it just did (the last ten tool calls, the first lines of the owner's
+recent messages and of the agent's own text, the topics of earlier notes) and stays silent unless it can
 quote evidence that the agent missed something. Then it drops one short note, and the agent
 must check the claim with its own read-only means and write a visible verdict (correct, wrong,
 or partly) before it acts on it.
@@ -34,6 +35,8 @@ or partly) before it acts on it.
 - Other side-agent watchdogs fire without a verdict, a ledger or a brake. This one keeps a precision ledger of its own
   notes, runs half as often below 50% precision, and stops delivering below 25%, saying so in the chat.
 - A check costs a bounded window, not the conversation: 1,335 input tokens at a 34k main context and 1,763 at 79k.
+  Each note also costs the agent its verification; a missing verdict is asked for once beside the next tool result,
+  never with an extra turn (in two projects the old end-of-turn reminder ran an extra turn for 12 of 13 notes).
 - `/myagentkit:suggestions on|off|status`: `status` shows the notes, the verdicts, the precision and the tokens spent.
 
 New in v0.12.1 and measured on one host; the ledger is how it earns trust, and how you will see

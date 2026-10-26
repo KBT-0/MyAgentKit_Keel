@@ -17,6 +17,10 @@ function stubs(on, calls: Calls, opts: Opts = {}) {
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
   on('turn.complete', () => ({ text: '' }))
+  on('turn.step', async function* ($, e) {
+    return { turnId: e.turnId, index: e.index, answer: (e as any).answer ?? '', toolUses: [], stopReason: 'end_turn',
+      usage: null }
+  })
   on('env.get', () => ({ value: opts.role }))
   on('session.root', () => ({ value: '/work' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -104,29 +108,64 @@ test('every owner message since the last check reaches the window, a mid-turn on
   await $.turn.complete({ answer: '', isAborted: false })
   await calls($, 13)
   expect(c.asks.length).toBe(2)
-  expect(c.asks[1].prompt).not.toContain('Upgrade the kit first.')
-  expect(c.asks[1].prompt).toContain('Then build and try the project.')
+  // Field (leeway #1, v0.14): the check flagged a kit upgrade the owner had asked for before its window.
+  expect(c.asks[1].prompt).toContain('Upgrade the kit first.')
   expect(c.asks[1].prompt).toContain('Now ship it.')
+  await $.prompt.submit({ text: 'Fourth.' })
+  await $.turn.complete({ answer: '', isAborted: false })
+  await calls($, 13)
+  expect(c.asks[2].prompt).toContain('Upgrade the kit first.')
+  // Review v014-suggestfix (Low): five new messages never push out the three kept ones.
+  for (const text of ['Fifth.', 'Sixth.', 'Seventh.', 'Eighth.', 'Ninth.']) await $.prompt.submit({ text })
+  await $.turn.complete({ answer: '', isAborted: false })
+  await calls($, 13)
+  const last = c.asks.at(-1).prompt
+  expect(last).toContain('Then build and try the project.')
+  expect(last).toContain('Ninth.')
+  expect(last.split('---').length).toBe(8)
 })
 
-test('the window keeps the request whole, drops the oldest calls and stays under 6000 characters', async () => {
-  const many = Array.from({ length: 10 }, (_, i) => ({ tool: 'Read', args: 'x'.repeat(300), head: 'y'.repeat(300 + i),
-    isError: i === 9 }))
-  const text = windowText('Fix the parser', many)
-  expect(text.length).toBeLessThanOrEqual(6000)
-  expect(text.startsWith('The user\'s messages since the last check, oldest first (first lines):\nFix the parser\n')).toBe(true)
-  expect(text).toContain('ERROR: ' + 'y'.repeat(309))
+async function step($, answer: string, agentId?: string) {
+  for await (const _ of $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1, answer,
+    ...(agentId ? { agentId } : {}) })) { /* drain */ }
+}
+
+// Field (leeway #3, #5, v0.14): the check flagged work the agent had already explained in its own text.
+test('the agent\'s last three visible texts reach the window, a sub-agent\'s do not', async ($, on) => {
+  const c = fresh()
+  stubs(on, c)
+  await start($)
+  await $.prompt.submit({ text: 'Find the ghosting.' })
+  for (const said of ['One.', 'I left far_distance.txt alone on purpose: the game wrote it.', 'Three.', 'Four.']) {
+    await step($, said)
+  }
+  await step($, 'Sub-agent text.', 'a1')
+  await calls($, 10)
+  expect(c.asks[0].prompt).toContain('The agent\'s recent text, oldest first (first lines):\nI left far_distance.txt')
+  expect(c.asks[0].prompt).toContain('Four.')
+  expect(c.asks[0].prompt).not.toContain('One.')
+  expect(c.asks[0].prompt).not.toContain('Sub-agent text.')
+})
+
+test('the window keeps the request whole, drops the oldest calls and stays under 8000 characters', async () => {
+  const many = Array.from({ length: 14 }, (_, i) => ({ tool: 'Read', args: 'x'.repeat(300), head: 'y'.repeat(300 + i),
+    isError: i === 13 }))
+  const text = windowText('Fix the parser', many, '', 's'.repeat(1200))
+  expect(text.length).toBeLessThanOrEqual(8000)
+  expect(text.startsWith('The user\'s recent messages, oldest first (first lines):\nFix the parser\n')).toBe(true)
+  expect(text).toContain('s'.repeat(1200))
+  expect(text).toContain('ERROR: ' + 'y'.repeat(313))
   expect(text).not.toContain('-> ' + 'y'.repeat(300) + '\n') // the oldest call
 })
 
-test('two hundred known topics stay inside the 6000 characters, the most recent kept', async ($, on) => {
+test('two hundred known topics stay inside the 8000 characters, the most recent kept', async ($, on) => {
   const c = fresh()
   const known = Array.from({ length: 200 }, (_, i) => 'topic ' + i + ' ' + 'k'.repeat(50))
   stubs(on, c, { gate: { known, recent: Array.from({ length: 5 }, () => 'r'.repeat(200)) } })
   await start($)
   await $.prompt.submit({ text: 'Fix the parser' })
   await calls($, 10, { padding: 'p'.repeat(400) })
-  expect(c.asks[0].prompt.length).toBeLessThanOrEqual(6000)
+  expect(c.asks[0].prompt.length).toBeLessThanOrEqual(8000)
   expect(c.asks[0].prompt).toContain('Fix the parser')
   expect(c.asks[0].prompt).toContain(known[199])
   expect(c.asks[0].prompt).not.toContain(known[179])
