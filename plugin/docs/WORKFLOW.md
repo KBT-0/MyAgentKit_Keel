@@ -1211,7 +1211,11 @@ Rules, binding for whoever routes workers:
    line. At red the lead stops at the next clean point and proposes a hand-off or `/compact`,
    because a session end kills the background jobs started from its tool shell (survivors:
    `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
-   decides at that stop, never mid-flow. With the owner away (`**Owner:** away` in STATE,
+   decides at that stop, never mid-flow. While work started inside the session still runs (its
+   background tasks, sub-agents, a review, gate or merge it runs) the hand-off is blocked, not
+   proposed: the lead says so and offers to finish the work or to wait and tell the owner when the
+   hand-off is ready; a worker in its own session does not block (`docs/HANDOFF.md`; owner,
+   2026-10-26). With the owner away (`**Owner:** away` in STATE,
    the switch of "autopilot, the owner-away switch"; without that record,
    `docs/COMMUNICATION.md`'s 45 minutes), the lead writes the hand-off file, runs `/compact`
    when jobs are in flight, and continues, after a second compaction too; it does not wait

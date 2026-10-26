@@ -26,6 +26,13 @@ hand-off file and keep going instead, since nobody is there to take a recommenda
 second compaction is no stop then; and each prompt tells the lead how to judge it, since only
 an owner message that says or implies the return ends the autopilot (docs/WORKFLOW.md,
 "autopilot, the owner-away switch").
+
+While work started inside this session still runs (a background Bash task, an async sub-agent:
+started by a tool result's `backgroundTaskId` or `agentId`, ended by its `<task-id>` notification
+or a TaskStop), the band line says the hand-off is blocked and names the jobs instead of offering
+it (owner, 2026-10-26: finish the work, or wait and tell the owner when the hand-off is ready).
+A worker in its own session does not block: the next lead's announcement reaches it. The jobs
+survive a compaction, so the running list is kept in the step file and carried across one.
 """
 import json
 import os
@@ -48,6 +55,7 @@ BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE,
 COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
            "and the owner's words verbatim")
 AUTOPILOT = 'docs/WORKFLOW.md, "autopilot, the owner-away switch"'
+TASK_ID = re.compile(r'<task-id>([^<\s]+)</task-id>')
 # STATE.md's Owner line while away, as scripts/working_mode.py writes it (OWNER_LINE and AWAY there).
 AWAY_LINE = re.compile(r'^[^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Owner:\*\*[^\S\r\n]*away \(autopilot since \S+\)', re.M)
 # A hook cannot read meaning, so the lead judges (owner, 2026-10-22: what the owner says or
@@ -109,20 +117,30 @@ def band_word(ctx: int) -> str:
 
 def context(path: Path, *, require_request: bool = False) -> tuple[int, int]:
     """The last request's context (0 after a boundary), and the compaction count."""
-    last, compactions, known, _ = scan(Path(path))
+    last, compactions, known, _, _ = scan(Path(path))
     if require_request and not known:
         raise ValueError('no request or compaction boundary in transcript')
     return last, compactions
 
 
-def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int]:
-    """(last, compactions, known, offset): from the start, or from a saved record boundary."""
+def text(content) -> str:
+    """A message's text: a string, or the text blocks of a list."""
+    if isinstance(content, str):
+        return content
+    return ' '.join(b.get('text', '') for b in content if isinstance(b, dict)) if isinstance(content, list) else ''
+
+
+def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, dict]:
+    """(last, compactions, known, offset, running): from the start, or from a saved record
+    boundary. RUNNING maps each job started in this session and not yet ended to its label."""
     with open(path, 'rb') as stream:
         size = stream.seek(0, 2)
         start = (saved or {}).get('offset', 0)
         if start > size or size <= RECOUNT:
             start = 0  # a small or truncated transcript is read again whole
         last, compactions, known = (saved['last'], saved['compactions'], saved['known']) if start else (0, 0, False)
+        running = dict(saved['running']) if start else {}
+        described = {}  # tool_use id -> the Bash or Agent description, for the job's label
         offset = stream.seek(start)
         for raw in stream:
             if not raw.endswith(b'\n'):
@@ -141,6 +159,25 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int]:
                 known = True
                 continue
             msg = rec.get('message')
+            content = msg.get('content') if isinstance(msg, dict) else None
+            if rec.get('type') == 'user':
+                result = rec.get('toolUseResult')
+                if isinstance(result, dict):
+                    job = result.get('backgroundTaskId') or (
+                        result.get('agentId') if result.get('status') == 'async_launched' else None)
+                    if isinstance(job, str) and job:
+                        uses = [b.get('tool_use_id') for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+                        running[job] = next((described[u] for u in uses if u in described), job)
+                for ended in TASK_ID.findall(text(content)):
+                    running.pop(ended, None)
+                continue
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get('type') == 'tool_use':
+                    inp = block.get('input') if isinstance(block.get('input'), dict) else {}
+                    if block.get('name') == 'TaskStop':
+                        running.pop(inp.get('task_id'), None)
+                    elif block.get('name') in ('Bash', 'Agent'):
+                        described[block.get('id')] = str(inp.get('description') or block['name'])
             usage = msg.get('usage') if isinstance(msg, dict) else None
             if rec.get('type') != 'assistant' or rec.get('isSidechain') or not isinstance(usage, dict) \
                     or msg.get('model') == '<synthetic>':
@@ -149,7 +186,7 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int]:
             last = sum(usage.get(k) or 0 for k in
                        ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
             known = True
-    return last, compactions, known, offset
+    return last, compactions, known, offset, running
 
 
 def notice(transcript: Path) -> str:
@@ -169,9 +206,10 @@ def notice(transcript: Path) -> str:
             saved = json.loads(state.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             saved = None
-        resume = saved if (isinstance(saved, dict) and type(saved.get('known')) is bool and all(
+        resume = saved if (isinstance(saved, dict) and type(saved.get('known')) is bool and isinstance(
+            saved.get('running'), dict) and all(
             type(saved.get(key)) is int and saved[key] >= 0 for key in ('offset', 'last', 'compactions'))) else None
-        ctx, compactions, known, offset = scan(transcript, resume)
+        ctx, compactions, known, offset, running = scan(transcript, resume)
         # Before the step became a record the state held only an integer step.
         legacy = type(saved) is int
         try:
@@ -187,7 +225,7 @@ def notice(transcript: Path) -> str:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({'step': max(now, said), 'compactions': compactions, 'offset': offset, 'last': ctx,
-                       'known': known}, stream)
+                       'known': known, 'running': running}, stream)
         try:
             os.replace(temporary, state)
         finally:
@@ -201,7 +239,14 @@ def notice(transcript: Path) -> str:
                    'update docs/STATE.md and the hand-off file now')
                 + ', then keep going; no band and no compaction, '
                 f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).')
-    if compactions:
+    if running:
+        advice = (f'Hand-off blocked: {len(running)} job(s) started in this session still run '
+                  f"({', '.join(sorted(running.values()))}). In this turn's closing summary say so to the owner "
+                  'and offer two ways, never a hand-off: finish the jobs, or wait and tell the owner when the '
+                  'hand-off is ready. A worker in its own session does not block (docs/HANDOFF.md)'
+                  + ('; never a second /compact' if compactions else
+                     f'; "{COMPACT}" stays open while the work in flight continues'))
+    elif compactions:
         advice = ('The lead session was compacted already, and a summary of a summary drifts: in this '
                   "turn's closing summary, recommend a hand-off (update STATE, write the handoff, "
                   'fresh session) to the owner in one line with this number, never a second /compact; '

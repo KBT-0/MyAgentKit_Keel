@@ -63,6 +63,38 @@ class ContextHookTests(unittest.TestCase):
         turns += [request(60_000), prompt(), request(205_000)]
         self.assertIn('Context is 205k tokens', self.run_hook(turns + [prompt()]))  # armed again
 
+    def test_running_work_of_the_session_blocks_the_hand_off(self):
+        # Owner 2026-10-26 (leeway, no-handoff-while-work-runs): a bg Bash task or async sub-agent
+        # started here blocks the hand-off until its <task-id> notification or a TaskStop.
+        def use(uid, name, **inp):
+            return {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': uid, 'name': name, 'input': inp}]}}
+
+        def result(uid, **tur):
+            return {'type': 'user', 'toolUseResult': tur,
+                    'message': {'content': [{'type': 'tool_result', 'tool_use_id': uid, 'content': 'started'}]}}
+
+        def ended(job):
+            return prompt(f'<task-notification>\n<task-id>{job}</task-id>\n<status>completed</status>\n</task-notification>')
+
+        turns = [prompt(), use('t1', 'Bash', command='sh x', run_in_background=True, description='Run the gate'),
+                 result('t1', backgroundTaskId='b1'), request(210_000)]
+        said = self.run_hook(turns + [prompt()])
+        self.assertIn('Hand-off blocked: 1 job(s) started in this session still run (Run the gate)', said)
+        self.assertNotIn('recommend ONE', said)
+        turns += [ended('b1'), request(260_000)]
+        said = self.run_hook(turns + [prompt()])  # the state file resumes the scan with the job ended
+        self.assertNotIn('blocked', said)
+        self.assertIn('recommend ONE', said)
+        turns += [use('t2', 'Agent', prompt='x', description='Review the diff'),
+                  result('t2', status='async_launched', agentId='a2'),
+                  use('t3', 'Agent', prompt='y', description='Sync one'), result('t3', status='completed'),
+                  {'type': 'system', 'subtype': 'compact_boundary'}, request(310_000)]
+        said = self.run_hook(turns + [prompt()])  # the running list survives the compaction
+        self.assertIn('1 job(s) started in this session still run (Review the diff)', said)
+        self.assertIn('never a second /compact', said)
+        turns += [use('t4', 'TaskStop', task_id='a2'), request(360_000)]
+        self.assertIn('recommend a hand-off', self.run_hook(turns + [prompt()]))
+
     def test_a_null_counter_is_zero(self):
         self.assertIn('Context is 210k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {
             'model': 'claude-x', 'usage': {'input_tokens': 210_000, 'cache_read_input_tokens': None,
@@ -199,14 +231,14 @@ class ContextHookTests(unittest.TestCase):
         module.RECOUNT = 0
         first = json.dumps(request(210_000)) + '\n'
         self.transcript.write_bytes(first.encode())
-        self.assertEqual(module.scan(self.transcript), (210_000, 0, True, len(first)))
+        self.assertEqual(module.scan(self.transcript), (210_000, 0, True, len(first), {}))
         with self.transcript.open('ab') as stream:
             stream.write((json.dumps(request(260_000)) + '\n' + '{"type": "system", "subtype": "compact_bou').encode())
         size = len(first) + len(json.dumps(request(260_000))) + 1
-        saved = {'offset': len(first), 'last': 1, 'compactions': 5, 'known': True}
+        saved = {'offset': len(first), 'last': 1, 'compactions': 5, 'known': True, 'running': {'b9': 'old job'}}
         # The saved compaction count proves the prefix was not read again; a partial record waits.
-        self.assertEqual(module.scan(self.transcript, saved), (260_000, 5, True, size))
-        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (260_000, 0, True, size))
+        self.assertEqual(module.scan(self.transcript, saved), (260_000, 5, True, size, {'b9': 'old job'}))
+        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (260_000, 0, True, size, {}))
 
     def run_progress(self, records, **extra):
         self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')

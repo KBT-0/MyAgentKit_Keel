@@ -101,7 +101,12 @@ mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.
    known sidecar and exits its separate session. A peer ends its turn and accepts SendMessage.
    The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
-A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
+A lead hands off only when no work started inside its session still runs: its background
+Bash tasks, its sub-agents, a review, gate or merge it runs (the overlay's `context_size.py` band
+line says "hand-off blocked" and names them). It says the work runs and offers two ways, never
+the hand-off: finish the work, or wait and tell {{OWNER_NAME}} when the hand-off is ready. A
+worker in its own session does not block: the next lead's announcement reaches it (owner,
+2026-10-26). A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
 `python3 scripts/master_writer.py release` (`python` on native Windows) before it ends and sends
 every peer lead of the project "I am leaving; the next lead will announce itself", and the
 next session runs `claim`, then sends every peer the line `claim` prints ("new lead is NAME, send
