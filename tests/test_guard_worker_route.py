@@ -34,6 +34,10 @@ class LongWaitRouteTests(unittest.TestCase):
             ('Agent', {'description': 'x', 'prompt': 'Fix them, then run `scripts/check.sh` and report.'}),
             ('Agent', {'description': 'x', 'prompt': 'Push, then wait for `gh run` to finish.'}),
             ('Agent', {'description': 'x', 'prompt': 'Run "scripts/check.sh" then report.'}),
+            # A rich-text paste's non-breaking space is a blank too (review 88777d130196).
+            ('Agent', {'description': 'x', 'prompt': 'wait for\u00a0CI'}),
+            # Not a prohibition: "not" belongs to another clause.
+            ('Agent', {'description': 'x', 'prompt': 'If it is not green, run the gate again.'}),
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'), tool)
@@ -54,6 +58,19 @@ class LongWaitRouteTests(unittest.TestCase):
              'prompt': 'The author ran scripts/check.sh: PASS. Fix the review gate findings and commit.'},
             {'description': 'Review', 'prompt': 'Review the merge commit 1a2b3c.'},
             {'description': 'Review', 'prompt': 'Review the  merge commit 1a2b3c.'},
+            # Review 88777d130196: a prohibition waits on nothing (Medium); the noun across a line,
+            # after a possessive or a demonstrative, a hyphenated word, and ci inside a name (Lows).
+            {'description': 'Review', 'prompt': 'Review the diff. Do not run the gate.'},
+            {'description': 'Review', 'prompt': 'Never run check.sh here.'},
+            {'description': 'Review', 'prompt': 'Do NOT run the gate; the lead does.'},
+            {'description': 'Review', 'prompt': "Don't wait for CI."},
+            {'description': 'Review', 'prompt': 'Review the\nmerge commit 1a2b3c.'},
+            {'description': 'Review', 'prompt': "Review the author's merge."},
+            {'description': 'Review', 'prompt': 'Review this merge.'},
+            {'description': 'Sort', 'prompt': 'Merge-sort the list.'},
+            {'description': 'Docs', 'prompt': 'Watch the CI/CD section.'},
+            {'description': 'Lint', 'prompt': 'Running the ci.yml linter locally.'},
+            {'description': 'Tests', 'prompt': 'Run precise/CI/tests.'},
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'))
