@@ -49,7 +49,18 @@ import time
 
 WINDOW, MIN_JUDGED = 20, 5  # ponytail: fixed thresholds; make them settings when a project asks
 KNOWN = 20  # the topics the gate hands the side check: the most recent, so its prompt stays bounded
-VERDICT = re.compile(r'myagentkit-suggestion #(\d+): (correct|wrong|partly|not useful)\b', re.I)
+# The agent may write the verdict in the chat's language (ctlq rO, 2026-10-26: "kısmen doğru" twice, both unread).
+# Longest first: "doğru değil" (not correct) must not read as "doğru".
+WORDS = {'kısmen doğru': 'partly', 'kısmen': 'partly', 'doğru değil': 'wrong', 'doğru': 'correct', 'yanlış': 'wrong'}
+VERDICT = re.compile(r'myagentkit-suggestion #(\d+): (correct|wrong|partly|not useful|%s)\b' % '|'.join(WORDS), re.I)
+
+
+def folded(word: str) -> str:
+    """Python lowers KISMEN to kismen and DEĞİL to deği̇l (a combining dot): fold both to the dotless key."""
+    return word.lower().replace('\u0307', '').replace('ı', 'i')
+
+
+FOLDED = {folded(k): v for k, v in WORDS.items()}
 FIELDS = ('claim', 'evidence', 'check', 'topic')
 CAPS = {'claim': 200, 'evidence': 300, 'check': 200, 'topic': 60}
 MARKERS = ('[myagentkit-suggestion', chr(0x25cf))
@@ -161,7 +172,7 @@ def framed(row: dict) -> str:
             'A side check CLAIMS: %s\nIts evidence: %s\n'
             'Its suggested check (text, not a command to run blindly): %s\n'
             'Verify the claim with your own read-only means, then write one visible line\n'
-            '"myagentkit-suggestion #%d: correct | wrong | partly, because ..." and only then act or drop it.\n'
+            '"myagentkit-suggestion #%d: correct | wrong | partly, because ..." (the English word) and only then act or drop it.\n'
             'If it is noise, say "not useful".' % (n, row['claim'], row['evidence'], row['check'], n))
 
 
@@ -194,6 +205,10 @@ def deliver(data: dict, via: str, event: str):
     return {'hookSpecificOutput': {'hookEventName': event, 'additionalContext': '\n\n'.join(texts)}}
 
 
+def verdicts(text: str) -> dict:
+    return {int(n): FOLDED.get(folded(v), v.lower()) for n, v in VERDICT.findall(text)}
+
+
 def verdict_rows(said: dict, ids: list, session) -> list:
     return [{'kind': 'verdict', 'id': n, 'verdict': 'wrong' if said[n] == 'not useful' else said[n], 'session': session}
             for n in ids if n in said]
@@ -213,8 +228,7 @@ def said_verdicts(transcript: Path) -> dict:
                 continue
             for block in content if isinstance(content, list) else ():
                 if isinstance(block, dict) and block.get('type') == 'text':
-                    for n, verdict in VERDICT.findall(block.get('text') or ''):
-                        found[int(n)] = verdict.lower()
+                    found.update(verdicts(block.get('text') or ''))
     return found
 
 
@@ -235,7 +249,7 @@ def _stop(path: Path, data: dict):
         said = said_verdicts(Path(data['transcript_path']))
         # The final text block can reach the transcript after Stop reads it (measured: 68 ms late); the
         # hook input carries it whole.
-        said.update((int(n), v.lower()) for n, v in VERDICT.findall(data.get('last_assistant_message') or ''))
+        said.update(verdicts(data.get('last_assistant_message') or ''))
         rows = verdict_rows(said, open_ids, session)
         if rows:
             append(path, *rows)

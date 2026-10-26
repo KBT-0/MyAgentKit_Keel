@@ -82,6 +82,19 @@ class TokenAuditTests(unittest.TestCase):
         self.assertEqual(token_audit.bash_kind('gh issue view 3'), 'gh')
         self.assertEqual(token_audit.bash_kind('sh scripts/spawn_worker.sh w'), 'kit-script')
 
+    def test_flags_a_low_hit_rate_a_hot_read_and_an_always_loaded_edit(self):
+        reads = [assistant(f'r{i}', usage(100, 5000, 10), [(f't{i}', 'Read', {'file_path': '/p/docs/STATE.md'})])
+                 for i in range(3)]
+        s = self.audit([rec for i, a in enumerate(reads) for rec in (a, result(f't{i}', 'x', f'u{i}'))] + [
+            assistant('r8', usage(100, 5000, 10), [('t8', 'Edit', {'file_path': '/p/AGENTS.md'}),
+                                                   ('t9', 'Write', {'file_path': '/p/src/AGENTS.py'})]),
+        ] + [assistant(f'q{i}', usage(100, 5000, 10)) for i in range(6)])
+        self.assertLess(s['hit_rate'], token_audit.HIT_FLOOR)
+        self.assertEqual(s['hot_reads'], {'/p/docs/STATE.md': 3})
+        self.assertEqual(s['always_edits'], ['/p/AGENTS.md'])
+        table = token_audit.summary([s], 10)
+        self.assertIn('| abc.jsonl | lead | 2% | STATE.md x3 | AGENTS.md |', table)
+
     def test_a_continued_transcript_does_not_count_its_parent_twice(self):
         parent = [assistant('r1', usage(0, 5000, 10)), assistant('r2', usage(5000, 100, 10))]
         with tempfile.TemporaryDirectory() as tmp:

@@ -15,6 +15,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.14
 
+- **ACTION** (Claude Code overlay, owner 2026-10-26: an autopilot session cannot hand off): copy the new
+  `.claude/hooks/before_compact.py`, and from the overlay's `.claude/settings.json` add the `PreCompact` entry and
+  the second half of the `SessionStart` (`compact`) command (`; cat ".myagentkit/compact-note.md" ... && rm -f ...; true`)
+  by hand. Just before a compaction the hook writes the facts git knows (branch, HEAD, files not committed, the
+  last five commits, the newest hand-off file) to `.myagentkit/compact-note.md`; after the summary the
+  `SessionStart` hook prints them below `after_compact.txt`. An autopilot session then compacts at the 450k
+  `autoCompactWindow` and goes on with those facts instead of growing toward the 1M window. `doctor.sh` names the
+  hook as unregistered until the settings entry is added. Checked in Claude Code 2.1.310: PreCompact gets
+  `trigger`, and the `SessionStart` (`compact`) text reached the model in all 17 kit sessions that compacted in
+  the last 14 days.
+- **ACTION** (Claude Code overlay, owner 2026-10-26: replies too long to read): add `"outputStyle": "Concise"`
+  to `.claude/settings.json` by hand (Claude Code's built-in style: the result first, no narration). The lead's
+  final report is short by default: the first sentence, then at most five lines; the full account on request; a
+  failure, a step not run, a security warning or an irreversible action is never cut (`docs/COMMUNICATION.md`,
+  "Principle", "Final report"). `.claude/hooks/progress_reminder.py` (`sync-kit.sh --merge`) reminds after ten
+  silent tool calls instead of five, once per silent stretch instead of three times, and never while the owner is
+  away (autopilot); there is no progress line then either ("Progress"). Turn-ending replies measured in the last
+  ten days: median 7 lines and 90th percentile 23 in the kit's own sessions; labricore's lead saw four reminders
+  in twenty read-only calls.
 - **ACTION** (myagentkit-suggestion, owner 2026-10-26): the side check is **off by default**; a project without
   `.myagentkit/suggestions.json` no longer runs it. To keep it, run `/myagentkit:suggestions on` once. A missing
   verdict line is asked for beside the next tool result or prompt, not by the Stop hook (field: that reminder ran an
@@ -60,7 +79,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   locale matrix.
 - `scripts/token_audit.py` (new, KIT-OWNED, synced): where a session's tokens go, from the Claude Code
   transcripts. It shows the cost by session type, the carried cost of every tool result and injected text, Bash
-  output by kind, whole-file reads, re-reads, big results, retries and narration. It is the #307 before/after
+  output by kind, whole-file reads, re-reads, big results, retries and narration, and flags a session with a cache
+  hit rate under 60 %, a path read three or more times, or an edit of an always-loaded file (`CLAUDE.md`,
+  `AGENTS.md`, `MEMORY.md`, `.claude/settings*.json`, `.claude/rules/`). It is the #307 before/after
   measurement; run `python scripts/token_audit.py ~/.claude/projects/<project folder> --json OUT.json`. No action.
 - The kit's own CI ends sooner, with every test still run on every job's platform and Python:
   `scripts/check_kit.py --shard K/N` runs every Nth unit of a tier from the Kth, and native

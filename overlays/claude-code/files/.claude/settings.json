@@ -3,6 +3,7 @@
   "enableArtifact": false,
   "skillListingMaxDescChars": 160,
   "autoCompactWindow": 450000,
+  "outputStyle": "Concise",
   "worktree": {
     "bgIsolation": "none"
   },
@@ -227,13 +228,24 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/before_compact.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "compact",
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/after_compact.txt\"",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/after_compact.txt\"; cat \"$CLAUDE_PROJECT_DIR/.myagentkit/compact-note.md\" 2>/dev/null && rm -f \"$CLAUDE_PROJECT_DIR/.myagentkit/compact-note.md\"; true",
             "timeout": 10
           }
         ]

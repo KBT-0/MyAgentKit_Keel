@@ -10,8 +10,8 @@ The evidence behind each rule is in the kit's `docs/research/communication-style
 
 ## Principle
 
-Readability beats brevity. Keep a message short by choosing what to say, never by
-compressing how it is said: no fragments, no invented abbreviations, no arrows, no symbol
+Short by default, detail on request (owner 2026-10-26: long replies tire the reader). Keep a
+message short by choosing what to say, never by compressing how it is said: no fragments, no invented abbreviations, no arrows, no symbol
 glossaries. Compression modes (dense style levels, token-saving shorthand) are for logs and
 agent-to-agent text only, and only with a measurement; the measured saving on the owner's
 bill is one to three percent.
@@ -58,11 +58,15 @@ calls yourself and report them. You see the code, so raise what `AGENTS.md`, "Du
 ## Final report
 
 First sentence: what happened, and whether a decision is needed. A failed or skipped step
-is in that sentence. Then, in plain prose or short lists: what was done; what was verified,
-with the command and the observed result; what was not verified, risks and what was
-skipped; the next step and the one decision wanted. The report stands alone: the owner
-does not re-read earlier messages. No headers under 500 words, no closing offer, no
-hand-off to a file in place of the report.
+is in that sentence. Then at most five short lines, only those that apply: what was done,
+what was verified (the command and its result), what was not verified or was skipped, the
+next step or the one decision wanted. The full account (every command, every risk, the
+reasoning) comes when {{OWNER_NAME}} asks for it. A failure, a step not run or verified, a
+security warning and an action that cannot be undone are never cut to fit (`AGENTS.md`,
+"Language & style", rule 3). The report stands alone: the owner does not re-read earlier
+messages. No headers under 500 words, no closing offer, no hand-off to a file in place of
+the report. The Claude Code overlay sets the built-in `Concise` output style
+(code.claude.com/docs/en/output-styles), which leads with the result and drops narration.
 
 Confidence has three steps and no percentages: *verified* (the command and its result are
 beside the claim), *read but not run*, *guessing*. "Done" is said only for a result
@@ -72,12 +76,14 @@ doubt; on verified work the sentence is plain.
 ## Progress
 
 One sentence before the first tool call. While working, one sentence only at a finding, a
-change of direction, a block, or after five tool calls with no visible line; no other prose
-between tool calls. The `progress_reminder.py` hook reminds the lead of the last case, and
-stops after the third reminder in the same silent stretch (a visible line or a compaction
-starts a new one); five and three are starting values (Anthropic's Sonnet 5.5 prompting
-guide; a hook's added context is paid on the next request, code.claude.com/docs/en/hooks).
-A worker session is not reminded: the lead reads its result, not its chat.
+change of direction, a block, or after ten tool calls with no visible line; no other prose
+between tool calls. The `progress_reminder.py` hook reminds the lead of the last case once
+per silent stretch (a visible line or a compaction starts a new one); Anthropic's Sonnet 5.5
+prompting guide started at five and three, the owner set ten and one (2026-10-26), and a
+hook's added context is paid on the next request (code.claude.com/docs/en/hooks). A worker
+session is not reminded: the lead reads its result, not its chat. While {{OWNER_NAME}} is
+away (autopilot) there is no progress line and no reminder: nobody reads the chat until they
+are back.
 
 ## Side-check notes (myagentkit-suggestion)
 

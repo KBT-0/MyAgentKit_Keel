@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""PostToolUse: after five tool calls with no visible line, remind the agent to say what it does.
+"""PostToolUse: after ten tool calls with no visible line, remind the agent to say what it does.
 
 `docs/COMMUNICATION.md` ("Progress"): one sentence at a finding, a turn or a block, never a
 long silence. Anthropic measured that a reminder after about five silent steps halved the
-share of tasks with long silences; the threshold is a starting value for this kit.
+share of tasks with long silences; this kit uses ten and one reminder (owner 2026-10-26: the
+replies were too long to read; labricore's lead saw four reminders in twenty read-only calls).
+While the owner is away (autopilot) nobody reads the chat, so no reminder is given.
 
 The hook counts the tool calls in the transcript since the agent's last non-empty text block
 (or the last compaction) and adds one line of context each time that count passes a multiple
@@ -12,7 +14,7 @@ per call, and a sub-agent's calls may see the lead's frozen transcript; so the c
 last nudge is kept beside the transcript (`<session>.progress-step`, with the id of the record
 the count started from) and the same count never nudges twice. A competing call stays silent.
 The transcript may lag the turn by a record or two, so a nudge can come one call late.
-At most three nudges are emitted per silent interval; text or compaction resets the limit.
+At most one nudge is emitted per silent interval; text or compaction resets the limit.
 It saves a byte offset on every call and reads at least everything appended since that offset,
 so a large tool result cannot hide a visible line between calls. Silent on any error.
 
@@ -30,9 +32,10 @@ import sys
 import tempfile
 
 # KARARLAR B08 inv1#253: Sonnet 5.5 prompting guide and Claude Code costs
-# (2026-10-15): stop after the second or third reminder; five is a starting value.
-MAX_NUDGES = 3
-STEP = 5
+# (2026-10-15): stop after the second or third reminder; five and three were the starting values,
+# ten and one are the owner's (2026-10-26).
+MAX_NUDGES = 1
+STEP = 10
 RECOUNT = 512 * 1024  # re-read small transcripts; larger ones resume at the saved offset
 
 
@@ -73,14 +76,25 @@ def silent_calls(path: Path, saved: dict) -> tuple[int, object, int]:
     return total, mark, offset
 
 
+def context_size():
+    sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import context_size
+    return context_size
+
+
 def band_notice(data: dict) -> str:
     try:
-        sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import context_size
-        return context_size.notice(Path(data['transcript_path']))
+        return context_size().notice(Path(data['transcript_path']))
     except Exception:  # noqa: BLE001 - a competing check holds the lock, or an older context_size.py
         return ''
+
+
+def owner_away() -> bool:
+    try:
+        return context_size().away()
+    except Exception:  # noqa: BLE001 - an older or missing context_size.py: the owner counts as present
+        return False
 
 
 def main() -> None:
@@ -115,7 +129,7 @@ def main() -> None:
                 said, nudges = None, 0  # visible text, compaction or truncation starts a new count
         # Nobody reads a worker's chat; its own band still matters (#132).
         nudge = (nudges < MAX_NUDGES and total // STEP > (said or 0) // STEP
-                 and os.environ.get('MYAGENTKIT_ROLE') != 'worker')
+                 and os.environ.get('MYAGENTKIT_ROLE') != 'worker' and not owner_away())
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({'said': total if nudge else (said or 0), 'mark': mark,

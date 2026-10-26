@@ -1,4 +1,4 @@
-"""The two communication hooks: bounce a bare label once, nudge after five silent calls, never block a turn."""
+"""The two communication hooks: bounce a bare label once, nudge after ten silent calls, never block a turn."""
 import itertools
 import importlib.util
 import json
@@ -366,6 +366,25 @@ class PlainReportTests(unittest.TestCase):
                 self.assertEqual(run('plain_report.py', payload).returncode, 0)
 
 
+def load_progress_reminder():
+    spec = importlib.util.spec_from_file_location('progress_reminder', HOOKS / 'progress_reminder.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The tests follow the hook's own threshold and cap, so a tuned value needs no test rewrite.
+STEP, MAX = load_progress_reminder().STEP, load_progress_reminder().MAX_NUDGES
+
+
+def nudged(count):
+    return count % STEP == 0 and count // STEP <= MAX
+
+
+def tools(n):
+    return [assistant(tool()) for _ in range(n)]
+
+
 class ProgressReminderTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -375,6 +394,7 @@ class ProgressReminderTests(unittest.TestCase):
     def nudge(self, records, raw=None, **env):
         self.transcript.write_text(raw if raw is not None else ''.join(json.dumps(r) + '\n' for r in records),
                                    encoding='utf-8')
+        env.setdefault('CLAUDE_PROJECT_DIR', str(self.transcript.parent))  # no presence record: owner present
         result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript)},
                                                         ensure_ascii=False), **env)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
@@ -382,74 +402,91 @@ class ProgressReminderTests(unittest.TestCase):
             return None
         return json.loads(result.stdout)['hookSpecificOutput']
 
-    def test_the_fifth_silent_call_nudges_once_and_a_visible_line_resets(self):
-        calls = [assistant(tool()) for _ in range(4)]
+    def test_the_steps_silent_call_nudges_once_and_a_visible_line_resets(self):
+        calls = tools(STEP - 1)
         self.assertIsNone(self.nudge(calls))
-        said = self.nudge(calls + [assistant(tool())])
+        said = self.nudge(calls + tools(1))
         self.assertEqual(said['hookEventName'], 'PostToolUse')
-        self.assertIn('5 tool calls', said['additionalContext'])
+        self.assertIn('%d tool calls' % STEP, said['additionalContext'])
         self.assertIn('docs/COMMUNICATION.md', said['additionalContext'])
-        calls += [assistant(tool()), assistant(tool())]  # 6 and 7: already said
+        calls += tools(3)  # past the step: already said
         self.assertIsNone(self.nudge(calls))
         calls += [assistant(text(), tool())]  # a visible line: the count restarts
-        self.assertIsNone(self.nudge(calls + [assistant(tool()) for _ in range(3)]))
-        self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool()) for _ in range(4)])['additionalContext'])
+        self.assertIsNone(self.nudge(calls + tools(STEP - 2)))
+        self.assertIn('%d tool calls' % STEP, self.nudge(calls + tools(STEP - 1))['additionalContext'])
+
+    def test_the_threshold_is_ten_with_one_nudge(self):
+        # Owner 2026-10-26: replies too long; labricore saw four nudges in twenty read-only calls.
+        self.assertEqual((STEP, MAX), (10, 1))
+
+    def test_no_nudge_while_the_owner_is_away_but_the_band_still_comes(self):
+        project = self.transcript.parent / 'project'
+        (project / '.myagentkit').mkdir(parents=True)
+        (project / '.myagentkit/presence').write_text('away 2026-10-26T23:00:00+03:00\n', encoding='utf-8')
+        calls = tools(STEP)
+        self.assertIsNone(self.nudge(calls, CLAUDE_PROJECT_DIR=str(project)))
+        calls[-1]['message']['usage'] = {'input_tokens': 250000}
+        said = self.nudge(calls + tools(1), CLAUDE_PROJECT_DIR=str(project))['additionalContext']
+        self.assertIn('Context is 250k tokens', said)
+        self.assertNotIn('tool calls since', said)
+        (project / '.myagentkit/presence').write_text('present 2026-10-27T08:00:00+03:00\n', encoding='utf-8')
+        self.assertIsNotNone(self.nudge(tools(STEP), CLAUDE_PROJECT_DIR=str(project)))
 
     def test_a_sub_agent_call_leaves_the_leads_nudge_unspent(self):
         # A sub-agent's first call at a delegation took the lead's nudge, quoting the lead's count (#214).
-        calls = [assistant(text())] + [assistant(tool()) for _ in range(5)]
+        calls = [assistant(text())] + tools(STEP)
         self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in calls), encoding='utf-8')
         result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript), 'agent_id': 'a1'}))
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-        self.assertIn('5 tool calls', self.nudge(calls)['additionalContext'])
+        self.assertIn('%d tool calls' % STEP, self.nudge(calls)['additionalContext'])
 
     def test_a_worker_session_is_never_nudged(self):
         # #132: a spawned worker's chat has no reader, and the nudge asked it for the narration
         # AGENTS.md forbids.
         # Its own band still reaches it: a 250k request makes the band line, so an empty output fails.
-        calls = [assistant(tool()) for _ in range(5)]
+        calls = tools(STEP)
         calls[-1]['message']['usage'] = {'input_tokens': 250000}
         said = self.nudge(calls, MYAGENTKIT_ROLE='worker')['additionalContext']
         self.assertIn('Context is 250k tokens', said)
         self.assertNotIn('tool calls since', said)
 
-    def test_three_nudges_per_silence_then_text_and_compaction_rearm(self):
+    def test_the_nudge_cap_per_silence_then_text_and_compaction_rearm(self):
         calls = []
-        for count in range(1, 26):
+        for count in range(1, STEP * (MAX + 2) + 1):
             calls.append(assistant(tool()))
-            nudge = self.nudge(calls)
-            self.assertEqual(nudge is not None, count in (5, 10, 15), count)
+            self.assertEqual(self.nudge(calls) is not None, nudged(count), count)
         for reset in (assistant(text()), {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'reset'}):
-            calls += [reset] + [assistant(tool()) for _ in range(5)]
+            calls += [reset] + tools(STEP)
             self.assertIsNotNone(self.nudge(calls))
 
     def test_a_parallel_batch_that_jumps_over_the_threshold_still_nudges_once(self):
-        calls = [assistant(tool()) for _ in range(4)] + [assistant(tool(), tool(), tool())]
-        self.assertIn('7 tool calls', self.nudge(calls)['additionalContext'])
-        self.assertIsNone(self.nudge(calls + [assistant(tool())]))  # 8
-        self.assertIn('10 tool calls', self.nudge(calls + [assistant(tool(), tool(), tool())])['additionalContext'])
+        calls = tools(STEP - 1) + [assistant(tool(), tool(), tool())]
+        self.assertIn('%d tool calls' % (STEP + 2), self.nudge(calls)['additionalContext'])
+        self.assertIsNone(self.nudge(calls + tools(1)))
+        jump = calls + tools(1) + [assistant(*[tool() for _ in range(STEP)])]
+        self.assertEqual(self.nudge(jump) is not None, MAX > 1)
 
     def test_thinking_sidechains_and_empty_text_do_not_count_as_visible(self):
         calls = [assistant({'type': 'thinking', 'thinking': 'hm'}, tool()), assistant(text('  '), tool()),
-                 {'type': 'assistant', 'isSidechain': True, 'message': {'content': [text('worker talk')]}},
-                 assistant(tool()), assistant(tool())]
+                 {'type': 'assistant', 'isSidechain': True, 'message': {'content': [text('worker talk')]}}]
+        calls += tools(STEP - 3)
         self.assertIsNone(self.nudge(calls))
-        self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool())])['additionalContext'])
+        self.assertIn('%d tool calls' % STEP, self.nudge(calls + tools(1))['additionalContext'])
 
     def test_the_same_count_seen_again_never_nudges_twice(self):
         # Claude Code writes one record per content block; a parallel batch runs the hook once
         # per call, and a sub-agent's calls may all see the lead's frozen transcript.
-        calls = [assistant(text())] + [assistant(tool()) for _ in range(4)] + [assistant(tool()) for _ in range(3)]
-        self.assertIn('7 tool calls', self.nudge(calls)['additionalContext'])
+        calls = [assistant(text())] + tools(STEP + 2)
+        self.assertIn('%d tool calls' % (STEP + 2), self.nudge(calls)['additionalContext'])
         for _ in range(3):
             self.assertIsNone(self.nudge(calls))
         self.assertTrue(self.transcript.with_suffix('.progress-step').exists())
 
     def test_a_compaction_starts_a_new_count(self):
-        calls = [assistant(tool()) for _ in range(4)]
+        calls = tools(STEP - 1)
         calls += [{'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'c1'}] + calls
         self.assertIsNone(self.nudge(calls))
-        self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool())])['additionalContext'])
+        self.assertIn('%d tool calls' % STEP, self.nudge(calls + tools(1))['additionalContext'])
 
     def test_a_broken_state_file_counts_as_none_and_a_turkish_path_works(self):
         # LC_ALL=C on Linux leaves an ASCII file system encoding, where no such name exists.
@@ -460,24 +497,24 @@ class ProgressReminderTests(unittest.TestCase):
         for broken in ('{broken', 'null', '{"said": "5", "mark": null}', '{"said": 5}'):
             with self.subTest(state=broken):
                 self.transcript.with_suffix('.progress-step').write_text(broken, encoding='utf-8')
-                said = self.nudge([assistant(tool()) for _ in range(5)], PYTHONIOENCODING='cp1252')
-                self.assertIn('5 tool calls', said['additionalContext'])
+                said = self.nudge(tools(STEP), PYTHONIOENCODING='cp1252')
+                self.assertIn('%d tool calls' % STEP, said['additionalContext'])
 
     def test_a_large_transcript_counts_the_latest_silent_interval(self):
         padding = json.dumps({'type': 'user', 'message': {'content': 'x' * 10_000}}) + '\n'
-        raw = padding * 120 + ''.join(json.dumps(assistant(tool())) + '\n' for _ in range(5))
-        self.assertIn('5 tool calls', self.nudge(None, raw=raw)['additionalContext'])
-        raw = padding * 120 + json.dumps(assistant(text())) + '\n' + ''.join(json.dumps(assistant(tool())) + '\n' for _ in range(4))
+        raw = padding * 120 + ''.join(json.dumps(r) + '\n' for r in tools(STEP))
+        self.assertIn('%d tool calls' % STEP, self.nudge(None, raw=raw)['additionalContext'])
+        raw = padding * 120 + json.dumps(assistant(text())) + '\n' + ''.join(json.dumps(r) + '\n' for r in tools(STEP - 1))
         self.assertIsNone(self.nudge(None, raw=raw))
 
-    def test_a_silence_longer_than_the_tail_keeps_the_three_nudge_cap(self):
+    def test_a_silence_longer_than_the_tail_keeps_the_nudge_cap(self):
         calls = [assistant(text())]
-        for count in range(1, 16):
+        for count in range(1, STEP * MAX + 1):
             calls.append(assistant(tool()))
-            self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15), count)
+            self.assertEqual(self.nudge(calls) is not None, nudged(count), count)
         raw = ''.join(json.dumps(r) + '\n' for r in calls)
         raw += (json.dumps({'type': 'user', 'message': {'content': 'x' * 10_000}}) + '\n') * 120
-        for count in range(1, 6):
+        for count in range(1, STEP + 1):
             raw += json.dumps(assistant(tool())) + '\n'
             self.assertIsNone(self.nudge(None, raw=raw), count)
 
@@ -489,28 +526,28 @@ class ProgressReminderTests(unittest.TestCase):
 
     def test_visible_text_before_a_large_tool_result_rearms_the_cap(self):
         calls = []
-        for count in range(1, 16):
+        for count in range(1, STEP * MAX + 1):
             calls.append(assistant(tool()))
-            self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15))
+            self.assertEqual(self.nudge(calls) is not None, nudged(count))
         for reset in (assistant(text('Still working.')),
                       {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'large-reset'}):
             calls += [reset, {'type': 'user', 'message': {'content': [
                 {'type': 'tool_result', 'content': 'x' * 600_000}]}}]
             self.assertIsNone(self.nudge(calls))
-            for count in range(1, 21):
+            for count in range(1, STEP * (MAX + 1) + 1):
                 calls.append(assistant(tool()))
-                self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15), count)
+                self.assertEqual(self.nudge(calls) is not None, nudged(count), count)
 
     def test_large_results_preserve_counts_before_the_first_nudge(self):
-        calls = [assistant(tool()), assistant(tool())]
+        calls = tools(2)
         self.assertIsNone(self.nudge(calls))
         calls.append({'type': 'user', 'message': {'content': 'x' * 600_000}})
-        for count in range(3, 21):
+        for count in range(3, STEP * (MAX + 1) + 1):
             calls.append(assistant(tool()))
-            self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15), count)
+            self.assertEqual(self.nudge(calls) is not None, nudged(count), count)
 
     def test_a_partial_record_is_read_again_when_complete(self):
-        calls = [assistant(tool()) for _ in range(15)]
+        calls = tools(STEP * MAX)
         self.assertIsNotNone(self.nudge(calls))
         prefix = ''.join(json.dumps(r) + '\n' for r in calls)
         visible = json.dumps(assistant(text()))
@@ -518,9 +555,9 @@ class ProgressReminderTests(unittest.TestCase):
         raw = prefix + visible + '\n' + json.dumps({'type': 'user', 'message': {
             'content': 'x' * 600_000}}) + '\n'
         self.assertIsNone(self.nudge(None, raw=raw))
-        for count in range(1, 6):
+        for count in range(1, STEP + 1):
             raw += json.dumps(assistant(tool())) + '\n'
-            self.assertEqual(self.nudge(None, raw=raw) is not None, count == 5)
+            self.assertEqual(self.nudge(None, raw=raw) is not None, count == STEP)
 
 
 if __name__ == '__main__':

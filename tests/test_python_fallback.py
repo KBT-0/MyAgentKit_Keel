@@ -25,7 +25,7 @@ class PythonFallbackTests(unittest.TestCase):
         hooks = json.loads((OVERLAY / '.claude/settings.json').read_text(encoding='utf-8'))['hooks']
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
-        self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
+        self.assertEqual(sorted(python_hooks), ['before_compact.py', 'context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
                                                 'guard_private_email.py', 'guard_risky_review.py', 'guard_root_scan.py', 'guard_secret_files.py', 'guard_worker_route.py', 'plain_report.py',
                                                 'progress_reminder.py', 'record_review.py', 'suggestions.py'], commands)
         for command in python_hooks.values():
@@ -94,7 +94,7 @@ class PythonFallbackTests(unittest.TestCase):
         self.assertEqual(bounced.returncode, 2, bounced.stderr)
         self.assertIn('BLOCKED', bounced.stderr)
         transcript.write_text(''.join(json.dumps({'type': 'assistant', 'message': {'content': [
-            {'type': 'tool_use', 'name': 'Read'}]}}) + '\n' for _ in range(5)), encoding='utf-8')
+            {'type': 'tool_use', 'name': 'Read'}]}}) + '\n' for _ in range(10)), encoding='utf-8')
         nudged = run(['sh', '-c', python_hooks['progress_reminder.py']], json.dumps({'transcript_path': str(transcript)}))
         self.assertEqual((nudged.returncode, nudged.stderr), (0, ''))
         self.assertIn('additionalContext', nudged.stdout)

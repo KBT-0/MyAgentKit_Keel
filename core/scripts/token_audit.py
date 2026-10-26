@@ -23,6 +23,8 @@ output, context peak, compactions) and adds where the context came from:
   inject      text the harness or a hook added: SessionStart output, hook additionalContext,
               skill and agent listings, CLAUDE.md/memory, by source.
   narration   characters of the assistant's own text (not tool input, not thinking).
+  flags       a cache hit rate under HIT_FLOOR, a path read 3+ times, an edit of an always-loaded
+              file (CLAUDE.md, AGENTS.md, MEMORY.md, .claude/settings or rules) inside the session.
 
 Tokens of a text are its characters / CHARS_PER_TOKEN (calibrated in
 .myagentkit/v014/tokaudit/BASELINE.md); request usage is the API's own count.
@@ -47,6 +49,11 @@ PRICES = {'opus': (4.0, 20.0, 0.05), 'sonnet': (2.0, 10.0, 0.05), 'haiku': (0.10
 JUNK = re.compile(r'(^|/)(node_modules|dist|build|\.venv|__pycache__|\.git)/|(package-lock\.json|yarn\.lock|'
                   r'pnpm-lock\.yaml|uv\.lock|poetry\.lock|Cargo\.lock)$|\.(png|jpe?g|gif|ico|min\.js|map)$|'
                   r'plugins/myagentkit/scripts/')
+# Cache hit rate below which a session is flagged: practitioner rule of thumb (>80 % healthy,
+# <60 % a problem: Zivtech's Claude Code health benchmarks, not measured); FLAG_MIN skips short probes.
+HIT_FLOOR, FLAG_MIN = 0.6, 10
+ALWAYS = re.compile(r'(^|[/\\])(CLAUDE|AGENTS|MEMORY)\.md$|'
+                    r'[/\\]\.claude[/\\](settings(\.local)?\.json$|rules[/\\])')
 CAT = re.compile(r'^\s*cat\s+(?:--\s+)?([^\s|<>;&]+)\s*$')
 
 
@@ -122,7 +129,7 @@ def audit(path: Path, seen: set) -> dict:
            'narration_chars': 0, 'text_blocks': 0, 'agent_calls': 0, 'agent_result_chars': 0,
            'skill_calls': collections.Counter(), 'retries': 0, 'retry_chars': 0, 'errors': 0,
            'copied': 0, 'entrypoint': None, 'prompt': None,
-           'instruction_files': {}, 'skill_listing': {}}
+           'instruction_files': {}, 'skill_listing': {}, 'always_edits': []}
     with open(path, errors='replace') as stream:
         for line in stream:
             try:
@@ -186,6 +193,9 @@ def audit(path: Path, seen: set) -> dict:
                         calls[sig] += 1
                         if calls[sig] > 1 and name not in ('TaskOutput', 'Monitor'):
                             out['retries'] += 1
+                        if name in ('Edit', 'Write', 'MultiEdit', 'NotebookEdit') and \
+                                ALWAYS.search(str(inp.get('file_path') or inp.get('notebook_path') or '')):
+                            out['always_edits'].append(inp.get('file_path') or inp.get('notebook_path'))
                         if name == 'Agent':
                             out['agent_calls'] += 1
                         elif name == 'Skill':
@@ -293,6 +303,8 @@ def audit(path: Path, seen: set) -> dict:
                 'cost_parts': parts, 'w1h': sum(r['w1h'] for r in rows),
                 'inp': sum(r['inp'] for r in rows), 'out': sum(r['out'] for r in rows),
                 'cr': sum(r['cr'] for r in rows), 'cw': sum(r['cw'] for r in rows),
+                'hit_rate': sum(r['cr'] for r in rows) / max(1, sum(r['cr'] + r['cw'] + r['inp'] for r in rows)),
+                'hot_reads': {p: n for p, n in read_paths.items() if n >= 3},
                 'ctx0': ctx[0] if ctx else 0, 'ctx_max': max(ctx, default=0), 'compactions': len(compactions),
                 'start': rows[0]['t'] if rows else None,
                 'tools': {k: v for k, v in tools.items()}, 'reads': dict(reads),
@@ -358,6 +370,13 @@ def summary(sessions: list[dict], top: int) -> str:
     lines += ['', '| # | step | kind | tokens | re-read by | carried $ |', '|---|---|---|---|---|---|']
     lines += [f"| {i} | {c['label'][:80]} | {c['kind']} | {c['tokens']} | {c['requests']} | {c['usd']:.2f} |"
               for i, c in enumerate(steps, 1)]
+    flagged = [(Path(s['file']).name, s) for s in sessions
+               if (s['requests'] >= FLAG_MIN and s['hit_rate'] < HIT_FLOOR) or s['hot_reads'] or s['always_edits']]
+    if flagged:
+        lines += ['', '| flagged session | kind | cache hit | read 3+ times | always-loaded edits |', '|---|---|---|---|---|']
+        lines += [f"| {name} | {s['kind']} | {s['hit_rate']:.0%} | "
+                  f"{', '.join(f'{Path(p).name} x{n}' for p, n in sorted(s['hot_reads'].items(), key=lambda kv: -kv[1])[:5])} | "
+                  f"{', '.join(Path(p).name for p in s['always_edits'][:5])} |" for name, s in flagged[:top]]
     return '\n'.join(lines)
 
 

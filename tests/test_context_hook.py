@@ -277,5 +277,53 @@ class ContextHookTests(unittest.TestCase):
         self.assertEqual(self.run_hook([request(10_000)]), '')
 
 
+class BeforeCompactTests(unittest.TestCase):
+    """PreCompact writes the git facts; SessionStart(compact) prints them after the summary (handoff-48 item 10)."""
+
+    def test_the_note_holds_the_git_facts_and_the_compact_hook_prints_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            git = ['git', '-C', tmp, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false']
+            subprocess.run(git + ['init', '-q', '-b', 'night'], check=True)
+            (root / 'a.txt').write_text('a', encoding='utf-8')
+            subprocess.run(git + ['add', 'a.txt'], check=True)
+            subprocess.run(git + ['commit', '-q', '-m', 'first step'], check=True)
+            (root / 'b.txt').write_text('b', encoding='utf-8')
+            (root / 'docs/handoffs').mkdir(parents=True)
+            (root / 'docs/handoffs/old.md').write_text('old', encoding='utf-8')
+            os.utime(root / 'docs/handoffs/old.md', (1, 1))
+            (root / '.myagentkit/v1').mkdir(parents=True)
+            (root / '.myagentkit/v1/handoff-3.md').write_text('new', encoding='utf-8')
+            env = {**os.environ, 'CLAUDE_PROJECT_DIR': tmp}
+            hook = OVERLAY / '.claude/hooks/before_compact.py'
+            run = subprocess.run([sys.executable, str(hook)], input=json.dumps({'trigger': 'auto', 'cwd': tmp}),
+                                 capture_output=True, text=True, env=env, timeout=30)
+            self.assertEqual((run.returncode, run.stdout, run.stderr), (0, '', ''))
+            note = (root / '.myagentkit/compact-note.md').read_text(encoding='utf-8')
+            self.assertIn('branch: night, HEAD ', note)
+            self.assertIn('first step', note)
+            self.assertIn('?? b.txt', note)
+            self.assertIn('newest hand-off file: ' + str(Path('.myagentkit/v1/handoff-3.md')), note)
+            settings = json.loads((OVERLAY / '.claude/settings.json').read_text(encoding='utf-8'))
+            self.assertIn('before_compact.py', json.dumps(settings['hooks']['PreCompact']))
+            command = settings['hooks']['SessionStart'][0]['hooks'][0]['command']
+            (root / '.claude/hooks').mkdir(parents=True)
+            (root / '.claude/hooks/after_compact.txt').write_text('re-read the rules\n', encoding='utf-8')
+            printed = subprocess.run(['sh', '-c', command], capture_output=True, text=True, env=env, timeout=30)
+            self.assertEqual(printed.returncode, 0)
+            self.assertIn('re-read the rules', printed.stdout)
+            self.assertIn('first step', printed.stdout)
+            # Printed once: a PreCompact that never ran (no Python) cannot bring the last note back.
+            again = subprocess.run(['sh', '-c', command], capture_output=True, text=True, env=env, timeout=30)
+            self.assertEqual(again.returncode, 0)
+            self.assertIn('re-read the rules', again.stdout)
+            self.assertNotIn('first step', again.stdout)
+            (root / '.myagentkit/compact-note.md').write_text('stale', encoding='utf-8')
+            broken = subprocess.run([sys.executable, str(hook)], input='not json', capture_output=True, text=True,
+                                    env=env, timeout=30)
+            self.assertEqual(broken.returncode, 0)
+            self.assertIn('first step', (root / '.myagentkit/compact-note.md').read_text(encoding='utf-8'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -117,6 +117,20 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(1, 'partly')])
         self.assertEqual(self.rows('reminded'), [])
 
+    def test_a_verdict_in_turkish_is_read(self):
+        # ctlq rO (2026-10-26): two agents wrote "kısmen doğru", the English-only pattern missed both and reminded.
+        self.write(note(1), note(2), note(3), *({'kind': 'delivered', 'id': n, 'session': 's1'} for n in (1, 2, 3)))
+        self.say('myagentkit-suggestion #1: kısmen doğru, review eskidi.', 'myagentkit-suggestion #2: Yanlış, test zaten öyleydi.')
+        self.run_hook('stop', self.event(last_assistant_message='myagentkit-suggestion #3: doğru, düzeltiyorum.'))
+        self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict')], [(1, 'partly'), (2, 'wrong'), (3, 'correct')])
+        # Fable review lean 18: "doğru değil" read as correct, and the capital KISMEN DOĞRU wrote a raw verdict.
+        self.write(note(4), note(5), note(6), *({'kind': 'delivered', 'id': n, 'session': 's1'} for n in (4, 5, 6)))
+        self.say('myagentkit-suggestion #4: doğru değil, dosya zaten öyle.', 'myagentkit-suggestion #5: KISMEN DOĞRU, eski.',
+                 'myagentkit-suggestion #6: DOĞRU DEĞİL.')
+        self.run_hook('stop', self.event(last_assistant_message='Tamam.'))
+        self.assertEqual([(r['id'], r['verdict']) for r in self.rows('verdict') if r['id'] > 3],
+                         [(4, 'wrong'), (5, 'partly'), (6, 'wrong')])
+
     def test_a_reminder_rides_with_a_new_note(self):
         self.write(note(1), {'kind': 'delivered', 'id': 1, 'session': 's1'}, {'kind': 'due', 'id': 1, 'session': 's1'},
                    note(2))
