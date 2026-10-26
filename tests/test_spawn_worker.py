@@ -2676,22 +2676,80 @@ class BackgroundHostTests(unittest.TestCase):
         # runs: close it first", and close_worker.sh removes the worktree. A plain spawn of the name
         # still refuses, naming the resume.
         self.resumable(row={'pid': 99, 'state': 'blocked'})
-        result = self.spawn()
+        config = self.limit_stop()
+        result = self.spawn(CLAUDE_CONFIG_DIR=str(config))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('usage limit', result.stderr)
-        self.assertIn('--resume', result.stderr)
+        # Review 13bf32d2e3e3 (Low): a row with no sessionId named "--resume -", which --resume refuses.
+        self.assertIn('--resume 1a2b3c4d ', result.stderr)
         self.assertFalse((self.state / 'launch.json').exists())
-        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        # Review 5abcce7efb20 (Medium): the earlier supervisor still holds NAME.live; the resume waits for it.
+        holder = self.live_holder()
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'),
+                            CLAUDE_CONFIG_DIR=str(config))
+        self.assertEqual(holder.wait(timeout=30 * SCALE), 0)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('still runs after 20 s', result.stdout)
+        self.assertLessEqual((self.state / 'released').stat().st_mtime, (self.state / 'launch.json').stat().st_mtime)
         calls = self.calls()
         self.assertLess(calls.index(['stop', '1a2b3c4d']), next(i for i, c in enumerate(calls) if '--bg' in c))
         self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
         self.ended()
 
+    def limit_stop(self):
+        # The entry Claude Code writes at a usage-limit stop, as watch_workers.sh's limited() reads it.
+        config = self.tmp / 'config'
+        folder = config / 'projects/lead'
+        folder.mkdir(parents=True)
+        entry = {'parentUuid': 'a', 'isSidechain': False, 'type': 'assistant', 'uuid': 'b',
+                 'message': {'model': '<synthetic>', 'role': 'assistant', 'type': 'message', 'content': [
+                     {'type': 'text', 'text': "You've hit your session limit \u00b7 resets 8:40pm (Europe/Istanbul)"}]},
+                 'apiError': 'usage_limit_reached', 'isApiErrorMessage': True}
+        (folder / '1a2b3c4d-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
+            json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
+        (self.workers / 'w1.host').write_text('bg\n')
+        return config
+
+    def live_holder(self):
+        # The earlier supervisor: it holds NAME.live until the session is stopped, then ends a second later.
+        code = ('import importlib.util, json, os, sys, time\n'
+                's = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])\n'
+                'm = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n'
+                'held = m.start_live(sys.argv[2])\n'
+                'log, end = sys.argv[3], time.monotonic() + 60\n'
+                'while time.monotonic() < end and not (os.path.exists(log) and \'"stop"\' in open(log).read()):\n'
+                '    time.sleep(.2)\n'
+                'time.sleep(1); open(sys.argv[4], "w").close(); os.close(held)\n')
+        holder = subprocess.Popen([sys.executable, '-c', code, str(SCRIPT.parent / 'codex_worker.py'),
+                                   str(self.workers / 'w1.exit'), str(self.state / 'claude.log'),
+                                   str(self.state / 'released')])
+        self.addCleanup(lambda: holder.poll() is not None or holder.kill())
+        live = self.workers / 'w1.live'
+        for _ in range(int(100 * SCALE)):
+            if live.exists():
+                return holder
+            time.sleep(.1)
+        self.fail('the holder never published w1.live')
+
+    def test_a_session_blocked_on_a_permission_prompt_is_not_a_usage_limit(self):
+        # Review 13bf32d2e3e3 (Medium): every blocked row read as a limit, so a --resume stopped a
+        # session that waited on an approval and dropped its pending tool call.
+        self.resumable(row={'pid': 99, 'state': 'blocked', 'waitingFor': 'permission prompt'})
+        (self.workers / 'w1.host').write_text('bg\n')
+        for args in ((), ('--resume', '1a2b3c4d')):
+            with self.subTest(args=args):
+                result = self.spawn(*args, CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('usage limit', result.stderr)
+                self.assertIn('still runs', result.stderr)
+                self.assertNotIn(['stop', '1a2b3c4d'], self.calls())
+                self.assertFalse((self.state / 'launch.json').exists())
+
     def test_a_resume_takes_over_a_session_whose_daemon_is_gone_but_never_a_running_one(self):
         # Keel lead note: `claude stop` said "No job matching", `claude logs` found no job, and the
         # row still read blocked (or working with no pid): the resume goes on past the failed stop.
-        for row in ({'pid': None, 'state': 'blocked'}, {'pid': None, 'state': 'working'}):
+        # Review 5abcce7efb20 (Low): a daemon that died while its row listed a pid leaves it working with that pid.
+        for row in ({'pid': None, 'state': 'blocked'}, {'pid': None, 'state': 'working'}, {'pid': 99, 'state': 'working'}):
             with self.subTest(row=row):
                 shutil.rmtree(self.workers, ignore_errors=True)
                 for f in ('launch.json', 'claude.log', 'agents-count'):
@@ -2703,7 +2761,9 @@ class BackgroundHostTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(self.launch()['argv'][1:], ['--resume', '1a2b3c4d-5137-4293-88d5-c4339d1ce56c', '--bg'])
                 self.ended()
-        # A session starting or working with its daemon there is not taken over.
+        # A session starting or working with its daemon there is not taken over, at once: the
+        # first loop's result is not this run's (review 5abcce7efb20: each subtest waited the 15 s grace).
+        (self.cwd / 'RESULT-w1.md').unlink()
         for row in ({'pid': None, 'state': 'working'}, {'pid': 99, 'state': 'working'}):
             with self.subTest(row=row):
                 (self.state / 'launch.json').unlink(missing_ok=True)
@@ -2711,6 +2771,7 @@ class BackgroundHostTests(unittest.TestCase):
                 result = self.spawn('--resume', '1a2b3c4d')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('still runs', result.stderr)
+                self.assertNotIn('closing grace', result.stdout)
                 self.assertFalse((self.state / 'launch.json').exists())
 
     def test_a_session_still_starting_counts_as_running(self):

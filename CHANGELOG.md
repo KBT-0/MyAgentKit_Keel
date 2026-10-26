@@ -22,7 +22,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   characters); a quoted verdict format sentence (`#ID: correct | wrong | partly`) is no longer read as a verdict.
   `check.sh` runs `build_cache_inputs`, and `review.sh --self-test` runs `scripts/review_selftest.project.sh`,
   without the git variables a hook exports (the C8 class). A failed build that prints from its first test-failure
-  block prints first the earlier lines that name an error or a failure (a lint step before the tests). A sync
+  block prints first the earlier lines that name an error or a failure (a lint step before the tests). A `spawn_worker.sh --resume` takes a blocked background session over only when
+  its transcript ends on a usage limit (one waiting on a permission prompt is left to the lead), probes a frozen row
+  with a pid for a gone daemon, and its hint names the session id. A sync
   brings the scripts and the hook, `claude plugin update myagentkit@myagentkit` the mod.
 - **ACTION** (`.claude/hooks/after_compact.txt`, project-owned): after a compaction it named `docs/STATE.md` whole;
   in yours, change "re-read docs/STATE.md," to "re-read docs/STATE.md's "Active work" and "Blocked" sections (never

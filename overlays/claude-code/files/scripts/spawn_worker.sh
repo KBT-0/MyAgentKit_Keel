@@ -781,7 +781,7 @@ watch_line() {
 # or effort change is a new spawn. codex_worker.py --detach supervises it and ends it with
 # `claude stop ID`; nothing calls `claude daemon stop`, which ends every background session on
 # the host (docs/research/worker-orchestration-spike.md, T1-T3, 6, T4).
-# bg_row ID prints "blocked" (a usage limit stops a session so, process or not), "live" (a
+# bg_row ID prints "blocked" (a usage limit or a wait for a person stops a session so), "live" (a
 # process), "starting" (working with no pid: a starting session lists none, spike check 4) or "-",
 # then the sessionId of that row, or nothing. All but "-" run, as codex_worker.py counts them.
 bg_row() {
@@ -852,14 +852,19 @@ if [ -n "$bg" ]; then
     # A resume takes either over in place: `claude stop` (best effort: a gone daemon has no job),
     # then a wait for its supervisor, so the stop's exit record never lands on the resumed run.
     # Never close_worker.sh, which removes the worktree; a session that truly runs still refuses.
+    # Blocked is a limit only when its transcript ends on one (watch_workers.sh --limit, as its
+    # LIMIT line): a session blocked on a permission prompt or a question waits for the lead.
+    # Any row may be frozen by a gone daemon, one that listed a pid too: `claude logs` tells.
     stale=""
-    case $row in
-      blocked*) stale="blocked at a usage limit" ;;
-      starting*) case $(claude logs "$old" </dev/null 2>&1) in
-          *"job not found"*|*"No job matching"*|*ENOENT*) stale="left by its gone daemon" ;; esac ;;
+    case $row in blocked*)
+      ! (CDPATH= cd -- "${wdir%/.myagentkit/workers}" && sh "${cworker%/*}/watch_workers.sh" --limit "$name") >/dev/null 2>&1 ||
+        stale="blocked at a usage limit" ;;
+    esac
+    case $stale$row in blocked*|live*|starting*) case $(claude logs "$old" </dev/null 2>&1) in
+        *"job not found"*|*"No job matching"*|*ENOENT*) stale="left by its gone daemon" ;; esac ;;
     esac
     if [ -n "$stale" ]; then
-      [ -n "$resume" ] || die "the background session $old of '$name' is $stale: resume it in place with --resume ${row#* } (it stops the session first; close_worker.sh would remove its worktree)"
+      [ -n "$resume" ] || die "the background session $old of '$name' is $stale: resume it in place with --resume $old (it stops the session first; close_worker.sh would remove its worktree)"
       claude stop "$old" </dev/null >/dev/null 2>&1 || :
       printf '%s\n' "spawn_worker: the background session $old of '$name' is $stale: stopped it, resuming it in place"
       [ ! -e "$wdir/$name.live" ] || $kit_python -I -c 'import importlib.util, sys, time
