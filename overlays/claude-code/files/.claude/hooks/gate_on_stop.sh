@@ -28,9 +28,18 @@ CDPATH= cd -- "$root" || exit 0
 # a space or a non-ASCII letter, and the closing quote broke the pattern's `$` (#174).
 gated_paths="{{GATED_PATHS}}"
 gated_pattern="{{GATED_FILE_PATTERN}}"
+# The root's build configuration is gated whatever the pattern says: a change to one of these
+# can break the build or the gate, and they sit outside the gated folders (#309). The globs
+# are git's pathspecs (set -f): the shell would expand them to the files left on disk only.
+root_config="package.json package-lock.json npm-shrinkwrap.json pnpm-lock.yaml pnpm-workspace.yaml yarn.lock
+  bun.lock bun.lockb tsconfig*.json jsconfig*.json vite.config.* vitest.config.* wrangler.toml wrangler.json
+  wrangler.jsonc biome.json biome.jsonc eslint.config.* .eslintrc* pyproject.toml setup.cfg setup.py
+  requirements*.txt uv.lock poetry.lock Cargo.toml Cargo.lock go.mod go.sum Makefile CMakeLists.txt"
+set -f
 
 # shellcheck disable=SC2086
-if [ -z "$(git status --porcelain -z --untracked-files=all -- $gated_paths 2>/dev/null | tr '\0' '\n' | grep -E "$gated_pattern" || true)" ]; then
+if [ -z "$({ git status --porcelain -z --untracked-files=all -- $gated_paths | tr '\0' '\n' | grep -E "$gated_pattern"
+  git status --porcelain -z --untracked-files=all -- $root_config | tr '\0' '\n'; } 2>/dev/null || true)" ]; then
   exit 0
 fi
 
@@ -58,7 +67,8 @@ hashed() { printf '%s\n' "$1"; [ -z "$1" ] || printf '%s\n' "$1" | git hash-obje
 names() {
   [ -n "$state" ] || return 1
   # shellcheck disable=SC2086
-  code_untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard -- $gated_paths | grep -E "$gated_pattern")
+  code_untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard -- $gated_paths | grep -E "$gated_pattern"
+    git -c core.quotePath=false ls-files --others --exclude-standard -- $root_config)
   { git rev-parse -q --verify HEAD || echo none; } > "$state.tree" &&
     git ls-files --stage >> "$state.tree" &&
     git diff --binary --no-ext-diff --no-textconv --no-color >> "$state.tree" &&

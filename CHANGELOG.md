@@ -31,6 +31,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   "Let's merge" and "re-merge" stay verbs) and ci inside a name ("CI/CD", "ci.yml"; not "ci-build") pass, and reads a
   non-breaking space as a blank. A sync brings the scripts and the hook, `claude plugin update myagentkit@myagentkit`
   the mod.
+- **The Stop hook gates the root's build configuration** (#309): a turn that changed only `package.json`,
+  `tsconfig*.json`, `wrangler.jsonc`, `vite.config.*`, `biome.json` (or a lock file, `pyproject.toml`, `Cargo.toml`,
+  `go.mod`, `Makefile`, ...), or deleted one, ended without a gate run, because the gated paths are folders and the
+  file pattern names source files. Other root files stay ungated. The commit hook always gated the commit.
+  **ACTION** (`.claude/hooks/gate_on_stop.sh`, project-owned): copy
+  `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` over yours, keeping your gated paths and file
+  pattern; add a root build file of your stack the `root_config` list lacks.
 - **ACTION** (`.claude/hooks/after_compact.txt`, project-owned): after a compaction it named `docs/STATE.md` whole;
   in yours, change "re-read docs/STATE.md," to "re-read docs/STATE.md's "Active work" and "Blocked" sections (never
   the whole file)," (or copy the kit's file over one you never edited).

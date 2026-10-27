@@ -216,6 +216,30 @@ class StopHookTests(unittest.TestCase):
             self.assertEqual(stop(hook, root).returncode, 0)
             self.assertTrue((root / '.git/gate-runs').exists(), 'a new file in a new directory ran no gate')
 
+    def test_a_root_build_configuration_file_is_gated(self):
+        # A turn that changed only package.json or tsconfig.json ended ungated: the gated paths
+        # are folders and the pattern names source files (#309). A deleted one counts too, and a
+        # glob in the list is git's, not the shell's (an existing tsconfig.json hid a deleted
+        # tsconfig.app.json). Other root files stay ungated: a background log must not loop.
+        for name in ('package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json', 'wrangler.jsonc',
+                     'vite.config.ts', 'biome.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Makefile',
+                     'notes.txt'):
+            for deleted in (False, True):
+                with self.subTest(name=name, deleted=deleted), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    hook = gated_repo(root, 'echo ran >> .git/gate-runs\n')
+                    (root / name).write_text('{}\n', newline='\n')
+                    (root / 'tsconfig.json' if name != 'tsconfig.json' else root / 'x').write_text('{}\n')
+                    subprocess.run(['git', 'add', '-A'], cwd=root, check=True)
+                    subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit',
+                                    '-q', '-m', 'base'], cwd=root, check=True, capture_output=True)
+                    if deleted:
+                        (root / name).unlink()
+                    else:
+                        (root / name).write_text('{"changed": 1}\n', newline='\n')
+                    self.assertEqual(stop(hook, root).returncode, 0)
+                    self.assertEqual((root / '.git/gate-runs').exists(), name != 'notes.txt')
+
     def test_a_name_git_quotes_is_gated(self):
         # Porcelain quotes a name with a space or a non-ASCII letter (`?? "src/my file.py"`): the
         # closing quote broke the pattern's `$`, and a turn that only added it ended ungated (#174).
