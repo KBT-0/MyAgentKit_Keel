@@ -22,6 +22,16 @@ A codebase written by agents decays in four ways, and a better prompt fixes none
 | The author reviews its own change. | Review is a gate run by a fresh session, by default a different model, in a throwaway copy where it can execute. Its output is evidence to verify, never a verdict to relay. |
 | Delegated work is invisible until it is wrong. | A spawned worker is a visible terminal tab, watched by a script that reports when it waits on a person, asks a question, or finishes; its worktree is removed after the merge only when nothing in it can be lost. |
 
+## What it costs
+
+Measured on v0.14 with headless Sonnet 5.5 (effort medium) runs on a small invoice project, 4 tasks x 4 runs each,
+hidden tests after every run; three tasks are risky (money, a race, a path escape):
+
+- Kit vs plain Claude Code: the kit left 6 failures, plain 16; it cost 1.9x plain ($3.04 vs $1.58), most of the gap is
+  the required diff review.
+- Kit vs plain with the kit's skill-listing cap copied (`skillListingMaxDescChars: 160`): the kit left 6 failures,
+  plain 18; it cost 2.6x ($3.04 vs $1.16).
+
 ## A second pair of eyes
 
 Once turned on (`/myagentkit:suggestions on`; off by default), while the lead works, a side check
