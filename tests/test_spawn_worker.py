@@ -2304,7 +2304,8 @@ elif args[:1] == ['agents']:
     print(json.dumps(rows))
 elif args[:1] == ['logs']:
     # A session whose daemon is gone (L17: its control socket missing): logs and stop find no job.
-    print('Couldn\'t read logs for %s \u2014 job not found' % args[1] if args[1] in gone else 'its last screen')
+    print('Couldn\'t read logs for %s \u2014 job not found' % args[1] if args[1] in gone
+          else os.environ.get('SPAWN_LOGS', 'its last screen'))
 elif args[:1] == ['stop'] and args[1] in gone:
     print('No job matching %s' % args[1], file=sys.stderr)
     sys.exit(1)
@@ -2742,8 +2743,33 @@ class BackgroundHostTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('usage limit', result.stderr)
                 self.assertIn('still runs', result.stderr)
+                # Review 99c84bd7fb41 (Low): close_worker.sh stops it; answering it is the way on.
+                self.assertIn('claude attach 1a2b3c4d', result.stderr)
                 self.assertNotIn(['stop', '1a2b3c4d'], self.calls())
                 self.assertFalse((self.state / 'launch.json').exists())
+
+    def test_a_running_worker_whose_screen_shows_enoent_is_not_a_gone_daemon(self):
+        # Review 99c84bd7fb41 (Medium): `claude logs` dumps the worker's screen, so a Node worker's
+        # own ENOENT read as the gone daemon's and its running session was stopped and resumed.
+        for screen in ('npm ERR! enoent ENOENT: no such file or directory',
+                       'its last screen\nconnect ENOENT /tmp/x/control.sock'):
+            with self.subTest(screen=screen):
+                shutil.rmtree(self.workers, ignore_errors=True)
+                (self.state / 'launch.json').unlink(missing_ok=True)
+                self.resumable(row={'pid': 99, 'state': 'working'})
+                result = self.spawn('--resume', '1a2b3c4d', SPAWN_LOGS=screen)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('still runs', result.stderr)
+                self.assertNotIn(['stop', '1a2b3c4d'], self.calls())
+                self.assertFalse((self.state / 'launch.json').exists())
+        # The leeway field report's gone daemon: its first line is the control socket's error.
+        shutil.rmtree(self.workers, ignore_errors=True)
+        self.resumable(row={'pid': 99, 'state': 'working'})
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_LOGS='Error: connect ENOENT /tmp/x/control.sock',
+                            SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('left by its gone daemon', result.stdout)
+        self.assertIn(['stop', '1a2b3c4d'], self.calls())
 
     def test_a_resume_takes_over_a_session_whose_daemon_is_gone_but_never_a_running_one(self):
         # Keel lead note: `claude stop` said "No job matching", `claude logs` found no job, and the

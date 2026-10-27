@@ -202,7 +202,10 @@ class GateCheckTests(unittest.TestCase):
                        '___ test_a ___', '1 failed, 300 passed'),
         }
         # Review 520392d33a7b (Low): an earlier step's failure ("lint; tests") reached only the log.
-        earlier = 'echo "lint: error in a.js"\n'
+        # Review 99c84bd7fb41 (Low): a passing or skipped test named error or failure is no error.
+        named = ('tests/test_a.py::test_error_handling PASSED [ 10%]', "test_failure_is_loud (t.T) ... skipped 'no dash'",
+                 'tests/test_a.py::test_fail_fast SKIPPED (no dash) [ 20%]', 'test_error_path (t.T) ... expected failure')
+        earlier = ''.join('echo "%s"\n' % line.replace('"', '\\"') for line in named) + 'echo "lint: error in a.js"\n'
         for runner, (failures, first, summary) in runners.items():
             with self.subTest(runner=runner):
                 write(self.build, earlier + passing + failures + 'exit 1\n')
@@ -211,6 +214,8 @@ class GateCheckTests(unittest.TestCase):
                 for line in (first, '  frame 0', '  frame 199', summary, 'lint: error in a.js'):
                     self.assertIn(line, out)
                 self.assertNotIn('test_0 ... ok', out)
+                for line in named:
+                    self.assertNotIn(line, out)
                 self.assertIn('.git/check-build.log', out)
                 log = (self.project / '.git/check-build.log').read_text(encoding='utf-8')
                 self.assertIn('test_0 ... ok', log)

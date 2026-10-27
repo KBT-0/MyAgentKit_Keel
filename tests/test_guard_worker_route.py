@@ -38,6 +38,11 @@ class LongWaitRouteTests(unittest.TestCase):
             ('Agent', {'description': 'x', 'prompt': 'wait for\u00a0CI'}),
             # Not a prohibition: "not" belongs to another clause.
             ('Agent', {'description': 'x', 'prompt': 'If it is not green, run the gate again.'}),
+            # Review 99c84bd7fb41: a contraction is no possessive (Medium); re-merge and a ci- job name (Lows).
+            ('Agent', {'description': 'x', 'prompt': "Let's merge w3 into master."}),
+            ('Agent', {'description': 'x', 'prompt': "It's merging into master; report after."}),
+            ('Agent', {'description': 'x', 'prompt': 'Rebase and re-merge the branch.'}),
+            ('Agent', {'description': 'x', 'prompt': 'Wait for the ci-build to go green, then report.'}),
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'), tool)
@@ -71,6 +76,8 @@ class LongWaitRouteTests(unittest.TestCase):
             {'description': 'Docs', 'prompt': 'Watch the CI/CD section.'},
             {'description': 'Lint', 'prompt': 'Running the ci.yml linter locally.'},
             {'description': 'Tests', 'prompt': 'Run precise/CI/tests.'},
+            {'description': 'Review', 'prompt': 'Review the re-merge.'},
+            {'description': 'Docs', 'prompt': 'Watch the CI-CD section.'},
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'))

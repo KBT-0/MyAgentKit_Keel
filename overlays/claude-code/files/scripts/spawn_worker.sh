@@ -854,14 +854,15 @@ if [ -n "$bg" ]; then
     # Never close_worker.sh, which removes the worktree; a session that truly runs still refuses.
     # Blocked is a limit only when its transcript ends on one (watch_workers.sh --limit, as its
     # LIMIT line): a session blocked on a permission prompt or a question waits for the lead.
-    # Any row may be frozen by a gone daemon, one that listed a pid too: `claude logs` tells.
+    # Any row may be frozen by a gone daemon, one that listed a pid too: `claude logs` tells on its
+    # first line ("No job matching", "connect ENOENT .../control.sock"); the rest is the worker's screen.
     stale=""
     case $row in blocked*)
       ! (CDPATH= cd -- "${wdir%/.myagentkit/workers}" && sh "${cworker%/*}/watch_workers.sh" --limit "$name") >/dev/null 2>&1 ||
         stale="blocked at a usage limit" ;;
     esac
-    case $stale$row in blocked*|live*|starting*) case $(claude logs "$old" </dev/null 2>&1) in
-        *"job not found"*|*"No job matching"*|*ENOENT*) stale="left by its gone daemon" ;; esac ;;
+    case $stale$row in blocked*|live*|starting*) case $(claude logs "$old" </dev/null 2>&1 | head -n 1) in
+        *"job not found"*|*"No job matching"*|*"connect ENOENT"*) stale="left by its gone daemon" ;; esac ;;
     esac
     if [ -n "$stale" ]; then
       [ -n "$resume" ] || die "the background session $old of '$name' is $stale: resume it in place with --resume $old (it stops the session first; close_worker.sh would remove its worktree)"
@@ -881,7 +882,10 @@ sys.exit(live.exists() and not m.gone(live, 0))' "$cworker" "$wdir/$name.live" |
     while case $row in [!-]*) in_grace ;; *) false ;; esac; do
       row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
     done
-    case $row in [!-]*) die "the background session $old of '$name' still runs: close it first (scripts/close_worker.sh $name)" ;; esac
+    case $row in
+      blocked*) die "the background session $old of '$name' still runs, blocked on a question or a permission prompt: answer it (claude attach $old); close_worker.sh would stop it and drop its pending call" ;;
+      [!-]*) die "the background session $old of '$name' still runs: close it first (scripts/close_worker.sh $name)" ;;
+    esac
   fi
   sid=$resume
   if [ -n "$resume" ] && [ "${resume%%-*}" = "$resume" ]; then

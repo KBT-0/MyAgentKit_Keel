@@ -76,13 +76,14 @@ if data.get("tool_name") not in ("Agent", "Task"):
 call = data.get("tool_input") or {}
 text = "%s\n%s" % (call.get("description") or "", call.get("prompt") or "")
 # A present-tense verb only: "the author ran check.sh" reports a job, it does not wait on one;
-# "Merge-sort" is no merge, and ci only on its own ("CI/CD", "ci.yml" are names).
+# "Merge-sort" is no merge ("re-merge" is), and ci only on its own ("CI/CD", "ci.yml" are names; "ci-build" is a job).
 LONG_JOB = re.compile(
-    r"\b(?:(?<![\w-])merg(?:e|es|ing)(?!-)|gh run watch"
+    r"\b(?:(?<![\w-])(?:re-)?merg(?:e|es|ing)(?!-)|gh run watch"
     r"|(?:run|runs|running|watch|watches|watching|wait(?:s|ing)? (?:for|on)) "
-    r"(?:[^\s.;:]+ ){0,3}?(?:[\w./-]*?\b(?:gate|pipeline|review\.sh|check\.sh|gh run)|(?<![\w./-])ci(?![./-])))\b", re.I)
-# A merge after an article, a demonstrative or a possessive is a noun ("the merge", "the author's merge").
-NOUN = re.compile(r"(?:\b(?:the|a|an|this|that|its|each|every|any|one)|\w's) $", re.I)
+    r"(?:[^\s.;:]+ ){0,3}?(?:[\w./-]*?\b(?:gate|pipeline|review\.sh|check\.sh|gh run)|(?<![\w./-])ci(?![./]|-cd\b)))\b", re.I)
+# A merge after an article, a demonstrative or a possessive is a noun ("the merge", "the author's merge");
+# "Let's merge", "it's merging" are verbs.
+NOUN = re.compile(r"(?:\b(?:the|a|an|this|that|its|each|every|any|one)|\b(?!(?:let|it|that|what|there|here|who|he|she)'s )\w+'s) $", re.I)
 # A prohibition waits on nothing: "Do not run the gate.", "Never run check.sh", "Don't wait for CI".
 NOT = re.compile(r"\b(?:not|never|don't|do not|no need to) (?:to )?$", re.I)
 # Backticks, double quotes and quoting apostrophes dropped (not the one in "don't"), every blank
@@ -90,7 +91,7 @@ NOT = re.compile(r"\b(?:not|never|don't|do not|no need to) (?:to )?$", re.I)
 scan = re.sub(r"\s+", " ", re.sub(r"[`\"]|'(?!\w)|(?<!\w)'", "", text))
 jobs = sorted({m.group(0).lower() for m in LONG_JOB.finditer(scan)
                if not NOT.search(scan, 0, m.start())
-               and not (m.group(0).lower().startswith("merg") and NOUN.search(scan, 0, m.start()))})
+               and not (re.match(r"(?:re-)?merg", m.group(0), re.I) and NOUN.search(scan, 0, m.start()))})
 if jobs and not re.search(r"^\s*No long wait:", text, re.M | re.I):
     print(
         "BLOCKED: this sub-agent names a long job (%s). A sub-agent runs on the five-minute cache, "

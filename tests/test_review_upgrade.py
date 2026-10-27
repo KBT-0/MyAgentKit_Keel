@@ -14,6 +14,19 @@ sys.path.insert(0, str(ROOT / 'core/scripts'))
 from review_test_support import PYTHON_SHEBANG, posix_only, python_cli  # noqa: E402
 
 
+def symlinks_work():
+    """Windows makes a symlink only in Developer Mode or for an administrator (as tests/test_gate_checks.py)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.symlink(tmp, os.path.join(tmp, 'link'))
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+SYMLINKS = symlinks_work()
+
+
 class ReviewUpgradeTests(unittest.TestCase):
     def test_documented_upgrade_isolates_inherited_backend(self):
         from unittest.mock import patch
@@ -127,14 +140,15 @@ class ReviewUpgradeTests(unittest.TestCase):
             for name in ('review.sh', 'gate_config.sh'):
                 shutil.copyfile(ROOT / 'core/scripts' / name, scripts / name)
             (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n')
-            try:
-                os.symlink('gone.sh', scripts / 'review_selftest.project.sh')
-            except OSError:
+            if not SYMLINKS:
                 self.skipTest('no symlinks here')
+            os.symlink('gone.sh', scripts / 'review_selftest.project.sh')
             result = subprocess.run(['sh', str(scripts / 'review.sh'), '--self-test'],
                                     capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn('scripts/review_selftest.project.sh cannot run', result.stdout)
+    # Declared, so the kit check prints its NOT RUN line and does not count it (review 99c84bd7fb41).
+    test_a_dangling_project_self_test_link_fails_loud._kit_platform_skip = not SYMLINKS
 
     def test_contract_suite_survives_project_owned_defaults(self):
         # Reproduce an installed project's Codex default and named pins, in its gate_config.sh
