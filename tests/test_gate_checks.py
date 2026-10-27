@@ -205,16 +205,20 @@ class GateCheckTests(unittest.TestCase):
         # Review 99c84bd7fb41 (Low): a passing or skipped test named error or failure is no error.
         named = ('tests/test_a.py::test_error_handling PASSED [ 10%]', "test_failure_is_loud (t.T) ... skipped 'no dash'",
                  'tests/test_a.py::test_fail_fast SKIPPED (no dash) [ 20%]', 'test_error_path (t.T) ... expected failure')
-        earlier = ''.join('echo "%s"\n' % line.replace('"', '\\"') for line in named) + 'echo "lint: error in a.js"\n'
+        # Review 9464fabccb32 and its sub-agent twin (Lows): an error line ending in passed or skipped stays; colour is no cover.
+        kept = ('lint: error: 3 files skipped', 'eslint found 2 errors, typecheck passed')
+        earlier = (''.join('echo "%s"\n' % line.replace('"', '\\"') for line in named + kept)
+                   + "printf 'tests/test_a.py::test_error_ok \\033[32mPASSED\\033[0m [ 30%%]\\n'\n"
+                   + 'echo "lint: error in a.js"\n')
         for runner, (failures, first, summary) in runners.items():
             with self.subTest(runner=runner):
                 write(self.build, earlier + passing + failures + 'exit 1\n')
                 out = self.assert_red('FAIL [build]: the build/test command exited 1. Its failures and summary follow',
                                       CI='', MYAGENTKIT_CHECK_VERBOSE='')
-                for line in (first, '  frame 0', '  frame 199', summary, 'lint: error in a.js'):
+                for line in (first, '  frame 0', '  frame 199', summary, 'lint: error in a.js') + kept:
                     self.assertIn(line, out)
                 self.assertNotIn('test_0 ... ok', out)
-                for line in named:
+                for line in named + ('test_error_ok',):
                     self.assertNotIn(line, out)
                 self.assertIn('.git/check-build.log', out)
                 log = (self.project / '.git/check-build.log').read_text(encoding='utf-8')

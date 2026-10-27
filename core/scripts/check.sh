@@ -1166,9 +1166,9 @@ print(len(fields) // 2)
         # An earlier step of a command of several ("lint; tests") fails above the first block: its
         # lines that name an error or a failure, not a passing or skipped test's (unittest "... ok",
         # pytest -v "PASSED [ 10%]"), print first (the last 20).
-        awk -v n="$failures_at" 'NR >= n { exit } { line = tolower($0) }
-          line ~ /error|fail/ && line !~ /(\.\.\.|:) (ok|skipped.*|expected failure)\r?$/ &&
-            line !~ / (passed|skipped|xfail|xpass)( \(.*\))?( +\[ *[0-9]+%\])?\r?$/ { held[++k] = $0 }
+        awk -v n="$failures_at" 'NR >= n { exit } { line = tolower($0); sub(/\r$/, "", line); gsub(/\033\[[0-9;]*m/, "", line) }
+          line ~ /error|fail/ && line !~ /(\.\.\.|:) ok$/ && line !~ /\.\.\. (skipped.*|expected failure)$/ &&
+            line !~ /::[^ ]+ (passed|skipped|xfail|xpass)( \(.*\))?( +\[ *[0-9]+%\])?$/ { held[++k] = $0 }
           END { if (k) { print "Earlier lines that name an error or a failure:"
                          for (i = (k > 20 ? k - 19 : 1); i <= k; i++) print held[i]; print "---" } }' "$build_log"
         tail -n "+$failures_at" "$build_log"

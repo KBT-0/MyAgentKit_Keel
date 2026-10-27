@@ -127,7 +127,7 @@ REQUIRED_SUITES = {
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 3, 'test_bootstrap': 42 if case_folds() else 41, 'test_acceptance': 20,
-              'test_review_upgrade': (7 if symlinks_work() else 6) if os.name == 'nt' else 9,
+              'test_review_upgrade': (8 if symlinks_work() else 7) if os.name == 'nt' else 9,
               'test_scan_gate': 1, 'test_gate_checks': 17 if symlinks_work() else 16, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 24, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,

@@ -862,7 +862,7 @@ if [ -n "$bg" ]; then
         stale="blocked at a usage limit" ;;
     esac
     case $stale$row in blocked*|live*|starting*) case $(claude logs "$old" </dev/null 2>&1 | head -n 1) in
-        *"job not found"*|*"No job matching"*|*"connect ENOENT"*) stale="left by its gone daemon" ;; esac ;;
+        *"job not found"*|*"No job matching"*|*"connect ENOENT"*control.sock*) stale="left by its gone daemon" ;; esac ;;
     esac
     if [ -n "$stale" ]; then
       [ -n "$resume" ] || die "the background session $old of '$name' is $stale: resume it in place with --resume $old (it stops the session first; close_worker.sh would remove its worktree)"

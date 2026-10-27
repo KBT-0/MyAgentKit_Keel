@@ -76,11 +76,11 @@ if data.get("tool_name") not in ("Agent", "Task"):
 call = data.get("tool_input") or {}
 text = "%s\n%s" % (call.get("description") or "", call.get("prompt") or "")
 # A present-tense verb only: "the author ran check.sh" reports a job, it does not wait on one;
-# "Merge-sort" is no merge ("re-merge" is), and ci only on its own ("CI/CD", "ci.yml" are names; "ci-build" is a job).
+# "Merge-sort" is no merge ("re-merge" is), and ci only on its own ("CI/CD", "ci.yml" are names; "ci-build" is a job, "ci-lint.sh" a file).
 LONG_JOB = re.compile(
     r"\b(?:(?<![\w-])(?:re-)?merg(?:e|es|ing)(?!-)|gh run watch"
     r"|(?:run|runs|running|watch|watches|watching|wait(?:s|ing)? (?:for|on)) "
-    r"(?:[^\s.;:]+ ){0,3}?(?:[\w./-]*?\b(?:gate|pipeline|review\.sh|check\.sh|gh run)|(?<![\w./-])ci(?![./]|-cd\b)))\b", re.I)
+    r"(?:[^\s.;:]+ ){0,3}?(?:[\w./-]*?\b(?:gate|pipeline|review\.sh|check\.sh|gh run)|(?<![\w./-])ci(?![./]|-cd\b|-[\w-]*\.\w)))\b", re.I)
 # A merge after an article, a demonstrative or a possessive is a noun ("the merge", "the author's merge");
 # "Let's merge", "it's merging" are verbs.
 NOUN = re.compile(r"(?:\b(?:the|a|an|this|that|its|each|every|any|one)|\b(?!(?:let|it|that|what|there|here|who|he|she)'s )\w+'s) $", re.I)
