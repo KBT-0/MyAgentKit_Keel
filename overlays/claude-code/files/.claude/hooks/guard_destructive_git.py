@@ -346,11 +346,14 @@ def strip_heredocs(text):
             if shell_reads:
                 # A shell elsewhere on the line may run the file this body writes. A shell runs it up to
                 # a quote it never closes (prose: `the worker's`), so that part is judged as shell; the
-                # rest never runs, and each git in it is judged as code is.
+                # rest never runs, and each git in it is judged as code is. A nested body's apostrophe
+                # is its data, not an open quote: the nested bodies are cut and judged by their readers.
+                body, nested = strip_heredocs(body)
                 start = next((m.start() for m in UNCLOSED.finditer(body) if m.group("open")), None)
                 bodies.append((True, body[:start]))
                 if start is not None:
                     bodies.append((False, body[start:]))
+                bodies.extend(nested)
     return text, bodies
 
 

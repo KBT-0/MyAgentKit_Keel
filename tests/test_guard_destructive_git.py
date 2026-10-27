@@ -945,6 +945,11 @@ class V014FieldReportTests(GuardCase):
             "cat > x.sh <<'EOF'\nHUSKY=0 git commit -m x\necho it's\nEOF\nsh x.sh",
             "cat > x.sh <<'EOF'\ng=git; $g stash drop\necho it's\nEOF\nsh x.sh",
             "cat > x.sh <<'EOF'\necho it's\ngit stash drop\nEOF\nsh x.sh",
+            # review v014-mergerev: a nested body's apostrophe is not a quote the shell leaves open
+            "cat > run.sh <<'EOF'\ncat <<'MSG'\nthe lead's note\nMSG\n"
+            "GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/dev/null'\" git commit -m x\nEOF\nsh run.sh",
+            "cat > run.sh <<'EOF'\ncat <<'MSG'\nthe lead's note\nMSG\nHUSKY=0 git commit -m x\nEOF\nsh run.sh",
+            "cat > run.sh <<'EOF'\ncat <<'MSG'\nthe lead's note\nMSG\ng=git; $g stash drop\nEOF\nsh run.sh",
             # an interpreter's body is its code, whatever shell runs elsewhere on the line
             "python3 - <<'EOF'\nos.system(\"git stash drop\")\nEOF\nnohup sh run.sh &",
             "python3 - <<'EOF'\nsubprocess.run([\"git\", \"stash\", \"drop\"])\nEOF\nnohup sh run.sh &",
