@@ -13,7 +13,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## Unreleased — v0.14.1
+## v0.14.1 — 2026-11-02
 
 - **A worker is never the owner's terminal (#311).** `spawn_worker.sh` and `spawn_codex.sh` start every worker with
   `MYAGENTKIT_SESSION_ID=worker-NAME` (a background worker in its settings' `env`, as its other worker variables, and

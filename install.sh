@@ -17,7 +17,7 @@
 set -eu
 
 # The kit release this installer pins; the release steps raise it (CONTRIBUTING.md).
-version=0.14
+version=0.14.1
 repo=${MYAGENTKIT_REPO:-https://github.com/KBT-0/MyAgentKit_Keel.git}
 ref=${MYAGENTKIT_REF:-v$version}
 kit=$HOME/.myagentkit/kit
