@@ -1483,6 +1483,16 @@ class BackgroundTests(Base):
         result = self.run_bg(WATCH, '--limit', 'w1', VIS_UNAME='MINGW64_NT-10.0')
         self.assertEqual(result.stdout, (LIMIT % 'w1').replace('resume it after the reset', 'reset passed: resume now'))
 
+    def test_a_passed_reset_in_a_zone_without_data_says_resume_now(self):
+        # Native Windows has no time zone data: a reset is within a day of its entry, so a day later it passed.
+        self.spawned('w1')
+        (self.workers / 'w1.session').write_text('aaaa0001-5137-4293-88d5-c4339d1ce56c\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
+        text = "You've hit your session limit \u00b7 resets 8:40pm (Nowhere/Zone)"
+        self.transcript(said('Running the next suite.'), dict(PASSED, message=dict(PASSED['message'], content=[dict(type='text', text=text)])), TURN)
+        line = limit_bg('w1', 'reset passed: resume now', 'aaaa0001-5137-4293-88d5-c4339d1ce56c')
+        self.assertEqual(self.watch().stdout, line.replace('Europe/Istanbul', 'Nowhere/Zone'))
+
     def test_ordinary_text_or_a_quote_of_the_limit_line_is_no_limit(self):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'working', pid=1, status='busy'))

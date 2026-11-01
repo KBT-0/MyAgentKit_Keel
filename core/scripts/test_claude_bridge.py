@@ -7277,8 +7277,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # leeway L16: unnamed, solo's reviewer is its own family (docs/REVIEW_GATE.md, "Invariant"),
         # whatever DEFAULT_REVIEWER says; cross and saver keep it; no mode line runs claude (owner 2026-10-24).
         config = self.repo / "scripts/gate_config.sh"
-        config.write_text(re.sub(r'^DEFAULT_REVIEWER=.*$', 'DEFAULT_REVIEWER="codex"', config.read_text(),
-                                 flags=re.M))
+        # Bytes: the file holds UTF-8 (Windows reads cp1252) and LF (Windows writes CRLF).
+        config.write_bytes(re.sub(rb'^DEFAULT_REVIEWER=.*$', b'DEFAULT_REVIEWER="codex"', config.read_bytes(),
+                                  flags=re.M))
         (self.repo / "docs").mkdir(exist_ok=True)
         for line, reviewer in (("solo", "claude"), ("Solo (family: claude)", "claude"),
                                ("solo (family: codex)", "codex"), ("cross", "codex"),

@@ -333,9 +333,10 @@ limited() {
 }
 
 # reset_passed TEXT TIMESTAMP: the reset the limit TEXT names ("resets 3:40pm (Europe/Istanbul)",
-# the first such time after the entry's TIMESTAMP) has passed. A text it cannot read, no Python or
-# no time zone data: not passed, and the line keeps "resume it after the reset" (L17: it said so
-# after the reset too, every time the lead armed the watch again).
+# the first such time after the entry's TIMESTAMP) has passed. A text it cannot read or no Python:
+# not passed, and the line keeps "resume it after the reset" (L17: it said so after the reset too,
+# every time the lead armed the watch again). No time zone data (native Windows has none without
+# the tzdata package): passed a day after the entry, since the reset falls within that day.
 reset_passed() {
   for p in python3 python 'py -3'; do
     pyrc=0
@@ -344,9 +345,15 @@ reset_passed() {
 m = re.search(r"resets (\d{1,2})(?::(\d\d))? ?([ap]m)(?: \(([^)]+)\))?", sys.argv[1], re.I)
 if not m:
     sys.exit(1)
+at = d.datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+zone = None
 if m[4]:
-    from zoneinfo import ZoneInfo
-at = d.datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00")).astimezone(ZoneInfo(m[4]) if m[4] else None)
+    try:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo(m[4])
+    except Exception:
+        sys.exit(0 if d.datetime.now(d.timezone.utc) >= at + d.timedelta(days=1) else 1)
+at = at.astimezone(zone)
 reset = at.replace(hour=int(m[1]) % 12 + (12 if m[3].lower() == "pm" else 0), minute=int(m[2] or 0), second=0, microsecond=0)
 if reset < at:
     reset += d.timedelta(days=1)

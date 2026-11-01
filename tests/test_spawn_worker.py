@@ -2770,6 +2770,7 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('left by its gone daemon', result.stdout)
         self.assertIn(['stop', '1a2b3c4d'], self.calls())
+        self.ended()  # Windows: the detached supervisor holds w1.supervisor.log until it ends
 
     def test_a_resume_takes_over_a_session_whose_daemon_is_gone_but_never_a_running_one(self):
         # Keel lead note: `claude stop` said "No job matching", `claude logs` found no job, and the
