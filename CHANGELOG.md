@@ -13,7 +13,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## v0.14 — 2026-10-27
+## v0.14 — 2026-11-01
 
 - **Review follow-ups.** A dangling `scripts/check.project.sh` or `scripts/review_selftest.project.sh` symlink fails the
   gate or the self-test as a step that cannot run (it was skipped silently); `check.sh` with an extra argument prints
