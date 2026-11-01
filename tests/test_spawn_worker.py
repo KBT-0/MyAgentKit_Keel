@@ -2322,7 +2322,8 @@ elif '--bg' in args:
         sys.exit(1)
     with open(os.path.join(state, 'launch.json'), 'w') as f:
         json.dump({'argv': args, 'cwd': os.getcwd(), 'markers': sorted(k for k in os.environ if k.startswith('CLAUDE_CODE_CHILD')),
-                   'env': sorted(k for k in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL') if k in os.environ)}, f)
+                   'env': sorted(k for k in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', 'MYAGENTKIT_SESSION_ID')
+                                 if k in os.environ)}, f)
     print('Starting background service…')
     if os.environ.get('SPAWN_NO_ID'):
         sys.exit(0)
@@ -2407,7 +2408,8 @@ class BackgroundHostTests(unittest.TestCase):
         (self.workers / 'w1.supervisor.log').write_text('an earlier run\n')
         # A worker spawning a sub-worker carries the worker variables: they never reach the launch line.
         result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'),
-                            MYAGENTKIT_ROLE='worker', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL='1h')
+                            MYAGENTKIT_ROLE='worker', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL='1h',
+                            MYAGENTKIT_SESSION_ID='worker-lead')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         argv = self.launch()['argv']
         self.assertTrue(argv[0].startswith('Read '), argv)  # the prompt first
@@ -2420,6 +2422,7 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertEqual(settings['worktree'], {'bgIsolation': 'none'})
         self.assertEqual(settings['env']['MYAGENTKIT_ROLE'], 'worker')
         self.assertEqual(settings['env']['CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'], '5m')  # beats the spawner's 1h
+        self.assertEqual(settings['env']['MYAGENTKIT_SESSION_ID'], 'worker-w1')  # the master-writer hooks' id (#311)
         self.assertEqual(settings['attribution'], {'commit': '', 'pr': ''})
         full = '1a2b3c4d-5137-4293-88d5-c4339d1ce56c'
         self.assertEqual((self.workers / 'w1.session').read_text(), full + '\n')

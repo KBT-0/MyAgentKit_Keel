@@ -571,9 +571,10 @@ if s:
         d.setdefault("worktree", {})["bgIsolation"] = "none"
         # No variable of the launch reaches the session (it runs in a process the daemon
         # started; POSIX spike), and no AI attribution in its commits (a rule of the owner).
-        d.setdefault("env", {}).update(MYAGENTKIT_ROLE="worker", CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="5m")
+        d.setdefault("env", {}).update(MYAGENTKIT_ROLE="worker", CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="5m",
+                                       MYAGENTKIT_SESSION_ID="worker-" + sys.argv[4])
         d["attribution"] = {"commit": "", "pr": ""}
-    print(json.dumps(d, indent=2))' "$hook" "$project" "$bg" >"$wdir/$name.settings.json" ||
+    print(json.dumps(d, indent=2))' "$hook" "$project" "$bg" "$name" >"$wdir/$name.settings.json" ||
     die "cannot merge the project and worker hooks into --settings (not a JSON object?): $own"
 }
 reset_state() {
@@ -591,9 +592,10 @@ reset_state() {
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
 # CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay. MYAGENTKIT_SESSION_ID names the
-# worker to the master-writer hooks, so a git command it runs is never taken for the owner's terminal (#311).
-bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT MYAGENTKIT_SESSION_ID=worker-$name"
-unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m MYAGENTKIT_ROLE=worker"
+# worker to the master-writer hooks, so a git command it runs is never taken for the owner's terminal
+# (#311); the bg host carries it in the settings' env, as its other worker variables (below).
+bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
+unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m MYAGENTKIT_ROLE=worker MYAGENTKIT_SESSION_ID=worker-$name"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")${resume:+ --resume $(q "$resume")}"
@@ -844,7 +846,7 @@ if [ -n "$bg" ]; then
   # The daemon a launch starts keeps that launch's environment and hands it to every background
   # session while it lives, the owner's own too (POSIX spike, contract change 2): the worker's
   # variables travel in the merged settings' env only, and a spawning worker's own never leave here.
-  unset MYAGENTKIT_ROLE CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL
+  unset MYAGENTKIT_ROLE CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL MYAGENTKIT_SESSION_ID
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
   if [ -n "$old" ]; then
     row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"

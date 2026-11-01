@@ -16,7 +16,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## Unreleased — v0.14.1
 
 - **A worker is never the owner's terminal (#311).** `spawn_worker.sh` and `spawn_codex.sh` start every worker with
-  `MYAGENTKIT_SESSION_ID=worker-NAME`, so the master-writer hooks refuse its commit or merge in the main checkout while
+  `MYAGENTKIT_SESSION_ID=worker-NAME` (a background worker in its settings' `env`, as its other worker variables, and
+  never on the daemon's launch line), so the master-writer hooks refuse its commit or merge in the main checkout while
   another session holds the marker; before, the launch line cleared Claude Code's session id and set none, and the
   hook let the commit through as the owner's terminal.
 - **Autopilot asks nothing in chat text either (#312).** WORKFLOW's autopilot "Stops" and COMMUNICATION's "Questions and
