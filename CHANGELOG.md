@@ -32,7 +32,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   three passages in with `sync-kit.sh --merge`. Records that already quote the owner as the rule: the lead lists them
   once (`docs/PROJECT.md` DECIDED items, `docs/STATE.md`, briefs), writes each as a summary, and shows the list to the
   owner in one pass; a DECIDED item's text changes only with the owner's approval (`docs/PROJECT.md`, "Who may write
-  what").
+  what", its new row).
 - **A research worker's web fetch cannot read reddit.com (#310).** `docs/GOTCHAS_KIT.md` names the gap and one optional
   fallback, NotebookLM deep research (`notebooklm-mcp-cli`, a community package), approved by the owner per project,
   on a secondary Google account with `--storage protected`. The kit installs nothing. **ACTION** (`docs/GOTCHAS.md`,

@@ -52,6 +52,7 @@ instead of guessing; Claude Code best practices, "Let Claude interview you".)
 | Write DECIDED for an item {{OWNER_NAME}} explicitly approved in this session | The agent, transcribing |
 | Decide, on its own judgement, that something is DECIDED | Nobody. Never |
 | Supersede an existing DECIDED item (it stays, marked SUPERSEDED) | {{OWNER_NAME}} only |
+| Reword a DECIDED item that quotes the owner into its summary, same meaning | The agent drafts; {{OWNER_NAME}} approves before the text changes |
 
 Every DECIDED item carries `Decided: YYYY-MM-DD, approved by {{OWNER_NAME}}`. Its text is the
 rule as a short summary, not the owner's chat sentence (`docs/COMMUNICATION.md`, "Questions and
