@@ -53,7 +53,9 @@ instead of guessing; Claude Code best practices, "Let Claude interview you".)
 | Decide, on its own judgement, that something is DECIDED | Nobody. Never |
 | Supersede an existing DECIDED item (it stays, marked SUPERSEDED) | {{OWNER_NAME}} only |
 
-Every DECIDED item carries `Decided: YYYY-MM-DD, approved by {{OWNER_NAME}}`.
+Every DECIDED item carries `Decided: YYYY-MM-DD, approved by {{OWNER_NAME}}`. Its text is the
+rule as a short summary, not the owner's chat sentence (`docs/COMMUNICATION.md`, "Questions and
+approvals").
 
 The line is between transcribing an approval and inferring one. An agent that hears
 something that sounds like a decision records it as **OPEN with a note that the owner

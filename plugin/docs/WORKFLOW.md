@@ -1645,7 +1645,8 @@ What the watcher reports decides the lead's next step for a spawned worker:
 
 - **QUESTIONS:** the lead asks them at once, one at a time, through its question tool, before
   the merge or in the same breath. It records each answer, and the general rule the answer
-  sets, in its permanent home, not only in the chat.
+  sets, in its permanent home as a summary, not a quote (`docs/COMMUNICATION.md`, "Questions
+  and approvals"), not only in the chat.
 - **CONTEXT:** the lead decides from the figure (absolute tokens, rule 8's band) and the
   worker's `Remaining:` line, which is the worker's estimate: the figure decides when they
   disagree. The lead decides whether the worker finishes, compacts or hands off; at red it

@@ -146,6 +146,17 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
   saving a low allowance) ends when its reason does, and the main rules return unasked. When
   it is recorded (STATE.md, a brief), its end condition is written beside it ("until the
   allowance resets", "for this task"), so the end is a fact the next session reads.
+- An answer is recorded as a rule, not as a quote (#313). The record states what holds as a
+  short summary in the written register ("The two registers", 2), with {{OWNER_NAME}}'s name
+  and the date beside it (in `docs/PROJECT.md`, `Decided: YYYY-MM-DD, approved by {{OWNER_NAME}}`).
+  A quote of the owner's words stands beside the summary, never in its place, and only where a
+  summary could change the meaning: an exact number, name or limit; a wording with two
+  readings; a point the owner disputed. The verbatim exchange stays in the session transcript,
+  and no other log keeps it. A compaction and a proxy consult still carry the owner's words
+  verbatim, since they serve work whose rule is not yet recorded. (Sources: Nygard,
+  "Documenting Architecture Decisions", 2011: the decision in full sentences and active voice,
+  for a future reader; MADR, adr.github.io/madr: decision-makers and date as metadata;
+  code.claude.com/docs/en/memory, "Write effective instructions": concrete enough to verify.)
 - An approval covers what was shown. Nothing the owner did not see is "approved"; the
   agent's own call is reported as its own, a guess as a guess.
 

@@ -24,6 +24,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   approvals": while autopilot is on, no question goes to the owner with the tool or in chat text (two options and a
   default for no answer included), even when the owner writes in between; the lead takes the rule's default, records it
   under My decisions and puts the question in the report.
+- **An owner's answer is recorded as a rule, not as a quote (#313).** `docs/COMMUNICATION.md`, "Questions and approvals":
+  the record is a short summary with the owner's name and the date; a quote stands beside it only for an exact number,
+  name or limit, a wording with two readings or a disputed point; the verbatim exchange stays in the session transcript.
+  A compaction and a proxy consult still keep the owner's words verbatim. `docs/PROJECT.md` and `docs/WORKFLOW.md`
+  point to it. **ACTION** (project-owned `docs/COMMUNICATION.md`, `docs/PROJECT.md`, `docs/WORKFLOW.md`): bring the
+  three passages in with `sync-kit.sh --merge`. Records that already quote the owner as the rule: the lead lists them
+  once (`docs/PROJECT.md` DECIDED items, `docs/STATE.md`, briefs), writes each as a summary, and shows the list to the
+  owner in one pass; a DECIDED item's text changes only with the owner's approval (`docs/PROJECT.md`, "Who may write
+  what").
+- **A research worker's web fetch cannot read reddit.com (#310).** `docs/GOTCHAS_KIT.md` names the gap and one optional
+  fallback, NotebookLM deep research (`notebooklm-mcp-cli`, a community package), approved by the owner per project,
+  on a secondary Google account with `--storage protected`. The kit installs nothing. **ACTION** (`docs/GOTCHAS.md`,
+  project-owned): add the entry's contents line and its "Kit rules:" section (`sync-kit.sh --merge`).
 
 ## v0.14 — 2026-11-01
 

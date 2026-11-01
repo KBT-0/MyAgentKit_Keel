@@ -37,6 +37,7 @@ entries it was installed with; one the kit added later is listed here.
 - A variable the session set does not reach the git hook
 - A PowerShell probe whose Set-Location fails goes on in the current folder
 - Claude Code's worktree points every tree at the main checkout's hooks
+- A research worker's web fetch cannot read reddit.com
 
 ---
 
@@ -359,3 +360,12 @@ wiring (project_leeway, seven times up to 2026-10-27; a hand reset held only unt
 worktree). The kit's pre-commit hook sets such a value back to `.githooks` and says so on the
 commit's output; the commit it runs in still used the main checkout's hook, the next one uses the
 tree's own. Any other absolute path is left for the owner: `git config core.hooksPath .githooks`.
+
+## A research worker's web fetch cannot read reddit.com
+
+The built-in fetch tool refuses every reddit.com URL, so a prior-art brief misses forum discussion
+in silence (#310, one measured session, 2026-10-31). An optional fallback is NotebookLM deep research
+through the community package `notebooklm-mcp-cli` (`nlm research start --mode deep`; it is not
+Google's and uses undocumented endpoints). It is a new dependency: the owner approves it per project.
+Its login stores Google cookies that open the whole account, so use a secondary account and
+`--storage protected`, and never upload a private design document: queries and uploads go to Google.

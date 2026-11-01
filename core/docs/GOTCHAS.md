@@ -35,6 +35,7 @@ installed is listed in `docs/GOTCHAS_KIT.md`, "Contents".
 - A variable the session set does not reach the git hook
 - A PowerShell probe whose Set-Location fails goes on in the current folder
 - Claude Code's worktree points every tree at the main checkout's hooks
+- A research worker's web fetch cannot read reddit.com
 
 ---
 
@@ -118,3 +119,7 @@ Kit rules: docs/GOTCHAS_KIT.md, "A PowerShell probe whose Set-Location fails goe
 ## Claude Code's worktree points every tree at the main checkout's hooks
 
 Kit rules: docs/GOTCHAS_KIT.md, "Claude Code's worktree points every tree at the main checkout's hooks".
+
+## A research worker's web fetch cannot read reddit.com
+
+Kit rules: docs/GOTCHAS_KIT.md, "A research worker's web fetch cannot read reddit.com".
