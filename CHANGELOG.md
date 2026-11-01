@@ -19,6 +19,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `MYAGENTKIT_SESSION_ID=worker-NAME`, so the master-writer hooks refuse its commit or merge in the main checkout while
   another session holds the marker; before, the launch line cleared Claude Code's session id and set none, and the
   hook let the commit through as the owner's terminal.
+- **Autopilot asks nothing in chat text either (#312).** WORKFLOW's autopilot "Stops" and COMMUNICATION's "Questions and
+  approvals": while autopilot is on, no question goes to the owner with the tool or in chat text (two options and a
+  default for no answer included), even when the owner writes in between; the lead takes the rule's default, records it
+  under My decisions and puts the question in the report.
 
 ## v0.14 — 2026-11-01
 

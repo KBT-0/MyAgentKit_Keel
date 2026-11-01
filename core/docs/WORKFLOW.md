@@ -962,7 +962,10 @@ a commit made while away) follows the away line until a switch records it there.
   lead cannot fix. A usage-limit note, the context band, a compaction (the second too), a
   worker's hand-off, a parked question, one stuck item (three tries, then a WIP commit and the
   next item) is no stop. No turn ends with nothing to wake it: every wait is a disk watch or
-  a `ScheduleWakeup`. No AskUserQuestion: a question goes to the report.
+  a `ScheduleWakeup`. No question to {{OWNER_NAME}} while autopilot is on, neither with
+  AskUserQuestion nor in chat text (two options and a default for no answer is a question
+  too), even when {{OWNER_NAME}} writes in between: the lead takes the rule's default, records
+  it under My decisions and puts the question in the report (#312).
 - **Decides:**
 
   | What | When | The lead |

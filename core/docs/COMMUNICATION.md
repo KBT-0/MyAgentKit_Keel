@@ -128,7 +128,8 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
   This holds for a question at the end of a report or a progress line too: it is asked with
   the tool, never left in text or named as "an open question". The `plain_report.py` hook
   bounces a final message that ends with a question or names one as open.
-- While the owner is away, nothing waits on a question. Away means the autopilot switch is
+- While the owner is away, nothing waits on a question, and none is asked: not with the tool,
+  not in chat text, not in a reply to a message the owner sends meanwhile. Away means the autopilot switch is
   on (`**Owner:** away` in `docs/STATE.md`; "autopilot, the owner-away switch" in
   `docs/WORKFLOW.md`, which {{OWNER_NAME}} turns on with `/myagentkit:mode autopilot` or in plain words).
   Without that record, away means {{OWNER_NAME}} said so
