@@ -1148,6 +1148,8 @@ exit 0
         # A worker is no child of the lead: the lead's session markers never reach it.
         self.assertFalse(MARKERS & set(launched['env_names']), launched['env_names'])
         self.assertIn('CLAUDE_CODE_EXECPATH', launched['env_names'])
+        # Its own id for the master-writer hooks (#311).
+        self.assertIn('MYAGENTKIT_SESSION_ID', launched['env_names'])
         # Its own sub-agents are short errands: five minutes (docs/WORKFLOW.md, "Worker cost", rule 1).
         self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', launched['env_names'])
         # Its report is for the lead: the plain-words Stop hook steps aside.
@@ -1945,6 +1947,7 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         script = (self.state / 'tmux-script').read_text()
         self.assertIn('exec env -u CLAUDE_CODE_CHILD_SESSION ', script)
+        self.assertIn(' MYAGENTKIT_SESSION_ID=worker-w1 ', script)  # #311
         self.assertIn(' claude ', script)
         env = self.launched()['env_names']
         self.assertFalse(MARKERS & set(env), env)

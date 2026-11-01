@@ -13,6 +13,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.14.1
+
+- **A worker is never the owner's terminal (#311).** `spawn_worker.sh` and `spawn_codex.sh` start every worker with
+  `MYAGENTKIT_SESSION_ID=worker-NAME`, so the master-writer hooks refuse its commit or merge in the main checkout while
+  another session holds the marker; before, the launch line cleared Claude Code's session id and set none, and the
+  hook let the commit through as the owner's terminal.
+
 ## v0.14 — 2026-11-01
 
 - **Review follow-ups.** A dangling `scripts/check.project.sh` or `scripts/review_selftest.project.sh` symlink fails the

@@ -164,6 +164,7 @@ class SpawnCodexTests(unittest.TestCase):
         # A worker is no child of the lead's Claude Code session; the binary's name is kept.
         self.assertFalse(MARKERS & set(run['env']), run['env'])
         self.assertIn('CLAUDE_CODE_EXECPATH', run['env'])
+        self.assertIn('MYAGENTKIT_SESSION_ID', run['env'])  # its own id for the master-writer hooks (#311)
         # Git metadata remains read-only even with --add-dir (issue #43); the lead commits.
         brief, cresult, cquestion = (shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md'))
         self.assertEqual(run['argv'], [INSTRUCTION % (brief, cresult, self.publisher(result.stdout), cquestion), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high',
@@ -269,6 +270,7 @@ class SpawnCodexTests(unittest.TestCase):
         # tmux got `sh SCRIPT`; the script carries the env -u prefix and the quoted command.
         script = (self.state / 'tmux-script').read_text()
         self.assertIn('exec env -u CLAUDE_CODE_CHILD_SESSION ', script)
+        self.assertIn(' MYAGENTKIT_SESSION_ID=worker-w6 ', script)  # #311
         self.assertIn(' -- sh -c ', script)
         run = self.runs()[0]
         self.assertEqual(run['argv'][0], INSTRUCTION % (shq(str(self.brief)), shq(str(self.repo / 'RESULT-w6.md')),

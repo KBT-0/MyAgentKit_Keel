@@ -112,6 +112,16 @@ class HookTests(unittest.TestCase):
         # MYAGENTKIT_SESSION_ID names a session that has no Claude Code id, and wins over it.
         result = self.commit('b', CLAUDE_CODE_SESSION_ID='other-2', MYAGENTKIT_SESSION_ID='writer-1')
         self.assertEqual(result.returncode, 0, result.stderr)
+        # A worker the spawn scripts start carries MYAGENTKIT_SESSION_ID=worker-NAME and no Claude id (#311):
+        # refused, never the owner's terminal, and its id wins over an inherited writer's id too.
+        before = self.runs()
+        for extra in ({}, {'CLAUDE_CODE_SESSION_ID': 'writer-1'}):
+            result = self.commit('c', MYAGENTKIT_SESSION_ID='worker-x', **extra)
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertIn('this is worker-x', result.stderr)
+            self.assertNotIn("owner's terminal", result.stderr)
+            self.git('reset', '-q')
+        self.assertEqual(self.runs(), before)
 
     def test_a_worktree_is_never_refused(self):
         self.claim('writer-1')

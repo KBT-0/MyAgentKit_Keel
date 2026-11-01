@@ -590,8 +590,9 @@ reset_state() {
 # Code's child-session markers, and a claude that sees CLAUDE_CODE_CHILD_SESSION skips its peer
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
-# CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay.
-bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
+# CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay. MYAGENTKIT_SESSION_ID names the
+# worker to the master-writer hooks, so a git command it runs is never taken for the owner's terminal (#311).
+bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT MYAGENTKIT_SESSION_ID=worker-$name"
 unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m MYAGENTKIT_ROLE=worker"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
