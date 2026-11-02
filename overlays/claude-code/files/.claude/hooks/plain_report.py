@@ -26,8 +26,9 @@ without that record is not visible to a hook. This check needs no commit-msg gra
 missing one turns off only the label check.
 
 It also bounces a final message with no fenced block that names the hand-off when the turn
-wrote a hand-off file (a Write or Edit of a file whose name, or whose folder's name, holds
-"handoff", as in docs/handoffs/, since the owner's last prompt, read from the transcript's tail;
+wrote a hand-off file (a Write or Edit of a file whose name, or whose folder's name, starts
+with "handoff", as in handoff-65.md or docs/handoffs/, since the owner's last prompt, read from
+the transcript's tail; a name that only holds the word, as a no-handoff-rule.md memory, is none;
 a compaction's summary is no prompt): the owner opens the next session and needs the
 exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The trigger is that write, not the
 message's wording, which no pattern reads reliably. Not under the autopilot switch: nobody
@@ -79,6 +80,8 @@ NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen question
 
 
 HANDOFF = re.compile(r'hand-?off', re.I)
+# A hand-off file's or folder's name starts with the word (handoff-65.md, docs/handoffs/); no-handoff-x.md is a note.
+HANDOFF_NAME = re.compile(r'hand-?offs?(?![a-z])', re.I)
 RULE_DOCS = {'HANDOFF.md', 'HANDOFF_KIT.md'}  # the kit's own rule docs: editing them hands nothing off
 # shortcut: only the transcript's last 4 MB is read; a longer turn misses its hand-off write (no bounce), widen if seen.
 TAIL = 4 * 1024 * 1024
@@ -113,7 +116,7 @@ def without_code(text: str) -> str:
 
 
 def wrote_handoff(transcript) -> bool:
-    """A Write or Edit of a file named *handoff*, or of a Markdown file in a folder so named
+    """A Write or Edit of a file named handoff*, or of a Markdown file in a folder so named
     (docs/handoffs/), since the owner's last prompt or a wake-up, from the transcript's tail."""
     try:
         with open(transcript, 'rb') as file:
@@ -140,7 +143,7 @@ def wrote_handoff(transcript) -> bool:
             if isinstance(block, dict) and block.get('type') == 'tool_use' \
                     and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
                     and (path := Path(str((block.get('input') or {}).get('file_path', '')))).name not in RULE_DOCS \
-                    and (HANDOFF.search(path.name) or HANDOFF.search(path.parent.name) and path.suffix.lower() == '.md'):
+                    and (HANDOFF_NAME.match(path.name) or HANDOFF_NAME.match(path.parent.name) and path.suffix.lower() == '.md'):
                 return True
     return False
 

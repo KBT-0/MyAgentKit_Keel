@@ -364,6 +364,9 @@ class PlainReportTests(unittest.TestCase):
                     for wake in ('Another Claude session sent a message: limit reset, continue',
                                  'Your claude.ai usage limit has reset. Continue the task.',
                                  [{'type': 'text', 'text': '[Cross-session idle notice] "w1" is idle'}])),
+                  # A note whose name only holds the word (a memory rule about hand-offs) is no hand-off.
+                  (transcript(prompt, write('/h/.claude/memory/no-handoff-while-work-runs.md', 'Edit'), result,
+                              write('/p/.myagentkit/nohandoff-dispositions.md'), result), 'Memory updated.'),
                   # A code folder named for hand-offs holds code, not a hand-off.
                   (transcript(prompt, write('/p/src/handoff/router.py', 'Edit'), result), 'Done: the router retries once.'),
                   (str(self.project / 'missing.jsonl'), 'Handoff hazır.'), (None, 'Handoff hazır.'))

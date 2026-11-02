@@ -56,7 +56,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   bounce, since a label never stands alone. Review r328 (Opus 5.5, Reject: 1 High + 1 Low): a harness note that
   wakes an idle session (another session's message, a usage-limit reset, a cross-session idle notice) starts a turn,
   so a hand-off written in the turn before it no longer bounces the woken one; a folder named for hand-offs counts
-  only for a Markdown file (`src/handoff/router.py` is code). test_communication_hooks 43, red without the fix.
+  only for a Markdown file (`src/handoff/router.py` is code). A file or folder counts only when its name starts with
+  "handoff" (`handoff-65.md`, `docs/handoffs/`): an edit of a note named `no-handoff-while-work-runs.md` bounced a
+  turn that handed nothing off (kit 2026-11-02). test_communication_hooks 44, red without the fix.
   **ACTION** (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
 - **A strong review never drops a scope silently (#335, labricore 2026-11-02).** Two Opus sub-readers of a strong
   review stopped on the plan limit, and the report held no finding for 22k lines of `src/app/`. WORKFLOW "The strong
