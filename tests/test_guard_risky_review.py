@@ -191,7 +191,7 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertTrue(first)
         (self.root / 'notes.md').write_text('main moved\n', encoding='utf-8')
         self.commit_in(self.root, 'main')
-        self.git('merge', '--no-ff', '--no-commit', 'w1')
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'merge', '--no-ff', '--no-commit', 'w1')
         merge = 'git merge --no-ff --no-commit w1 && git commit -m merge'
         self.assertEqual(self.commit(merge).returncode, 0, self.commit(merge).stderr)
         # a risky file that differs from the reviewed content is refused

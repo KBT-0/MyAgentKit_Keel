@@ -38,19 +38,19 @@ case ${1:-} in
   hold)
     case ${2:-} in ''|*[!0-9]*) echo "usage: sh scripts/calm.sh hold SECONDS REASON" >&2; exit 2 ;; esac
     secs=$2; shift 2
-    if held=$(window_live); then echo "QUIET WINDOW refused: already $held" >&2; exit 1; fi
+    if held=$(window_live); then printf 'QUIET WINDOW refused: already %s\n' "$held" >&2; exit 1; fi
     if ! { printf '%s\n%s\n' "$(( $(date +%s) + secs ))" "${*:-unnamed} ($(pwd -P))" > "$window.$$" &&
            mv -f "$window.$$" "$window"; }; then
-      rm -f "$window.$$"; echo "QUIET WINDOW not held: cannot write $window" >&2; exit 1
+      rm -f "$window.$$"; printf 'QUIET WINDOW not held: cannot write %s\n' "$window" >&2; exit 1
     fi
-    echo "QUIET WINDOW held for $secs s; end it with: sh scripts/calm.sh release"
+    printf 'QUIET WINDOW held for %s s; end it with: sh scripts/calm.sh release\n' "$secs"
     exit 0 ;;
   release) rm -f "$window" && echo "QUIET WINDOW released"; exit ;;
   status) window_live; exit ;;
   window)
     start=$(date +%s)
     while held=$(window_live); do
-      [ $(( $(date +%s) - start )) -lt "$wait_s" ] || { echo "QUIET WINDOW still $held"; exit 1; }
+      [ $(( $(date +%s) - start )) -lt "$wait_s" ] || { printf 'QUIET WINDOW still %s\n' "$held"; exit 1; }
       sleep "$step_s"
     done
     exit 0 ;;
