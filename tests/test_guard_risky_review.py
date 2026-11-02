@@ -89,7 +89,7 @@ class RiskyReviewTests(unittest.TestCase):
             call = {'tool_name': 'Bash', 'tool_input': {'command': payload['command']}, 'cwd': payload['cwd']}
             self.assertEqual(self.hook('guard_risky_review.py', call).returncode, 2, payload)
         # a -C value only the shell expands names the call's own tree, never the clean session folder (r2 Medium)
-        self.git('commit', '-qam', 'main')  # main clean: only the worktree's unreviewed file can refuse
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qam', 'main')  # main clean: only the worktree's unreviewed file can refuse
         (tree / 'src/money/tax.py').write_text('t = 1\n', encoding='utf-8')
         for command in ('git -C "$PWD" commit -am x', 'git -C "$(pwd)" commit -am x', 'git -C "$NOPE" commit -am x'):
             call = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(tree)}

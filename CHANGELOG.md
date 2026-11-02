@@ -40,9 +40,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   on a secondary Google account with `--storage protected`. The kit installs nothing. **ACTION** (`docs/GOTCHAS.md`,
   project-owned): add the entry's contents line and its "Kit rules:" section (`sync-kit.sh --merge`).
 - **The risky-review guard judges the tree the command runs in (#317).** `guard_risky_review.py` and `record_review.py`
-  take the call's `cwd` (its git top folder), then `$CLAUDE_PROJECT_DIR`: a session started in the main checkout and
-  working in a worktree had its commits refused over the main checkout's own uncommitted files, and its review
-  recorded in the main checkout's git folder. Test: a worktree session with a dirty main checkout (red before).
+  take the call's `cwd` (its git top folder; for the guard, a commit's `-C` folders joined on it), then
+  `$CLAUDE_PROJECT_DIR`: a session started in the main checkout and working in a worktree had its commits refused over
+  the main checkout's own uncommitted files, and its review recorded in the main checkout's git folder. Test: a
+  worktree session with a dirty main checkout (red before). **ACTION** (`.claude/hooks/guard_risky_review.py`,
+  `.claude/hooks/record_review.py`, project-owned): copy both from the kit.
 - **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
   `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
   `check.sh` still measures each).

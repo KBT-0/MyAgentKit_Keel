@@ -158,7 +158,7 @@ class ContextHookTests(unittest.TestCase):
                            'hook["main"]()\n' % str(HOOK), encoding='utf-8')
         self.transcript.write_text(json.dumps(request(260_000)) + '\n', encoding='utf-8')
         holder = subprocess.Popen([sys.executable, str(wrapper)], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', env=self.env)
         try:
             holder.stdin.write(json.dumps({'transcript_path': str(self.transcript)}))
             holder.stdin.close()
