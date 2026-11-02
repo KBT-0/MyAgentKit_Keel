@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **Rule conflicts settled; a settled step is done, not offered (#336, #337, labricore 2026-11-02).** Autopilot's
+  "never without the owner" list allows kit feedback under `kit_feedback: standing-approval` and a local message to
+  another session of the owner's own; a high-tier merge parks for the owner's diff read, which wins over a standing
+  "merge without asking" and autopilot's local merges (WORKFLOW, REVIEW_GATE "Risk tiers"). AGENTS.md "Duties": what
+  the owner decided or the rules settle is done and reported, standing-approval kit feedback is sent, and a settings
+  file a tool rewrote itself is the lead's to commit after reading its diff; COMMUNICATION "Final report": no
+  "shall I ...?" when the next step is approved. **ACTION** (project-owned `AGENTS.md`, `docs/WORKFLOW.md`,
+  `docs/REVIEW_GATE.md`, `docs/COMMUNICATION.md`): `sync-kit.sh . --merge`.
 - **Context band and usage-limit waits (#329, labricore 2026-11-02).** `context_size.py` labels a foreground Bash
   call that timed out and moved to the background by its description, not its bare id, and a moved watch on a
   worker's result is no job, so it no longer reads "hand-off blocked"; a task notification delivered mid-turn (a

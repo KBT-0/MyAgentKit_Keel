@@ -63,6 +63,9 @@ with the reason in the brief; a working mode never lowers it.
 Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and the diff. When
 the diff is too long to read, a longer summary lists every changed file with its line counts,
 every open or deferred finding and every manual check, and {{OWNER_NAME}} may ask for the diff.
+This read wins over a standing "merge accepted branches without asking" and over autopilot's
+local merges: the high-tier merge waits for it (`docs/WORKFLOW.md`, "autopilot, the owner-away
+switch").
 
 A Claude Code commit that changes a `risky_paths` file (`scripts/gate_config.sh`) is refused until
 a review has seen that path since HEAD: the diff-reviewer agent, or a completed `scripts/review.sh

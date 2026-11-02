@@ -65,7 +65,8 @@ reasoning) comes when {{OWNER_NAME}} asks for it. A failure, a step not run or v
 security warning and an action that cannot be undone are never cut to fit (`AGENTS.md`,
 "Language & style", rule 3). The report stands alone: the owner does not re-read earlier
 messages. No headers under 500 words, no closing offer, no hand-off to a file in place of
-the report. The Claude Code overlay's `.claude/settings.json` sets the built-in `Concise` output
+the report. A report never ends with "shall I ...?" when the next step is already approved
+(`AGENTS.md`, "Duties"): the step is taken, or named as running. The Claude Code overlay's `.claude/settings.json` sets the built-in `Concise` output
 style (code.claude.com/docs/en/output-styles), which leads with the result and drops narration;
 a project's own settings file has it only once the kit's v0.14 ACTION is applied.
 

@@ -110,7 +110,10 @@ is answered and discussed; files change only on an explicit go-ahead. **A one-of
 (`docs/COMMUNICATION.md`, "Questions and approvals"). **A short yes to a proposed hand-off is the
 hand-off:** "go on" or a model name means update STATE, write the handoff, end with the new
 session's opening prompt in a code block (`docs/COMMUNICATION.md`, "Handoff") and stop; new work
-there needs an explicit "start it here".
+there needs an explicit "start it here". **Settled is done, not offered:** what {{OWNER_NAME}} decided
+or the rules settle is done and reported; a question is only for an open decision. Kit feedback
+under `kit_feedback: standing-approval` is sent, and a settings file a tool rewrote itself (key
+order, `enabledPlugins`) is the lead's to commit after reading its diff.
 
 ### STOP — pause the work and ask (rare)
 

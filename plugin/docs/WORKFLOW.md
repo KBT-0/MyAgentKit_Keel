@@ -984,8 +984,12 @@ a commit made while away) follows the away line until a switch records it there.
   or spend beyond the plan; changing the owner's rules (`BEHAVIOUR.md`, the owner's
   decisions here, memory); moving an owner item to a later version; ending running work
   without a valid reason; credentials, permissions or a security boundary; skipping a review
-  or lowering a risk tier. **Allowed:** local merges into the main branch; push and tag once
-  every check and CI are green.
+  or lowering a risk tier. **Allowed:** local merges into the main branch, but a high-tier
+  change parks for {{OWNER_NAME}}'s diff read (`docs/REVIEW_GATE.md`, "Risk tiers"), which
+  wins over any standing "merge without asking"; push and tag once every check and CI are
+  green; kit feedback under `kit_feedback: standing-approval` (`/myagentkit:kit-feedback`,
+  §4: the approval was given in advance); a local message to another session of
+  {{OWNER_NAME}}'s own on this machine, which leaves nothing outside it.
 - **Proxy consult:** a sub-agent with model and effort stated: Fable 5.1 first; when it is
   unavailable or asks to bill usage credits, never approve them: Opus 5.5 at high. First the
   question, why now, the binding rules and the owner's words verbatim, the evidence and the
