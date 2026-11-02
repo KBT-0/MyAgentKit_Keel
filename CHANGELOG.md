@@ -36,6 +36,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   so a hand-off written in the turn before it no longer bounces the woken one; a folder named for hand-offs counts
   only for a Markdown file (`src/handoff/router.py` is code). test_communication_hooks 43, red without the fix.
   **ACTION** (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
+- **A sub-agent's worktree gets the installed packages (#339, labricore 2026-11-02).** "No commit made ... CHECK:
+  FAIL for an environment reason" came back 8 times from two `isolation: worktree` sub-agents: their worktree had
+  no working `node_modules`, so biome and tsc in the commit gate were missing. The settings template sets Claude
+  Code's `worktree.symlinkDirectories: ["node_modules"]`, which links the main checkout's folder into each worktree
+  Claude Code makes (a project without one gets a warning in the debug log only). Unchanged: guard_worker_route.py
+  still refuses an Agent call without model and effort (6 refusals; the field asked to keep the guard), and the
+  pick rule stays in WORKFLOW "The rules in brief", rule 5, which the lead reads once a session.
+  **ACTION** (`.claude/settings.json`, the owner's file): add `"symlinkDirectories": ["node_modules"]` to the
+  `worktree` object.
 - **review.sh: a used-up Claude plan is no rate limit, a worker's result file blocks no review, the copy has the
   installed packages (#332, labricore 2026-11-02).** Claude Code 2.1.x says "You've hit your 5-hour limit" or
   "You've hit your limit · resets 3pm"; both were read as `rate_limited` (labricore's three back-to-back failed Fable

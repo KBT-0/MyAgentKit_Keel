@@ -5,7 +5,8 @@
   "autoCompactWindow": 450000,
   "outputStyle": "Concise",
   "worktree": {
-    "bgIsolation": "none"
+    "bgIsolation": "none",
+    "symlinkDirectories": ["node_modules"]
   },
   "attribution": {
     "commit": "",
