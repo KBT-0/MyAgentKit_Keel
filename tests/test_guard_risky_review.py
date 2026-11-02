@@ -88,6 +88,12 @@ class RiskyReviewTests(unittest.TestCase):
                         {'command': 'git commit -am x', 'cwd': str(self.root / 'gone')}):
             call = {'tool_name': 'Bash', 'tool_input': {'command': payload['command']}, 'cwd': payload['cwd']}
             self.assertEqual(self.hook('guard_risky_review.py', call).returncode, 2, payload)
+        # a -C value only the shell expands names the call's own tree, never the clean session folder (r2 Medium)
+        self.git('commit', '-qam', 'main')  # main clean: only the worktree's unreviewed file can refuse
+        (tree / 'src/money/tax.py').write_text('t = 1\n', encoding='utf-8')
+        for command in ('git -C "$PWD" commit -am x', 'git -C "$(pwd)" commit -am x', 'git -C "$NOPE" commit -am x'):
+            call = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(tree)}
+            self.assertEqual(self.hook('guard_risky_review.py', call).returncode, 2, command)
 
     def test_a_new_risky_file_after_the_review_is_refused(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

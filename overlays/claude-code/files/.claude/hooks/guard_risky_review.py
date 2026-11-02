@@ -88,11 +88,13 @@ def reviewed(root):
 def project_root(data, command=""):
     """The work tree the call runs in (a worktree session's own), not the folder the session started in (#317):
     the commit's -C folders on the call's cwd, their top folder; outside any work tree, the session's."""
-    where = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    cwd = where = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
     match = COMMIT.search(command)
     for value in re.findall(r"\s-C\s+((?:[^\s\"']|\"[^\"]*\"|'[^']*')+)", match.group(0) if match else ""):
-        where = os.path.join(where, re.sub(r"[\"']", "", value))
-    for folder in (where, os.environ.get("CLAUDE_PROJECT_DIR") or "."):
+        value = re.sub(r"\$\{?PWD\}?|\$\(pwd\)|`pwd`", lambda _: cwd, re.sub(r"[\"']", "", value))
+        where = os.path.join(where, os.path.expanduser(os.path.expandvars(value)))
+    # shortcut: a -C value the shell alone can expand falls back to the call's own tree, then the session's
+    for folder in (where, cwd, os.environ.get("CLAUDE_PROJECT_DIR") or "."):
         top = (git(folder, "rev-parse", "--show-toplevel") or "").strip() if os.path.isdir(folder) else ""
         if top:
             return top
