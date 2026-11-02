@@ -878,6 +878,13 @@ for name; do
         [ -n "$why" ] || why=$(printf '%s\n' "$out" | sed -n '$p')
         if [ -n "$dry" ] && [ "$rc" -eq 0 ]; then
           say "$name: dry run: the audit would keep the worktree: $why"
+        # #333 (labricore): a worker that published a result and committed nothing, with no other
+        # reason to keep and a clean tree once its result moved out, is a report-only worker (a
+        # strong review): kept, not a failure. The audit stops at "no commit", so the tree is asked here.
+        elif [ -n "$moved" ] && [ "$(printf '%s\n' "$out" | grep -c '^         - ')" = 1 ] &&
+             case $why in "no commit was made"*) true ;; *) false ;; esac &&
+             st=$(git -C "$wt_dir" status --porcelain 2>/dev/null) && [ -z "$st" ]; then
+          say "$name: worktree kept, not a failure: it published a result and made no commit (a report-only worker); its report goes back beside it"; kept=1
         else
           fail "$name: worktree kept: $why"; kept=1
         fi ;;

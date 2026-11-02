@@ -657,6 +657,21 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('notes.txt', last)
         self.git('rev-parse', '--verify', 'worktree-w1')
 
+    def test_a_report_only_worker_is_kept_without_a_failure(self):
+        # #333 (labricore): a strong review worker writes its report and never commits; every close
+        # said FAILED. Its only reason to keep is "no commit", and it published a result.
+        path = self.main / '.claude/worktrees/w1'
+        self.git('worktree', 'add', '-q', str(path), '-b', 'worktree-w1')
+        self.result(path, 'w1', 'Kind: completed')
+        out = self.close('w1')
+        self.assertIn('close_worker: w1: worktree kept, not a failure: it published a result and made no commit', out)
+        self.assertNotIn('FAILED', out)
+        self.assertTrue((path / 'RESULT-w1.md').is_file(), out)
+        # Anything else to keep is still a failure.
+        (path / 'notes.txt').write_text('not committed, no copy on main\n')
+        out = self.close('w1', code=1)
+        self.assertIn('close_worker: FAILED: w1: worktree kept: ', out)
+
     def test_the_ignore_file_spawn_writes_for_copied_hooks_does_not_keep_the_worktree(self):
         # Fable final review 1: spawn_worker.sh no longer lists the hook files it copies in the
         # shared info/exclude; a self-ignoring .claude/hooks/.gitignore in the worktree lists them.
