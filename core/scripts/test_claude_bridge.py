@@ -661,6 +661,25 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[-1]['failure_kind'], None)
                 self.assertEqual(verdicts_of(received[-1]['evidence']) == ['VERDICT: Accept'], clean)
 
+    def test_a_labelled_codex_record_holds_no_label_files(self):
+        # review r-v0141-fields Low: prior_rounds' label_files is review_dispatch's, never a record field
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None, watch=None):
+            Path(command[command.index('-o') + 1]).write_bytes(b'## Findings\nNone.\n## Manual checks\nNone.\nVERDICT: Accept\n')
+            return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        stderr='', termination=None, duration_ms=1)
+        received = []
+        with patch.dict(os.environ, dict(self.review_env(), MYAGENTKIT_TASK_ID='labelled')), \
+                patch('agent_process.run', side_effect=execution), redirect_stdout(io.StringIO()):
+            self.assertEqual(codex_bridge.main(['--repo', str(self.repo), '--model', 'x', '--uncommitted'],
+                                               received.append), 0)
+        task = json.loads(Path(received[-1]['usage_record']).read_text(encoding='utf-8'))['task']
+        self.assertEqual(task['id'], 'labelled')
+        self.assertNotIn('label_files', task)
+
     def test_codex_failed_turn_message_reaches_the_evidence(self):
         # #292: a refused model's turn.failed message lived only in the usage record's raw stdout.
         from contextlib import redirect_stdout
@@ -6967,11 +6986,13 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def test_a_solo_mode_line_keeps_the_fallback_in_its_family(self):
         # labricore L18: solo reviews within its family, yet --fallback fell over to a pinned Codex
         (self.repo / 'docs').mkdir(exist_ok=True)
-        (self.repo / 'docs/STATE.md').write_text('# STATE\n\n**Working mode:** solo\n')
-        result, chain = self.dispatch_result('claude', FIXTURE_CASE='quota')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(len(chain['attempts']), 1)
-        self.assertIn('the working mode is solo', chain['fallback_blocked'])
+        for line in ('solo', 'solo (family: gemini)'):  # review r-v0141-fields Low: a family the kit cannot run
+            with self.subTest(line=line):
+                (self.repo / 'docs/STATE.md').write_text('# STATE\n\n**Working mode:** %s\n' % line)
+                result, chain = self.dispatch_result('claude', FIXTURE_CASE='quota')
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(len(chain['attempts']), 1)
+                self.assertIn('the working mode is solo', chain['fallback_blocked'])
 
     def dispatch_result(self, primary='claude', fallback=True, args=(), **extra):
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',

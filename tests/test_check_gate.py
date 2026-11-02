@@ -261,6 +261,10 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [state]: docs/BACKLOG.md:1 names K4', out)
         self.assertIn('The next free K id: K10.', out)  # labricore A13
+        state.write_text('# STATE\n\n## Active work\n- K12 open\n')  # review r-v0141-fields Low: STATE.md's open ids too
+        code, out = gate(self.project, self.build)
+        self.assertIn('The next free K id: K13.', out)
+        state.write_text('# STATE\n\n## Active work\n')
         # leeway 43 item 8: two parallel lines defined the same number or id; another section restarts numbers.
         backlog = self.project / 'docs/BACKLOG.md'
         backlog.write_text('## Next\n1. a\n2. b\n- **K7** c\n## Parked\n1. d\n')

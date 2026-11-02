@@ -994,6 +994,15 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('commit', '-q', '-m', 'second', cwd=other)
         self.git('cherry-pick', self.git('rev-parse', 'worktree-half~1').strip())
         self.assertKept(other, self.run_script('--apply'), 'its branch is not merged')  # one commit left out
+        # review r-v0141-fields Low: git cherry skips a merge commit, which main does not hold
+        merged = self.worktree('mtip', merge=False)
+        work = self.git('rev-parse', 'worktree-mtip').strip()
+        (self.main / 'main2.txt').write_text('main again\n')
+        self.git('add', 'main2.txt')
+        self.git('commit', '-q', '-m', 'main again')
+        self.git('merge', '-q', '--no-ff', '-m', 'main into mtip', self.git('rev-parse', 'HEAD').strip(), cwd=merged)
+        self.git('cherry-pick', work)
+        self.assertKept(merged, self.run_script('--apply'), 'its branch is not merged')
 
     def test_a_fresh_worktree_with_no_commit_is_kept_after_a_merge(self):
         # Reproduced by a reviewer: a worker's fresh worktree was removed by the next merge.

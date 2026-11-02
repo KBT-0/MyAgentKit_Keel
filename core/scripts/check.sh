@@ -656,9 +656,13 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
     for f in docs/STATE.md docs/BACKLOG.md docs/STRONG_REVIEW.md docs/reviews/strong-*.md docs/audits/*.md; do
       level=FAIL
       case "$f" in docs/audits/*.md) level=NOTE ;; esac
-      [ ! -f "$f" ] || awk -v closed="$work/done-ids" -v level="$level" '
-        # labricore A13: the highest number seen per letter prefix (closed ids and this file), so a
-        # refusal names the next free id
+      # The other task file's open ids count for the next free id too (review r-v0141-fields Low).
+      other=/dev/null
+      for o in docs/STATE.md docs/BACKLOG.md; do [ "$o" = "$f" ] || [ ! -f "$o" ] || other="$other $o"; done
+      # shellcheck disable=SC2086 # other holds fixed names without spaces: split on purpose
+      [ ! -f "$f" ] || awk -v closed="$work/done-ids" -v level="$level" -v target="$f" '
+        # labricore A13: the highest number seen per letter prefix (closed ids, the task files and
+        # this file), so a refusal names the next free id
         function seen(w,   p) { if (match(w, /^[A-Za-z]+[0-9]+$/)) { p = tolower(w); sub(/[0-9]+$/, "", p)
                                  if (substr(w, length(p) + 1) + 0 > top[p]) top[p] = substr(w, length(p) + 1) + 0 } }
         FILENAME == closed {
@@ -666,6 +670,7 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
           else { seen($0); if (!(tolower($0) in by)) { by[tolower($0)] = commit; as[tolower($0)] = $0 } }
           next
         }
+        FILENAME != target { n = split($0, word, /[^A-Za-z0-9_-]+/); for (i = 1; i <= n; i++) seen(word[i]); next }
         { n = split($0, word, /[^A-Za-z0-9_-]+/)
           for (i = 1; i <= n; i++) { seen(word[i]); if ((key = tolower(word[i])) in by) {
             hits[++m] = sprintf("%s [state]: %s:%d names %s, which commit %s closed (Done: %s).", level, FILENAME, FNR, word[i], by[key], as[key])
@@ -674,7 +679,7 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
         END { for (i = 1; i <= m; i++)
                 print hits[i] (pre[i] ~ /^[A-Za-z]+$/ ? " The next free " pre[i] " id: " pre[i] (top[tolower(pre[i])] + 1) "." : "")
               if (m) print "              Delete the line (the history is in git); a task needed again gets a new id."
-              exit (m && level == "FAIL") }' "$work/done-ids" "$f" || fail=1
+              exit (m && level == "FAIL") }' "$work/done-ids" $other "$f" || fail=1
     done
   else
     echo "FAIL [state]: git log could not list the Done: trailers, so finished tasks were not checked."

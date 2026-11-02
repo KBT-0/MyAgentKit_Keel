@@ -70,8 +70,9 @@ local merges: the high-tier merge waits for it (`docs/WORKFLOW.md`, "autopilot, 
 switch").
 
 A Claude Code commit that changes a `risky_paths` file (`scripts/gate_config.sh`) is refused until
-a review has seen that path since HEAD: the diff-reviewer agent, or a completed `scripts/review.sh
---uncommitted` Accept (`.claude/hooks/guard_risky_review.py`). The guard is on only where
+a review has seen that path since HEAD (the diff-reviewer agent, or a completed `scripts/review.sh
+--uncommitted` Accept), or an accepted review saw its content, a `--commit`/`--base` round included,
+so a reviewed branch commits or merges in any checkout (`.claude/hooks/guard_risky_review.py`). The guard is on only where
 `scripts/gate_config.sh` sets `risky_paths` and `.claude/settings.json` runs the hook (the kit's
 v0.14 ACTION); without them nothing refuses the commit and the review is the lead's duty alone.
 

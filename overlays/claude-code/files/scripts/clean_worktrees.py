@@ -973,9 +973,11 @@ def audit(record, ctx):
                     'has not started, or one that only fast-forwarded']
         # leeway lead 43: a branch whose every commit `git cherry` finds as a patch upstream (cherry-picked, or a
         # one-commit squash) is merged too; the branch itself is always kept, so no commit is lost
-        if (git(real, 'merge-base', '--is-ancestor', facts['head'], ctx['main_ref'], codes=(0, 1)).returncode
-                and not all(line.startswith(b'- ') for line in
-                            git(real, 'cherry', ctx['main_ref'], facts['head']).stdout.splitlines())):
+        # git cherry skips merge commits, so one not in main (a conflict resolution) keeps it unmerged (review r-v0141-fields)
+        cherry = git(real, 'cherry', ctx['main_ref'], facts['head']).stdout.splitlines() if git(
+            real, 'merge-base', '--is-ancestor', facts['head'], ctx['main_ref'], codes=(0, 1)).returncode else None
+        if cherry is not None and not (cherry and all(line.startswith(b'- ') for line in cherry) and not git(
+                real, 'rev-list', '--merges', ctx['main_ref'] + b'..' + facts['head']).stdout.strip()):
             return ['its branch is not merged: %s is not in %s' % (show(facts['head'][:12]), show(short(ctx['main_ref'])))]
         return []
 
