@@ -119,8 +119,9 @@ def main() -> None:
                     or any(type(saved.get(key)) is not int or saved[key] < 0 for key in ('offset', 'total'))):
                 raise TypeError(saved)
             nudges = saved.get('nudges', min(said // STEP, MAX_NUDGES))
-            if type(nudges) is not int or not 0 <= nudges <= MAX_NUDGES:
+            if type(nudges) is not int or nudges < 0:
                 raise TypeError(saved)
+            nudges = min(nudges, MAX_NUDGES)  # an older kit allowed three: its spent stretch stays spent (#340)
         except (OSError, ValueError, KeyError, TypeError):
             saved, said, nudges = {}, None, 0
         total, mark, offset = silent_calls(transcript, saved)

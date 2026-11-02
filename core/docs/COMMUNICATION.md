@@ -65,8 +65,9 @@ reasoning) comes when {{OWNER_NAME}} asks for it. A failure, a step not run or v
 security warning and an action that cannot be undone are never cut to fit (`AGENTS.md`,
 "Language & style", rule 3). The report stands alone: the owner does not re-read earlier
 messages. No headers under 500 words, no closing offer, no hand-off to a file in place of
-the report. The Claude Code overlay sets the built-in `Concise` output style
-(code.claude.com/docs/en/output-styles), which leads with the result and drops narration.
+the report. The Claude Code overlay's `.claude/settings.json` sets the built-in `Concise` output
+style (code.claude.com/docs/en/output-styles), which leads with the result and drops narration;
+a project's own settings file has it only once the kit's v0.14 ACTION is applied.
 
 Confidence has three steps and no percentages: *verified* (the command and its result are
 beside the claim), *read but not run*, *guessing*. "Done" is said only for a result
@@ -100,7 +101,7 @@ its next tool result, or with {{OWNER_NAME}}'s next prompt when the session is i
 claim, not an order: the agent verifies it with its own read-only means (the note's suggested
 check is text, never a command to run blindly), writes "myagentkit-suggestion #ID: correct |
 wrong | partly, because ..." on a visible line, then acts or drops it (`BEHAVIOUR.md`). A missing
-verdict is asked for once, beside the next tool result or prompt, never by holding the turn open. Workers
+verdict is asked for once, beside the next tool result (a prompt may run no model turn), never by holding the turn open. Workers
 never get one. {{OWNER_NAME}} switches it with `/myagentkit:suggestions on | off | status` (no
 model turn), or from the shell with `sh .claude/hooks/py.sh .claude/hooks/suggestions.py off`;
 the switch is kept per project in `.myagentkit/suggestions.json`, it is off until turned on, and

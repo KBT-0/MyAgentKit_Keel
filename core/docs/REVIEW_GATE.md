@@ -66,7 +66,9 @@ every open or deferred finding and every manual check, and {{OWNER_NAME}} may as
 
 A Claude Code commit that changes a `risky_paths` file (`scripts/gate_config.sh`) is refused until
 a review has seen that path since HEAD: the diff-reviewer agent, or a completed `scripts/review.sh
---uncommitted` Accept (`.claude/hooks/guard_risky_review.py`).
+--uncommitted` Accept (`.claude/hooks/guard_risky_review.py`). The guard is on only where
+`scripts/gate_config.sh` sets `risky_paths` and `.claude/settings.json` runs the hook (the kit's
+v0.14 ACTION); without them nothing refuses the commit and the review is the lead's duty alone.
 
 The review its tier requires starts without asking; an extra review beyond it is
 {{OWNER_NAME}}'s call (`/myagentkit:cross-review`). Findings go to the author's side

@@ -15,6 +15,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **Small hook and doc defects from labricore's v0.14 sync review (#340).** `progress_reminder.py` keeps an
+  older kit's state with two or three nudges as spent (it threw the state away and nudged the same silent stretch
+  once more; test_communication_hooks 43, red without the fix). `docs/COMMUNICATION.md` says a missing
+  suggestion verdict is asked for beside the next tool result only (a prompt may run no model turn), and that the
+  `Concise` style is in a project's settings only once the v0.14 ACTION is applied; `docs/REVIEW_GATE.md` says the
+  risky-review guard is on only with `risky_paths` set and the hook in settings. **ACTION**
+  (`.claude/hooks/progress_reminder.py`, project-owned): `sync-kit.sh . --merge`.
 - **A worker is never the owner's terminal (#311).** `spawn_worker.sh` and `spawn_codex.sh` start every worker with
   `MYAGENTKIT_SESSION_ID=worker-NAME` (a background worker in its settings' `env`, as its other worker variables, and
   never on the daemon's launch line), so the master-writer hooks refuse its commit or merge in the main checkout while

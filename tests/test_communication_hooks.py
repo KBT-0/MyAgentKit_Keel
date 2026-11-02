@@ -500,6 +500,17 @@ class ProgressReminderTests(unittest.TestCase):
                 said = self.nudge(tools(STEP), PYTHONIOENCODING='cp1252')
                 self.assertIn('%d tool calls' % STEP, said['additionalContext'])
 
+    def test_an_older_kits_state_with_more_nudges_stays_spent(self):
+        # #340: v0.13 allowed three nudges; its state with 2 was thrown away and the stretch nudged once more.
+        calls = tools(STEP + 3)
+        self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in calls), encoding='utf-8')
+        size = self.transcript.stat().st_size
+        for spent in (2, 3):
+            with self.subTest(nudges=spent):
+                self.transcript.with_suffix('.progress-step').write_text(json.dumps(
+                    {'said': STEP, 'mark': None, 'nudges': spent, 'total': STEP + 3, 'offset': size}), encoding='utf-8')
+                self.assertIsNone(self.nudge(calls + tools(STEP)))
+
     def test_a_large_transcript_counts_the_latest_silent_interval(self):
         padding = json.dumps({'type': 'user', 'message': {'content': 'x' * 10_000}}) + '\n'
         raw = padding * 120 + ''.join(json.dumps(r) + '\n' for r in tools(STEP))
