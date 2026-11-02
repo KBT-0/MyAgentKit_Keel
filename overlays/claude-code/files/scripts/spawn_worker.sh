@@ -175,6 +175,10 @@ if [ -f scripts/owns_check.py ]; then
   owns_out=$($owns_py -I scripts/owns_check.py "$brief" --brief 2>&1) ||
     die "the brief's Owns: line cannot be read: $owns_out"
 fi
+# leeway lead 43 items 5-6: a bench holds the machine's quiet window; a new worker would load it
+if [ -f scripts/calm.sh ] && held=$(sh scripts/calm.sh status); then
+  die "the machine's quiet window is $held. Wait (sh scripts/calm.sh window) or ask its holder to release it"
+fi
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 # Every path handed on is physical (`pwd -P`): a plain `pwd` printed the logical path when the
 # caller exported a matching PWD and the physical one otherwise, so the same brief was named

@@ -38,6 +38,28 @@ class CalmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('heavy=sleep 173 after', result.stdout)
 
+    def test_the_quiet_window_is_held_refused_waited_and_released(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, CALM_WINDOW_FILE=os.path.join(tmp, 'w'), CALM_WAIT='0')
+            run = lambda *a: subprocess.run(['sh', str(CALM), *a], capture_output=True, text=True,
+                                            timeout=60, env=env)
+            self.assertEqual(run('status').returncode, 1)
+            self.assertEqual(run('window').returncode, 0)
+            self.assertEqual(run('hold', 'x').returncode, 2)
+            held = run('hold', '600', 'frame', 'bench')
+            self.assertEqual(held.returncode, 0, held.stderr)
+            status = run('status')
+            self.assertEqual(status.returncode, 0)
+            self.assertRegex(status.stdout, r'^held for \d+ s more: frame bench \(')
+            self.assertIn('already held', run('hold', '60', 'other').stderr)
+            self.assertIn('QUIET WINDOW still held', run('window').stdout)
+            self.assertEqual(run('release').returncode, 0)
+            self.assertEqual(run('status').returncode, 1)
+            Path(tmp, 'w').write_text('1\nlong gone\n')  # an expired hold ends by itself
+            self.assertEqual(run('status').returncode, 1)
+            self.assertEqual(run('hold', '60', 'next').returncode, 0)
+
 
 if __name__ == '__main__':
     unittest.main()

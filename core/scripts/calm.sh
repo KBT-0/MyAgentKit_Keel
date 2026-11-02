@@ -18,6 +18,45 @@ wait_s=${CALM_WAIT:-1200}
 step_s=${CALM_STEP:-15}
 py=python3; command -v python3 >/dev/null 2>&1 || py=python
 
+# The machine-wide quiet window (leeway lead 43, items 5-6: a bench waited 2 h and the lead
+# sent PAUSE by hand to 5 sessions). One file per user for every project on the machine:
+#   sh scripts/calm.sh hold SECONDS REASON   a bench takes the window (refused while another holds it)
+#   sh scripts/calm.sh release               ends it (it also ends by itself after SECONDS)
+#   sh scripts/calm.sh status                prints the live hold and exits 0, else exits 1
+#   sh scripts/calm.sh window                a heavy job waits, up to CALM_WAIT, for no live hold
+# spawn_worker.sh refuses a new worker while the window is held.
+window=${CALM_WINDOW_FILE:-${TMPDIR:-/tmp}/myagentkit-quiet-window}
+window_live() {  # prints the live hold, or fails: none, expired or unreadable
+  { IFS= read -r until && IFS= read -r why; } < "$window" 2>/dev/null || return 1
+  case $until in ''|*[!0-9]*) return 1 ;; esac
+  left=$(( until - $(date +%s) ))
+  [ "$left" -gt 0 ] || return 1
+  printf 'held for %s s more: %s\n' "$left" "$why"
+}
+case ${1:-} in
+  hold)
+    case ${2:-} in ''|*[!0-9]*) echo "usage: sh scripts/calm.sh hold SECONDS REASON" >&2; exit 2 ;; esac
+    secs=$2; shift 2
+    if held=$(window_live); then echo "QUIET WINDOW refused: already $held" >&2; exit 1; fi
+    if ! { printf '%s\n%s\n' "$(( $(date +%s) + secs ))" "${*:-unnamed} ($(pwd -P))" > "$window.$$" &&
+           mv -f "$window.$$" "$window"; }; then
+      rm -f "$window.$$"; echo "QUIET WINDOW not held: cannot write $window" >&2; exit 1
+    fi
+    echo "QUIET WINDOW held for $secs s; end it with: sh scripts/calm.sh release"
+    exit 0 ;;
+  release) rm -f "$window" && echo "QUIET WINDOW released"; exit ;;
+  status) window_live; exit ;;
+  window)
+    start=$(date +%s)
+    while held=$(window_live); do
+      [ $(( $(date +%s) - start )) -lt "$wait_s" ] || { echo "QUIET WINDOW still $held"; exit 1; }
+      sleep "$step_s"
+    done
+    exit 0 ;;
+  '') ;;
+  *) echo "usage: sh scripts/calm.sh [hold SECONDS REASON | release | status | window]" >&2; exit 2 ;;
+esac
+
 read_load() {  # "load1 cores", or nothing where the host has no load average
   "$py" -c 'import os
 try: print("%.1f %d" % (os.getloadavg()[0], os.cpu_count() or 1))

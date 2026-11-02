@@ -308,6 +308,11 @@ them; ending one that is not yours is the owner's call). Write that record besid
 number without it is not a result, and a slower number is a regression only once a quiet rerun
 confirms it. `sh scripts/calm.sh && <the measurement>` waits for that quiet and prints the
 `CALM load1=.. cores=.. heavy=none` line to write beside the number (leeway 2026-10-26).
+A bench that other sessions on the machine must leave alone takes the machine's quiet window
+first, `sh scripts/calm.sh hold 3600 "frame bench" && sh scripts/calm.sh && <bench>; sh
+scripts/calm.sh release`: while it is held, `spawn_worker.sh` starts no worker, and a heavy job
+waits with `sh scripts/calm.sh window && <job>`; the hold ends by itself after its seconds
+(leeway lead 43, items 5-6).
 
 ## PowerShell from the Microsoft Store leaves suspended processes behind
 

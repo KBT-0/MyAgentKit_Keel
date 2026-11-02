@@ -1562,6 +1562,18 @@ exit 0
         self.assertIn('the mac pipeline files and their tests', result.stderr)
         self.assertNotIn('new-session', self.tmux_log())
 
+    def test_a_held_quiet_window_refuses_a_new_worker(self):
+        # leeway lead 43 items 5-6: a bench held the machine, and five sessions were paused by hand
+        (self.cwd / 'scripts').mkdir(exist_ok=True)
+        shutil.copy(ROOT / 'core/scripts/calm.sh', self.cwd / 'scripts/calm.sh')
+        window = self.tmp / 'quiet-window'
+        window.write_text('%d\nframe bench (/p)\n' % (time.time() + 600))
+        result = self.spawn('w2', str(self.brief), CALM_WINDOW_FILE=str(window))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the machine's quiet window is held for", result.stderr)
+        self.assertIn('frame bench', result.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
+
     def test_a_brief_without_read_permission_is_refused(self):
         # Root reads a mode-000 file: there this case cannot run, and a case that cannot run
         # is reported as a skip, which the kit check refuses, never as a pass.
