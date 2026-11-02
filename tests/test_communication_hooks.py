@@ -554,22 +554,26 @@ class ProgressReminderTests(unittest.TestCase):
 
     def test_a_second_whole_state_read_gets_one_note(self):
         self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in [assistant(text())]), encoding='utf-8')
+        project = self.transcript.parent
 
         def call(tool, given):
             result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript), 'tool_name': tool,
                                                              'tool_input': given}),
-                         CLAUDE_PROJECT_DIR=str(self.transcript.parent))
+                         CLAUDE_PROJECT_DIR=str(project))
             self.assertEqual((result.returncode, result.stderr), (0, ''))
             return json.loads(result.stdout)['hookSpecificOutput']['additionalContext'] if result.stdout else ''
         note = 'docs/STATE.md was read whole a second time'
-        self.assertNotIn(note, call('Read', {'file_path': '/p/docs/STATE.md'}))
-        self.assertNotIn(note, call('Read', {'file_path': '/p/docs/STATE.md', 'offset': 1, 'limit': 40}))  # a range
-        self.assertNotIn(note, call('Read', {'file_path': '/p/docs/STATE.md.bak'}))
+        state = str(project / 'docs' / 'STATE.md')
+        self.assertNotIn(note, call('Read', {'file_path': state}))
+        self.assertNotIn(note, call('Read', {'file_path': state, 'offset': 1, 'limit': 40}))  # a range
+        self.assertNotIn(note, call('Read', {'file_path': state + '.bak'}))
+        self.assertNotIn(note, call('Read', {'file_path': '/other/repo/docs/STATE.md'}))  # not this project's
         self.assertNotIn(note, call('Bash', {'command': 'grep -n "^## " docs/STATE.md'}))
+        self.assertNotIn(note, call('Bash', {'command': 'cat docs/STATE.md | head -40'}))  # a pipe reads a part
         said = call('Bash', {'command': 'cd /p && cat docs/STATE.md'})
         self.assertIn(note, said)
         self.assertIn("grep -n '^## ' docs/STATE.md", said)
-        self.assertNotIn(note, call('Read', {'file_path': 'C:\\p\\docs\\STATE.md'}))  # once a session
+        self.assertNotIn(note, call('Read', {'file_path': 'docs/STATE.md'}))  # once a session
 
     def test_a_missing_or_broken_transcript_never_blocks(self):
         result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript / 'missing')}))

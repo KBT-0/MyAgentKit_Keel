@@ -148,6 +148,10 @@ def audit(path: Path, seen: set) -> dict:
             if kind == 'user' and out['prompt'] is None and not rec.get('isMeta'):
                 text = text_of((rec.get('message') or {}).get('content'))
                 out['prompt'] = text[:160] if text else None
+            if kind == 'user':  # a slash command the owner typed is a call too (r338)
+                typed = re.search(r'<command-name>/?([^<\s]+)</command-name>', text_of((rec.get('message') or {}).get('content')))
+                if typed:
+                    out['skill_calls'][typed.group(1)] += 1
             if kind == 'api-request-shape' and not out['tools_chars']:
                 shape = rec.get('shape') or {}
                 out['system_chars'] = sum(len(s.get('text', '')) for s in shape.get('system') or [])

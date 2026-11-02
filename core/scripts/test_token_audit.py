@@ -106,6 +106,12 @@ class TokenAuditTests(unittest.TestCase):
             assistant('r1', usage(0, 5000, 10), [('t1', 'Skill', {'skill': 'myagentkit:handoff'})]),
             result('t1', 'ok', 'u1'),
         ])
+        typed = self.audit([  # r338: a slash command the owner typed is a call
+            {'type': 'attachment', 'uuid': 'k1', 'attachment': {'type': 'skill_listing', 'content': listing}},
+            {'type': 'user', 'uuid': 'u0', 'message': {'content': '<command-name>/ponytail:ponytail-audit</command-name>'}},
+            assistant('r1', usage(0, 5000, 10)),
+        ])
+        self.assertIn('Never called: myagentkit. A plugin', token_audit.summary([typed], 10))
         table = token_audit.summary([s], 10)
         self.assertIn('| ponytail | 1 | 50 | 0 |', table)
         self.assertIn('| myagentkit | 1 | 38 | 1 |', table)

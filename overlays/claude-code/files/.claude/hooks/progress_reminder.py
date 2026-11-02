@@ -41,7 +41,8 @@ import tempfile
 # ten and one are the owner's (2026-10-26).
 MAX_NUDGES = 1
 STEP = 10
-STATE_CAT = re.compile(r'(^|[;&|(]\s*)cat\s+["\']?(\S*/)?docs/STATE\.md["\']?\s*($|[;&|)])')
+# A pipe after it (`cat docs/STATE.md | head`) is no whole read in context (r338).
+STATE_CAT = re.compile(r'(^|[;&|(]\s*)cat\s+["\']?(\./)?docs/STATE\.md["\']?\s*($|;|&&|\))')
 RECOUNT = 512 * 1024  # re-read small transcripts; larger ones resume at the saved offset
 
 
@@ -100,9 +101,12 @@ def whole_state_read(data: dict) -> int:
     """1 when this call read docs/STATE.md whole: a Read without offset or limit, or a Bash cat."""
     tool, given = data.get('tool_name'), data.get('tool_input') or {}
     if tool == 'Read':
-        path = str(given.get('file_path') or '').replace('\\', '/')
-        return int((path == 'docs/STATE.md' or path.endswith('/docs/STATE.md'))
-                   and given.get('offset') is None and given.get('limit') is None)
+        path = str(given.get('file_path') or '')
+        roots = {data.get('cwd'), os.environ.get('CLAUDE_PROJECT_DIR')} - {None, ''}
+        mine = path == 'docs/STATE.md' or any(
+            os.path.normcase(os.path.normpath(path)) == os.path.normcase(os.path.join(os.path.normpath(r), 'docs', 'STATE.md'))
+            for r in roots)  # this project's file, not another repository's (r338)
+        return int(mine and given.get('offset') is None and given.get('limit') is None)
     return int(tool == 'Bash' and bool(STATE_CAT.search(str(given.get('command') or ''))))
 
 

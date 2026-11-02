@@ -111,9 +111,12 @@ class GateCheckTests(unittest.TestCase):
 
     def test_finished_active_work_lines_are_listed_for_deletion(self):
         write(self.project / 'docs/STATE.md', '# STATE\n\n## Active work\n\n- auth: MERGED to main\n'
-              '- cache: in flight\n- docs: COMMITTED, CI green\n- MERGEDX is a word\n\n## Notes\n- MERGED in the notes section\n')
+              '- cache: in flight\n- docs: COMMITTED, CI green\n- MERGEDX is a word\n- w3: blocked until #12 is MERGED\n'
+              '- w4: NOT DONE, tests red\n\n## Notes\n- MERGED in the notes section\n')
         out = self.assert_green()
-        self.assertIn('NOTE [state]: "Active work" lines marked finished', out)
+        self.assertIn('NOTE [state]: "Active work" lines that look finished', out)
+        self.assertNotIn('w3:', out)
+        self.assertNotIn('w4:', out)
         self.assertIn('docs/STATE.md:5: - auth: MERGED to main', out)
         self.assertIn('docs/STATE.md:7: - docs: COMMITTED, CI green', out)
         self.assertNotIn('in flight', out)

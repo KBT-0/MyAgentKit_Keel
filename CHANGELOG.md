@@ -22,17 +22,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   2.1.316: `skillOverrides` hides a bundled or user skill, never a plugin's; reviewers already start with
   `--safe-mode`). `progress_reminder.py` adds one note on a second whole read of `docs/STATE.md` in a session (Read
   without a range, or `cat`). `check.sh` prints a NOTE past `STATE_MAX_LINES` (default 300, 0 = off; never a FAIL)
-  and lists "Active work" lines still marked MERGED, COMMITTED, DONE and the like. test_gate_checks 18,
+  and lists "Active work" lines that look finished (MERGED, COMMITTED, DONE and the like; "NOT DONE" or "until ...
+  is MERGED" stay out). Review r338: `token_audit.py` counts a typed slash command as a call; the STATE note counts
+  only this project's file and no piped `cat`. test_gate_checks 18,
   test_communication_hooks 44, test_token_audit 5, all red without the change. **ACTION** (project-owned
   `.claude/hooks/progress_reminder.py`, `docs/AGENTS.md`): `sync-kit.sh . --merge`; to change the line count, set
   `STATE_MAX_LINES` in `scripts/gate_config.sh`; then name each plugin this project does not need `false` under
   `enabledPlugins` in `.claude/settings.json` (`token_audit.py` names the ones never called).
 - **Rule conflicts settled; a settled step is done, not offered (#336, #337, labricore 2026-11-02).** Autopilot's
-  "never without the owner" list allows kit feedback under `kit_feedback: standing-approval` and a local message to
-  another session of the owner's own; a high-tier merge parks for the owner's diff read, which wins over a standing
+  "never without the owner" list allows a local message to another session of the owner's own and keeps kit feedback
+  a draft even under `kit_feedback: standing-approval` (its one gate is the owner reading the body); a high-tier merge parks for the owner's diff read, which wins over a standing
   "merge without asking" and autopilot's local merges (WORKFLOW, REVIEW_GATE "Risk tiers"). AGENTS.md "Duties": what
-  the owner decided or the rules settle is done and reported, standing-approval kit feedback is sent, and a settings
-  file a tool rewrote itself is the lead's to commit after reading its diff; COMMUNICATION "Final report": no
+  the owner decided or the rules settle is done and reported, standing-approval kit feedback is sent while the owner is
+  present, and a settings file a tool rewrote itself goes through its tier's review and the lead commits it; COMMUNICATION "Final report": no
   "shall I ...?" when the next step is approved. **ACTION** (project-owned `AGENTS.md`, `docs/WORKFLOW.md`,
   `docs/REVIEW_GATE.md`, `docs/COMMUNICATION.md`): `sync-kit.sh . --merge`.
 - **Context band and usage-limit waits (#329, labricore 2026-11-02).** `context_size.py` labels a foreground Bash

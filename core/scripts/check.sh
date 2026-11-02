@@ -608,11 +608,13 @@ elif ! grep -q "^## Active work" docs/STATE.md; then
 else
   awk -v max="$STATE_MAX_LINES" '
     /^## / { active = ($0 ~ /^## Active work/) }
-    active && /(^|[^A-Za-z])(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)([^A-Za-z]|$)/ { done[++n] = FNR ": " $0 }
+    # "NOT DONE", "until #12 is MERGED" are live work (r338): a word before the marker leaves the line out.
+    active && /(^|[^A-Za-z])(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)([^A-Za-z]|$)/ &&
+      !/([Nn][Oo][Tt]|until|once|after|when|before|is|be) +(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)/ { done[++n] = FNR ": " $0 }
     END {
       if (max ~ /^[0-9]+$/ && max > 0 && NR > max)
         printf "NOTE [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh);\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", NR, max
-      if (n) print "NOTE [state]: \"Active work\" lines marked finished; delete them (the history is in git):"
+      if (n) print "NOTE [state]: \"Active work\" lines that look finished; delete the finished ones (the history is in git):"
       for (i = 1; i <= n && i <= 10; i++) print "              docs/STATE.md:" substr(done[i], 1, 100)
       if (n > 10) print "              and " n - 10 " more"
     }' docs/STATE.md

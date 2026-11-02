@@ -112,8 +112,9 @@ hand-off:** "go on" or a model name means update STATE, write the handoff, end w
 session's opening prompt in a code block (`docs/COMMUNICATION.md`, "Handoff") and stop; new work
 there needs an explicit "start it here". **Settled is done, not offered:** what {{OWNER_NAME}} decided
 or the rules settle is done and reported; a question is only for an open decision. Kit feedback
-under `kit_feedback: standing-approval` is sent, and a settings file a tool rewrote itself (key
-order, `enabledPlugins`) is the lead's to commit after reading its diff.
+under `kit_feedback: standing-approval` is sent while {{OWNER_NAME}} is present (autopilot keeps it
+as a draft), and a settings file a tool rewrote itself is the lead's to take through its tier's
+review (`docs/REVIEW_GATE.md`, "Risk tiers") and commit, never handed back to {{OWNER_NAME}}.
 
 ### STOP — pause the work and ask (rare)
 
