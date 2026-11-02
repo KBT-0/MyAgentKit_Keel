@@ -173,7 +173,7 @@ class RiskyReviewTests(unittest.TestCase):
         subprocess.run(['git', '-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                         'commit', '-qam', message], check=True, capture_output=True)
         return subprocess.run(['git', '-C', str(tree), 'rev-parse', 'HEAD'], check=True, capture_output=True,
-                              text=True).stdout.strip()
+                              text=True, encoding='utf-8').stdout.strip()
 
     def test_a_merge_of_a_branch_reviewed_with_commit_passes(self):
         # labricore A1: a worker branch in a real worktree, reviewed with --commit in two rounds (round 1's
