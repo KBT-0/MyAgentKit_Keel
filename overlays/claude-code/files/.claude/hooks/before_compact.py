@@ -34,18 +34,18 @@ def newest_handoff(root: Path) -> str:
     return str(max(found, key=lambda p: p.stat().st_mtime).relative_to(root)) if found else 'none found'
 
 
-def note(root: Path, trigger: str) -> str:
-    status = git(root, 'status', '--short').splitlines()
+def note(root: Path, trigger: str, here: Path) -> str:
+    status = git(here, 'status', '--short').splitlines()
     if len(status) > STATUS_LINES:
         status = status[:STATUS_LINES] + ['... and %d more' % (len(status) - STATUS_LINES)]
     return '\n'.join([
         'Facts from git, written just before the compaction (%s, %s); they outrank the summary:'
         % (trigger or 'auto', datetime.now().astimezone().isoformat(timespec='seconds')),
-        '- branch: %s, HEAD %s' % (git(root, 'branch', '--show-current') or '(detached)',
-                                   git(root, 'log', '-1', '--format=%h %s') or '(no commit)'),
+        '- branch: %s, HEAD %s' % (git(here, 'branch', '--show-current') or '(detached)',
+                                   git(here, 'log', '-1', '--format=%h %s') or '(no commit)'),
         '- newest hand-off file: %s (update it before the next step)' % newest_handoff(root),
         '- not committed:' + ('\n  ' + '\n  '.join(status) if status else ' nothing'),
-        '- last commits:\n  ' + '\n  '.join(git(root, 'log', '-5', '--format=%h %s').splitlines() or ['none']),
+        '- last commits:\n  ' + '\n  '.join(git(here, 'log', '-5', '--format=%h %s').splitlines() or ['none']),
     ]) + '\n'
 
 
@@ -58,7 +58,9 @@ def main() -> None:
     root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or data.get('cwd') or '.')
     path = root / NOTE
     path.unlink(missing_ok=True)
-    text = note(root, str(data.get('trigger') or ''))
+    # The note sits where the SessionStart hook reads it ($CLAUDE_PROJECT_DIR); its git facts are
+    # the session's own checkout, a linked worktree included (labricore 2026-11-02).
+    text = note(root, str(data.get('trigger') or ''), Path(data.get('cwd') or root))
     path.parent.mkdir(exist_ok=True)
     path.write_text(text, encoding='utf-8')
 

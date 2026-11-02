@@ -353,6 +353,21 @@ class BeforeCompactTests(unittest.TestCase):
             self.assertIn('first step', note)
             self.assertIn('?? b.txt', note)
             self.assertIn('newest hand-off file: ' + str(Path('.myagentkit/v1/handoff-3.md')), note)
+            # A lead in a linked worktree: the note stays where SessionStart reads it, its git
+            # facts are the worktree's (labricore 2026-11-02).
+            subprocess.run(git + ['worktree', 'add', '-q', '-b', 'lead', str(root / 'wt')], check=True)
+            (root / 'wt/c.txt').write_text('c', encoding='utf-8')
+            run = subprocess.run([sys.executable, str(hook)], input=json.dumps({'trigger': 'auto', 'cwd': str(root / 'wt')}),
+                                 capture_output=True, text=True, encoding='utf-8', env=env, timeout=30)
+            self.assertEqual((run.returncode, run.stderr), (0, ''))
+            note = (root / '.myagentkit/compact-note.md').read_text(encoding='utf-8')
+            self.assertIn('branch: lead, HEAD ', note)
+            self.assertIn('?? c.txt', note)
+            self.assertFalse((root / 'wt/.myagentkit').exists())
+            subprocess.run(git + ['worktree', 'remove', '--force', str(root / 'wt')], check=True)
+            (root / '.myagentkit/compact-note.md').unlink()
+            run = subprocess.run([sys.executable, str(hook)], input=json.dumps({'trigger': 'auto', 'cwd': tmp}),
+                                 capture_output=True, text=True, encoding='utf-8', env=env, timeout=30)
             settings = json.loads((OVERLAY / '.claude/settings.json').read_text(encoding='utf-8'))
             self.assertIn('before_compact.py', json.dumps(settings['hooks']['PreCompact']))
             command = settings['hooks']['SessionStart'][0]['hooks'][0]['command']
