@@ -979,6 +979,22 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('merge', '-q', '--no-edit', 'worktree-done', cwd=self.tmp / 'other')
         self.assertKept(path, self.run_script('--apply'), 'its branch is not merged')
 
+    def test_a_cherry_picked_branch_is_merged(self):
+        # leeway lead 43: a result brought in by cherry-pick counted as unmerged; GB-sized worktrees stayed
+        path = self.worktree('picked', merge=False)
+        tip = self.git('rev-parse', 'worktree-picked').strip()
+        (self.main / 'main.txt').write_text('main moved\n')
+        self.git('add', 'main.txt')
+        self.git('commit', '-q', '-m', 'main moved')
+        self.git('cherry-pick', tip)
+        self.assertRemoved(path, self.run_script('--apply'))
+        other = self.worktree('half', merge=False)
+        (other / 'more.txt').write_text('more\n')
+        self.git('add', 'more.txt', cwd=other)
+        self.git('commit', '-q', '-m', 'second', cwd=other)
+        self.git('cherry-pick', self.git('rev-parse', 'worktree-half~1').strip())
+        self.assertKept(other, self.run_script('--apply'), 'its branch is not merged')  # one commit left out
+
     def test_a_fresh_worktree_with_no_commit_is_kept_after_a_merge(self):
         # Reproduced by a reviewer: a worker's fresh worktree was removed by the next merge.
         self.hooked()
@@ -1113,8 +1129,12 @@ class CleanWorktreesTests(unittest.TestCase):
     def test_an_unmerged_or_squash_merged_branch_is_kept(self):
         path = self.worktree('done', merge=False)
         self.assertKept(path, self.run_script('--apply'), 'its branch is not merged')
+        (path / 'more.txt').write_text('more\n')
+        self.git('add', 'more.txt', cwd=path)
+        self.git('commit', '-q', '-m', 'second', cwd=path)
         self.git('merge', '-q', '--squash', 'worktree-done')
         self.git('commit', '-q', '-m', 'squashed')
+        # two commits squashed into one match neither patch (a one-commit squash is merged: leeway lead 43)
         self.assertKept(path, self.run_script('--apply'), 'its branch is not merged')
 
     # --- c and h: the quiet period ----------------------------------------------------------

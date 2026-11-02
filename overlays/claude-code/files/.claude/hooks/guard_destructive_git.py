@@ -12,7 +12,7 @@ the boundary. What the hook can parse it reads as the shell and git would; what 
 it refuses. Two kinds of command are refused (the loss-certain subset; AGENTS.md's rule "commit
 or stash before any command that discards work" still covers every destructive command):
 
-- Always, whatever the tree's state: `git stash drop/clear` (the stash may be the only copy),
+- Always, whatever the tree's state: `git stash drop/clear` (the stash may be the only copy; dropping an entry whose every file HEAD holds as stashed passes),
   a force push (`--force`, `-f`, `+refspec`, `:ref`, `--mirror`, `--delete`, and a
   `--force-with-lease` without `=ref:expected` or a final `--force-if-includes`),
   `git remote set-url/add` (it moves where a push goes), `git commit --amend` of a commit a
@@ -667,6 +667,39 @@ def hooks_config_allowed(g):
         return False
 
 
+def stash_in_head(g, ref):
+    """Whether every file stash entry `ref` saved (worktree, index and untracked parts) is in HEAD with
+    the same content and mode, in every folder the command may run in: dropping it then loses nothing."""
+    if unknowable(ref) or not g.cwds or None in g.cwds:
+        return False
+    try:
+        for where in g.cwds:
+            code, stash = g.ask("rev-parse", "--verify", "-q", ref + "^{commit}", where=where)
+            if code or not stash:
+                return False
+            code, parents = g.ask("rev-list", "--parents", "-n", "1", stash, where=where)
+            parents = parents.split()[1:]
+            if code or len(parents) not in (2, 3):
+                return False
+            # the worktree and index parts against their base; the untracked part is a tree of its own
+            parts = [(stash, parents[0]), (parents[1], parents[0])] + ([(parents[2], None)] if len(parents) == 3 else [])
+            for tree, base_ in parts:
+                code, names = (g.ask("diff", "--name-only", "--no-renames", "-z", base_, tree, where=where) if base_
+                               else g.ask("ls-tree", "-r", "--name-only", "-z", tree, where=where))
+                paths = [n for n in names.split("\0") if n]
+                if code:
+                    return False
+                if not paths:
+                    continue
+                listed = [g.ask("--literal-pathspecs", "ls-tree", "-r", "-z", t, "--", *paths, where=where)
+                          for t in (tree, "HEAD")]
+                if any(c for c, _ in listed) or listed[0][1] != listed[1][1]:
+                    return False
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def verdict(g, depth=0):
     """None, or (always, why, ignored_counts) for one git invocation, or ("shell", text, cwds,
     fallback why) when git runs shell text (findings() judges it)."""
@@ -689,8 +722,12 @@ def verdict(g, depth=0):
     if sub in HOOK_SUBS and (not last(opts, "verify", "no-verify", True)
                              or last(opts, "no-gpg-sign", "gpg-sign")):
         return True, GATE, False
+    if sub == "stash" and first == "drop" and len(words) <= 2 and stash_in_head(g, (words[1:] or ["stash@{0}"])[0]):
+        return None  # leeway lead 43: every file of the entry is in HEAD as stashed, so the drop loses nothing
     if sub == "stash" and first in ("drop", "clear"):
-        return True, "git stash drop/clear deletes stashed work, which may be its only copy", False
+        return True, ("git stash drop/clear deletes stashed work, which may be its only copy (an entry whose "
+                      "every file HEAD holds as stashed is dropped; commit it first). Set work aside with a "
+                      "WIP commit, not a stash"), False
     if sub == "remote" and first in ("set-url", "add"):
         return True, "git remote set-url/add changes where a push goes", False
     if sub == "push":
@@ -993,8 +1030,8 @@ def lost(why, dirty):
             "owner edited by hand, a note written this session — this command is the last moment it "
             "exists.\n\n"
             "Do one of these first, then re-run:\n"
-            "  git stash push -u -m 'before <what you are about to do>'   # recoverable\n"
-            "  git add -A && git commit -m 'wip'      # recoverable; the gate runs, never --no-verify\n\n"
+            "  git add -A && git commit -m 'wip'      # recoverable; the gate runs, never --no-verify\n"
+            "  git stash push -u -m 'before <what you are about to do>'   # recoverable; drop it once committed\n\n"
             "If you have checked the list above and every entry is disposable, say so to the owner "
             "and ask them to run the command themselves")
 

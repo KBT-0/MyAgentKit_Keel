@@ -971,7 +971,11 @@ def audit(record, ctx):
         if not made_here(log):
             return ['no commit was made in this worktree (its own HEAD reflog records none): a worker that '
                     'has not started, or one that only fast-forwarded']
-        if git(real, 'merge-base', '--is-ancestor', facts['head'], ctx['main_ref'], codes=(0, 1)).returncode:
+        # leeway lead 43: a branch whose every commit `git cherry` finds as a patch upstream (cherry-picked, or a
+        # one-commit squash) is merged too; the branch itself is always kept, so no commit is lost
+        if (git(real, 'merge-base', '--is-ancestor', facts['head'], ctx['main_ref'], codes=(0, 1)).returncode
+                and not all(line.startswith(b'- ') for line in
+                            git(real, 'cherry', ctx['main_ref'], facts['head']).stdout.splitlines())):
             return ['its branch is not merged: %s is not in %s' % (show(facts['head'][:12]), show(short(ctx['main_ref'])))]
         return []
 

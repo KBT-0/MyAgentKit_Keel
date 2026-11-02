@@ -1001,6 +1001,22 @@ class V0141FieldReportTests(GuardCase):
             "cat > n.md <<'EOF'\nnever %s another entry\nEOF\nsh x.sh" % drop,
         ], 2)
 
+    def test_a_stash_entry_head_holds_is_dropped(self):
+        # leeway lead 43: the session's own stash entries could never be dropped, even once committed
+        drop = 'git stash ' + 'drop'
+        (self.repo / 'f.txt').write_text('two\n', encoding='utf-8')
+        (self.repo / 'new.txt').write_text('n\n', encoding='utf-8')
+        git(self.repo, 'stash', 'push', '-u', '-m', 'lead43-x')
+        self.assertVerdict([drop, drop + ' stash@{0}'], 2)  # its files are nowhere else
+        git(self.repo, 'stash', 'apply', '-q')
+        git(self.repo, 'add', '-A')
+        git(self.repo, 'commit', '-q', '-m', 'wip')
+        self.assertVerdict([drop, drop + ' stash@{0}', drop + " 'stash@{0}'"], 0)
+        self.assertVerdict(['git stash ' + 'clear', drop + ' $x'], 2)
+        (self.repo / 'new.txt').write_text('changed\n', encoding='utf-8')
+        git(self.repo, 'commit', '-q', '-am', 'moved on')
+        self.assertVerdict([drop], 2)  # HEAD no longer holds the untracked part as stashed
+
     def test_a_mention_on_a_plain_line_is_no_command(self):
         self.dirty()
         self.assertVerdict([

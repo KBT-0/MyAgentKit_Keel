@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **Leeway lead 43's field report (2026-11-02).** `guard_destructive_git.py` lets `git stash drop` through when every
+  file of the entry (its worktree, index and untracked parts) is in HEAD as stashed, so a session's own entries can
+  be dropped once their content is committed; any other drop and every `stash clear` stay refused, and the refusal
+  and the dirty-tree advice name a WIP commit first. `clean_worktrees.py` (and so `close_worker.sh`) counts a branch
+  whose every commit `git cherry` finds upstream as merged: a cherry-picked result, or a one-commit squash (the
+  branch itself is always kept). test_guard_destructive_git and test_clean_worktrees: each new case red without its
+  fix. **ACTION** (project-owned `.claude/hooks/guard_destructive_git.py`, `scripts/clean_worktrees.py`):
+  `sync-kit.sh . --merge`.
 - **A branch reviewed after its commits merges (labricore A1-A7, 2026-11-02).** `guard_risky_review.py` counted only
   an `--uncommitted` review, so every merge of a worker branch reviewed with `--commit` was refused. An accepted
   `review.sh` round of any scope, and an accepted diff-reviewer, now also record the reviewed content of every file
