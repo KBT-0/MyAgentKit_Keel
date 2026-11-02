@@ -113,6 +113,11 @@ FLOOR = [(re.compile(p, re.I), why) for p, why in [
 ]]
 PLAIN_GIT = {"status", "log", "diff", "show", "commit", "tag", "add", "checkout", "rev-parse", "ls-files"}
 TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
+# A variable git or a tool runs as a command (GIT_EDITOR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND, ...): its value is shell
+# text, judged as such (review r327 High: `GIT_EDITOR='git reset --hard #' git commit` ran the reset).
+COMMAND_VAR = re.compile(r"GIT_\w+|EDITOR|VISUAL|PAGER|\w*ASKPASS")
+# Names and dates only: a plain line keeps its blanked floor with these (any other GIT_* may carry a command or config).
+NAME_VAR = re.compile(r"GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)")
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 CALM = {"cd", "pushd", "echo", "printf", "pwd", "ls", "cat", "true", ":", "test", "[", "export"}
 # #327: commands that run none of the text they are given (sort is not: --compress-program). Their
@@ -300,7 +305,7 @@ def strip_heredocs(text):
     command elsewhere is a shell (it may run the file the body writes), up to a quote that never
     closes. A quoted or commented `<<` is an argument, not a here-document. Every body is cut
     first, so one body's apostrophes never read as a quote while another's readers are found."""
-    cut, pos, marker = [], 0, "__guard_heredoc_input__"
+    cut, pos, marker, expanded = [], 0, "__guard_heredoc_input__", []
     while True:
         m = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2").search(text, pos)
         if not m:
@@ -320,6 +325,10 @@ def strip_heredocs(text):
             if (line.lstrip("\t") if m.group(1) else line).removesuffix("\r") == m.group(3):
                 break
         line = text.rfind("\n", 0, m.start()) + 1
+        if not m.group(2):
+            # An unquoted delimiter: the shell runs the body's $( ) and backticks before any reader sees it
+            # (review r327 High: `cat <<E` over `$(git reset --hard)` ran the reset). Judged as shell.
+            expanded += [(True, inner) for inner in substitutions(text[start:end]) if GIT_WORD.search(inner)]
         cut.append((text[line:m.start()] + " " + marker + " " + text[m.end():start], text[start:end]))
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
     cut = [(header, body) for header, body in cut if GIT_WORD.search(body)]
@@ -360,7 +369,7 @@ def strip_heredocs(text):
                 if start is not None:
                     bodies.append((False, body[start:]))
                 bodies.extend(nested)
-    return text, bodies
+    return text, bodies + expanded
 
 
 UNCLOSED = re.compile(QUOTED.pattern + r"""|(?P<open>['"])""", re.S)
@@ -428,8 +437,9 @@ def loose(text, cwds, changed=False, env=None, appended=False):
     for m in GIT_WORD.finditer(text):
         quote, after = text[m.start() - 1:m.start()], text[m.end():m.end() + 1]
         # #327: code and data name git in prose: a label ('GIT', "Git"), or a git that ends a string it
-        # did not start (grep 'class git' "$f"). shortcut: a Windows argv ['Git', ...] passes; none was seen.
-        if (not re.search(r"git(?:\.exe)?$", m.group()) and not m.group().lower().endswith(".exe")
+        # did not start (grep 'class git' "$f"). An all-caps GIT only: a case-insensitive file system runs
+        # ['Git', ...] (review r327 Low). shortcut: an argv ['GIT', ...] passes; none was seen.
+        if (re.search(r"GIT$", m.group())
                 or after in ("'", '"') and quote != after):
             continue
         if quote in ("'", '"') and text[m.end():m.end() + 1] == quote:
@@ -562,6 +572,7 @@ class Git:
     def __init__(self, tokens, env, cwds):
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
         self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
+        self.options = list(itertools.takewhile(lambda t: t.startswith("-"), tokens))
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
@@ -703,7 +714,11 @@ def verdict(g, depth=0):
     if sub == "checkout" and not names & {"b", "B", "orphan", "patch"}:
         if "force" in names or "--" in args or len(words) != 1:
             paths = args[args.index("--") + 1:] if "--" in args else []
-            if paths and not names & {"force", "pathspec-from-file"} and not any(unknowable(p) for p in paths):
+            # A pathspec option or variable (--icase-pathspecs) changes what the paths match: the whole tree is asked
+            # (review r327 Medium; status would get the paths without it).
+            if (paths and not names & {"force", "pathspec-from-file"} and not any(unknowable(p) for p in paths)
+                    and not any("pathspecs" in t for t in g.options)
+                    and not any(k.endswith("_PATHSPECS") for k in g.env)):
                 # #327: labricore's path checkouts were refused over staged files elsewhere (59 hits).
                 g.paths = paths
                 return False, "git checkout of these paths overwrites their working copy", True
@@ -809,6 +824,8 @@ def judge(command, cwds, changed=False, env=None):
                 k, v = seg[i].split("=", 1)
                 local[k] = v
                 i += 1
+                if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
+                    yield from judge(v, cwds, changed, env)
             elif base(seg[i]) in TRANSPARENT:
                 wrapper = base(seg[i])
                 i += 1
@@ -848,6 +865,10 @@ def judge(command, cwds, changed=False, env=None):
             yield from loose(" ".join(rest[1:]), cwds, changed, here, name in ("xargs", "parallel"))
         if name == "export":
             env.update(dict(t.split("=", 1) for t in rest[1:] if "=" in t))
+            for t in rest[1:]:
+                k, _, v = t.partition("=")
+                if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
+                    yield from judge(v, cwds, changed, env)
         if name in ("cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"):
             args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
             target = native(os.path.expanduser(os.path.expandvars(args[0]))) if args and "pop" not in name else None
@@ -874,9 +895,14 @@ def plain(command):
     """The command with its quoted strings, comments and here-document bodies blanked when every
     command of the line is INERT or a PLAIN_GIT git without -c (#327); None otherwise."""
     try:
-        text, _ = strip_heredocs(command)
+        text, bodies = strip_heredocs(command)
         blank = unquoted(text)
+        if any(shell for shell, _ in bodies):
+            return None  # a body the shell runs or expands (review r327 High)
         for seg in segments(text, strict=True) if blank is not None else [["eval"]]:
+            if any(COMMAND_VAR.fullmatch(k := w.split("=", 1)[0]) and not NAME_VAR.fullmatch(k)
+                   for w in seg if re.match(r"[A-Za-z_]\w*=", w)):
+                return None  # a variable git runs as a command (review r327 High)
             words = list(itertools.dropwhile(lambda w: w in KEYWORDS or re.match(r"[A-Za-z_]\w*=", w), seg))
             if not words:
                 continue

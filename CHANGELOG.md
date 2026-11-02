@@ -41,7 +41,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `git checkout REV -- PATHS` is judged by those paths' status alone (59 refusals over staged files elsewhere);
   `-f`, a variable path or no `--` still read the whole tree. A refusal lists ten changes and counts the rest.
   The here-document and here-string refusals found in labricore's sessions (15 of 17) already passed before this change.
-  test_guard_destructive_git 84 (Windows) / 83, red without the fix. **ACTION** (`.claude/hooks/guard_destructive_git.py`,
+  Review r327 (Fable 5.1, Reject) closed four holes the relaxations opened, and two older ones beside them: the
+  `$( )` and backticks of a here-document body under an unquoted delimiter run before cat or git reads it, so they
+  are judged as shell (`cat <<E` over `$(git reset --hard)`, `$(git stash drop)` even on a clean tree); a variable
+  git runs as a command (GIT_EDITOR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND, EDITOR, PAGER, ...) has its value judged
+  as shell, and any GIT_* other than an author or committer name, email or date keeps the raw floor; a path
+  checkout under `--icase-pathspecs` or a `GIT_*_PATHSPECS` variable reads the whole tree; only an all-caps `GIT` is
+  a label (`sudo Git stash drop` runs git on a case-insensitive file system).
+  test_guard_destructive_git 85 (Windows) / 84, red without the fix. **ACTION** (`.claude/hooks/guard_destructive_git.py`,
   project-owned): `sync-kit.sh . --merge`.
 - **sync-kit.sh and the sync command (#330, labricore's v0.14 sync).** `--merge` merges a kit change that only
   appends after the project's own lines, `merged: FILE (the kit appended N lines; they follow the project's own)`,

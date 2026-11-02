@@ -1016,6 +1016,25 @@ class V0141FieldReportTests(GuardCase):
                             'git checkout HEAD -- $p', 'git checkout HEAD f.txt',
                             "python3 -c \"import os; os.system('git checkout HEAD -- a')\""], 2)
 
+    def test_review_r327_expansions_and_command_variables(self):
+        # Review r327 (Fable 5.1, Reject): an unquoted here-document body's $( ) and backticks run before cat sees
+        # them; a GIT_EDITOR / GIT_EXTERNAL_DIFF value runs as a command; --icase-pathspecs widens the paths;
+        # a 'Git' argv runs on a case-insensitive file system. The quoted-delimiter mention still passes.
+        always = ["cat <<E\n$(git stash drop)\nE", "GIT_EDITOR='git stash drop #' git commit --allow-empty",
+                  "export GIT_EDITOR='git stash clear #'; git commit", "sudo Git stash drop",
+                  "python3 -c \"subprocess.run(['Git', 'stash', 'drop'])\""]
+        self.assertVerdict(always, 2)
+        self.dirty()
+        self.assertVerdict([
+            "cat <<E\n$(git reset --hard)\nE", "cat <<E > n.md\nnote: $(git reset --hard)\nE",
+            "git commit -F - <<E\n$(git reset --hard)\nE", "cat <<E\n`git reset --hard`\nE",
+            "cat <<-E\n\t$(git stash clear)\n\tE", "GIT_EDITOR='git reset --hard #' git commit",
+            "export GIT_EDITOR='git reset --hard #'; git commit", "GIT_EXTERNAL_DIFF='git stash clear #' git diff",
+            "git --icase-pathspecs checkout HEAD -- F.TXT", "GIT_ICASE_PATHSPECS=1 git checkout HEAD -- F.TXT",
+        ], 2)
+        self.assertVerdict(["cat <<'E' > n.md\nnote: $(git reset --hard) is bad\nE",
+                            "GIT_AUTHOR_NAME=me git commit -m 'never git reset --hard'"], 0)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')
