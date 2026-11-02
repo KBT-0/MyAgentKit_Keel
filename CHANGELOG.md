@@ -58,8 +58,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   so a hand-off written in the turn before it no longer bounces the woken one; a folder named for hand-offs counts
   only for a Markdown file (`src/handoff/router.py` is code). A file or folder counts only when its name starts with
   "handoff" (`handoff-65.md`, `docs/handoffs/`): an edit of a note named `no-handoff-while-work-runs.md` bounced a
-  turn that handed nothing off (kit 2026-11-02). test_communication_hooks 44, red without the fix.
-  **ACTION** (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
+  turn that handed nothing off (kit 2026-11-02). Recording progress in an existing hand-off file proposes no
+  hand-off: COMMUNICATION "Handoff" gives the opening prompt only to a message that proposes one, and the bounce
+  says to answer in one line, with no prompt, when the turn only recorded progress (owner 2026-11-02).
+  test_communication_hooks 44, red without the fix.
+  **ACTION** (`.claude/hooks/plain_report.py` and `docs/COMMUNICATION.md`, project-owned): `sync-kit.sh . --merge`.
 - **A strong review never drops a scope silently (#335, labricore 2026-11-02).** Two Opus sub-readers of a strong
   review stopped on the plan limit, and the report held no finding for 22k lines of `src/app/`. WORKFLOW "The strong
   review cycle": a reviewer that splits its scope names each sub-agent's model and effort, reads a stopped one's

@@ -348,6 +348,7 @@ class PlainReportTests(unittest.TestCase):
                     bounced = stop(message, path)
                     self.assertEqual(bounced.returncode, 2, bounced.stderr)
                     self.assertIn('opening prompt', bounced.stderr)
+                    self.assertIn('proposes no hand-off', bounced.stderr)  # progress notes need no prompt
         passes = ((wrote, 'Handoff hazır. Yeni oturuma yapıştır:\n```\nhandoff-36\'yı oku, devam et\n```'),
                   # A hand-off written before the owner's last prompt, or only read, is not this turn's.
                   (transcript(write('/p/HANDOFF-35.md'), result, prompt, write('/p/notes.md', 'Edit'), result),

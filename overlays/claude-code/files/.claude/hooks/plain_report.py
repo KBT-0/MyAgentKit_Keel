@@ -284,7 +284,8 @@ def main() -> None:
                     'has already read the message: do not send it again. Send one short line and a fenced code block '
                     'with the exact text the owner pastes into the new session, in the chat language (the hand-off '
                     'file to read and "go on"), and the model to open it on (full model id), and close every '
-                    'hand-off that way (docs/COMMUNICATION.md, "Handoff"; core/docs/ in the kit).')
+                    'hand-off that way. If the turn only recorded progress in a hand-off file and proposes no hand-off, '
+                    'say so in one line and give no prompt (docs/COMMUNICATION.md, "Handoff"; core/docs/ in the kit).')
     try:
         found = bare_labels(text)
     except Exception:  # noqa: BLE001 - no commit-msg grammar: only the label check is off

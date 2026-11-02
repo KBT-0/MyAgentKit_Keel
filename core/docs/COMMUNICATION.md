@@ -173,7 +173,9 @@ opening prompt in a fenced code block: the exact text the owner pastes into the 
 overlay's `plain_report.py` Stop hook bounces that message once. The owner skips the routine
 model line, so a model other than the project's default lead (a stronger tier for a very
 critical task) gets its own bold line above the code block, with its one-line reason, and is
-the hand-off file's first line. After any further talk that follows a hand-off proposal, every
+the hand-off file's first line. Recording progress in an existing hand-off file (an item
+closed, a new commit id) proposes no hand-off and ends with no opening prompt; the prompt
+belongs only to a message that proposes one (owner, 2026-11-02). After any further talk that follows a hand-off proposal, every
 reply ends with the full, final opening prompt again, unasked, never "the prompt above" (owner,
 2026-10-26).
 
