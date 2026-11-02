@@ -450,7 +450,10 @@ cadence (ten days came from a project's request, kit issue #61).
   ("Task ids"), a severity and its evidence. The id is a task id of the project's own shape,
   never a label of the report's own (`P3`, `F16`): such a label is one token with a task of
   that name, and closing the task is refused while the report names it (#301). A report that
-  needs labels of its own gives them a prefix no task id uses.
+  needs labels of its own gives them a prefix no task id uses. A reviewer that splits its
+  scope among sub-agents names each one's model and effort, and reads itself the scope of
+  any sub-agent that stopped on a limit, or lists that scope under "Not read" in the report;
+  a scope is never dropped silently (#335: two stopped sub-readers left 22k lines unreviewed).
 - **Triage:** the lead and the owner mark each finding in the list as accepted, parked or
   rejected. An accepted finding becomes a task under its id.
 - **Second reviewer**, a strong model of the other family when one is available: reviews the

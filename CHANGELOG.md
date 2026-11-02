@@ -36,6 +36,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   so a hand-off written in the turn before it no longer bounces the woken one; a folder named for hand-offs counts
   only for a Markdown file (`src/handoff/router.py` is code). test_communication_hooks 43, red without the fix.
   **ACTION** (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
+- **A strong review never drops a scope silently (#335, labricore 2026-11-02).** Two Opus sub-readers of a strong
+  review stopped on the plan limit, and the report held no finding for 22k lines of `src/app/`. WORKFLOW "The strong
+  review cycle": a reviewer that splits its scope names each sub-agent's model and effort, reads a stopped one's
+  scope itself or lists it under "Not read". **ACTION** (`docs/WORKFLOW.md`, project-owned): `sync-kit.sh . --merge`.
 - **A sub-agent's worktree gets the installed packages (#339, labricore 2026-11-02).** "No commit made ... CHECK:
   FAIL for an environment reason" came back 8 times from two `isolation: worktree` sub-agents: their worktree had
   no working `node_modules`, so biome and tsc in the commit gate were missing. The settings template sets Claude
