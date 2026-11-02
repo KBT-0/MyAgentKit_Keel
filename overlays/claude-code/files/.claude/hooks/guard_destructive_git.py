@@ -572,11 +572,12 @@ class Git:
     def __init__(self, tokens, env, cwds):
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
         self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
-        self.options = list(itertools.takewhile(lambda t: t.startswith("-"), tokens))
+        self.options = []  # the global options, their separate values skipped (r327 r2: `-C . --icase-pathspecs`)
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
             takes = tok in GIT_VALUE
+            self.options.append(tok)
             if tok in ("-C", "--git-dir", "--work-tree"):
                 self.route += [tok, native(nxt)]
             elif tok.startswith(("--git-dir=", "--work-tree=")):
@@ -826,6 +827,11 @@ def judge(command, cwds, changed=False, env=None):
                 i += 1
                 if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
                     yield from judge(v, cwds, changed, env)
+                    # GIT_CONFIG_PARAMETERS holds 'key=value' pairs; core.editor, diff.external or
+                    # core.sshCommand there runs as a command (r327 r2 Low).
+                    for pair in re.findall(r"'([^']*)'", v):
+                        if GIT_WORD.search(pair.partition("=")[2]):
+                            yield from judge(pair.partition("=")[2], cwds, changed, env)
             elif base(seg[i]) in TRANSPARENT:
                 wrapper = base(seg[i])
                 i += 1
@@ -869,6 +875,11 @@ def judge(command, cwds, changed=False, env=None):
                 k, _, v = t.partition("=")
                 if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
                     yield from judge(v, cwds, changed, env)
+                    # GIT_CONFIG_PARAMETERS holds 'key=value' pairs; core.editor, diff.external or
+                    # core.sshCommand there runs as a command (r327 r2 Low).
+                    for pair in re.findall(r"'([^']*)'", v):
+                        if GIT_WORD.search(pair.partition("=")[2]):
+                            yield from judge(pair.partition("=")[2], cwds, changed, env)
         if name in ("cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"):
             args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
             target = native(os.path.expanduser(os.path.expandvars(args[0]))) if args and "pop" not in name else None
@@ -878,6 +889,10 @@ def judge(command, cwds, changed=False, env=None):
             continue
         if name == "git":
             g = Git(rest[1:], here, cwds)
+            # A -c value git may run (core.editor, diff.external, core.sshCommand, alias.x=!...) is shell text (r327 r2).
+            for config in g.configs:
+                if GIT_WORD.search(config.partition("=")[2]):
+                    yield from judge(config.partition("=")[2].lstrip("!"), cwds, changed, here)
             yield from findings(g, changed)
             changed = changed or g.sub not in READ_ONLY
         elif name not in CALM:

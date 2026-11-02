@@ -469,7 +469,8 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       daemonized nginx or Redis in a test run), which overwrites the marker (#198).
     - Accepted limit: committed snapshots use `git archive`, which honours export-ignore and
       export-subst. Uncommitted snapshots use checkout bytes instead. Untracked ignored files
-      (installed dependencies, build output) and submodule contents are absent.
+      (build output) and submodule contents are absent; the root node_modules is a symlink to
+      the checkout's (or the main checkout's), so the reviewer can read the repository's path there.
     - Accepted limit: construction assumes no concurrent hostile filesystem replacement.
       Symlinks retained as leaves may still be followed by the reviewer after construction.
     """
@@ -610,6 +611,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
             finally:
                 agent_process.restore_mask(mask)
                 archive_err.close()
+        link_packages(repo, copy)
         return
 
     # No archive overlay: paths absent from the index and checkout never enter this tree.
@@ -677,6 +679,23 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 if not chunk:
                     break
     check_running()
+    link_packages(repo, copy)
+
+
+def link_packages(repo: Path, copy: Path) -> None:
+    """#332: the reviewer runs the project's tests, tsc and lint with the checkout's installed packages,
+    else the main checkout's (a worktree has none). Writes through the link stay blocked by the
+    sandbox. shortcut: the root node_modules only; nested workspace ones are not linked."""
+    if os.path.lexists(copy / "node_modules"):
+        return  # tracked, or copied as an untracked file the project does not ignore
+    common = Path(os.fsdecode(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()))
+    for source in (repo / "node_modules", common.parent / "node_modules"):
+        if source.is_dir():
+            try:
+                os.symlink(source.resolve(), copy / "node_modules", target_is_directory=True)
+            except OSError:
+                pass  # native Windows without symlink rights: the reviewer goes without, as before
+            return
 
 
 def resolve(repo: Path, scope: str, reference: str | None) -> str | None:
@@ -1044,8 +1063,10 @@ def snapshot(repo: Path, scope: str, reference: str | None, past_ok: bool = Fals
             name = os.fsdecode(raw)
             if name.casefold().startswith((".myagentkit/usage/", ".myagentkit/backends/")):
                 continue
+            # A worker's untracked result file (spawn_worker.sh RESULT-NAME.md) is its report, not code (#332).
             if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
-                    or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):
+                    or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name) \
+                    or re.fullmatch(r"RESULT-[^/]+\.md", name):
                 continue
             working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))

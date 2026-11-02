@@ -31,8 +31,22 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   message no longer reads as the owner's prompt (its summary and harness notes are skipped). The label bounce prints
   the line to fill in (`F22 = <what it is>; L10 = <what it is>`), so the rewrite takes one turn. Unchanged, by the
   rule in COMMUNICATION ("Language and terms"): a backticked registered id and a label already explained once still
-  bounce, since a label never stands alone. test_communication_hooks 43, red without the fix. **ACTION**
-  (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
+  bounce, since a label never stands alone. Review r328 (Opus 5.5, Reject: 1 High + 1 Low): a harness note that
+  wakes an idle session (another session's message, a usage-limit reset, a cross-session idle notice) starts a turn,
+  so a hand-off written in the turn before it no longer bounces the woken one; a folder named for hand-offs counts
+  only for a Markdown file (`src/handoff/router.py` is code). test_communication_hooks 43, red without the fix.
+  **ACTION** (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
+- **review.sh: a used-up Claude plan is no rate limit, a worker's result file blocks no review, the copy has the
+  installed packages (#332, labricore 2026-11-02).** Claude Code 2.1.x says "You've hit your 5-hour limit" or
+  "You've hit your limit · resets 3pm"; both were read as `rate_limited` (labricore's three back-to-back failed Fable
+  reviews), now `quota_exhausted`, whose FAIL line tells the lead to wait for the reset. A real 429 or 529 stays
+  `rate_limited`; Claude Code retries those itself before it exits (CLAUDE_CODE_MAX_RETRIES). An untracked `RESULT-NAME.md` at the checkout's
+  root (spawn_worker.sh's result file) no longer refuses `--base`/`--commit` and stays out of an `--uncommitted`
+  diff. The reviewer's copy links the checkout's root `node_modules`, else the main checkout's (a worktree has
+  none), so it can run the tests, tsc and lint (all seven of labricore's reviews marked them NOT RUN); the sandbox
+  still blocks writes through the link, and native Windows without symlink rights goes without. Not done: a quota
+  check before the copy is built (a used-up plan fails within a second) and a one-command fall-over (Claude-only
+  projects have no other reviewer). test_claude_bridge 290/262, test_agent_usage, red without the fix.
 - **guard_destructive_git.py refuses fewer harmless commands (#327, labricore 2026-11-02).** A `git/` is a folder,
   not the command (`awk '/git/{print $1}' f; git diff` was refused as a variable subcommand); in interpreter code a
   `'GIT'` label or a git that ends a string it did not start is prose; grep, head, tail, wc, uniq, cut and tr run
@@ -49,7 +63,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   git runs as a command (GIT_EDITOR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND, EDITOR, PAGER, ...) has its value judged
   as shell, and any GIT_* other than an author or committer name, email or date keeps the raw floor; a path
   checkout under `--icase-pathspecs` or a `GIT_*_PATHSPECS` variable reads the whole tree; only an all-caps `GIT` is
-  a label (`sudo Git stash drop` runs git on a case-insensitive file system).
+  a label (`sudo Git stash drop` runs git on a case-insensitive file system). Round 2 (Fable 5.1, Accept with
+  manual checks): a global option's separate value (`git -C . --icase-pathspecs`) no longer hides the pathspec
+  option after it; a `-c` value or a `GIT_CONFIG_PARAMETERS` pair git runs as a command (core.editor,
+  diff.external, core.sshCommand) is judged as shell, an older gap on a clean tree.
   test_guard_destructive_git 85 (Windows) / 84, red without the fix. **ACTION** (`.claude/hooks/guard_destructive_git.py`,
   project-owned): `sync-kit.sh . --merge`.
 - **sync-kit.sh and the sync command (#330, labricore's v0.14 sync).** `--merge` merges a kit change that only

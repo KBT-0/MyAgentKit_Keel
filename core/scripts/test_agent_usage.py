@@ -473,6 +473,10 @@ class UsageTests(unittest.TestCase):
                   ({"api_error_status": 429, "result": "You've hit your session limit · resets 3:45pm"},
                    "quota_exhausted"),
                   ({"result": "You've hit your weekly limit"}, "quota_exhausted"),
+                  # #332: Claude Code 2.1.x's wording, field-seen as rate_limited before the fix.
+                  ({"api_error_status": 429, "is_error": True,
+                    "result": "You've hit your 5-hour limit · resets 10am (Europe/Istanbul)"}, "quota_exhausted"),
+                  ({"api_error_status": 429, "result": "You've hit your limit · resets 3pm"}, "quota_exhausted"),
                   ({"result": "billing_error: your credit balance is too low"}, "quota_exhausted"),
                   ({"result": "account_on_hold"}, "quota_exhausted")]
         for fields, expected in claude:

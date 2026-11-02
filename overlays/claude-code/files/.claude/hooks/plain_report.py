@@ -82,6 +82,11 @@ HANDOFF = re.compile(r'hand-?off', re.I)
 RULE_DOCS = {'HANDOFF.md', 'HANDOFF_KIT.md'}  # the kit's own rule docs: editing them hands nothing off
 # shortcut: only the transcript's last 4 MB is read; a longer turn misses its hand-off write (no bounce), widen if seen.
 TAIL = 4 * 1024 * 1024
+# Harness notes (isMeta user records) that wake an idle session start a turn of their own; the rest
+# (Stop hook feedback, an image, a skill body, the usage-limit grace note) arrive inside one.
+# Prefixes as Claude Code 2.1.x writes them, counted in 60 of this machine's transcripts (review r328).
+WAKES = ('Another Claude session sent a message', 'Your claude.ai usage limit has reset',
+         '[Cross-session idle notice]', '[Earlier usage-limit notes no longer apply')
 
 
 def split_fences(text: str) -> tuple[str, str]:
@@ -108,8 +113,8 @@ def without_code(text: str) -> str:
 
 
 def wrote_handoff(transcript) -> bool:
-    """A Write or Edit of a file named *handoff*, or in a folder so named (docs/handoffs/), since the
-    owner's last prompt, from the transcript's tail."""
+    """A Write or Edit of a file named *handoff*, or of a Markdown file in a folder so named
+    (docs/handoffs/), since the owner's last prompt or a wake-up, from the transcript's tail."""
     try:
         with open(transcript, 'rb') as file:
             file.seek(max(0, os.fstat(file.fileno()).st_size - TAIL))
@@ -123,8 +128,11 @@ def wrote_handoff(transcript) -> bool:
         except (ValueError, KeyError, TypeError):
             continue
         blocks = content if isinstance(content, list) else []
+        if record.get('isMeta') and record.get('type') == 'user' and (content if isinstance(content, str) else ''.join(
+                b.get('text', '') for b in blocks if isinstance(b, dict))).lstrip().startswith(WAKES):
+            return False  # a wake-up: the turn starts here, as at the owner's prompt
         if record.get('isCompactSummary') or record.get('isMeta'):
-            continue  # a compaction's summary or a harness note, not the owner's prompt
+            continue  # a compaction's summary or a harness note inside the turn, not the owner's prompt
         if record.get('type') == 'user' and not any(isinstance(b, dict) and b.get('type') == 'tool_result'
                                                      for b in blocks):
             return False  # the owner's prompt: the turn starts here
@@ -132,7 +140,7 @@ def wrote_handoff(transcript) -> bool:
             if isinstance(block, dict) and block.get('type') == 'tool_use' \
                     and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
                     and (path := Path(str((block.get('input') or {}).get('file_path', '')))).name not in RULE_DOCS \
-                    and (HANDOFF.search(path.name) or HANDOFF.search(path.parent.name)):
+                    and (HANDOFF.search(path.name) or HANDOFF.search(path.parent.name) and path.suffix.lower() == '.md'):
                 return True
     return False
 

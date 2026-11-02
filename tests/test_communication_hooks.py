@@ -337,7 +337,12 @@ class PlainReportTests(unittest.TestCase):
         compacted = transcript(prompt, write('/p/.myagentkit/v014/handoff-36.md'), result,
                                {'type': 'system', 'subtype': 'compact_boundary'}, summary,
                                write('/p/docs/STATE.md', 'Edit'), result)
-        for path in (wrote, in_folder, compacted):
+        # A harness note inside the turn (Stop hook feedback, the usage-limit grace note) is not its start.
+        def note(text):
+            return {'type': 'user', 'isMeta': True, 'message': {'content': text}}
+        noted = transcript(prompt, write('/p/docs/handoffs/2026-11-02-sync.md'), result,
+                           note('[Usage limit reached; a short grace allowance remains]'), write('/p/a.py', 'Edit'), result)
+        for path in (wrote, in_folder, compacted, noted):
             for message in ('Handoff hazır.', 'Hazır:\n```\nls\n```', 'Done.'):
                 with self.subTest(message=message, path=path):
                     bounced = stop(message, path)
@@ -353,6 +358,14 @@ class PlainReportTests(unittest.TestCase):
                   # The kit's rule docs are named HANDOFF too; editing them hands nothing off.
                   (transcript(prompt, write('/p/docs/HANDOFF.md', 'Edit'), result,
                               write('/p/core/docs/HANDOFF_KIT.md', 'Edit'), result), 'HANDOFF.md fixed.'),
+                  # Review r328: a wake-up starts a turn, so the hand-off written before it is the last turn's.
+                  *((transcript(prompt, write('/p/docs/handoffs/2026-11-02-sync.md'), result, note(wake),
+                                write('/p/a.py', 'Edit'), result), 'Tests pass; resuming the next step.')
+                    for wake in ('Another Claude session sent a message: limit reset, continue',
+                                 'Your claude.ai usage limit has reset. Continue the task.',
+                                 [{'type': 'text', 'text': '[Cross-session idle notice] "w1" is idle'}])),
+                  # A code folder named for hand-offs holds code, not a hand-off.
+                  (transcript(prompt, write('/p/src/handoff/router.py', 'Edit'), result), 'Done: the router retries once.'),
                   (str(self.project / 'missing.jsonl'), 'Handoff hazır.'), (None, 'Handoff hazır.'))
         for path, message in passes:
             with self.subTest(passes=message, path=path):

@@ -213,8 +213,10 @@ def decode(provider: str, stdout: str) -> list[dict]:
 # Claude Code's documented session, weekly and model-family plan limits are exhausted
 # quotas (https://code.claude.com/docs/en/costs, "When a developer asks about a limit";
 # checked 2026-10-17).
-EXHAUSTED = ("quota", "usage limit", "session limit", "weekly limit", "opus limit", "sonnet limit",
-             "spend", "billing", "credit", "on_hold", "on hold")
+# Claude Code 2.1.x says "You've hit your 5-hour limit" / "You've hit your limit · resets 3pm" (#332:
+# labricore's three "rate_limited" Fable reviews were this, and a capacity retry cannot outwait it).
+EXHAUSTED = ("quota", "usage limit", "session limit", "weekly limit", "hour limit", "hit your limit",
+             "opus limit", "sonnet limit", "spend", "billing", "credit", "on_hold", "on hold")
 RATE_LIMITED = ("rate limit", "rate_limit", "429", "529", "overloaded", "at capacity", "too many requests")
 
 

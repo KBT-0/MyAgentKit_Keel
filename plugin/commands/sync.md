@@ -35,7 +35,7 @@ to its release tag and runs that kit's `sync-kit.sh` on this folder.
    prompt, not every tool this command uses): it downloads and runs code, and the permission
    prompt is the second gate.
    When the installer is refused (Claude Code's auto mode refuses code piped from the network)
-   and `git -C ~/.myagentkit/kit describe --tags --dirty` names this plugin's release, run the cache's own
+   and `git -C ~/.myagentkit/kit describe --tags --dirty` prints exactly this plugin's release tag (no -dirty or -N-g<hash> suffix), run the cache's own
    `sh ~/.myagentkit/kit/sync-kit.sh "$PWD" OPTIONS` instead (#330); an older cache is no fallback.
    Otherwise, on a refusal, give the owner the installer command to run.
 4. No `install: kit` line in the installer's output means the download failed (curl printed why; the

@@ -53,9 +53,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 288, 'test_agent_usage': 40, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 290, 'test_agent_usage': 40, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 261, 'test_agent_usage': 36, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 262, 'test_agent_usage': 36, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -1956,6 +1956,38 @@ class BridgeTests(unittest.TestCase):
         diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
         self.assertIn('CODE_ONLY_CHANGE', diff)
         self.assertNotIn('second review', diff)
+
+    def test_a_workers_result_file_neither_blocks_nor_joins_a_review(self):
+        # #332: a worker's untracked RESULT-NAME.md refused --base/--commit ("clean checkout").
+        self.commit_fixture('Clean')
+        (self.repo / 'RESULT-w1.md').write_text('worker report\n')
+        bridge.snapshot(self.repo, 'commit', 'HEAD')
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
+        self.assertIn('CODE_ONLY_CHANGE', diff)
+        self.assertNotIn('worker report', diff)
+        # Only the root file is a worker's report; one deeper is code.
+        (self.repo / 'sub').mkdir()
+        (self.repo / 'sub/RESULT-w1.md').write_text('nested\n')
+        self.assertIn('nested', bridge.snapshot(self.repo, 'uncommitted', None)[2])
+
+    @posix_only  # native Windows needs symlink rights a runner may lack; the link is skipped there
+    def test_the_copy_links_the_checkouts_node_modules_else_the_main_checkouts(self):
+        # #332: the reviewer could not run tests, tsc or lint: the copy had no installed packages.
+        import claude_bridge
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        claude_bridge.throwaway_copy(self.repo, head, '', copy)
+        self.assertFalse(os.path.lexists(copy / 'node_modules'))
+        (self.repo / 'node_modules/pkg').mkdir(parents=True)
+        (self.repo / 'node_modules/pkg/index.js').write_text('main\n')
+        self.git('worktree', 'add', '-q', '--detach', str(self.root / 'wt'), 'HEAD')
+        for tree in (self.repo, self.root / 'wt'):
+            with self.subTest(tree=tree.name):
+                copy = Path(tempfile.mkdtemp(dir=self.root))
+                claude_bridge.throwaway_copy(tree, head, None, copy)
+                self.assertTrue((copy / 'node_modules').is_symlink())
+                self.assertEqual((copy / 'node_modules/pkg/index.js').read_text(), 'main\n')
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
         from contextlib import redirect_stdout

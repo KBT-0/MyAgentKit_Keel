@@ -1022,7 +1022,11 @@ class V0141FieldReportTests(GuardCase):
         # a 'Git' argv runs on a case-insensitive file system. The quoted-delimiter mention still passes.
         always = ["cat <<E\n$(git stash drop)\nE", "GIT_EDITOR='git stash drop #' git commit --allow-empty",
                   "export GIT_EDITOR='git stash clear #'; git commit", "sudo Git stash drop",
-                  "python3 -c \"subprocess.run(['Git', 'stash', 'drop'])\""]
+                  "python3 -c \"subprocess.run(['Git', 'stash', 'drop'])\"",
+                  # Round 2 (Low, and its pre-existing neighbours): a config value git runs as a command.
+                  "GIT_CONFIG_PARAMETERS=\"'diff.external=git stash drop #'\" git diff",
+                  "git -c core.editor='git stash drop #' commit", "git -c diff.external='git stash drop #' diff",
+                  "git -c core.sshCommand='git stash drop #' fetch", "git -c alias.x='!git stash drop' x"]
         self.assertVerdict(always, 2)
         self.dirty()
         self.assertVerdict([
@@ -1031,9 +1035,13 @@ class V0141FieldReportTests(GuardCase):
             "cat <<-E\n\t$(git stash clear)\n\tE", "GIT_EDITOR='git reset --hard #' git commit",
             "export GIT_EDITOR='git reset --hard #'; git commit", "GIT_EXTERNAL_DIFF='git stash clear #' git diff",
             "git --icase-pathspecs checkout HEAD -- F.TXT", "GIT_ICASE_PATHSPECS=1 git checkout HEAD -- F.TXT",
+            # Round 2 (Medium): a global option's separate value hid the pathspec option after it.
+            "git -C . --icase-pathspecs checkout HEAD -- F.TXT", "git -c k.v=1 --icase-pathspecs checkout HEAD -- F.TXT",
+            "git --work-tree . --glob-pathspecs checkout HEAD -- F.TXT",
         ], 2)
         self.assertVerdict(["cat <<'E' > n.md\nnote: $(git reset --hard) is bad\nE",
-                            "GIT_AUTHOR_NAME=me git commit -m 'never git reset --hard'"], 0)
+                            "GIT_AUTHOR_NAME=me git commit -m 'never git reset --hard'",
+                            "git -c user.name=git commit -m x"], 0)
 
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
