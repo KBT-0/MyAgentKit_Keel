@@ -26,7 +26,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   is MERGED" stay out). Review r338: `token_audit.py` counts a typed slash command as a call; the STATE note counts
   only this project's file and no piped `cat`. test_gate_checks 18,
   test_communication_hooks 44, test_token_audit 5, all red without the change. **ACTION** (project-owned
-  `.claude/hooks/progress_reminder.py`, `docs/AGENTS.md`): `sync-kit.sh . --merge`; to change the line count, set
+  `.claude/hooks/progress_reminder.py`, `docs/AGENTS.md`, the overlay's `README.md`): `sync-kit.sh . --merge`; to change the line count, set
   `STATE_MAX_LINES` in `scripts/gate_config.sh`; then name each plugin this project does not need `false` under
   `enabledPlugins` in `.claude/settings.json` (`token_audit.py` names the ones never called).
 - **Rule conflicts settled; a settled step is done, not offered (#336, #337, labricore 2026-11-02).** Autopilot's
@@ -118,6 +118,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   at the plugin's release, unedited (`describe --tags --dirty`). The v0.14 ACTION that keeps a root `AGENTS.md` says to drop what `docs/AGENTS.md`
   then repeats (24,789 bytes against the gate's 24 KiB). test_sync_kit 70 (69 without a case-folding file
   system), red without the fix.
+- **The compaction note names the lead's own worktree (labricore 2026-11-02).** `before_compact.py` reads its git
+  facts (branch, HEAD, uncommitted files, last commits) from the hook input's `cwd`, so a lead in a linked worktree
+  gets its own tree's facts; the note stays at `$CLAUDE_PROJECT_DIR`, where the SessionStart hook reads it.
+  test_context_hook, red without the fix. **ACTION** (project-owned `.claude/hooks/before_compact.py`):
+  `sync-kit.sh . --merge`.
 - **Small hook and doc defects from labricore's v0.14 sync review (#340).** `progress_reminder.py` keeps an
   older kit's state with two or three nudges as spent (it threw the state away and nudged the same silent stretch
   once more; test_communication_hooks 43, red without the fix). `docs/COMMUNICATION.md` says a missing

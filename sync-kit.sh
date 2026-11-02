@@ -177,7 +177,7 @@ owned_rel() {
 # which scripts/gate_config.sh holds now: an alternation for awk, empty for any other file.
 value_names() {
   case "$1" in
-    scripts/check.sh) echo 'toolchain_path|build_test_cmd|docs_only_skip_build|docs_always_build|build_cache_inputs|cache_days|module_roots|STRONG_REVIEW_DAYS|STRONG_REVIEW_TASKS' ;;
+    scripts/check.sh) echo 'toolchain_path|build_test_cmd|docs_only_skip_build|docs_always_build|build_cache_inputs|cache_days|module_roots|STRONG_REVIEW_DAYS|STRONG_REVIEW_TASKS|STATE_MAX_LINES' ;;
     scripts/review.sh) echo 'DEFAULT_REVIEWER|CODEX_MODEL|CLAUDE_MODEL' ;;
   esac
 }
