@@ -84,11 +84,6 @@ LONG_JOB = re.compile(
 # A merge after an article, a demonstrative or a possessive is a noun ("the merge", "the author's merge");
 # "Let's merge", "it's merging" are verbs.
 NOUN = re.compile(r"(?:\b(?:the|a|an|this|that|its|each|every|any|one)|\b(?!(?:let|it|that|what|there|here|who|he|she)'s )\w+'s) $", re.I)
-# A compound noun names a merge, it runs none: "two merge blockers", "Review merge conflict resolution"
-# (leeway 2026-11-02). Not at a clause start or after a word that leads a command: "Merge commits from
-# w1 into master" (a capital M starts a line or a sentence), "then merge requests in" are jobs (review r-leewayfield).
-COMPOUND = re.compile(r" (?:conflicts?|commits?|blockers?|records?|base|requests?|results?|resolutions?|bench\w*|plans?)\b", re.I)
-LEADS = re.compile(r"(?:^|[.;:!?] |\b(?:then|and|or|please|to|now|first|next|also|just|must|should|will|can|would|could|you) )$", re.I)
 # A prohibition waits on nothing: "Do not run the gate.", "Never run check.sh", "Don't wait for CI".
 NOT = re.compile(r"\b(?:not|never|don't|do not|no need to) (?:to )?$", re.I)
 # Backticks, double quotes and quoting apostrophes dropped (not the one in "don't"), every blank
@@ -96,8 +91,7 @@ NOT = re.compile(r"\b(?:not|never|don't|do not|no need to) (?:to )?$", re.I)
 scan = re.sub(r"\s+", " ", re.sub(r"[`\"]|'(?!\w)|(?<!\w)'", "", text))
 jobs = sorted({m.group(0).lower() for m in LONG_JOB.finditer(scan)
                if not NOT.search(scan, 0, m.start())
-               and not (re.match(r"(?:re-)?merg", m.group(0), re.I) and (NOUN.search(scan, 0, m.start()) or (
-                   COMPOUND.match(scan, m.end()) and not m.group(0)[0].isupper() and not LEADS.search(scan, 0, m.start()))))})
+               and not (re.match(r"(?:re-)?merg", m.group(0), re.I) and NOUN.search(scan, 0, m.start()))})
 if jobs and not re.search(r"^\s*No long wait:", text, re.M | re.I):
     print(
         "BLOCKED: this sub-agent names a long job (%s). A sub-agent runs on the five-minute cache, "

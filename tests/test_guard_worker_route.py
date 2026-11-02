@@ -47,6 +47,10 @@ class LongWaitRouteTests(unittest.TestCase):
             ('Agent', {'description': 'x', 'prompt': 'Merge commits from w1 and w2 into master.'}),
             ('Agent', {'description': 'x', 'prompt': 'Fix it, then merge requests from the workers in.'}),
             ('Agent', {'description': 'x', 'prompt': 'Done. Merge results of w1 and w2 into one branch.'}),
+            # Review r-leewayfield round 2: a list item or a comma list gives a merge job too; a compound
+            # noun is not told apart from it, so "No long wait:" stays the way past a false match.
+            ('Agent', {'description': 'x', 'prompt': 'Steps:\n- rebase w2 on master\n- merge commits from w1 into master'}),
+            ('Agent', {'description': 'x', 'prompt': 'Rebase w2, merge commits from w1 into master, report.'}),
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'), tool)
@@ -83,9 +87,6 @@ class LongWaitRouteTests(unittest.TestCase):
             {'description': 'Review', 'prompt': 'Review the re-merge.'},
             {'description': 'Docs', 'prompt': 'Watch the CI-CD section.'},
             {'description': 'Lint', 'prompt': 'Running the ci-lint.sh linter locally.'},
-            # leeway 2026-11-02: compound nouns name a merge, they wait on none.
-            {'description': 'Review merge conflict resolution', 'prompt': 'This round fixes the two merge blockers.'},
-            {'description': 'Review', 'prompt': 'Read the merge record and the merge commit.'},
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'))

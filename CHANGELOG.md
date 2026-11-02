@@ -22,10 +22,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `watch_workers.sh` reports a background session's block only once it has held 60 s while polling (`--once` at
   once): one transient denial ended the watch on a worker that went on; a background IDLE line adds the worker's last
   background command (a park on its own job shows what it waits on), and a HANDOFF report names the worker's host
-  and `list_workers.sh` to see whether its session still runs. `guard_worker_route.py` reads "merge
-  conflict", "merge commit", "merge blockers" and the like as nouns, not a merge job (but not at a clause
-  start or after then/and/please: "Merge commits from w1 into master" is one), and its missing model/effort
-  message is three lines. `suggestions.py` keeps a worker worktree's ledger and switch in the main checkout, so a
+  and `list_workers.sh` to see whether its session still runs. `guard_worker_route.py`'s missing model/effort message is three lines;
+  a merge named in a brief's context still blocks (a compound noun cannot be told from a merge job in a list,
+  review r-leewayfield round 2): add a line `No long wait: REASON` to such a prompt. `suggestions.py` keeps a worker worktree's ledger and switch in the main checkout, so a
   close no longer keeps the worktree for `.myagentkit/suggestions.jsonl`. WORKFLOW: a follow-up to a finished worker
   goes by `--resume` (its session ends 60 s after the publish, and a later SendMessage is lost); a close removes the
   disposable folders with no copy (move a cache out first; `--dry-run` prints the bytes; list regenerable output
