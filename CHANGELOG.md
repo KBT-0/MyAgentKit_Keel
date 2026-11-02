@@ -55,11 +55,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **The token audit's hot reads count whole reads only (#325).** `token_audit.py` flagged leeway's lead for reading
   `docs/STATE.md` 8 times; all were 8-25 line Reads before an Edit, the cheap form the Edit rule needs. A ranged Read
   no longer counts; a whole Read or a `cat` does.
-- **A resume into a worktree someone else used is refused (#324).** `spawn_worker.sh --resume` refuses when files in
-  the linked worktree that holds the worker's result (git-ignored ones aside) changed after that result: another
-  session worked there (leeway: a lead `cd`'d into it from the main checkout, which no session list shows, and the
-  resumed worker met its commit). It names up to five files; `KIT_WORKER_SHARED=1` resumes anyway once that session
-  has stopped. The main checkout is never checked: the lead works there by design.
+- **A resume into a worktree someone else used says so (#324).** `spawn_worker.sh --resume` prints a NOTE naming up
+  to five files (git-ignored ones aside) in the linked worktree holding the worker's result that changed after that
+  result: another session may work there (leeway: a lead `cd`'d into it from the main checkout, which no session list
+  shows, and the resumed worker met its commit). A note, not a refusal: the worker's own work after a progress result
+  looks the same. The main checkout is never checked: the lead works there by design.
 - **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
   `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
   `check.sh` still measures each).

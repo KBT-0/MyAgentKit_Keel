@@ -2547,9 +2547,9 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertTrue(argv[0].startswith('Read '), argv)
         self.assertTrue(self.ended().startswith('DONE published'))
 
-    def test_a_resume_into_a_worktree_another_session_changed_after_the_result_is_refused(self):
+    def test_a_resume_into_a_worktree_changed_after_the_result_says_so(self):
         # #324 (leeway): a lead cd'd into the worker's worktree from the main checkout; no session
-        # list shows that, and the resume put two writers in one tree. The files say it.
+        # list shows that. A NOTE, never a refusal: the worker's own later work looks the same.
         self.workers.mkdir(parents=True)
         (self.workers / 'w1.id').write_text('1a2b3c4d\n')
         (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
@@ -2557,24 +2557,27 @@ class BackgroundHostTests(unittest.TestCase):
         tree = self.cwd / '.claude/worktrees/agent-x'
         subprocess.run(['git', '-C', str(self.cwd), 'worktree', 'add', '-q', str(tree), '-b', 'agent-x'],
                        check=True, capture_output=True)
-        out = tree / 'RESULT-w1.md'
+        for f in tree.rglob('*'):  # the checkout predates the worker's result
+            if f.is_file() and f.name != '.git':
+                os.utime(f, (time.time() - 900, time.time() - 900))
+        out = tree / 'out/RESULT-w1.md'
+        out.parent.mkdir()
         out.write_text(DONE)
         os.utime(out, (time.time() - 600, time.time() - 600))
         (tree / 'lead-edit.txt').write_text('the other session\n')
-        result = self.spawn('--resume', '1a2b3c4d', '--result', str(out))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('another session worked there: lead-edit.txt', result.stderr)
-        result = self.spawn('--resume', '1a2b3c4d', '--result', str(out), KIT_WORKER_SHARED='1',
-                            SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(out))
+        result = self.spawn('--resume', '1a2b3c4d', '--result', str(out), SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(out))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NOTE: files in the worker's worktree changed after its result %s: lead-edit.txt. If" % out,
+                      result.stdout)
         self.ended()
-        # In the main checkout the lead works by design: no refusal there.
+        # In the main checkout the lead works by design: no note there.
         main = self.cwd / 'RESULT-w1.md'
         main.write_text(DONE)
         os.utime(main, (time.time() - 600, time.time() - 600))
         (self.cwd / 'lead-edit.txt').write_text('the lead\n')
         result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(main))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('NOTE: files', result.stdout)
         self.ended()
 
     def test_an_untrusted_folder_stops_the_spawn_with_the_plain_fix_and_leaves_no_worktree(self):
