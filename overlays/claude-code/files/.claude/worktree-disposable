@@ -8,6 +8,7 @@
 # One entry per line, `#` starts a comment line:
 #   a NAME (build, node_modules, dist, target, .venv) matches a folder of that name anywhere,
 #     except below a place that holds work (docs/build is not disposable);
+#     __pycache__ alone also takes the .pyc files directly in it below such a place (#322);
 #   a root-relative PATH (app/build) matches that folder only, compared folder by folder;
 #   /NAME (/build) matches the folder of that name at the root only, never a deeper one
 #     (src/build). List no folder where workers keep scratch or proof files: what is in a

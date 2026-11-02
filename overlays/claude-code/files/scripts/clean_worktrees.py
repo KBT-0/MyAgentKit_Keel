@@ -346,6 +346,11 @@ def disposable(rel, entries):
             if folders[:len(parts)] == parts:
                 return True
             continue
+        # #322: a listed __pycache__ also takes the bytecode a run leaves below a place that holds
+        # work (.claude/hooks, scripts): only a .pyc file directly in it, which Python makes again.
+        if (entry == b'__pycache__' and folders[-1:] == [entry] and rel.endswith(b'.pyc')
+                and fold(folders[0]) != fold(b'.git')):
+            return True
         for folder in folders:
             if fold(folder) in refused:
                 break

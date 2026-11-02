@@ -1,5 +1,5 @@
 # The kit's own list (the shipped one, empty: overlays/claude-code/files/.claude/worktree-disposable,
 # which explains the format). Python's bytecode caches: a test run leaves them in every worker's
-# worktree, and close_worker.sh kept docsowned's for 59 of them and nothing else. Not below scripts/
-# (core/scripts/ included): the audit never takes a folder there, so delete those by hand.
+# worktree, and close_worker.sh kept docsowned's for 59 of them and nothing else. Below scripts/ and
+# .claude/ only the .pyc files directly in it go (#322).
 __pycache__

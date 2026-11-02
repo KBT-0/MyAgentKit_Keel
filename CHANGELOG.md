@@ -45,6 +45,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the main checkout's own uncommitted files, and its review recorded in the main checkout's git folder. Test: a
   worktree session with a dirty main checkout (red before). **ACTION** (`.claude/hooks/guard_risky_review.py`,
   `.claude/hooks/record_review.py`, project-owned): copy both from the kit.
+- **A worktree's Python bytecode no longer keeps it (#322).** With `__pycache__` in
+  `.claude/worktree-disposable`, `clean_worktrees.py` (and so `close_worker.sh`) also takes the `.pyc` files directly
+  in a `__pycache__` below a place that holds work (`.claude/hooks`, `scripts`); every other file there still keeps the
+  worktree. **ACTION** (`.claude/worktree-disposable`, project-owned): list `__pycache__` if it is not there.
 - **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
   `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
   `check.sh` still measures each).

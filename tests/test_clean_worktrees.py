@@ -2275,6 +2275,24 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertKept(path, self.run_script('--apply'), '.claude/build/f, .myagentkit/build/f, docs/build/f, '
                         'scripts/x/build/f; ')
 
+    def test_a_listed_pycache_takes_bytecode_below_a_place_that_holds_work(self):
+        # #322: leeway's close kept a worktree for .claude/hooks/__pycache__/*.pyc alone
+        self.disposable('__pycache__\n')
+        with open(self.main / '.git/info/exclude', 'a') as handle:
+            handle.write('__pycache__/\n')
+        path = self.worktree('done')
+        for rel in ('.claude/hooks/__pycache__/guard.cpython-314.pyc', 'scripts/__pycache__/x.cpython-314.pyc'):
+            (path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (path / rel).write_bytes(b'\x00')
+        self.assertRemoved(path, self.run_script('--apply'))
+        for rel, entries, expected in ((b'.claude/hooks/__pycache__/g.pyc', [b'__pycache__'], True),
+                                       (b'.claude/hooks/__pycache__/notes.md', [b'__pycache__'], False),
+                                       (b'.claude/__pycache__/x/g.pyc', [b'__pycache__'], False),
+                                       (b'.git/__pycache__/g.pyc', [b'__pycache__'], False),
+                                       (b'.claude/hooks/__pycache__/g.pyc', [b'build'], False)):
+            with self.subTest(rel=rel, entries=entries):
+                self.assertIs(clean_worktrees.disposable(rel, entries), expected)
+
     def test_disposable_matching_folder_by_folder(self):
         for rel, entries, expected in (
                 (b'app/build/x', [b'app/build'], True), (b'app/build2/x', [b'app/build'], False),
