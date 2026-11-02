@@ -85,6 +85,10 @@ class TokenAuditTests(unittest.TestCase):
     def test_flags_a_low_hit_rate_a_hot_read_and_an_always_loaded_edit(self):
         reads = [assistant(f'r{i}', usage(100, 5000, 10), [(f't{i}', 'Read', {'file_path': '/p/docs/STATE.md'})])
                  for i in range(3)]
+        # #325: ranged reads before an Edit (leeway's STATE.md x8) are no hot read
+        reads += [assistant(f'g{i}', usage(100, 5000, 10),
+                            [(f't{i}', 'Read', {'file_path': '/p/docs/PLAN.md', 'offset': 9, 'limit': 8})])
+                  for i in range(3, 6)]
         s = self.audit([rec for i, a in enumerate(reads) for rec in (a, result(f't{i}', 'x', f'u{i}'))] + [
             assistant('r8', usage(100, 5000, 10), [('t8', 'Edit', {'file_path': '/p/AGENTS.md'}),
                                                    ('t9', 'Write', {'file_path': '/p/src/AGENTS.py'})]),

@@ -124,6 +124,7 @@ def audit(path: Path, seen: set) -> dict:
     tools = collections.defaultdict(lambda: [0, 0])
     reads = collections.Counter()
     read_paths = collections.Counter()
+    hot = collections.Counter()  # whole reads only: a ranged Read before an Edit is the cheap rule (#325)
     calls = collections.Counter()
     out = {'file': str(path), 'kind': kind_of(path), 'system_chars': 0, 'tools_chars': 0,
            'narration_chars': 0, 'text_blocks': 0, 'agent_calls': 0, 'agent_result_chars': 0,
@@ -220,6 +221,7 @@ def audit(path: Path, seen: set) -> dict:
                         reads['whole'] += whole
                         reads['whole_chars'] += size if whole else 0
                         reads['whole_big'] += whole and size > 12000
+                        hot[target] += whole
                         read_paths[target] += 1
                         if read_paths[target] > 1:
                             reads['reread'] += 1
@@ -230,6 +232,7 @@ def audit(path: Path, seen: set) -> dict:
                             target = m.group(1)
                             reads['bash_cat'] += 1
                             reads['bash_cat_chars'] += size
+                            hot[target] += 1
                             read_paths[target] += 1
                             if read_paths[target] > 1:
                                 reads['reread'] += 1
@@ -304,7 +307,7 @@ def audit(path: Path, seen: set) -> dict:
                 'inp': sum(r['inp'] for r in rows), 'out': sum(r['out'] for r in rows),
                 'cr': sum(r['cr'] for r in rows), 'cw': sum(r['cw'] for r in rows),
                 'hit_rate': sum(r['cr'] for r in rows) / max(1, sum(r['cr'] + r['cw'] + r['inp'] for r in rows)),
-                'hot_reads': {p: n for p, n in read_paths.items() if n >= 3},
+                'hot_reads': {p: n for p, n in hot.items() if n >= 3},
                 'ctx0': ctx[0] if ctx else 0, 'ctx_max': max(ctx, default=0), 'compactions': len(compactions),
                 'start': rows[0]['t'] if rows else None,
                 'tools': {k: v for k, v in tools.items()}, 'reads': dict(reads),

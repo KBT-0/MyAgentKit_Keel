@@ -52,6 +52,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **A 5-hour limit is LIMIT, not a wait (#323).** `waiting_patterns.txt`'s `limit` rule took only letters before
   "limit"; Claude Code's "You've hit your 5-hour limit" fell through, and `watch_workers.sh` reported the stopped
   worker as WAITING with no reason given. The kind may now hold digits and a hyphen.
+- **The token audit's hot reads count whole reads only (#325).** `token_audit.py` flagged leeway's lead for reading
+  `docs/STATE.md` 8 times; all were 8-25 line Reads before an Edit, the cheap form the Edit rule needs. A ranged Read
+  no longer counts; a whole Read or a `cat` does.
 - **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
   `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
   `check.sh` still measures each).
