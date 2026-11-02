@@ -60,6 +60,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   result: another session may work there (leeway: a lead `cd`'d into it from the main checkout, which no session list
   shows, and the resumed worker met its commit). A note, not a refusal: the worker's own work after a progress result
   looks the same. The main checkout is never checked: the lead works there by design.
+- **A result a merge brought in no longer ends the worker (#326).** leeway's worker merged an old branch whose
+  completed result sat at its `--result` path; `codex_worker.py` ended it mid-merge and `watch_workers.sh` said DONE.
+  A result whose exact bytes a commit made before the run's start holds (any branch) is an earlier run's and is not
+  counted. A rebase or cherry-pick of an old result (a new commit time) still counts.
 - **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
   `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
   `check.sh` still measures each).

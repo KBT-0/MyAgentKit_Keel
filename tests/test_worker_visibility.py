@@ -1004,6 +1004,35 @@ class ResultTests(Base):
         self.commit(data + b'more\n')
         self.assertEqual(self.watch().stdout, done, 'the committed BOM result')
 
+    def test_a_result_a_merge_brought_in_is_not_done(self):
+        # #326 (leeway): a merge of an old branch brought its completed result in at the worker's
+        # result path; watch_workers said DONE. A commit made before the run's start holds it.
+        (self.cwd / '.git' / 'info' / 'exclude').write_text('.myagentkit/\n')
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        start = workers / 'w1.result-path'
+        start.write_text('RESULT-w1.md\n')
+        then = time.time() - 60
+        os.utime(start, (then, then))
+        report = self.cwd / 'RESULT-w1.md'
+        ready = HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n'
+        watch = lambda: self.run_script(WATCH, '--once', '--result', 'w1=RESULT-w1.md', 'w1', VIS_SESSIONS='w1',
+                                        VIS_PANE=str(PANES / 'working-auto.txt')).stdout
+        self.git('checkout', '-q', '-b', 'old')
+        report.write_text(ready)
+        self.git('add', 'RESULT-w1.md')
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'old run'],
+                       cwd=self.cwd, check=True, capture_output=True,
+                       env=dict(os.environ, GIT_COMMITTER_DATE='2020-01-01T00:00:00Z'))
+        self.git('checkout', '-q', '-')
+        self.git('merge', '-q', '--no-commit', '--no-ff', 'old')
+        self.assertEqual(watch(), '', 'a result a merge in progress brought in was read')
+        self.git('commit', '-q', '-m', 'merge')
+        self.assertEqual(watch(), '', 'a result a finished merge brought in was read')
+        self.file = report
+        self.commit(ready.replace('T-7', 'T-8'))
+        self.assertIn('DONE: w1, task T-8', watch())
+
     def test_a_crlf_result_committed_later_is_not_reported_again(self):
         # Under core.autocrlf=true the committed blob is LF: the once-marker of the uncommitted
         # CRLF file must be the blob git stores, or the commit reports the same result twice.

@@ -360,6 +360,34 @@ class CodexWorkerTests(unittest.TestCase):
                     waiter.kill()
                     waiter.communicate()
 
+    def test_a_result_a_merge_brought_in_is_an_earlier_runs(self):
+        # #326 (leeway): a worker merged an old branch whose completed result sat at its --result
+        # path; the fresh file (new mtime, ready marker) ended the worker mid-merge.
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            git = lambda *a, **env: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a],
+                                                    cwd=tmp, check=True, capture_output=True,
+                                                    env=dict(os.environ, **env))
+            result = Path(tmp) / 'RESULT-w1.md'
+            old = 'Kind: completed\nTask: old\nAttempt: 1\nRemaining: none\n' + READY + '\n'
+            git('init', '-q')
+            git('commit', '-q', '--allow-empty', '-m', 'a')
+            git('checkout', '-q', '-b', 'old')
+            result.write_text(old)
+            git('add', 'RESULT-w1.md')
+            git('commit', '-q', '-m', 'old run', GIT_COMMITTER_DATE='2020-01-01T00:00:00Z')
+            git('checkout', '-q', '-')
+            git('merge', '-q', '--no-commit', '--no-ff', 'old')
+            since = time.time() - 5
+            self.assertGreater(result.stat().st_mtime, since)
+            self.assertEqual(worker.result_kind(result, since), ('', None), 'a merged-in result counted')
+            git('commit', '-q', '-m', 'merge')
+            result.write_text(old.replace('Task: old', 'Task: new'))
+            self.assertEqual(worker.result_kind(result, since)[0], 'DONE')
+            git('commit', '-q', '-am', 'this run')  # the worker's own commit of its result still counts
+            worker.SEEN.clear()
+            self.assertEqual(worker.result_kind(result, since)[0], 'DONE')
+
     def test_progress_result_leaves_the_worker_running(self):
         with tempfile.TemporaryDirectory() as tmp:
             question, result, working = (Path(tmp) / n for n in ('q.md', 'result.md', 'working'))

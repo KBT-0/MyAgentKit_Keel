@@ -507,6 +507,9 @@ report_result() {
       failed=1; return 1
     fi
   fi
+  # #326: bytes a commit made before the run's start holds are an earlier run's result that a merge
+  # or checkout brought in, never this run's. A lone name has no run start.
+  lone "$1" || ! earlier "$d" "$blob" "$wdir/$1.result-path" || return 1
   k=$(hl 1 "$body"); t=$(hl 2 "$body"); a=$(hl 3 "$body"); r=$(hl 4 "$body")
   case $a in "Attempt: "*) a=${a#Attempt: } ;; *) a=x ;; esac
   bad=""
@@ -683,6 +686,23 @@ spec = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])
 cw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cw)
 sys.exit(0 if cw.gone(Path(sys.argv[2]), 0) else 1)' "$here/codex_worker.py" "$1" </dev/null >/dev/null 2>&1 || pyrc=$?
+    case $pyrc in 0) return 0 ;; 1) return 1 ;; esac  # else not found, or a Store alias: the next
+  done
+  return 1
+}
+
+# earlier DIR BLOB START: a commit made before START's time holds BLOB, by codex_worker.py's
+# own earlier_run() (#326). No Python, or any failure, counts as not earlier: the result counts.
+earlier() {
+  for p in python3 python 'py -3'; do
+    pyrc=0
+    # shellcheck disable=SC2086 # py -3 splits on purpose
+    $p -I -c 'import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("codex_worker", sys.argv[1])
+cw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cw)
+sys.exit(0 if cw.earlier_run(sys.argv[2], sys.argv[3], os.stat(sys.argv[4]).st_mtime) else 1)' \
+      "$here/codex_worker.py" "$1" "$2" "$3" </dev/null >/dev/null 2>&1 || pyrc=$?
     case $pyrc in 0) return 0 ;; 1) return 1 ;; esac  # else not found, or a Store alias: the next
   done
   return 1

@@ -118,7 +118,7 @@ def result_kind(path, since=0, stale=None):
             return seen[1]
         with path.open('rb') as file:
             info = os.fstat(file.fileno())
-            text = decoded(file.read()).strip()
+            raw = file.read()
     except FileNotFoundError:
         REFUSED.pop(path, None)
         return '', None
@@ -126,8 +126,36 @@ def result_kind(path, since=0, stale=None):
         tolerated(path, error)
         return '', None  # opened in the middle of a rename over it; the next poll reads it
     REFUSED.pop(path, None)
-    SEEN[path] = (info.st_ino, info.st_size, info.st_mtime_ns, since, stale), parse(text, info, since, stale)
-    return SEEN[path][1]
+    found = parse(decoded(raw).strip(), info, since, stale)
+    if found[0] and since and earlier_run(path.parent, blob_id(path, raw), since):
+        found = '', None
+    SEEN[path] = (info.st_ino, info.st_size, info.st_mtime_ns, since, stale), found
+    return found
+
+
+def blob_id(path, raw):
+    """RAW's git blob id as stored at PATH (its eol and attribute filters); '' outside a repository."""
+    try:
+        return subprocess.run(['git', '-C', str(path.parent), 'hash-object', '--stdin', '--path=' + path.name],
+                              input=raw, capture_output=True, timeout=60).stdout.decode().strip()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
+def earlier_run(directory, blob, since):
+    """Whether a commit made before SINCE holds BLOB: a result a merge or checkout
+    brought in is an earlier run's, never this run's publication (#326: leeway's worker merged an
+    old branch whose completed result sat at its --result path and was ended mid-merge).
+    Commit time, not author time: an amend keeps the author's. shortcut: commits reachable from a ref
+    only (git log --all), and a rebase or cherry-pick (a new commit time) goes unseen."""
+    if not blob:
+        return False
+    try:
+        out = subprocess.run(['git', '-C', str(directory), 'log', '--all', '--format=%ct', '--find-object=' + blob],
+                             capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(int(t) < since for t in out.split() if t.isdigit())
 
 
 def not_a_result(path, since, stale):
