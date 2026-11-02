@@ -1587,6 +1587,21 @@ class BackgroundTests(Base):
         self.assertEqual(self.watch().stdout, waiting, 'a new wait after work was not reported')
         self.assertEqual(self.log('tmux'), '', 'tmux was asked about a background session')
 
+    def test_an_idle_session_names_its_last_background_command(self):
+        # leeway 2026-11-02: "claude attach" alone did not show the lead what a parked worker waits on.
+        self.spawned('w1')
+        sid = 'aaaa0001-5137-4293-88d5-c4339d1ce56c'
+        (self.workers / 'w1.session').write_text(sid + '\n')
+        folder = self.tmp / 'config/projects/-w1'
+        folder.mkdir(parents=True)
+        call = {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {
+            'command': 'python3 tools/generate.py --map datca2', 'run_in_background': True}}]}}
+        (folder / (sid + '.jsonl')).write_text(json.dumps(call, separators=(',', ':')) + '\n')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=1))
+        said = self.watch().stdout
+        self.assertTrue(said.startswith('watch_workers: IDLE: w1'), said)
+        self.assertIn('  its last background command: python3 tools/generate.py --map datca2\n', said)
+
     def test_a_polling_watch_reports_a_block_only_once_it_has_held_a_minute(self):
         # leeway 2026-11-02: a transient denial read blocked for a moment and ended the watch.
         self.spawned('w1')
@@ -1706,7 +1721,9 @@ class BackgroundTests(Base):
         self.assertIn('GONE: w1, its background session aaaa0001 is failed', self.watch().stdout,
                       'a blocked result hid a session that ended')
         (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('handoff', 'the lead') + READY)
-        self.assertIn('HANDOFF: w1', self.watch().stdout)
+        said = self.watch().stdout
+        self.assertIn('HANDOFF: w1', said)
+        self.assertIn('  its host: bg; whether its session still runs: scripts/list_workers.sh', said)
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
         self.assertEqual(self.watch().stdout, '')
 

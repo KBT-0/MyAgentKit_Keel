@@ -544,6 +544,10 @@ report_result() {
   fi
   case $k in completed) k=DONE ;; blocked) k=BLOCKED ;; handoff) k=HANDOFF ;; *) k=PROGRESS ;; esac
   say "watch_workers: $k: $1, $what (result file $f)" || return 2
+  # leeway 2026-11-02: after a hand-off the lead could not tell a bg session from a tmux one.
+  if [ "$k" = HANDOFF ] && h=$(cat -- "$wdir/$1.host" 2>/dev/null) && [ -n "$h" ]; then
+    say "  its host: $h; whether its session still runs: scripts/list_workers.sh (its STATE column)" || return 2
+  fi
 }
 
 # Native Windows: report NAME's state line when it starts with $2 (waiting or idle) and was not
@@ -679,6 +683,8 @@ EOF
   elif [ "$bstate" = done ] && [ "$bpid" != - ]; then
     # A turn end, as the tab path's IDLE: the session lives on, and the lead re-arms the watch.
     say "watch_workers: IDLE: $1, its background session $bid is done with no new result report and its process still idles: a question in its view, a usage limit or an error, or a park on its own background job (it goes on by itself when the job ends): claude attach $bid" || return 2
+    # leeway 2026-11-02: a park on its own job is told apart by the job it started last.
+    job=$(bg_job "$1") && [ -n "$job" ] && { say "  its last background command: $job" || return 2; }
   else
     say "watch_workers: GONE: $1, its background session $bid is $bstate with no new result report: read its result file" || return 2
   fi
@@ -700,6 +706,18 @@ sys.exit(0 if cw.gone(Path(sys.argv[2]), 0) else 1)' "$here/codex_worker.py" "$1
     case $pyrc in 0) return 0 ;; 1) return 1 ;; esac  # else not found, or a Store alias: the next
   done
   return 1
+}
+
+# bg_job NAME: the command of the last background Bash call in NAME's own transcript (found by
+# NAME.session under the config folder), cut at 200 bytes; nothing when there is none.
+# shortcut: a sed over the transcript's last 2 MB, not a JSON parse; an escaped quote ends the command early.
+bg_job() {
+  sid=$(cat -- "$wdir/$1.session" 2>/dev/null) || return 1
+  case $sid in ""|*[!0-9a-f-]*) return 1 ;; esac
+  t=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -name "$sid.jsonl" 2>/dev/null | sed -n 1p)
+  [ -n "$t" ] || return 1
+  tail -c 2000000 -- "$t" | grep -F '"run_in_background":true' | grep -F '"name":"Bash"' | tail -n 1 |
+    sed -n 's/.*"command":"\([^"]*\)".*/\1/p' | cutb | LC_ALL=C tr '\001-\011\013-\037\177' '?'
 }
 
 # earlier DIR BLOB START: a commit made before START's time holds BLOB, by codex_worker.py's

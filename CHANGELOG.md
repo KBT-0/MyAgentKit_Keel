@@ -19,14 +19,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   uncommitted result to `RESULT.prev` and tells the worker the file it reads is a new task: the watch said DONE at
   once from the old result (the worker's own merge renewed its mtime) and the worker republished it as "already done".
   `watch_workers.sh` reports a background session's block only once it has held 60 s while polling (`--once` at
-  once): one transient denial ended the watch on a worker that went on. `guard_worker_route.py` reads "merge
+  once): one transient denial ended the watch on a worker that went on; a background IDLE line adds the worker's last
+  background command (a park on its own job shows what it waits on), and a HANDOFF report names the worker's host
+  and `list_workers.sh` to see whether its session still runs. `guard_worker_route.py` reads "merge
   conflict", "merge commit", "merge blockers" and the like as nouns, not a merge job, and its missing model/effort
   message is three lines. `suggestions.py` keeps a worker worktree's ledger and switch in the main checkout, so a
   close no longer keeps the worktree for `.myagentkit/suggestions.jsonl`. WORKFLOW: a follow-up to a finished worker
   goes by `--resume` (its session ends 60 s after the publish, and a later SendMessage is lost); a close removes the
   disposable folders with no copy (move a cache out first; `--dry-run` prints the bytes; list regenerable output
   such as `out`); a request to change another project's settings goes to the owner or that project's master-writer
-  lead. GOTCHAS_KIT: never wait on a `pgrep -f` pattern another session's job shares. Already fixed in v0.14.1: the
+  lead; under autopilot a wait on another session runs as one background watch, not turns the goal's Stop hook
+  bounces. GOTCHAS_KIT: never wait on a `pgrep -f` pattern another session's job shares. Already fixed in v0.14.1: the
   context band's "hand-off blocked" by finished jobs (#329, the leeway transcripts replayed clean) and a hook's
   `__pycache__` keeping a worktree (#322). test_spawn_worker, test_worker_visibility, test_guard_worker_route,
   test_suggestions: each new case red without its fix. **ACTION** (project-owned `.claude/hooks/guard_worker_route.py`,

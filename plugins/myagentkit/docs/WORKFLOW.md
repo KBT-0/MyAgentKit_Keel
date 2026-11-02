@@ -1000,7 +1000,10 @@ a commit made while away) follows the away line until a switch records it there.
   refute.
 - **Checkpoints:** each finished item is committed; STATE and the hand-off file are current
   after each; at red (300k) the hand-off file is written and the session goes on (rule 8).
-  Reviews run by tier; only Critical and High block.
+  Reviews run by tier; only Critical and High block. A wait on another session (its merge,
+  its message) with nothing else to do runs as one background watch on that session's signal
+  (a file it writes, its idle notice): a turn that ends instead is bounced by the goal's Stop
+  hook, one turn each time (leeway 2026-11-02).
 - **The report:** `.myagentkit/autopilot/<date of the stamp>.md` (ignored by Git), from
   `docs/AUTOPILOT.md`; `python3 scripts/autopilot_report.py` prints its Done section from git.
 - **Ends:** only by `working_mode.py present` (`/myagentkit:mode present`), or by a message
