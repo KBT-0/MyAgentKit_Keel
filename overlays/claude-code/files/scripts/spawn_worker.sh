@@ -476,6 +476,25 @@ cresult=$result; cquestion=$dir/QUESTION-$name.md
 # spawn without --worktree can meet one: a fresh worktree is a new folder.
 [ -n "$resume" ] || [ ! -e "$cquestion" ] ||
   die "QUESTION-$name.md from an earlier run is unanswered in $dir: answer it with --resume SESSION_ID, or remove it once it is settled"
+# #324: a resume into a linked worktree another session worked in after the worker's last result
+# (leeway: a lead cd'd into it from the main checkout, which no session list shows) is refused,
+# naming what changed. KIT_WORKER_SHARED=1 resumes anyway, once that session has stopped.
+# shortcut: file times only (not git-ignored files); a session that changed nothing goes unseen.
+if [ -n "$resume" ] && [ -f "$result" ] && [ "${KIT_WORKER_SHARED:-}" != 1 ]; then
+  newer=$($kit_python -I -c 'import os, subprocess, sys
+result, brief = (os.path.realpath(p) for p in sys.argv[1:3])
+git = lambda *a: subprocess.run(["git", "-C", os.path.dirname(result), *a], capture_output=True).stdout
+top, here, common = (git("rev-parse", o).decode().strip() for o in ("--show-toplevel", "--absolute-git-dir", "--git-common-dir"))
+if not top or os.path.realpath(os.path.join(os.path.dirname(result), common)) == os.path.realpath(here):
+    sys.exit(0)  # the main checkout: the lead works there by design
+since = os.stat(result).st_mtime
+skip = {result, brief, os.path.join(os.path.dirname(result), "QUESTION-" + sys.argv[3] + ".md")}
+for rel in git("ls-files", "-z", "-c", "-o", "--exclude-standard", "--full-name", ":/").split(b"\0"):
+    path = os.path.realpath(os.path.join(top, os.fsdecode(rel))) if rel else ""
+    if path and path not in skip and os.path.isfile(path) and os.stat(path).st_mtime > since:
+        print(os.fsdecode(rel))' "$result" "$brief" "$name" 2>/dev/null | head -n 5) || newer=""
+  [ -z "$newer" ] || die "files in the worker's worktree changed after its result $result, so another session worked there: $(printf '%s' "$newer" | tr '\n' ' ')- make sure that session has stopped, then resume with KIT_WORKER_SHARED=1"
+fi
 if [ -n "$windows" ]; then
   { cworker=$(cygpath -m "$cworker") && cresult=$(cygpath -m "$result") && cquestion=$(cygpath -m "$cquestion"); } ||
     die "cygpath cannot convert the result's path: $result"
