@@ -999,6 +999,11 @@ class V0141FieldReportTests(GuardCase):
             "cat > n.py <<'EOF'\nos.system('%s')\nEOF\npython3 n.py" % reset,  # it runs what it wrote
             "cat > n.md <<'EOF'\nnever %s another entry\nEOF\npython3 -c x" % drop,
             "cat > n.md <<'EOF'\nnever %s another entry\nEOF\nsh x.sh" % drop,
+            # review r-v0141-fields Medium: the written file spelled another way is still the one run
+            "f=n; cat > $f.py <<'EOF'\nos.system('%s')\nEOF\npython3 n.py" % reset,
+            "cat > N.py <<'EOF'\nos.system('%s')\nEOF\npython3 n.py" % reset,
+            "cat > n\".py\" <<'EOF'\nos.system('%s')\nEOF\npython3 n.py" % reset,
+            "cat > n.py <<'EOF'\nos.system('%s')\nEOF\npython3 ./n.py" % reset,
         ], 2)
 
     def test_a_stash_entry_head_holds_is_dropped(self):
@@ -1011,8 +1016,12 @@ class V0141FieldReportTests(GuardCase):
         git(self.repo, 'stash', 'apply', '-q')
         git(self.repo, 'add', '-A')
         git(self.repo, 'commit', '-q', '-m', 'wip')
-        self.assertVerdict([drop, drop + ' stash@{0}', drop + " 'stash@{0}'"], 0)
+        self.assertVerdict([drop, drop + ' stash@{0}', drop + " 'stash@{0}'", drop + ' 0'], 0)
         self.assertVerdict(['git stash ' + 'clear', drop + ' $x'], 2)
+        (self.repo / 'notes.md').write_text('mine\n', encoding='utf-8')  # review r-v0141-fields Medium: a dirty tree
+        self.assertVerdict([drop, drop + ' 0'], 0)
+        self.assertVerdict(['git stash ' + 'clear', drop + ' stash@{1}'], 2)
+        (self.repo / 'notes.md').unlink()
         (self.repo / 'new.txt').write_text('changed\n', encoding='utf-8')
         git(self.repo, 'commit', '-q', '-am', 'moved on')
         self.assertVerdict([drop], 2)  # HEAD no longer holds the untracked part as stashed

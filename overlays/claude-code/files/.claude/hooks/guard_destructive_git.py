@@ -672,6 +672,8 @@ def stash_in_head(g, ref):
     the same content and mode, in every folder the command may run in: dropping it then loses nothing."""
     if unknowable(ref) or not g.cwds or None in g.cwds:
         return False
+    if ref.isdigit():  # git takes a bare index for stash@{n} (review r-v0141-fields Low)
+        ref = "stash@{%s}" % ref
     try:
         for where in g.cwds:
             code, stash = g.ask("rev-parse", "--verify", "-q", ref + "^{commit}", where=where)
@@ -943,6 +945,12 @@ def judge(command, cwds, changed=False, env=None):
             yield from judge(inner, cwds, changed, env)
 
 
+def once(operand, text):
+    """Whether the line names the operand's file only as the operand: by its base name, any case
+    (a case-folding disk), quotes and backslashes dropped (`x".py"`, `./x.py`; review r-v0141-fields)."""
+    return re.sub(r"['\"\\]", "", text).lower().count(operand.rsplit("/", 1)[-1].lower()) == 1
+
+
 def plain(command):
     """The command with its quoted strings, comments and here-document bodies blanked when every
     command of the line is INERT, a PLAIN_GIT git without -c (#327) or an interpreter given plain file
@@ -966,8 +974,8 @@ def plain(command):
             elif base(words[0]) not in INERT and not (
                     # leeway-43: `cat > n.md <<EOF ... EOF; python3 x.py` read the cat's body raw; an
                     # interpreter given only plain file operands runs no text of this line
-                    interpreter(base(words[0])) and len(words) > 1
-                    and all(re.fullmatch(r"[\w.+/][\w.+/-]*", w) and text.count(w) == 1 for w in words[1:])):
+                    interpreter(base(words[0])) and len(words) > 1 and not re.search(r"[$`{*?[]", text)
+                    and all(re.fullmatch(r"[\w.+/][\w.+/-]*", w) and once(w, text) for w in words[1:])):
                 # ... unless the line also names that file (it may write it: `cat > n.py <<EOF`)
                 return None
         return blank
@@ -1001,6 +1009,11 @@ def main():
     text = plain(command)
     floor = next((why for pattern, why in FLOOR if pattern.search(command if text is None else text)
                   and (text is None or pattern is not FLOOR[1][0])), None)
+    # A lone `git stash drop [REF]` of an entry HEAD holds as stashed loses nothing, dirty tree or not
+    # (review r-v0141-fields Medium: the floor refused it before verdict() could tell).
+    lone = re.fullmatch(r"\s*git(?:\.exe)?\s+stash\s+drop(?:\s+([\w@{}]+))?\s*", command)
+    if lone and stash_in_head(Git([], {}, [os.getcwd()]), lone.group(1) or "stash@{0}"):
+        return None
     if floor:  # the base rule, first and never cleared by the parser below
         dirty = Git([], {}, [os.getcwd()]).dirty()
         if dirty:
