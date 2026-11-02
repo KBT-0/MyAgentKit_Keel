@@ -30,7 +30,9 @@ def git(root, *args):
 
 def newest_handoff(root: Path) -> str:
     patterns = ('docs/handoffs/*.md', '.myagentkit/handoff*.md', '.myagentkit/*/handoff*.md')
-    found = [p for pattern in patterns for p in root.glob(pattern)]
+    # leeway lead 43: a worker's brief or result in docs/handoffs/ is no lead hand-off
+    found = [p for pattern in patterns for p in root.glob(pattern)
+             if not (p.name.endswith('.brief.md') or p.name.startswith(('RESULT', 'QUESTION')))]
     return str(max(found, key=lambda p: p.stat().st_mtime).relative_to(root)) if found else 'none found'
 
 

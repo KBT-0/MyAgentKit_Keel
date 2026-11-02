@@ -1551,6 +1551,17 @@ exit 0
             with self.subTest(brief=brief.name):
                 self.assert_refused(brief)
 
+    def test_a_prose_owns_line_is_refused_before_any_session(self):
+        # leeway lead 43: the worker started on a prose Owns: line, and review.sh refused its diff mid-task
+        (self.cwd / 'scripts').mkdir(exist_ok=True)
+        shutil.copy(ROOT / 'core/scripts/owns_check.py', self.cwd / 'scripts/owns_check.py')
+        brief = self.cwd / 'prose.md'
+        brief.write_text('Task: x.\nOwns: the mac pipeline files and their tests\n', encoding='utf-8')
+        result = self.spawn('w2', str(brief))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('the mac pipeline files and their tests', result.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
+
     def test_a_brief_without_read_permission_is_refused(self):
         # Root reads a mode-000 file: there this case cannot run, and a case that cannot run
         # is reported as a skip, which the kit check refuses, never as a pass.

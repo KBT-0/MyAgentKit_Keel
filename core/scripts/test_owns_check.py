@@ -45,6 +45,13 @@ class OwnsCheckTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30 * SCALE)
         return result.returncode, result.stderr
 
+    def test_brief_mode_refuses_a_prose_line_only(self):
+        # leeway lead 43: checked at spawn, before the worker writes anything
+        for owns, code in (('Owns: src/, tests/test_*.py', 0), ('No owns line here.', 0),
+                           ('Owns: the pipeline files', 2), ('Owns: ', 2)):
+            with self.subTest(owns=owns):
+                self.assertEqual(self.check(owns, '--brief')[0], code)
+
     def test_uncommitted_counts_untracked_and_renamed_paths_and_allows_state(self):
         self.write('src/a.py')
         self.write('src/new/b.py')

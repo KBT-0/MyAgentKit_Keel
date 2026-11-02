@@ -169,6 +169,12 @@ case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows=""
 if [ -n "$windows" ]; then brief=$(printf '%sx' "$brief" | tr '\\' '/') && brief=${brief%x}; fi
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
 brief_src=$brief  # the file just checked, which a copy into the worker's folder reads (below)
+# leeway lead 43: an Owns: line in prose let the worker start, and review.sh refused its diff mid-task
+if [ -f scripts/owns_check.py ]; then
+  owns_py=python3; command -v python3 >/dev/null 2>&1 || owns_py=python
+  owns_out=$($owns_py -I scripts/owns_check.py "$brief" --brief 2>&1) ||
+    die "the brief's Owns: line cannot be read: $owns_out"
+fi
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 # Every path handed on is physical (`pwd -P`): a plain `pwd` printed the logical path when the
 # caller exported a matching PWD and the physical one otherwise, so the same brief was named

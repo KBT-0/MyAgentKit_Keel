@@ -358,6 +358,10 @@ class BeforeCompactTests(unittest.TestCase):
             os.utime(root / 'docs/handoffs/old.md', (1, 1))
             (root / '.myagentkit/v1').mkdir(parents=True)
             (root / '.myagentkit/v1/handoff-3.md').write_text('new', encoding='utf-8')
+            os.utime(root / '.myagentkit/v1/handoff-3.md', (2, 2))
+            # leeway lead 43: a newer worker brief or result is no lead hand-off
+            (root / 'docs/handoffs/bench.brief.md').write_text('brief', encoding='utf-8')
+            (root / 'docs/handoffs/RESULT-w1.md').write_text('result', encoding='utf-8')
             env = {**os.environ, 'CLAUDE_PROJECT_DIR': tmp}
             hook = OVERLAY / '.claude/hooks/before_compact.py'
             run = subprocess.run([sys.executable, str(hook)], input=json.dumps({'trigger': 'auto', 'cwd': tmp}),

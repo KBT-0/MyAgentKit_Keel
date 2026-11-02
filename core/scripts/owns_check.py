@@ -1,14 +1,15 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Refuse a diff that changes a path outside the brief's Owns: line (docs/HANDOFF.md, "The brief").
 
-usage: owns_check.py BRIEF [--uncommitted | --base REF | --commit SHA]
+usage: owns_check.py BRIEF [--uncommitted | --base REF | --commit SHA | --brief]
 
 A brief without an Owns: line, or with more than one outside fenced code blocks, is an error
 (exit 2). A pattern ending in '/' owns that folder; any other is a glob on the repository path
 with git's rules: '*' and '?' stay inside one folder, '**/' matches zero or more folders and a
 trailing '/**' everything below. docs/STATE.md and docs/BACKLOG.md are always allowed: every
 worker records its state there. Exit 1 lists the paths outside; exit 2 is a usage or git error.
-Run from the repository root (scripts/review.sh does).
+Run from the repository root (scripts/review.sh does). --brief checks the line alone, before a
+worker starts (spawn_worker.sh): a brief without one passes, a pattern holding a space is prose.
 """
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -103,6 +104,20 @@ def outside(paths, patterns):
 def main(argv):
     if len(argv) == 1:
         argv = argv + ['--uncommitted']
+    if argv[1:] == ['--brief']:
+        # leeway lead 43: a prose Owns: line let the worker start; this script refused its diff twice mid-task
+        try:
+            patterns = owned(argv[0])
+        except (OSError, ValueError) as error:
+            print('owns_check: %s' % error, file=sys.stderr)
+            return 2
+        prose = [p for p in patterns or [] if re.search(r'\s', p)]
+        if patterns == [] or prose:
+            print('owns_check: the Owns: line of %s is no path list (%s); write folders ending in / or globs, '
+                  'comma-separated (docs/HANDOFF.md, "The brief")' % (argv[0], ', '.join(prose) or 'empty'),
+                  file=sys.stderr)
+            return 2
+        return 0
     if not (len(argv) == 2 and argv[1] == '--uncommitted'
             or len(argv) == 3 and argv[1] in ('--base', '--commit') and not argv[2].startswith('-')):
         print(__doc__.split('\n\n')[1], file=sys.stderr)
