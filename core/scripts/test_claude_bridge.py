@@ -1972,22 +1972,30 @@ class BridgeTests(unittest.TestCase):
         self.assertIn('nested', bridge.snapshot(self.repo, 'uncommitted', None)[2])
 
     @posix_only  # native Windows needs symlink rights a runner may lack; the link is skipped there
-    def test_the_copy_links_the_checkouts_node_modules_else_the_main_checkouts(self):
+    def test_the_copy_links_only_the_checkouts_own_node_modules_for_its_head(self):
         # #332: the reviewer could not run tests, tsc or lint: the copy had no installed packages.
+        # Review r332 High: the main checkout's folder (or one symlinked to it) loads another branch's
+        # workspace packages, and so does the checkout's own for a past commit.
         import claude_bridge
+        def copy_of(tree, rev):
+            copy = Path(tempfile.mkdtemp(dir=self.root))
+            claude_bridge.throwaway_copy(tree, rev, None, copy)
+            return copy / 'node_modules'
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
-        copy = Path(tempfile.mkdtemp(dir=self.root))
-        claude_bridge.throwaway_copy(self.repo, head, '', copy)
-        self.assertFalse(os.path.lexists(copy / 'node_modules'))
+        self.assertFalse(os.path.lexists(copy_of(self.repo, head)))
+        (self.repo / '.git/info/exclude').write_text('node_modules\n')  # as a project ignores it
         (self.repo / 'node_modules/pkg').mkdir(parents=True)
         (self.repo / 'node_modules/pkg/index.js').write_text('main\n')
+        linked = copy_of(self.repo, head)
+        self.assertTrue(linked.is_symlink())
+        self.assertEqual((linked / 'pkg/index.js').read_text(), 'main\n')
+        self.commit_fixture('Later')
+        self.assertFalse(os.path.lexists(copy_of(self.repo, head)))  # a past commit
         self.git('worktree', 'add', '-q', '--detach', str(self.root / 'wt'), 'HEAD')
-        for tree in (self.repo, self.root / 'wt'):
-            with self.subTest(tree=tree.name):
-                copy = Path(tempfile.mkdtemp(dir=self.root))
-                claude_bridge.throwaway_copy(tree, head, None, copy)
-                self.assertTrue((copy / 'node_modules').is_symlink())
-                self.assertEqual((copy / 'node_modules/pkg/index.js').read_text(), 'main\n')
+        wt_head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        self.assertFalse(os.path.lexists(copy_of(self.root / 'wt', wt_head)))  # none of its own
+        os.symlink(self.repo / 'node_modules', self.root / 'wt/node_modules')
+        self.assertFalse(os.path.lexists(copy_of(self.root / 'wt', wt_head)))  # the main's, through a link
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
         from contextlib import redirect_stdout

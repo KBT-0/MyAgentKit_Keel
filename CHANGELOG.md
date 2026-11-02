@@ -44,7 +44,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   FAIL for an environment reason" came back 8 times from two `isolation: worktree` sub-agents: their worktree had
   no working `node_modules`, so biome and tsc in the commit gate were missing. The settings template sets Claude
   Code's `worktree.symlinkDirectories: ["node_modules"]`, which links the main checkout's folder into each worktree
-  Claude Code makes (a project without one gets a warning in the debug log only). Unchanged: guard_worker_route.py
+  Claude Code makes (a project without one gets a warning in the debug log only). A workspace project
+  (`node_modules` links its own `packages/`) leaves it out: through the link a worktree's tests load the main
+  checkout's packages (review r332). Unchanged: guard_worker_route.py
   still refuses an Agent call without model and effort (6 refusals; the field asked to keep the guard), and the
   pick rule stays in WORKFLOW "The rules in brief", rule 5, which the lead reads once a session.
   **ACTION** (`.claude/settings.json`, the owner's file): add `"symlinkDirectories": ["node_modules"]` to the
@@ -55,9 +57,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   reviews), now `quota_exhausted`, whose FAIL line tells the lead to wait for the reset. A real 429 or 529 stays
   `rate_limited`; Claude Code retries those itself before it exits (CLAUDE_CODE_MAX_RETRIES). An untracked `RESULT-NAME.md` at the checkout's
   root (spawn_worker.sh's result file) no longer refuses `--base`/`--commit` and stays out of an `--uncommitted`
-  diff. The reviewer's copy links the checkout's root `node_modules`, else the main checkout's (a worktree has
-  none), so it can run the tests, tsc and lint (all seven of labricore's reviews marked them NOT RUN); the sandbox
-  still blocks writes through the link, and native Windows without symlink rights goes without. Not done: a quota
+  diff. For a review of HEAD the reviewer's copy links the checkout's own root `node_modules`, so it can run the
+  tests, tsc and lint (all seven of labricore's reviews marked them NOT RUN); the sandbox still blocks writes
+  through the link, and native Windows without symlink rights goes without. Review r332 (Opus 5.5, Reject: 1 High
+  + 1 Low): never the main checkout's folder, a symlinked one or one for a past commit, since a workspace link
+  (`node_modules/lib -> ../packages/lib`) resolves into the folder it lives in and loaded the main branch's code. Not done: a quota
   check before the copy is built (a used-up plan fails within a second) and a one-command fall-over (Claude-only
   projects have no other reviewer). test_claude_bridge 290/262, test_agent_usage, red without the fix.
 - **guard_destructive_git.py refuses fewer harmless commands (#327, labricore 2026-11-02).** A `git/` is a folder,
