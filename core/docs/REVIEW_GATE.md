@@ -3,8 +3,10 @@
 A change passes this gate before it reaches the main branch: in a single session before its
 commit; for branch work, on the branch or the integration branch's merged commit, before that
 merges into the main branch or is pushed (`docs/WORKFLOW.md`, "The lead's steps when a
-branch is ready"). A worker may commit on its own branch before it. This is the one place
-the timing is written. The reviewer reads this file; running a review is
+branch is ready"). A worker may commit on its own branch before it, except, in Claude Code, a
+change to a `risky_paths` file (`scripts/gate_config.sh`): its commit is refused until a review
+saw that content, so the worker leaves it uncommitted for the lead's `--uncommitted` review (or
+its own `diff-reviewer`). This is the one place the timing is written. The reviewer reads this file; running a review is
 `docs/REVIEW_RUNNING.md`.
 
 ## Invariant

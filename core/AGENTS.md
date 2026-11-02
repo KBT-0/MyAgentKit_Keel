@@ -68,7 +68,7 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 - No untested code enters {{TESTED_AREA}}: a logic change brings its test; `./scripts/check.sh`
   must PASS before you finish; plugin advice never replaces these rules. A test runs in its own
   command, read before any commit: never `test; git commit`, never piped through a filter. The
-  commit hook runs `./scripts/check.sh` and refuses a red commit: do not also run it by hand. A
+  commit hook runs `./scripts/check.sh` and refuses a red commit: do not also run it by hand; a task that ends without a commit runs it. A
   commit whose output lacks the gate's `CHECK: PASS` line ran no gate (an unwired clone,
   `docs/DEV_SETUP.md`): run it then and say the hook is unwired.
 - **Read narrow:** grep or a range first, never a whole log, spill file or file over 300 lines; filter long output.
@@ -84,9 +84,8 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling) pass the review
   gate before they reach the main branch; others get their tier's review (`docs/REVIEW_GATE.md`,
-  "Risk tiers"). It starts unasked, before the change reaches the main branch: on the uncommitted
-  diff where it is written, or with `--commit`/`--base` on a committed worker branch before its
-  merge; a risky commit or merge whose content no review accepted is refused. A
+  "Risk tiers"). It starts unasked, when `docs/REVIEW_GATE.md` (its opening) says; in Claude Code a
+  commit or merge changing a `risky_paths` file whose content no review accepted is refused. A
   FRESH session reviews, never the author
   (`docs/REVIEW_GATE.md`, "Invariant", "Rounds"). A verdict's manual checks go to `docs/STATE.md`.
 - **Never report a verification you did not run**; say "not run".
@@ -145,5 +144,5 @@ review (`docs/REVIEW_GATE.md`, "Risk tiers") and commit, never handed back to {{
 One module; `./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
 `docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. A small fix (one commit,
 one module; owner 2026-10-25) skips `doctor.sh` and the STATE.md trace and leaves `./scripts/check.sh` to
-the commit hook and reads its `CHECK: PASS`; a risky diff still takes its review, and its manual checks still go to STATE.md. On compaction keep
+the commit hook and reads its `CHECK: PASS`; a risky diff still takes its review, and its manual checks still go to STATE.md with their tool+model trace. On compaction keep
 open decisions, binding rules, changed files, the next step and {{OWNER_NAME}}'s words verbatim.
