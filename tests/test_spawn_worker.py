@@ -2547,6 +2547,21 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertTrue(argv[0].startswith('Read '), argv)
         self.assertTrue(self.ended().startswith('DONE published'))
 
+    def test_a_resume_sets_the_earlier_result_aside_and_names_the_new_task(self):
+        # leeway 2026-11-02: the worker's merge renewed the old result's mtime, the watch said DONE at once,
+        # and the worker republished it as "already done". The old file is moved aside on resume.
+        self.workers.mkdir(parents=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+        old = self.cwd / 'RESULT-w1.md'
+        old.write_text('old task\n')
+        result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(old))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.cwd / 'RESULT-w1.md.prev').read_text(), 'old task\n')
+        self.assertIn('This resumes your session with a new instruction', self.launch()['argv'][0])
+        self.ended()
+
     def test_a_resume_into_a_worktree_changed_after_the_result_says_so(self):
         # #324 (leeway): a lead cd'd into the worker's worktree from the main checkout; no session
         # list shows that. A NOTE, never a refusal: the worker's own later work looks the same.

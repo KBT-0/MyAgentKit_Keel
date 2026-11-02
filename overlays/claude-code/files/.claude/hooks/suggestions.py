@@ -40,6 +40,7 @@ nothing. Silent on any error (fail open, 7.6: a review gate that blocked on its 
                                              the 20 most recent topics, the last notes' claims
 """
 import contextlib
+import functools
 import json
 import os
 from pathlib import Path
@@ -69,8 +70,18 @@ MARKERS = ('[myagentkit-suggestion', chr(0x25cf))
 CONTROL = re.compile('[%s]+' % re.escape(''.join(map(chr, [*range(32), *range(127, 160), 0x2028, 0x2029]))))
 
 
+@functools.cache
 def ledger_path() -> Path:
-    return Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd()) / '.myagentkit/suggestions.jsonl'
+    root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    # A worker's worktree keeps no ledger or switch of its own: they are the main checkout's, so a
+    # close never finds the worktree holding them (leeway 2026-11-02).
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from context_size import main_checkout
+        root = main_checkout(root) or root
+    except Exception:  # noqa: BLE001 - no helper: the project folder, as before
+        pass
+    return root / '.myagentkit/suggestions.jsonl'
 
 
 def switch_path() -> Path:

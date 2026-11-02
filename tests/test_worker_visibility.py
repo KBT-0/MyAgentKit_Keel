@@ -1587,6 +1587,18 @@ class BackgroundTests(Base):
         self.assertEqual(self.watch().stdout, waiting, 'a new wait after work was not reported')
         self.assertEqual(self.log('tmux'), '', 'tmux was asked about a background session')
 
+    def test_a_polling_watch_reports_a_block_only_once_it_has_held_a_minute(self):
+        # leeway 2026-11-02: a transient denial read blocked for a moment and ended the watch.
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='waiting',
+                        waitingFor='permission prompt'))
+        poll = lambda: self.run_bg(WATCH, '--max-minutes', '0', '--result', 'w1=RESULT-w1.md', 'w1')
+        self.assertNotIn('WAITING', poll().stdout)
+        held = self.workers / 'w1.watch-held'
+        stamp, key = held.read_text().split(' ', 1)
+        held.write_text('%d %s' % (int(stamp) - 61, key))
+        self.assertIn('WAITING: w1, waiting for: permission prompt', poll().stdout)
+
     def test_an_ended_or_removed_session_is_gone_unless_its_result_says_more(self):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=28256, status='idle'))
@@ -1672,6 +1684,11 @@ class BackgroundTests(Base):
             with self.subTest(said=said):
                 self.rows(row)
                 result = self.run_bg(WATCH, '--max-minutes', '0', '--result', 'w1=RESULT-w1.md', 'w1')
+                if said.startswith('WAITING'):  # a block is reported once it has held a minute
+                    held = self.workers / 'w1.watch-held'
+                    stamp, key = held.read_text().split(' ', 1)
+                    held.write_text('%d %s' % (int(stamp) - 61, key))
+                    result = self.run_bg(WATCH, '--max-minutes', '0', '--result', 'w1=RESULT-w1.md', 'w1')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(said, result.stdout)
                 self.assertNotIn('nothing was waiting', result.stdout)

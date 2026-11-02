@@ -138,7 +138,10 @@ A wait loop such as `while pgrep -f "<pattern>"; do sleep 20; done` never ends w
 pattern also appears in the loop's own command line, because `pgrep -f` matches the shell
 that runs the loop. It happened three times in one day in the founding project before the
 rule was written. Match on the process name (`pgrep -x`), on a pid, or on a file the job
-writes; never on text that is also in your command. The same holds for "wait until the
+writes; never on text that is also in your command. Nor on a pattern another session's job
+shares: `pgrep -f "generate.py --map datca2"` matched a second worktree's run and held a
+worker four hours (leeway 2026-11-02); wait on your own pid, the job's lock, or a path inside
+your own worktree. The same holds for "wait until the
 screen shows DONE" when the task text itself contains DONE. `pgrep` never reports itself, but
 it does report the shell around it; `pgrep -A` also skips the loop's own ancestors
 (https://man7.org/linux/man-pages/man1/pgrep.1.html).

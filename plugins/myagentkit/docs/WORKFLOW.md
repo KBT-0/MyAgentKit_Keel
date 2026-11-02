@@ -988,7 +988,9 @@ a commit made while away) follows the away line until a switch records it there.
   change parks for {{OWNER_NAME}}'s diff read (`docs/REVIEW_GATE.md`, "Risk tiers"), which
   wins over any standing "merge without asking"; push and tag once every check and CI are
   green; a local message to another session of {{OWNER_NAME}}'s own on this machine, which
-  leaves nothing outside it. Kit feedback waits as a draft even under `kit_feedback:
+  leaves nothing outside it; a request to change another project's settings or hooks goes to
+  {{OWNER_NAME}} or that project's master-writer lead, never to a lead that does not own them
+  (leeway 2026-11-02). Kit feedback waits as a draft even under `kit_feedback:
   standing-approval`: its one gate is {{OWNER_NAME}} reading the printed body
   (`/myagentkit:kit-feedback`, §5).
 - **Proxy consult:** a sub-agent with model and effort stated: Fable 5.1 first; when it is
@@ -1347,7 +1349,11 @@ a merge), the post-merge hook runs `scripts/close_worker.sh --finished NAME`: it
 whose session still runs without a `Kind: completed` result, marked
 `.myagentkit/workers/NAME.merged-running`, and a later merge closes it once it has finished. A refused close is printed, never a veto of the merge. The
 explicit `scripts/close_worker.sh NAME` stays for a session closed without a merge (work not
-merged, a worker without a worktree, a reused session the lead now finishes). It ends the tmux
+merged, a worker without a worktree, a reused session the lead now finishes). The close removes
+the worktree's disposable folders (`.claude/worktree-disposable`) with no copy: a cache or
+package worth keeping there (a 2 GB pipeline build, leeway 2026-11-02) is moved out first;
+`close_worker.sh --dry-run NAME` prints the disposable bytes. Regenerable output a project's
+workers leave (`out`, `__pycache__`) is listed there, or every close keeps the worktree. It ends the tmux
 session (its terminal tab closes by itself), on native Windows the worker's Claude Code session
 or the Codex session in its own worktree (the tab's script then ends with `exit 0`, on which
 Windows Terminal closes the tab), unlocks the worktree its spawn locked (`kit worker NAME`;
@@ -1409,7 +1415,10 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   is not registered (a Windows Terminal tab, above) gets it typed into its tab by
   {{OWNER_NAME}}, or is resumed once its tab has closed: `scripts/spawn_worker.sh NAME
   ANSWER_FILE --model M --effort LEVEL [--worktree] --resume SESSION_ID` (spawn prints the line
-  with the id when Claude Code registered the session), which keeps `-n NAME`.
+  with the id when Claude Code registered the session), which keeps `-n NAME`. A worker that
+  published a completed or handoff result ends 60 s later, and a SendMessage that arrives after
+  that is lost: a follow-up to a finished worker goes by `--resume` (leeway 2026-11-02); the
+  resume moves its earlier uncommitted result to `RESULT.prev` and tells it the task is new.
 - A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
   --resume`. The spawning checkout records `.myagentkit/workers/NAME.session`, outside

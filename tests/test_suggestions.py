@@ -198,6 +198,20 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.run_hook('stop', 'not json').returncode, 0)
 
 
+    def test_a_linked_worktree_uses_the_main_checkouts_ledger_and_switch(self):
+        # leeway 2026-11-02: a worker's own .myagentkit/suggestions.jsonl kept its worktree at close.
+        def git(*args):
+            subprocess.run(['git', '-C', str(self.project), *args], check=True, capture_output=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x')
+        tree = self.project / 'wt'
+        git('worktree', 'add', '-q', str(tree))
+        self.assertEqual(self.run_hook('add-note', None, json.dumps(
+            {'session': 's1', 'claim': 'A', 'evidence': 'x:1', 'check': 'ls', 'topic': 't'}),
+            CLAUDE_PROJECT_DIR=str(tree)).returncode, 0)
+        self.assertEqual([r['claim'] for r in self.rows('note')], ['A'])
+        self.assertFalse((tree / '.myagentkit').exists())
+
     def test_no_switch_file_is_off(self):
         (self.project / '.myagentkit/suggestions.json').unlink()
         self.write(note(1))

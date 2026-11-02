@@ -76,9 +76,9 @@ if data.get("tool_name") not in ("Agent", "Task"):
 call = data.get("tool_input") or {}
 text = "%s\n%s" % (call.get("description") or "", call.get("prompt") or "")
 # A present-tense verb only: "the author ran check.sh" reports a job, it does not wait on one;
-# "Merge-sort" is no merge ("re-merge" is), and ci only on its own ("CI/CD", "ci.yml" are names; "ci-build" is a job, "ci-lint.sh" a file).
+# "Merge-sort" is no merge ("re-merge" is), nor a compound noun ("merge conflict", "merge blockers": leeway 2026-11-02), and ci only on its own ("CI/CD", "ci.yml" are names; "ci-build" is a job, "ci-lint.sh" a file).
 LONG_JOB = re.compile(
-    r"\b(?:(?<![\w-])(?:re-)?merg(?:e|es|ing)(?!-)|gh run watch"
+    r"\b(?:(?<![\w-])(?:re-)?merg(?:e|es|ing)(?!-)(?! (?:conflicts?|commits?|blockers?|records?|base|requests?|results?|resolutions?|bench\w*|plans?)\b)|gh run watch"
     r"|(?:run|runs|running|watch|watches|watching|wait(?:s|ing)? (?:for|on)) "
     r"(?:[^\s.;:]+ ){0,3}?(?:[\w./-]*?\b(?:gate|pipeline|review\.sh|check\.sh|gh run)|(?<![\w./-])ci(?![./]|-cd\b|-[\w-]*\.\w)))\b", re.I)
 # A merge after an article, a demonstrative or a possessive is a noun ("the merge", "the author's merge");
@@ -107,15 +107,9 @@ missing = [name for name in ("model", "effort") if not call.get(name)]
 if not missing or pinned(call.get("subagent_type")):
     sys.exit(0)
 print(
-    "BLOCKED: this Agent call names no %s, so it would inherit the lead's. Pick the model from "
-    "docs/WORKFLOW.md \"Model routing\" (a worker: the cheapest tier that fits the work; a reviewer: "
-    "a small risky diff the diff-reviewer agent, which inherits the session's, or one scripts/review.sh "
-    "round if it touches a hook, gate, CI configuration or check script; a larger one the "
-    "author's own tier in a fresh session, a stronger one for a data-loss or gate risk, a release or "
-    "security, docs/REVIEW_GATE.md \"Invariant\") and the "
-    "effort from its effort "
-    "table, pass both on the call, and tell the owner first, in one plain line, which model and "
-    "effort and why." % " and no ".join(missing),
+    "BLOCKED: this Agent call names no %s. Call again with both model and effort (or pin both in the "
+    "agent's .claude/agents/ definition): the model from docs/WORKFLOW.md \"Model routing\", the effort from "
+    "its effort table; tell the owner first, in one plain line, which and why." % " and no ".join(missing),
     file=sys.stderr,
 )
 sys.exit(2)

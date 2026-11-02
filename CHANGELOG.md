@@ -15,6 +15,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **Field reports from the leeway leads (2026-11-02).** `spawn_worker.sh --resume` moves the worker's earlier
+  uncommitted result to `RESULT.prev` and tells the worker the file it reads is a new task: the watch said DONE at
+  once from the old result (the worker's own merge renewed its mtime) and the worker republished it as "already done".
+  `watch_workers.sh` reports a background session's block only once it has held 60 s while polling (`--once` at
+  once): one transient denial ended the watch on a worker that went on. `guard_worker_route.py` reads "merge
+  conflict", "merge commit", "merge blockers" and the like as nouns, not a merge job, and its missing model/effort
+  message is three lines. `suggestions.py` keeps a worker worktree's ledger and switch in the main checkout, so a
+  close no longer keeps the worktree for `.myagentkit/suggestions.jsonl`. WORKFLOW: a follow-up to a finished worker
+  goes by `--resume` (its session ends 60 s after the publish, and a later SendMessage is lost); a close removes the
+  disposable folders with no copy (move a cache out first; `--dry-run` prints the bytes; list regenerable output
+  such as `out`); a request to change another project's settings goes to the owner or that project's master-writer
+  lead. GOTCHAS_KIT: never wait on a `pgrep -f` pattern another session's job shares. Already fixed in v0.14.1: the
+  context band's "hand-off blocked" by finished jobs (#329, the leeway transcripts replayed clean) and a hook's
+  `__pycache__` keeping a worktree (#322). test_spawn_worker, test_worker_visibility, test_guard_worker_route,
+  test_suggestions: each new case red without its fix. **ACTION** (project-owned `.claude/hooks/guard_worker_route.py`,
+  `.claude/hooks/suggestions.py`, `scripts/spawn_worker.sh`, `scripts/watch_workers.sh`, `docs/WORKFLOW.md`):
+  `sync-kit.sh . --merge`; list the folders your workers regenerate (`out` in leeway) in `.claude/worktree-disposable`.
 - **Token costs: skill listing, whole STATE.md reads, STATE growth (#338, labricore 2026-11-02).** `token_audit.py`
   prints a skill-listing table (each plugin's listed tokens and skill calls) and names the plugins never called; the
   setup interview (item 11) asks which of the owner's plugins the project needs and sets the rest `false` under

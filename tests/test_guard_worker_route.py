@@ -79,6 +79,9 @@ class LongWaitRouteTests(unittest.TestCase):
             {'description': 'Review', 'prompt': 'Review the re-merge.'},
             {'description': 'Docs', 'prompt': 'Watch the CI-CD section.'},
             {'description': 'Lint', 'prompt': 'Running the ci-lint.sh linter locally.'},
+            # leeway 2026-11-02: compound nouns name a merge, they wait on none.
+            {'description': 'Review merge conflict resolution', 'prompt': 'This round fixes the two merge blockers.'},
+            {'description': 'Review', 'prompt': 'Read the merge record and the merge commit.'},
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'))

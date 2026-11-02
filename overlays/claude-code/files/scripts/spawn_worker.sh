@@ -512,6 +512,14 @@ supervisor() {
 # Written once the name is known to be free: a running worker's record is never replaced.
 # NAME.host names the host it runs on (bg, tab or tmux) for close_worker.sh and the watcher.
 record_result() {
+  # A resume's earlier result belongs to the closed task: kept beside it as RESULT.prev, so neither the
+  # watch nor the worker takes it for this run's (leeway 2026-11-02: the worker's merge renewed its
+  # mtime and the watch said DONE at once; the worker republished it as "already done"). A committed
+  # result stays where it is: the watch's earlier() check already sets it aside.
+  if [ -n "$resume" ] && [ -f "$result" ] &&
+     ! git -C "${result%/*}" ls-files --error-unmatch -- "${result##*/}" >/dev/null 2>&1; then
+    mv -f -- "$result" "$result.prev" || die "cannot move the earlier result aside: $result"
+  fi
   mkdir -p -- "$wdir" && printf '%s\n' "$cresult" > "$wdir/$name.result-path" &&
     printf '%s\n' "$host" > "$wdir/$name.host" || die "cannot record the result path and host in $wdir"
 }
@@ -700,6 +708,7 @@ else
   instruction="$instruction No lead session was found to message, so send no message: the published file is the signal."
   printf '%s\n' "spawn_worker: lead session: none found (CLAUDE_PID and CLAUDE_CODE_SESSION_ID name no Claude Code session record): the watch below is the only done signal"
 fi
+[ -z "$resume" ] || instruction="$instruction This resumes your session with a new instruction: follow that file as the current task, even if your earlier result said the work was done; that result is closed (an uncommitted one is moved to $(q "$cresult.prev")), so publish a new result for this instruction."
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
 # opens as a Windows Terminal tab (KIT_WT names another launcher, as for show_workers.sh) with

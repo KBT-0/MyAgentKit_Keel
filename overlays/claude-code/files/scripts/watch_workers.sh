@@ -653,9 +653,15 @@ EOF
       case $rw in 1) ;; 4) return 1 ;; *) return "$rw" ;; esac; } ;;
   esac
   case $bstate in
-    working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""; return 1 ;;
+    working) [ -z "$(mark "$1" bg)" ] || setmark "$1" bg ""
+             [ -z "$(mark "$1" held)" ] || setmark "$1" held ""; return 1 ;;
     blocked)
       [ "$(mark "$1" bg)" != "$key" ] || return 1
+      # leeway 2026-11-02: one denial reads blocked for a moment while the worker goes on, and the
+      # watch ended on it: a polling watch reports a block once it has held 60 s (--once at once).
+      now=$(date +%s); held=$(mark "$1" held)
+      case $held in *" $key") first=${held%% *} ;; *) first=$now; setmark "$1" held "$now $key" ;; esac
+      [ -n "$once" ] || [ $((now - first)) -ge 60 ] || return 1
       [ "$bwait" != - ] || bwait="no reason given"  # POSIX spike: blocked may name nothing
       say "watch_workers: WAITING: $1, waiting for: $bwait (background session $bid, state blocked)" || return 2
       say "  look at it: claude attach $bid   (claude agents lists every session)" || return 2
