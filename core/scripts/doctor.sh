@@ -236,7 +236,7 @@ case "$reviewer" in
   *) pin_name='' pin_override='' ;;
 esac
 if [ -n "$pin_name" ] && [ -z "$pin_override" ] && grep -qx "$pin_name=\"\"" scripts/gate_config.sh 2>/dev/null; then
-  miss "no $reviewer model pinned: scripts/gate_config.sh has $pin_name=\"\", so the first review stops" "set $pin_name=\"<model id>\" in scripts/gate_config.sh (REVIEW_$pin_name sets it for one run)"
+  miss "no $reviewer model pinned: scripts/gate_config.sh has $pin_name=\"\", so the first review stops" "set $pin_name=\"<model id>\" in scripts/gate_config.sh: a project that pins each run with REVIEW_$pin_name keeps doing so (it wins), and a run that forgets it no longer stops (#331)"
 fi
 # The probes below capture into temp files: an interrupt (Ctrl-C, a hook's time limit) in
 # the middle of one still removes them.
