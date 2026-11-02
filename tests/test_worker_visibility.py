@@ -1482,6 +1482,24 @@ class BackgroundTests(Base):
             marker.unlink()
         self.assertEqual(self.watch().stdout, gone)
 
+    def test_a_stopped_session_mid_merge_of_an_old_result_is_gone(self):
+        # Review of #326: an earlier run's completed result a merge brought in settled the worker,
+        # so a session stopped mid-merge was never reported GONE.
+        (self.cwd / '.git' / 'info' / 'exclude').write_text('.myagentkit/\n')
+        self.spawned('w1')
+        git = lambda *a, **env: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a],
+                                                cwd=self.cwd, check=True, capture_output=True,
+                                                env=dict(os.environ, **env))
+        git('checkout', '-q', '-b', 'old')
+        (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none') + '\n<!-- codex-worker: ready -->\n')
+        git('add', 'RESULT-w1.md')
+        git('commit', '-q', '-m', 'old run', GIT_COMMITTER_DATE='2020-01-01T00:00:00Z')
+        git('checkout', '-q', '-')
+        git('merge', '-q', '--no-commit', '--no-ff', 'old')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'stopped'))
+        self.assertEqual(self.watch().stdout, 'watch_workers: GONE: w1, its background session aaaa0001 is stopped '
+                         'with no new result report: read its result file\n')
+
     def test_a_session_stopped_by_its_usage_limit_is_limit_once_and_no_wait(self):
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))

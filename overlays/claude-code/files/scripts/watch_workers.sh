@@ -636,7 +636,12 @@ EOF
   fi
   rfile "$1"
   if [ -n "$f" ] && [ -f "$f" ] && ! newer "$rp" "$f" && published "$f"; then
-    case $(hl 1 "$f") in "Kind: completed"|"Kind: handoff") settled=1 ;; esac
+    # An earlier run's result a merge brought in (#326) settles nothing: GONE and IDLE still report.
+    case $f in */*) fd=${f%/*} ;; *) fd=. ;; esac
+    case $(hl 1 "$f") in "Kind: completed"|"Kind: handoff")
+      fb=$(git -C "$fd" hash-object --path="${f##*/}" --stdin <"$f" 2>/dev/null) || fb=""
+      [ -n "$fb" ] && earlier "$fd" "$fb" "$rp" || settled=1 ;;
+    esac
   fi
   # Not the main loop's w: a report here returns 0, and the caller keeps w as bg() left it.
   rw=0; result "$1" || rw=$?
