@@ -25,9 +25,10 @@ py=python3; command -v python3 >/dev/null 2>&1 || py=python
 #   sh scripts/calm.sh status                prints the live hold and exits 0, else exits 1
 #   sh scripts/calm.sh window                a heavy job waits, up to CALM_WAIT, for no live hold
 # spawn_worker.sh refuses a new worker while the window is held.
-window=${CALM_WINDOW_FILE:-${TMPDIR:-/tmp}/myagentkit-quiet-window}
+# A fixed /tmp path, never $TMPDIR: a sandboxed Claude Code shell and the owner's terminal differ there.
+window=${CALM_WINDOW_FILE:-/tmp/myagentkit-quiet-window-$(id -u)}
 window_live() {  # prints the live hold, or fails: none, expired or unreadable
-  { IFS= read -r until && IFS= read -r why; } < "$window" 2>/dev/null || return 1
+  { IFS= read -r until && IFS= read -r why; } 2>/dev/null < "$window" || return 1
   case $until in ''|*[!0-9]*) return 1 ;; esac
   left=$(( until - $(date +%s) ))
   [ "$left" -gt 0 ] || return 1

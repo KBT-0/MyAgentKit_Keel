@@ -44,7 +44,8 @@ class CalmTests(unittest.TestCase):
             env = dict(os.environ, CALM_WINDOW_FILE=os.path.join(tmp, 'w'), CALM_WAIT='0')
             run = lambda *a: subprocess.run(['sh', str(CALM), *a], capture_output=True, text=True,
                                             timeout=60, env=env)
-            self.assertEqual(run('status').returncode, 1)
+            none = run('status')
+            self.assertEqual((none.returncode, none.stderr), (1, ''))  # review v0141-e Low: no noise without a hold
             self.assertEqual(run('window').returncode, 0)
             self.assertEqual(run('hold', 'x').returncode, 2)
             held = run('hold', '600', 'frame', 'bench')
@@ -59,6 +60,22 @@ class CalmTests(unittest.TestCase):
             Path(tmp, 'w').write_text('1\nlong gone\n')  # an expired hold ends by itself
             self.assertEqual(run('status').returncode, 1)
             self.assertEqual(run('hold', '60', 'next').returncode, 0)
+
+
+    def test_the_default_window_does_not_follow_tmpdir(self):
+        # review v0141-e Medium: a sandboxed Claude shell's TMPDIR differs from the owner's terminal.
+        import tempfile
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            base = {k: v for k, v in os.environ.items() if k != 'CALM_WINDOW_FILE'}
+            run = lambda tmp, *args: subprocess.run(['sh', str(CALM), *args], capture_output=True, text=True,
+                                                    timeout=60, env=dict(base, TMPDIR=tmp))
+            if run(a, 'status').returncode == 0:
+                self.skipTest('a real quiet window is held on this machine')
+            self.assertEqual(run(a, 'hold', '60', 'test').returncode, 0)
+            try:
+                self.assertEqual(run(b, 'status').returncode, 0)
+            finally:
+                run(a, 'release')
 
 
 if __name__ == '__main__':

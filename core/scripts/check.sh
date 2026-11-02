@@ -689,14 +689,16 @@ fi
 
 # Two parallel lines each add "94." or "- K12:" to docs/BACKLOG.md and the merge keeps both
 # (leeway lead 43, item 8): an item number defined twice in one section, or a task id defined
-# twice in the file, fails. Only a list item's leading number or id is a definition.
+# twice in the file, fails. Only a list item's leading number ("1." repeats freely, any heading restarts) or its
+# bold or colon-ended id ("- **K12**", "- K12:") is a definition; "- v0.14 ..." or "- S3 ..." names, not defines.
 [ ! -f docs/BACKLOG.md ] || awk '
   function dup(what, first) { bad = 1
     printf "FAIL [state]: docs/BACKLOG.md:%d defines %s again (first at line %d); a parallel line took the same one: renumber this one.\n", FNR, what, first }
-  /^## / { split("", num); next }
-  match($0, /^[0-9]+\. /) { k = substr($0, 1, RLENGTH - 2); if (k in num) dup("item " k, num[k]); else num[k] = FNR; next }
-  match($0, /^[-*] (\*\*)?[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?(\*\*)?[:. ]/) {
-    k = substr($0, 3, RLENGTH - 3); gsub(/\*/, "", k)
+  /^#+ / { split("", num); next }
+  match($0, /^[0-9]+\. /) { k = substr($0, 1, RLENGTH - 2)  # an all-"1." markdown list numbers nothing
+    if (k != 1 && k in num) dup("item " k, num[k]); else num[k] = FNR; next }
+  match($0, /^[-*] (\*\*[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?\*\*|[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?:)/) {
+    k = substr($0, 3, RLENGTH - 2); gsub(/[*:]/, "", k)
     if (k ~ /[0-9]/) { if (tolower(k) in id) dup("task id " k, id[tolower(k)]); else id[tolower(k)] = FNR } }
   END { exit bad }' docs/BACKLOG.md || fail=1
 

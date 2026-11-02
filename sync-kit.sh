@@ -798,7 +798,7 @@ agents_regen() {
       print "values while AGENTS.md holds nothing else; it learns them from AGENTS.md each time, and a value"
       print "only this file holds fills a placeholder AGENTS.md no longer shows."; print "" }
     { print "## " $1; n = split($2, v, "\037"); for (i = 1; i <= n; i++) print v[i]; print "" }' "$mdir/allvals" > "$mdir/arecord" &&
-    put "$target/$agents_vals" "$mdir/arecord"
+    put "$target/$agents_vals" "$mdir/arecord" && agents_recorded=1
 }
 if [ "$merge" -eq 1 ]; then
   owned_list
@@ -856,7 +856,7 @@ if [ "$merge" -eq 1 ]; then
       open=1; continue
     fi
     tr -d '\r' < "$target/$rel" > "$mdir/ours" || die "cannot read $rel"
-    rc=0 union="" added=0 regen=""
+    rc=0 union="" added=0 regen="" agents_recorded=""
     [ "$rel" != AGENTS.md ] || ! agents_regen || regen=1
     # #330: a kit change that only appends merges as a union, the kit's lines after the project's own: labricore's
     # GOTCHAS.md, which ends in the project's entries, showed a 5-line kit append as a conflict of 400 project lines.
@@ -881,7 +881,9 @@ if [ "$merge" -eq 1 ]; then
     fi
     put "$target/$rel" "$mdir/out" || die "could not write $rel; it and the files after it are unchanged"
     if [ -n "$regen" ]; then
-      printf '%s\n' "  rebuilt:  $rel (the kit's template with your values, recorded in $agents_vals; read its git diff)"
+      # review v0141-e Low: a blocked or absent docs/kit keeps the values only in AGENTS.md's git history
+      if [ -n "$agents_recorded" ]; then kept="recorded in $agents_vals"; else kept="NOT recorded: $agents_vals is blocked or docs/kit is absent"; fi
+      printf '%s\n' "  rebuilt:  $rel (the kit's template with your values, $kept; read its git diff)"
     elif [ "$rc" -eq 0 ] && [ -n "$union" ]; then
       printf '%s\n' "  merged:   $rel (the kit appended $added lines; they follow the project's own)"
     elif [ "$rc" -eq 0 ]; then

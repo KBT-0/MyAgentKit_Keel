@@ -267,7 +267,9 @@ class CheckGateTests(unittest.TestCase):
         state.write_text('# STATE\n\n## Active work\n')
         # leeway 43 item 8: two parallel lines defined the same number or id; another section restarts numbers.
         backlog = self.project / 'docs/BACKLOG.md'
-        backlog.write_text('## Next\n1. a\n2. b\n- **K7** c\n## Parked\n1. d\n')
+        # review v0141-e Medium: "- v0.14 x" names no id, an all-"1." list numbers nothing, "###" restarts.
+        backlog.write_text('## Next\n1. a\n2. b\n- **K7** c\n- v0.14 x\n- v0.15 y\n- S3 z\n- S3 w\n'
+                           '### Sub\n2. again\n## Parked\n1. d\n1. e\n1. f\n')
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 0, out)
         backlog.write_text('## Next\n1. a\n2. b\n2. c\n- **K7** d\n- k7: e\n')

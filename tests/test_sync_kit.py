@@ -1082,11 +1082,13 @@ class SyncKitTests(unittest.TestCase):
         ours = b'# Rules of Leeway here\nintro\n\n- No engine in tools.\n- Contracts only.\n\n## Duties\nAsk Kemal before a push.\nOld line.\n'
         built = (b'# Rules of Leeway here\nNew intro.\n\n- No engine in tools.\n- Contracts only.\n\n## Duties\n'
                  b'Old line moved up.\nAsk Kemal before a push or a tag.\n\n')
-        for case in ('plain', 'recorded', 'own line'):
+        for case in ('plain', 'recorded', 'own line', 'blocked record'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 kit, project, kbase, env = self.merge_kit(tmp, '- A change.\n', {'AGENTS.md': (base, now)})
                 (project / 'docs/kit').mkdir(parents=True, exist_ok=True)
                 record = project / 'docs/kit/agents-values.md'
+                if case == 'blocked record':  # a folder where the record goes: blocked, never written
+                    record.mkdir()
                 if case == 'recorded':  # a value only the record holds fills a new placeholder; the copy's win
                     record.write_text('# x\n\n## NEW_ONE\n\nFrom the record.\n\n## OWNER_NAME\nSomeone else\n')
                 (project / 'AGENTS.md').write_bytes(ours + (b'My own rule.\n' if case == 'own line' else b''))
@@ -1097,6 +1099,11 @@ class SyncKitTests(unittest.TestCase):
                     self.assertNotIn('rebuilt:', out)
                     self.assertIn(b'My own rule.', (project / 'AGENTS.md').read_bytes())
                     self.assertFalse(record.exists())
+                    continue
+                if case == 'blocked record':  # review v0141-e Low: the line said "recorded" with no record
+                    self.assertIn("  rebuilt:  AGENTS.md (the kit's template with your values, NOT recorded: "
+                                  "docs/kit/agents-values.md is blocked or docs/kit is absent; read its git diff)\n", out)
+                    self.assertTrue(record.is_dir())
                     continue
                 self.assertIn("  rebuilt:  AGENTS.md (the kit's template with your values, recorded in "
                               "docs/kit/agents-values.md; read its git diff)\n", out)
