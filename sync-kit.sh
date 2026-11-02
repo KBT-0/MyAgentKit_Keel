@@ -655,6 +655,8 @@ render() {
       print "and tick its box (- [x]) when it is done; each one'\''s whole entry is in " src "."
       print "Then rerun sync-kit.sh with --actions-applied: it records v" to " only when every box is"
       print "ticked, and deletes this file."
+      print "A hook an item adds runs only in a session started after it (#321): the commit that adds it"
+      print "is not guarded by it, so restart the session before relying on it."
       review = ENVIRON["review"]
       if (review != "") print "Commit the upgrade, then review that commit: " review " (see docs/REVIEW_RUNNING.md)."
       print "" }
@@ -856,6 +858,8 @@ if [ "$merge" -eq 1 ]; then
   echo
   printf '%s\n' "sync-kit: version left at v$have. Read each merged file's diff (git diff) and account for"
   echo "          every removed line; resolve each conflict listed (read only those lines);"
+  # #319: a project paragraph that restated an old rule survived beside the kit's new Invariant.
+  echo "          a paragraph only your copy has is kept as it was: check those beside a changed rule;"
   printf '%s\n' "          then rerun with --actions-applied, without --merge, to record v$latest."
   [ "$open" -eq 0 ] || echo "          Files are listed above as conflict, placeholder, unresolved, skipped, by hand or no base."
   exit 2
@@ -921,4 +925,8 @@ if [ -s "$copies.stage" ]; then
     fi
   done < "$copies.stage"
 fi
+# #318: the gate's agents-size check (24576 bytes, check.sh 2c2) failed a sync's first commit; say it here.
+# shortcut: the root AGENTS.md alone, not each module's chain; check.sh still measures every chain.
+size=$(wc -c < "$target/AGENTS.md" 2>/dev/null | tr -d " ") && [ "$size" -ge 24576 ] &&
+  printf '%s\n' "sync-kit: NOTE: AGENTS.md is $size bytes, not under the gate's 24576 (check.sh agents-size): move what only some tasks need into a doc the reading order points to before the commit."
 echo "sync-kit: now run ./scripts/check.sh. A sync that leaves the gate red is not finished."

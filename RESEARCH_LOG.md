@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-02 — v0.14.1: worker identity, autopilot questions, owner records, fetch gap; leeway v0.14 sync
+
+Backflow (kit issues #310-#313 from leeway and labricore sessions, leeway lead 41's v0.14 sync report 2026-11-02).
+#311: a worker with no session id passed the master-writer hook as the owner's terminal; every spawn now names it.
+#312: an autopilot lead asked the owner in chat text, which the tool rule did not cover. #313: decisions recorded as the
+owner's quoted sentences read as wording to match, not a rule (sources in docs/COMMUNICATION.md, "Questions and
+approvals"). #310: the research worker's fetch tool refused reddit.com in a measured session; NotebookLM is optional
+and owner-approved, never installed. Leeway's sync: the risky-review guard read the main checkout from a worktree
+session (#317); the agents-size gate failed the first commit unannounced (#318); a project paragraph restating the old
+review rule survived --merge (#319); a worker's RESULT file failed the setup scan (#320); a hook added by an ACTION did
+not guard its own commit (#321). Verdict: each fixed in v0.14.1 with a test where code changed.
+
 ### 2026-10-27 — v0.14 field batch: labricore 1-6, 8, calm machine, Claude Code's hooks path
 
 Backflow (labricore field report 4, leeway kit-feedback 2026-10-26 calm-machine, leeway lead 40 2026-10-27).

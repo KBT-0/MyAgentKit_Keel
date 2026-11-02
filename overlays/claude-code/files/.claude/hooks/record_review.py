@@ -18,7 +18,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guard_risky_review import changed, head, read_record, record_path  # noqa: E402
+from guard_risky_review import changed, head, project_root, read_record, record_path  # noqa: E402
 
 # A PASS only after "Verdict" (ctl10: "VERDICT: PASS"): a cut-off "Pass 1: reading the diff" is none.
 VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve)\b|\W*verdict\W*pass\b", re.I)
@@ -44,7 +44,7 @@ def main():
         data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         if data.get("agent_type") != "diff-reviewer":
             return 0
-        root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or "."
+        root = project_root(data)
         record = read_record(root)
         paths, pending = set(record.get("paths", [])), dict(record.get("pending", {}))
         agent = str(data.get("agent_id") or "")

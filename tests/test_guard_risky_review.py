@@ -65,6 +65,24 @@ class RiskyReviewTests(unittest.TestCase):
         (self.root / 'src/money/round.py').write_text('x = 3\n', encoding='utf-8')
         self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
 
+    def test_a_worktree_session_is_judged_by_its_own_tree(self):
+        # #317: the session started in the main checkout (CLAUDE_PROJECT_DIR) and works in a worktree (cwd)
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', str(tree))
+        (self.root / 'src/money/round.py').write_text('x = 9\n', encoding='utf-8')  # main's own dirty risky file
+        (tree / 'notes.md').write_text('b\n', encoding='utf-8')
+        commit = {'tool_name': 'Bash', 'tool_input': {'command': 'git commit -am notes'}, 'cwd': str(tree / 'src')}
+        self.assertEqual(self.hook('guard_risky_review.py', commit).returncode, 0)
+        (tree / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        refused = self.hook('guard_risky_review.py', commit)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('src/money/round.py', refused.stderr.decode())
+        for name in ('SubagentStart', 'SubagentStop'):
+            self.hook('record_review.py', {'hook_event_name': name, 'agent_type': 'diff-reviewer', 'agent_id': 'a1',
+                                           'last_assistant_message': 'Verdict: Accept\n\nNo findings.', 'cwd': str(tree)})
+        self.assertEqual(self.hook('guard_risky_review.py', commit).returncode, 0)
+        self.assertEqual(self.commit().returncode, 2)  # the main checkout's record is untouched
+
     def test_a_new_risky_file_after_the_review_is_refused(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
         self.review()

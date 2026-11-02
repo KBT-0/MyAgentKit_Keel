@@ -91,7 +91,11 @@ class GateCheckTests(unittest.TestCase):
         (self.project / 'docs/note.md').unlink()
         write(self.project / 'setup/note.md', MARKER + '\n')
         write(self.project / 'MODULE_AGENTS_TEMPLATE.md', MARKER + '\n')
+        write(self.project / 'RESULT-w1.md', 'quoted ' + MARKER + '\n')  # #320: a worker's hand-back
+        write(self.project / 'QUESTION-w1.md', MARKER + '\n')
         self.assert_green()
+        write(self.project / 'docs/RESULT-w1.md', MARKER + '\n')  # only at the top
+        self.assert_red('FAIL [setup]: unfilled placeholder markers remain')
 
     def test_the_state_file_must_exist_with_its_heading_and_is_never_measured(self):
         state = self.project / 'docs/STATE.md'

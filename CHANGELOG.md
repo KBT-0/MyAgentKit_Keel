@@ -19,11 +19,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `MYAGENTKIT_SESSION_ID=worker-NAME` (a background worker in its settings' `env`, as its other worker variables, and
   never on the daemon's launch line), so the master-writer hooks refuse its commit or merge in the main checkout while
   another session holds the marker; before, the launch line cleared Claude Code's session id and set none, and the
-  hook let the commit through as the owner's terminal.
+  hook let the commit through as the owner's terminal. **ACTION** (project-owned `docs/WORKFLOW.md`): bring its
+  worker-id sentence in with `sync-kit.sh --merge`.
 - **Autopilot asks nothing in chat text either (#312).** WORKFLOW's autopilot "Stops" and COMMUNICATION's "Questions and
   approvals": while autopilot is on, no question goes to the owner with the tool or in chat text (two options and a
   default for no answer included), even when the owner writes in between; the lead takes the rule's default, records it
-  under My decisions and puts the question in the report.
+  under My decisions and puts the question in the report. **ACTION** (project-owned `docs/WORKFLOW.md`,
+  `docs/COMMUNICATION.md`): bring both passages in with `sync-kit.sh --merge`.
 - **An owner's answer is recorded as a rule, not as a quote (#313).** `docs/COMMUNICATION.md`, "Questions and approvals":
   the record is a short summary with the owner's name and the date; a quote stands beside it only for an exact number,
   name or limit, a wording with two readings or a disputed point; the verbatim exchange stays in the session transcript.
@@ -37,6 +39,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   fallback, NotebookLM deep research (`notebooklm-mcp-cli`, a community package), approved by the owner per project,
   on a secondary Google account with `--storage protected`. The kit installs nothing. **ACTION** (`docs/GOTCHAS.md`,
   project-owned): add the entry's contents line and its "Kit rules:" section (`sync-kit.sh --merge`).
+- **The risky-review guard judges the tree the command runs in (#317).** `guard_risky_review.py` and `record_review.py`
+  take the call's `cwd` (its git top folder), then `$CLAUDE_PROJECT_DIR`: a session started in the main checkout and
+  working in a worktree had its commits refused over the main checkout's own uncommitted files, and its review
+  recorded in the main checkout's git folder. Test: a worktree session with a dirty main checkout (red before).
+- **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
+  `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
+  `check.sh` still measures each).
+- **`--merge` says your own paragraphs are kept (#319).** Its closing lines ask to check a paragraph only the
+  project's copy has beside a rule the kit changed: one restating the old rule survived beside the new Invariant.
+- **A worker's hand-back passes the setup scan (#320).** `check.sh`'s placeholder scan exempts `RESULT-NAME.md` and
+  `QUESTION-NAME.md` at the top folder: a worker's result quoting marker names failed the gate.
+- **A new hook is live only in a later session (#321).** The upgrade checklist (`docs/kit/UPGRADE.md`) says a hook an
+  ACTION item adds does not guard the commit that adds it; restart the session before relying on it.
 
 ## v0.14 — 2026-11-01
 

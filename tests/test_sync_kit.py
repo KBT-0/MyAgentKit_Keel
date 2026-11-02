@@ -72,6 +72,18 @@ class SyncKitTests(unittest.TestCase):
         listing.write_bytes(b'\n'.join(line.replace(b'- [ ] ', b'- [x] ', 1) if item in line else line
                                        for line in lines))
 
+    def test_a_root_agents_md_over_the_gate_limit_is_named_before_the_commit(self):
+        # #318: the gate's agents-size check failed a sync's first commit; the sync says so first
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'project').mkdir()
+            (Path(tmp) / 'project/AGENTS.md').write_bytes(b'x' * 24575)
+            result, _ = self.sync(tmp, '- Second.\n')
+            self.assertNotIn('AGENTS.md is', result.stdout, result.stderr)
+            (Path(tmp) / 'project/AGENTS.md').write_bytes(b'x' * 24576)
+            result, _ = self.sync(tmp, '- Second.\n')
+            self.assertIn("sync-kit: NOTE: AGENTS.md is 24576 bytes, not under the gate's 24576", result.stdout,
+                          result.stdout + result.stderr)
+
     def test_unconfirmed_action_keeps_the_stamp_and_reappears(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / 'project'
@@ -81,6 +93,7 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual(stamp, '0.1', 'stamped past an unconfirmed ACTION')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('- [ ] v0.2: **ACTION:** copy it', listing.read_text(encoding='utf-8'))
+                self.assertIn('runs only in a session started after it (#321)', listing.read_text(encoding='utf-8'))
                 self.assertNotIn('already current', result.stdout)
             # One flag no longer confirms a list nobody ticked (#129).
             result, stamp = self.sync(tmp, ACTION, '--actions-applied')
@@ -780,6 +793,7 @@ class SyncKitTests(unittest.TestCase):
             self.assertIn('Y mine', (project / 'docs/GOTCHAS.md').read_text())
             self.assertIn('  kit-new:  scripts/new.sh', out)
             self.assertIn('  kit-removed: docs/OLD.md', out)
+            self.assertIn('a paragraph only your copy has is kept as it was', out)  # #319
             self.assertNotIn('docs/STATE.md', out)
             self.assertEqual((project / 'docs/STATE.md').read_bytes(), b'mine\n')
             self.assertNotIn('.githooks/commit-msg', out.split('PROJECT-OWNED')[1])

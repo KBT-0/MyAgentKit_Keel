@@ -85,11 +85,17 @@ def reviewed(root):
     return set(read_record(root).get("paths", []))
 
 
+def project_root(data):
+    """The work tree the call runs in (a worktree session's own), not the folder the session started in (#317)."""
+    where = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    return (git(where, "rev-parse", "--show-toplevel") or "").strip() or where
+
+
 def main():
     data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     if not COMMIT.search((data.get("tool_input") or {}).get("command") or ""):
         return 0
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or "."
+    root = project_root(data)
     globs = risky_globs(root)
     if not globs:
         return 0
