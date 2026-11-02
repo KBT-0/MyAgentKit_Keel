@@ -82,6 +82,12 @@ class RiskyReviewTests(unittest.TestCase):
                                            'last_assistant_message': 'Verdict: Accept\n\nNo findings.', 'cwd': str(tree)})
         self.assertEqual(self.hook('guard_risky_review.py', commit).returncode, 0)
         self.assertEqual(self.commit().returncode, 2)  # the main checkout's record is untouched
+        # a commit into the main checkout from the worktree (-C) or from outside any work tree is judged by main
+        for payload in ({'command': 'git -C "%s" commit -am x' % self.root, 'cwd': str(tree)},
+                        {'command': 'git commit -am x', 'cwd': str(self.root.parent)},
+                        {'command': 'git commit -am x', 'cwd': str(self.root / 'gone')}):
+            call = {'tool_name': 'Bash', 'tool_input': {'command': payload['command']}, 'cwd': payload['cwd']}
+            self.assertEqual(self.hook('guard_risky_review.py', call).returncode, 2, payload)
 
     def test_a_new_risky_file_after_the_review_is_refused(self):
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

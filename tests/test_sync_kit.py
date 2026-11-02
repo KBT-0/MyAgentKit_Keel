@@ -76,11 +76,14 @@ class SyncKitTests(unittest.TestCase):
         # #318: the gate's agents-size check failed a sync's first commit; the sync says so first
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / 'project').mkdir()
+            result, _ = self.sync(tmp, ACTION)
+            self.assertNotIn('AGENTS.md', result.stdout + result.stderr)  # no root AGENTS.md: nothing said
             (Path(tmp) / 'project/AGENTS.md').write_bytes(b'x' * 24575)
-            result, _ = self.sync(tmp, '- Second.\n')
+            result, _ = self.sync(tmp, ACTION)
             self.assertNotIn('AGENTS.md is', result.stdout, result.stderr)
             (Path(tmp) / 'project/AGENTS.md').write_bytes(b'x' * 24576)
-            result, _ = self.sync(tmp, '- Second.\n')
+            result, _ = self.sync(tmp, ACTION)  # said before the exit a pending ACTION item makes
+            self.assertNotEqual(result.returncode, 0)
             self.assertIn("sync-kit: NOTE: AGENTS.md is 24576 bytes, not under the gate's 24576", result.stdout,
                           result.stdout + result.stderr)
 

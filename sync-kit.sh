@@ -663,6 +663,13 @@ render() {
     { i = index($0, "\t"); t = substr($0, 1, i - 1) ": " substr($0, i + 1); print "- [" (t in done ? "x" : " ") "] " t }
   ' "$1" "$pending"
 }
+# #318: the gate's agents-size check (24576 bytes, check.sh 2c2) failed a sync's first commit: said here, before
+# the ACTION and --merge exits below. shortcut: the root AGENTS.md alone; check.sh still measures every chain.
+if [ -f "$target/AGENTS.md" ]; then
+  size=$(wc -c < "$target/AGENTS.md" | tr -d " ")
+  [ "$size" -lt 24576 ] ||
+    printf '%s\n' "sync-kit: NOTE: AGENTS.md is $size bytes, not under the gate's 24576 (check.sh agents-size): move what only some tasks need into a doc the reading order points to before the commit."
+fi
 echo
 if [ ! -s "$pending" ]; then
   [ "$have" != "$latest" ] || echo "sync-kit: already current: nothing new to apply by hand since the last sync."
@@ -925,8 +932,4 @@ if [ -s "$copies.stage" ]; then
     fi
   done < "$copies.stage"
 fi
-# #318: the gate's agents-size check (24576 bytes, check.sh 2c2) failed a sync's first commit; say it here.
-# shortcut: the root AGENTS.md alone, not each module's chain; check.sh still measures every chain.
-size=$(wc -c < "$target/AGENTS.md" 2>/dev/null | tr -d " ") && [ "$size" -ge 24576 ] &&
-  printf '%s\n' "sync-kit: NOTE: AGENTS.md is $size bytes, not under the gate's 24576 (check.sh agents-size): move what only some tasks need into a doc the reading order points to before the commit."
 echo "sync-kit: now run ./scripts/check.sh. A sync that leaves the gate red is not finished."

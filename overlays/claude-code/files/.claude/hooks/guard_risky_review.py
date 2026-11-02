@@ -85,17 +85,26 @@ def reviewed(root):
     return set(read_record(root).get("paths", []))
 
 
-def project_root(data):
-    """The work tree the call runs in (a worktree session's own), not the folder the session started in (#317)."""
+def project_root(data, command=""):
+    """The work tree the call runs in (a worktree session's own), not the folder the session started in (#317):
+    the commit's -C folders on the call's cwd, their top folder; outside any work tree, the session's."""
     where = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
-    return (git(where, "rev-parse", "--show-toplevel") or "").strip() or where
+    match = COMMIT.search(command)
+    for value in re.findall(r"\s-C\s+((?:[^\s\"']|\"[^\"]*\"|'[^']*')+)", match.group(0) if match else ""):
+        where = os.path.join(where, re.sub(r"[\"']", "", value))
+    for folder in (where, os.environ.get("CLAUDE_PROJECT_DIR") or "."):
+        top = (git(folder, "rev-parse", "--show-toplevel") or "").strip() if os.path.isdir(folder) else ""
+        if top:
+            return top
+    return where
 
 
 def main():
     data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    if not COMMIT.search((data.get("tool_input") or {}).get("command") or ""):
+    command = (data.get("tool_input") or {}).get("command") or ""
+    if not COMMIT.search(command):
         return 0
-    root = project_root(data)
+    root = project_root(data, command)
     globs = risky_globs(root)
     if not globs:
         return 0
