@@ -682,6 +682,19 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   fi
 fi
 
+# Two parallel lines each add "94." or "- K12:" to docs/BACKLOG.md and the merge keeps both
+# (leeway lead 43, item 8): an item number defined twice in one section, or a task id defined
+# twice in the file, fails. Only a list item's leading number or id is a definition.
+[ ! -f docs/BACKLOG.md ] || awk '
+  function dup(what, first) { bad = 1
+    printf "FAIL [state]: docs/BACKLOG.md:%d defines %s again (first at line %d); a parallel line took the same one: renumber this one.\n", FNR, what, first }
+  /^## / { split("", num); next }
+  match($0, /^[0-9]+\. /) { k = substr($0, 1, RLENGTH - 2); if (k in num) dup("item " k, num[k]); else num[k] = FNR; next }
+  match($0, /^[-*] (\*\*)?[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?(\*\*)?[:. ]/) {
+    k = substr($0, 3, RLENGTH - 3); gsub(/\*/, "", k)
+    if (k ~ /[0-9]/) { if (tolower(k) in id) dup("task id " k, id[tolower(k)]); else id[tolower(k)] = FNR } }
+  END { exit bad }' docs/BACKLOG.md || fail=1
+
 # A [LESSON] or [GOTCHA] line in docs/STATE.md may not be deleted until it has a
 # permanent home (docs/AGENTS.md). Written only, the rule held nowhere: a commit that deletes
 # such a line from STATE.md and adds no line to any other file is told so, never failed, since

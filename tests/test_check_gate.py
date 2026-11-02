@@ -261,6 +261,16 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [state]: docs/BACKLOG.md:1 names K4', out)
         self.assertIn('The next free K id: K10.', out)  # labricore A13
+        # leeway 43 item 8: two parallel lines defined the same number or id; another section restarts numbers.
+        backlog = self.project / 'docs/BACKLOG.md'
+        backlog.write_text('## Next\n1. a\n2. b\n- **K7** c\n## Parked\n1. d\n')
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 0, out)
+        backlog.write_text('## Next\n1. a\n2. b\n2. c\n- **K7** d\n- k7: e\n')
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [state]: docs/BACKLOG.md:4 defines item 2 again (first at line 3)', out)
+        self.assertIn('FAIL [state]: docs/BACKLOG.md:6 defines task id k7 again (first at line 5)', out)
         # A shallow clone sees only what it holds, and says so.
         (self.project / 'docs/BACKLOG.md').unlink()
         git('add', '-A')
