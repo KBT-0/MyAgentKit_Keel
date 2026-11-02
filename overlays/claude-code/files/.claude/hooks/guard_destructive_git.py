@@ -908,7 +908,8 @@ def judge(command, cwds, changed=False, env=None):
 
 def plain(command):
     """The command with its quoted strings, comments and here-document bodies blanked when every
-    command of the line is INERT or a PLAIN_GIT git without -c (#327); None otherwise."""
+    command of the line is INERT, a PLAIN_GIT git without -c (#327) or an interpreter given plain file
+    operands alone; None otherwise."""
     try:
         text, bodies = strip_heredocs(command)
         blank = unquoted(text)
@@ -925,7 +926,12 @@ def plain(command):
                 g = Git(words[1:], {}, [None])
                 if g.configs or g.sub not in PLAIN_GIT:
                     return None
-            elif base(words[0]) not in INERT:
+            elif base(words[0]) not in INERT and not (
+                    # leeway-43: `cat > n.md <<EOF ... EOF; python3 x.py` read the cat's body raw; an
+                    # interpreter given only plain file operands runs no text of this line
+                    interpreter(base(words[0])) and len(words) > 1
+                    and all(re.fullmatch(r"[\w.+/][\w.+/-]*", w) and text.count(w) == 1 for w in words[1:])):
+                # ... unless the line also names that file (it may write it: `cat > n.py <<EOF`)
                 return None
         return blank
     except Exception:  # noqa: BLE001 - unreadable: the floor reads the raw text

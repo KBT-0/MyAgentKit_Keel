@@ -164,9 +164,79 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertEqual(self.commit().returncode, 0)
         accept, reject = {'result': {'verdict': 'Accept with Manual Checks'}}, {'result': {'verdict': 'Reject'}}
         self.assertTrue(review_dispatch.guard_counts('uncommitted', accept, {}))
+        self.assertTrue(review_dispatch.guard_counts('base', accept, {}))  # labricore A1
         for scope, result, chain in (('uncommitted', reject, {}), ('uncommitted', {'status': 'completed'}, {}),
-                                     ('uncommitted', accept, {'shadow': True}), ('base', accept, {})):
+                                     ('uncommitted', accept, {'shadow': True})):
             self.assertFalse(review_dispatch.guard_counts(scope, result, chain), (scope, result, chain))
+
+    def commit_in(self, tree, message):
+        subprocess.run(['git', '-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                        'commit', '-qam', message], check=True, capture_output=True)
+        return subprocess.run(['git', '-C', str(tree), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def test_a_merge_of_a_branch_reviewed_with_commit_passes(self):
+        # labricore A1: a worker branch in a real worktree, reviewed with --commit in two rounds (round 1's
+        # file untouched by round 2), merged into the main checkout: the merge's commit passes
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core/scripts'))
+        import review_dispatch
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', '-b', 'w1', str(tree))
+        (tree / 'scripts/check.sh').write_text('true\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(tree), 'add', 'scripts/check.sh'], check=True)
+        first = self.commit_in(tree, 'round 1')
+        (tree / 'src/money/round.py').write_text('x = 5\n', encoding='utf-8')
+        second = self.commit_in(tree, 'round 2 fix')
+        review_dispatch.note_reviewed(tree, 'commit', second, ['scripts/check.sh', 'src/money/round.py'])
+        self.assertTrue(first)
+        (self.root / 'notes.md').write_text('main moved\n', encoding='utf-8')
+        self.commit_in(self.root, 'main')
+        self.git('merge', '--no-ff', '--no-commit', 'w1')
+        merge = 'git merge --no-ff --no-commit w1 && git commit -m merge'
+        self.assertEqual(self.commit(merge).returncode, 0, self.commit(merge).stderr)
+        # a risky file that differs from the reviewed content is refused
+        (self.root / 'src/money/round.py').write_text('x = 6\n', encoding='utf-8')
+        refused = self.commit(merge)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('src/money/round.py', refused.stderr.decode())
+        self.assertNotIn('scripts/check.sh', refused.stderr.decode())
+
+    def test_a_diff_reviewer_accept_in_a_worktree_covers_its_merge(self):
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', '-b', 'w2', str(tree))
+        (tree / 'src/money/round.py').write_text('x = 7\n', encoding='utf-8')
+        for name in ('SubagentStart', 'SubagentStop'):
+            self.hook('record_review.py', {'hook_event_name': name, 'agent_type': 'diff-reviewer', 'agent_id': 'w',
+                                           'cwd': str(tree), 'last_assistant_message': 'Verdict: Accept'})
+        self.commit_in(tree, 'reviewed')
+        self.git('merge', '--ff-only', 'w2')  # the record is the worktree's own HEAD; the content record is shared
+        (self.root / 'src/money/round.py').write_text('x = 8\n', encoding='utf-8')
+        self.assertEqual(self.commit().returncode, 2)
+        (self.root / 'src/money/round.py').write_text('x = 7\n', encoding='utf-8')
+        self.git('reset', '-q', '--hard', 'HEAD~1')
+        (self.root / 'src/money/round.py').write_text('x = 7\n', encoding='utf-8')
+        self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
+
+    def test_an_unresolvable_c_folder_is_refused(self):
+        # labricore A4: $WT the hook cannot expand fell back to the session's tree and passed
+        for command in ('git -C "$NO_SUCH_WT_VAR" commit -m x', 'git -C ~/no-such-wt-dir commit -m x'):
+            with self.subTest(command=command):
+                refused = self.commit(command)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('-C folder', refused.stderr.decode())
+        self.assertEqual(self.commit('git -C "%s" commit -m x' % self.root).returncode, 0)
+
+    def test_git_exe_commit_is_seen(self):
+        # labricore A7: native Windows spells it git.exe
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        self.assertEqual(self.commit('git.exe commit -am x').returncode, 2)
+
+    def test_severity_forms(self):
+        # labricore A5: a path-first High blocks; a "High-risk" line does not void an Accept
+        sys.path.insert(0, str(HOOKS))
+        import record_review
+        self.assertFalse(record_review.accepted('Verdict: Accept\n- src/x.ts:3 \u2014 High: off by one'))
+        self.assertTrue(record_review.accepted('Verdict: Accept\nHigh-risk paths: none touched.'))
 
     def test_a_rename_out_of_the_risky_folder_is_refused(self):
         self.git('mv', 'src/money/round.py', 'legacy.py')

@@ -353,35 +353,57 @@ def reject_line_ending_churn(repo, scope, reference, diff, also=()):
 
 
 def guard_counts(scope, result, chain):
-    """Whether a completed review satisfies guard_risky_review.py: an --uncommitted review whose verdict
-    names an Accept, not a shadow run (it closes nothing). A Codex result carries no verdict, so it
-    records nothing and the guard asks for a diff-reviewer review (fail closed)."""
+    """Whether a completed review satisfies guard_risky_review.py: a review whose verdict names an
+    Accept, not a shadow run (it closes nothing). A Codex result carries no verdict, so it records
+    nothing and the guard asks for a diff-reviewer review (fail closed)."""
     verdict = str((result.get("result") or {}).get("verdict") or "")
-    return scope == "uncommitted" and not chain.get("shadow") and verdict.startswith("Accept")
+    return not chain.get("shadow") and verdict.startswith("Accept")
 
 
-def note_reviewed(repo):
-    """Record a completed --uncommitted review that Accepted for the Claude Code overlay's guard_risky_review.py
-    (the git folder's myagentkit-reviewed, in record_review.py's format; owner 2026-10-25). A failure
-    only means the guard asks for a diff-reviewer review."""
+def note_reviewed(repo, scope="uncommitted", tip=None, files=()):
+    """Record a completed review that Accepted for the Claude Code overlay's guard_risky_review.py
+    (owner 2026-10-25). An --uncommitted one adds the paths changed against HEAD to the git folder's
+    myagentkit-reviewed, in record_review.py's format. Every scope also records the reviewed content
+    of `files` (all rounds of the label) in the common git folder's myagentkit-reviewed-content, so a
+    commit or a merge of a branch reviewed with --commit or --base passes when its risky files hold
+    that content (labricore A1). A failure only means the guard asks for a diff-reviewer review."""
     def git(*args):
         return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=20, check=True).stdout
-    try:
-        head = git("rev-parse", "--verify", "-q", "HEAD").strip()
-        names = (git("diff", "--name-only", "--no-renames", "-z", "HEAD")
-                 + git("ls-files", "--others", "--exclude-standard", "-z"))
-        path = Path(git("rev-parse", "--git-path", "myagentkit-reviewed").strip())
-        path = path if path.is_absolute() else Path(repo) / path
+
+    def load(path):
         try:
-            record = json.loads(path.read_text(encoding="utf-8"))
+            value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            record = {}
-        if not isinstance(record, dict) or record.get("head") != head:
-            record = {}
-        paths = set(record.get("paths", [])) | {name for name in names.split("\0") if name}
-        path.write_text(json.dumps({"head": head, "paths": sorted(paths), "pending": record.get("pending", {})}),
-                        encoding="utf-8")
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def absolute(text):
+        path = Path(text.strip())
+        return path if path.is_absolute() else Path(repo) / path
+    try:
+        if scope == "uncommitted":
+            head = git("rev-parse", "--verify", "-q", "HEAD").strip()
+            names = (git("diff", "--name-only", "--no-renames", "-z", "HEAD")
+                     + git("ls-files", "--others", "--exclude-standard", "-z"))
+            path = absolute(git("rev-parse", "--git-path", "myagentkit-reviewed"))
+            record = load(path)
+            if record.get("head") != head:
+                record = {}
+            paths = set(record.get("paths", [])) | {name for name in names.split("\0") if name}
+            path.write_text(json.dumps({"head": head, "paths": sorted(paths), "pending": record.get("pending", {})}),
+                            encoding="utf-8")
+        path = absolute(git("rev-parse", "--git-common-dir")) / "myagentkit-reviewed-content"
+        content = load(path)
+        for name in files:
+            if scope == "uncommitted":
+                blob = git("hash-object", "--", name).strip() if (Path(repo) / name).is_file() else ""
+            else:
+                listed = git("ls-tree", "-z", tip, "--", name).split("\0")[0].split("\t")[0].split()
+                blob = listed[2] if listed[1:2] == ["blob"] else ""
+            content[name] = blob  # "" = the reviewed change deletes it
+        # shortcut: the record only grows; prune it if it ever slows the guard
+        path.write_text(json.dumps(content, sort_keys=True), encoding="utf-8")
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print("NOTE [review]: the reviewed-paths record was not written (%s)" % error, flush=True)
 
@@ -545,6 +567,7 @@ def main(argv=None):
              "fallback_allowed": args.allow_fallback,
              "attempts": [], "status": "pending", "failure_kind": None,
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
+    label_files = measured.pop("label_files", [])
     if "continues" in measured:
         chain["continues"] = measured["continues"]  # an --uncommitted round's label, continued (#293)
     if author:
@@ -670,7 +693,7 @@ def main(argv=None):
         if chain["status"] == "completed" and exit_code == 0:
             chain["selected_reviewer"] = names[provider]
             if guard_counts(scope, result, chain):
-                note_reviewed(repo)
+                note_reviewed(repo, scope, original[3] if scope == "commit" else original[0], label_files)
         else:
             chain["status"] = "failed"
         # A cancel at any point after launch ends the chain: both adapters relabel a cancelled

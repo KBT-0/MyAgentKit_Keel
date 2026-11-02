@@ -990,6 +990,17 @@ class V0141FieldReportTests(GuardCase):
             "watch 'cd x; git stash drop'", "sort --compress-program='git stash drop' f",
         ], 2)
 
+    def test_a_note_written_before_a_script_run_is_no_command(self):
+        # leeway-43: a cat here-document naming a stash drop, then `python3 x.py`, read the body raw
+        self.dirty()
+        drop, reset = 'git stash ' + 'drop', 'git reset ' + '--hard'
+        self.assertVerdict(["cat > n.md <<'EOF'\nnever %s another entry\nEOF\npython3 x.py" % drop], 0)
+        self.assertVerdict([
+            "cat > n.py <<'EOF'\nos.system('%s')\nEOF\npython3 n.py" % reset,  # it runs what it wrote
+            "cat > n.md <<'EOF'\nnever %s another entry\nEOF\npython3 -c x" % drop,
+            "cat > n.md <<'EOF'\nnever %s another entry\nEOF\nsh x.sh" % drop,
+        ], 2)
+
     def test_a_mention_on_a_plain_line_is_no_command(self):
         self.dirty()
         self.assertVerdict([

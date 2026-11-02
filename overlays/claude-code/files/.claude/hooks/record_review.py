@@ -18,7 +18,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guard_risky_review import changed, head, project_root, read_record, record_path  # noqa: E402
+from guard_risky_review import changed, head, note_content, project_root, read_record, record_path  # noqa: E402
 
 # A PASS only after "Verdict" (ctl10: "VERDICT: PASS"): a cut-off "Pass 1: reading the diff" is none.
 VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve)\b|\W*verdict\W*pass\b", re.I)
@@ -26,7 +26,8 @@ HEADING = re.compile(r"\W*verdict\W*", re.I)
 # A line that leads with Critical or High, after list, table and emphasis markup and labels such as
 # "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; "High-severity" too, not "High-tier".
 LABEL = r"(?:issue|finding|[a-z]?\d+|severity|`[^`\n]*`)"  # one way to split a line: no backtracking blow-up
-BLOCKING = re.compile(r"^[^\w\n`]*(?:%s[^\w\n`]+)*(?:critical|high)\b(?!-(?:tier|effort)\b)" % LABEL,
+# labricore A5: a bare path:line may lead once ("- src/x.ts:3 — High: ...")
+BLOCKING = re.compile(r"^[^\w\n`]*(?:[\w\\-]*[./][\w./\\-]*:\d+[^\w\n`]+)?(?:%s[^\w\n`]+)*(?:critical|high)\b(?!-(?:tier|effort|risk)\b)" % LABEL,
                       re.I | re.M)
 
 
@@ -58,6 +59,7 @@ def main():
                 note = pending.pop(agent, [])
                 if accepted(str(report or "")):
                     paths |= set(note)
+                    note_content(root, note)  # a merge of this tree's commits passes elsewhere too
         with open(record_path(root), "w", encoding="utf-8") as f:
             json.dump({"head": head(root), "paths": sorted(paths), "pending": pending}, f)
     except Exception as error:  # a broken record only means the guard asks for the review again

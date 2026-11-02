@@ -5782,7 +5782,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 0, first)
         record = Path(first['usage_record'])
         original = json.loads(record.read_text())
-        for field, value, named in (('scope', 'base', 'scope'), ('resolved', '1' * 40, 'reference'),
+        # A --commit or --base round's scope is continued by an --uncommitted fix on top (labricore A2,
+        # test_an_uncommitted_fix_continues_a_commit_round).
+        for field, value, named in (('resolved', '1' * 40, 'reference'),
                                     ('head', '0' * 40, 'not an ancestor of HEAD')):
             with self.subTest(field=field):
                 changed = json.loads(json.dumps(original))
@@ -5936,6 +5938,32 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         (self.repo / 'file.py').write_text('amended')
         commit('--amend', '-m', 'amended')
         code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('new task label', refused['error'])
+
+    def test_an_uncommitted_fix_continues_a_commit_round(self):
+        # labricore A2: round 1 --commit, its fix left uncommitted on top: round 2 --uncommitted kept the
+        # label only after the lead committed the fix; an amended round-1 commit still needs a new label
+        commit = lambda *args: self.git(
+            '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qa', *args)
+        task = {'MYAGENTKIT_TASK_ID': 'onto-task'}
+        commit('-m', 'A')
+        code, first = self.run_bridge('reject', extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 0, first)
+        (self.repo / 'file.py').write_text('fixed')
+        code, second = self.run_bridge(extra=('--uncommitted',), env_extra=task)
+        self.assertEqual(code, 0, second)
+        code, third = self.run_bridge(extra=('--uncommitted',), env_extra=task)  # one count with round 1
+        self.assertEqual(code, 2, third)
+        self.assertIn('already has 2 completed rounds', third['error'])
+        commit('-m', 'fix')
+        task = {'MYAGENTKIT_TASK_ID': 'onto-amended'}
+        code, first = self.run_bridge('reject', extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 0, first)
+        commit('--amend', '-m', 'amended')
+        (self.repo / 'file.py').write_text('fixed again')
+        code, refused = self.run_bridge(extra=('--uncommitted',), env_extra=task)
         self.assertEqual(code, 2, refused)
         self.assertIn('new task label', refused['error'])
 
@@ -7666,7 +7694,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         carried, measured = bridge.prior_rounds(self.repo.resolve(), 'measured-task', 'uncommitted', None, head, 'x')
         # The tree read and the diff's files ride along since #293.
         self.assertEqual((carried, measured), ('', {'shadow': 'yes', 'focus': 'logic', 'tree': str(self.repo.resolve()),
-                                                    'files': []}))
+                                                    'files': [], 'label_files': []}))
         self.assertFalse(hasattr(bridge, 'MEASURED'))
 
     def test_a_shadow_review_is_marked_in_the_chain_and_on_the_console(self):

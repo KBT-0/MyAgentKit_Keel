@@ -15,6 +15,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **A branch reviewed after its commits merges (labricore A1-A7, 2026-11-02).** `guard_risky_review.py` counted only
+  an `--uncommitted` review, so every merge of a worker branch reviewed with `--commit` was refused. An accepted
+  `review.sh` round of any scope, and an accepted diff-reviewer, now also record the reviewed content of every file
+  of the label's rounds (the common git folder's `myagentkit-reviewed-content`); a commit or a merge passes when each
+  risky file holds content a review accepted, in any checkout. A risky file that differs from it is still refused.
+  An `--uncommitted` fix on top of a `--commit` or `--base` round continues that label (an amend still needs a new
+  one). The guard refuses a `git -C` folder it cannot resolve (`$WT`, `~/x` that does not exist) instead of judging
+  another tree, and sees `git.exe commit`. `record_review.py` reads a finding written path first
+  (`- src/x.ts:3 — High: ...`) as a High, and a "High-risk" line no longer voids an Accept. AGENTS.md says the one
+  flow: the review runs before the change reaches the main branch, on the uncommitted diff or with `--commit`/`--base`
+  on a committed worker branch before its merge; HANDOFF's worker brief says the same. AGENTS.md drops another
+  project's label from the task-discipline rule. `guard_destructive_git.py`: a here-document written by `cat`, then a
+  script run by an interpreter on a file the line does not write (`python3 x.py`), no longer reads the note's text
+  as a command (leeway lead 43). test_guard_risky_review (real worktrees), test_claude_bridge,
+  test_guard_destructive_git: each new case red without its fix. **ACTION** (project-owned `AGENTS.md`,
+  `docs/HANDOFF.md`, `.claude/hooks/guard_risky_review.py`, `.claude/hooks/record_review.py`,
+  `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
 - **Field reports from the leeway leads (2026-11-02).** `spawn_worker.sh --resume` moves the worker's earlier
   uncommitted result to `.myagentkit/workers/NAME.result-prev.md` and tells the worker the file is a new
   instruction (a new task or an answer): the watch said DONE at

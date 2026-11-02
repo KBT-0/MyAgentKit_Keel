@@ -192,7 +192,8 @@ REVIEW: you review your diff with fresh sub-agents before the commit; where
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: the review gate is the
 lead's (docs/REVIEW_RUNNING.md), in a FRESH session that the working mode names
-(docs/REVIEW_GATE.md, "Invariant"); report the diff ready for it and stop.
+(docs/REVIEW_GATE.md, "Invariant"); report the diff ready for it, committed on your branch or
+not, and stop: the lead reviews a commit with --commit or --base, an open diff with --uncommitted.
 If you are the lead, that review is yours to start (docs/REVIEW_RUNNING.md, "Running it"):
 its reviewer is the fresh session, never this one.
 Any other change gets its tier's review (docs/REVIEW_GATE.md, "Risk tiers").

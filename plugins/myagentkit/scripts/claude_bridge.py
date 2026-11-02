@@ -1257,7 +1257,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     # Recorded with the round: the tree it read, and its diff's files, which a later --commit
     # round must cover to continue an --uncommitted one under its label.
     files = diff_files(diff.encode())
-    continues, newest = None, ""
+    continues, newest, label_files = None, "", set(files)
 
     def damaged(path, what):
         return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
@@ -1336,14 +1336,17 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         transition = task["scope"] == "uncommitted" and scope == "commit"
         if transition and isinstance(task.get("files"), list) and all(isinstance(f, str) for f in task["files"]):
             left = sorted(set(task["files"]) - set(files))
-        if task.get("scope") != scope and left != []:
+        # labricore A2: an --uncommitted fix on top of a --commit or --base round continues its label;
+        # the ancestry check below still applies.
+        onto = task["scope"] != "uncommitted" and scope == "uncommitted"
+        if task.get("scope") != scope and left != [] and not onto:
             mismatch = "scope %s, not %s" % (task.get("scope"), scope) + (
                 " (its files %s are not in the diff of commit %s)" % (", ".join(left), resolved) if left
                 else " (a record written before v0.13 names no files)" if transition else "")
         elif transition and not (descends(earlier, resolved) and descends(resolved, head)):
             # A worker branch rebased or amended before the merge leaves the round's head off the line.
             mismatch = "head %s, and commit %s does not descend from it on HEAD %s's line" % (earlier, resolved, head)
-        elif task.get("resolved") != resolved and not (
+        elif not onto and task.get("resolved") != resolved and not (
                 # Round 2 over the fix commits, in every scope (#119): a --base at the earlier
                 # round's head or above it, or the --commit of a fix on top of it, on HEAD's line.
                 # The rounds stay one count, so a third is still refused; a new label restarted
@@ -1358,6 +1361,8 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("an earlier review with task label %s has %s; that is another "
                               "change, a rebase or an amend, so use a new "
                               "task label" % (task_id, mismatch))
+        if isinstance(task.get("files"), list):
+            label_files.update(f for f in task["files"] if isinstance(f, str))
         if transition and str(value.get("recorded_at")) >= newest:
             # The newest round, whatever order the directory lists the records in.
             newest = str(value.get("recorded_at"))
@@ -1404,6 +1409,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     except ValueError as error:
         raise BridgeError(str(error)) from error
     measured.update(tree=str(repo), files=files)
+    measured["label_files"] = sorted(label_files)  # every round's files, for review_dispatch.note_reviewed; not recorded
     if continues:
         measured["continues"] = continues  # the dispatcher copies it into the chain record
         if "MYAGENTKIT_REVIEW_CHAIN_ID" not in os.environ:
@@ -2057,6 +2063,7 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
         if args.mode == "review":
             prompt_prefix = REVIEW_PROMPT % ", ".join(docs)
             carried, measured = prior_rounds(repo, args.task_id, scope, resolved, head, diff, claims)
+            measured.pop("label_files", None)
             prompt_suffix = (
                 (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n" + REVIEW_OUTPUT + "\n"
                 + carried

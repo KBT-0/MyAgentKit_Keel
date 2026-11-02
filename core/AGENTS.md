@@ -53,7 +53,7 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 - One change in one module, inside the brief's `Owns:` paths; more is a STOP (split, report).
   No drive-by refactors; a tidy inside a line you had to change is part of the task. A second
   bug of the same cause in a file the task changes is part of the task too: fix it with its test
-  and say so; one elsewhere is reported (owner 2026-10-25, ctlq: the kit left a found bug 4 of 4).
+  and say so; one elsewhere is reported.
 - No push, PR or remote update without {{OWNER_NAME}}'s word in this session.
 - A git command line holding `--out`, `--ext`, `--textc` or `--sub`, a commit message included,
   is denied (`.claude/settings.json`): write the message, in a step of its own (the denial reads the whole
@@ -84,8 +84,10 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling) pass the review
   gate before they reach the main branch; others get their tier's review (`docs/REVIEW_GATE.md`,
-  "Risk tiers"). It starts unasked, on the uncommitted diff, before the first commit attempt (an
-  unreviewed risky commit is refused); a FRESH session reviews, never the author
+  "Risk tiers"). It starts unasked, before the change reaches the main branch: on the uncommitted
+  diff where it is written, or with `--commit`/`--base` on a committed worker branch before its
+  merge; a risky commit or merge whose content no review accepted is refused. A
+  FRESH session reviews, never the author
   (`docs/REVIEW_GATE.md`, "Invariant", "Rounds"). A verdict's manual checks go to `docs/STATE.md`.
 - **Never report a verification you did not run**; say "not run".
 
