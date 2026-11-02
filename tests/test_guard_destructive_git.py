@@ -254,9 +254,8 @@ class ReviewRoundThreeTests(GuardCase):
     def test_a_shell_with_a_file_operand_is_covered_by_the_floor(self):
         self.dirty()
         self.assertVerdict(['echo "git reset --hard" > x.sh; sh x.sh', "printf 'git reset --hard' > x.sh; bash x.sh",
-                            'echo "git stash drop" > x.sh; sh x.sh',
-                            # the floor's accepted cost: a mention is refused while the tree is dirty
-                            'git commit -m "undo git reset --hard"'], 2)
+                            'echo "git stash drop" > x.sh; sh x.sh'], 2)
+        self.assertVerdict(['git commit -m "undo git reset --hard"'], 0)  # #327: a mention on a plain line
 
     def test_the_floor_reads_restore_and_clean_as_git_does(self):
         # Lead on c3f8427: --staged with --worktree overwrites the working copy, and an -n that
@@ -357,8 +356,9 @@ class CloseReviewTests(GuardCase):
         git(self.repo, 'checkout', '-q', '-b', 'other')
         git(self.repo, 'checkout', '-q', 'main')
         self.dirty()
-        self.assertVerdict(['git checkout -', 'git checkout @{-1}', 'git checkout @{-2}'], 0)
-        self.assertVerdict(['git checkout -f -', 'git checkout -- -', 'git checkout - f.txt'], 2)
+        # `git checkout -- -` names a path `-`, which holds no change (#327: a path checkout reads its paths).
+        self.assertVerdict(['git checkout -', 'git checkout @{-1}', 'git checkout @{-2}', 'git checkout -- -'], 0)
+        self.assertVerdict(['git checkout -f -', 'git checkout -- f.txt', 'git checkout - f.txt'], 2)
 
     def test_interpreter_heredocs_holding_git_are_unreadable(self):
         for interpreter in ['python', 'python3', 'python3.13', 'node', 'perl', 'ruby']:
@@ -973,6 +973,57 @@ class V014FieldReportTests(GuardCase):
 
     def test_a_crlf_heredoc_terminator_ends_the_body(self):
         self.assertVerdict(["cat > n.md <<'EOF'\r\nx\r\nEOF\r\ngit stash drop"], 2)
+
+
+
+class V0141FieldReportTests(GuardCase):
+    """#327, labricore 2026-11-02: harmless commands refused. Each relaxation has its dangerous
+    neighbour beside it, still refused."""
+
+    def test_a_folder_named_git_or_prose_naming_git_is_no_git(self):
+        self.assertVerdict([
+            "awk '/git/{print $1}' f; git diff --stat", "grep -n 'class Git' $f; git diff --stat",
+            "grep -n 'see git' \"$f\" | head", "python3 - <<'E'\nev.append((dt,'GIT',h+' '+s[:60]))\nE",
+        ], 0)
+        self.assertVerdict([
+            "python3 - <<'E'\nsubprocess.run(['git', sub])\nE", "xargs git $x", "sudo git $sub",
+            "watch 'cd x; git stash drop'", "sort --compress-program='git stash drop' f",
+        ], 2)
+
+    def test_a_mention_on_a_plain_line_is_no_command(self):
+        self.dirty()
+        self.assertVerdict([
+            "git commit -m 'never git reset --hard here'", "cat <<'EOF' > n.md\ngit reset --hard is bad\nEOF",
+            "git commit -F - <<'EOF'\nfix: do not run git checkout HEAD -- x or git clean -fd\nEOF",
+            "echo 'git stash drop is final' # git push --force",
+        ], 0)
+        self.assertVerdict([
+            "git rebase -x 'git reset --hard' HEAD~1", "sh -c 'git reset --hard'", "echo 'git reset --hard' | sh",
+            'git commit -m "$(git reset --hard)"', "git -c alias.x='!git reset --hard' x",
+            "python3 -c \"import subprocess; subprocess.run(['git', 'reset', '--hard'])\"",
+            "cat <<'EOF' > x.sh\ngit reset --hard\nEOF\nsh x.sh", "git commit -m x; git reset --hard",
+            "xargs echo 'git reset --hard'",
+        ], 2)
+
+    def test_a_path_checkout_reads_its_own_paths(self):
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')  # staged elsewhere: labricore's 59 refusals
+        self.assertVerdict(['git checkout HEAD -- f.txt', 'git checkout HEAD~0 -- f.txt nothing.txt'], 0)
+        self.dirty()
+        (self.repo / 'u.txt').write_text('untracked\n', encoding='utf-8')
+        self.assertVerdict(['git checkout HEAD -- f.txt', 'git checkout HEAD -- .', 'git checkout HEAD -- g.txt',
+                            'git checkout HEAD -- u.txt', 'git checkout HEAD -- "*.txt"', 'git checkout -f HEAD -- a',
+                            'git checkout HEAD -- $p', 'git checkout HEAD f.txt',
+                            "python3 -c \"import os; os.system('git checkout HEAD -- a')\""], 2)
+
+    def test_a_long_list_of_changes_is_cut(self):
+        for n in range(15):
+            (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')
+        result = self.run_hook('git reset --hard')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'n09.txt', result.stderr)
+        self.assertNotIn(b'n14.txt', result.stderr)
+        self.assertIn(b'... and 5 more (git status --porcelain)', result.stderr)
 
 
 if __name__ == '__main__':

@@ -15,6 +15,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **guard_destructive_git.py refuses fewer harmless commands (#327, labricore 2026-11-02).** A `git/` is a folder,
+  not the command (`awk '/git/{print $1}' f; git diff` was refused as a variable subcommand); in interpreter code a
+  `'GIT'` label or a git that ends a string it did not start is prose; grep, head, tail, wc, uniq, cut and tr run
+  none of their arguments, so a pattern naming git is data. On a line of those, cd/echo/cat-like commands and git
+  status/log/diff/show/commit/tag/add/checkout/rev-parse/ls-files without `-c`, the floor reads the text with
+  quotes, comments and here-document bodies blanked: a commit message or a note that names a hard reset is no
+  reset (a shell, an interpreter, `$(...)`, an alias or `rebase -x` keeps the raw floor). On such a line,
+  `git checkout REV -- PATHS` is judged by those paths' status alone (59 refusals over staged files elsewhere);
+  `-f`, a variable path or no `--` still read the whole tree. A refusal lists ten changes and counts the rest.
+  The here-document and here-string refusals found in labricore's sessions (15 of 17) already passed before this change.
+  test_guard_destructive_git 84 (Windows) / 83, red without the fix. **ACTION** (`.claude/hooks/guard_destructive_git.py`,
+  project-owned): `sync-kit.sh . --merge`.
 - **sync-kit.sh and the sync command (#330, labricore's v0.14 sync).** `--merge` merges a kit change that only
   appends after the project's own lines, `merged: FILE (the kit appended N lines; they follow the project's own)`,
   not as a conflict (GOTCHAS.md showed a 5-line append as 400+ project-only lines); a kit clone's

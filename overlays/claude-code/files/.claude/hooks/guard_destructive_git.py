@@ -90,7 +90,8 @@ import shlex
 import subprocess
 import sys
 
-GIT_WORD = re.compile(r"(?<![\w.\\/-])(?:[\w.:\\/-]*[\\/])?git(?:\.exe)?(?![\w.-])", re.I)
+# A `git/` is a folder (awk's `/git/`, `.git/`), never the command (#327).
+GIT_WORD = re.compile(r"(?<![\w.\\/-])(?:[\w.:\\/-]*[\\/])?git(?:\.exe)?(?![\w.\\/-])", re.I)
 SEPARATORS = set(";&|\n()")
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", ".", "source"}
 # The floor: the base implementation's patterns, matched on the raw text (quoted strings and
@@ -110,9 +111,14 @@ FLOOR = [(re.compile(p, re.I), why) for p, why in [
     (r"\bgit(\.exe)?\s+stash\s+(drop|clear)\b", "git stash drop/clear deletes stashed work"),
     (r"\bgit(\.exe)?\s+push\b[^|;&]*(--force(?![\w-])|\s-f\b)", "a force push can discard remote commits"),
 ]]
+PLAIN_GIT = {"status", "log", "diff", "show", "commit", "tag", "add", "checkout", "rev-parse", "ls-files"}
 TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 CALM = {"cd", "pushd", "echo", "printf", "pwd", "ls", "cat", "true", ":", "test", "[", "export"}
+# #327: commands that run none of the text they are given (sort is not: --compress-program). Their
+# arguments are data, and on a line of these and PLAIN_GIT alone the floor reads the line with quotes,
+# comments and here-document bodies blanked, so a message that names a hard reset is no reset.
+INERT = CALM | {"grep", "egrep", "fgrep", "head", "tail", "wc", "uniq", "cut", "tr"}
 READ_ONLY = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "describe", "blame",
              "grep", "help", "version", "reflog", "shortlog", "remote", "config", "branch", "tag"}
 HOOK_SUBS = {"commit", "merge", "push", "rebase", "am", "pull", "cherry-pick", "revert"}
@@ -420,7 +426,12 @@ def loose(text, cwds, changed=False, env=None, appended=False):
     if MOVES.search(text):
         cwds = [*cwds, None]
     for m in GIT_WORD.finditer(text):
-        quote = text[m.start() - 1:m.start()]
+        quote, after = text[m.start() - 1:m.start()], text[m.end():m.end() + 1]
+        # #327: code and data name git in prose: a label ('GIT', "Git"), or a git that ends a string it
+        # did not start (grep 'class git' "$f"). shortcut: a Windows argv ['Git', ...] passes; none was seen.
+        if (not re.search(r"git(?:\.exe)?$", m.group()) and not m.group().lower().endswith(".exe")
+                or after in ("'", '"') and quote != after):
+            continue
         if quote in ("'", '"') and text[m.end():m.end() + 1] == quote:
             items = re.split(r"[\])]", text[m.end() + 1:], maxsplit=1)[0]
             words = [next((w for w in x.groups()[:2] if w is not None), UNKNOWN) for x in ARGV.finditer(items)]
@@ -550,6 +561,7 @@ class Git:
 
     def __init__(self, tokens, env, cwds):
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
+        self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
@@ -581,7 +593,8 @@ class Git:
             if where is None:
                 return "(the command changes to a folder the hook cannot name — assuming uncommitted work)"
             try:
-                code, out = self.ask("status", "--porcelain", *(["--ignored"] if ignored else []), where=where)
+                code, out = self.ask("status", "--porcelain", *(["--ignored"] if ignored else []),
+                                     *(["--", *self.paths] if self.paths else []), where=where)
             except Exception:
                 code, out = 1, ""
             # If we cannot tell whether the tree is dirty, assume it is. Refusing a safe command
@@ -689,6 +702,11 @@ def verdict(g, depth=0):
             return False, "git reset --hard discards every uncommitted change", False
     if sub == "checkout" and not names & {"b", "B", "orphan", "patch"}:
         if "force" in names or "--" in args or len(words) != 1:
+            paths = args[args.index("--") + 1:] if "--" in args else []
+            if paths and not names & {"force", "pathspec-from-file"} and not any(unknowable(p) for p in paths):
+                # #327: labricore's path checkouts were refused over staged files elsewhere (59 hits).
+                g.paths = paths
+                return False, "git checkout of these paths overwrites their working copy", True
             if "force" in names or words:
                 return False, "git checkout of a path, or -f, overwrites the working copy", False
         else:
@@ -824,7 +842,7 @@ def judge(command, cwds, changed=False, env=None):
         elif (input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest)
               and not (name in ("awk", "gawk", "mawk") and plain_awk(rest[1:], text))):
             raise Unreadable(f"interpreter input through {name}")
-        elif name != "git" and name not in CALM and has_git:
+        elif name != "git" and name not in INERT and has_git:
             # An interpreter's code, a wrapper's command (sudo, xargs: it appends operands) or
             # another program's data.
             yield from loose(" ".join(rest[1:]), cwds, changed, here, name in ("xargs", "parallel"))
@@ -852,6 +870,27 @@ def judge(command, cwds, changed=False, env=None):
             yield from judge(inner, cwds, changed, env)
 
 
+def plain(command):
+    """The command with its quoted strings, comments and here-document bodies blanked when every
+    command of the line is INERT or a PLAIN_GIT git without -c (#327); None otherwise."""
+    try:
+        text, _ = strip_heredocs(command)
+        blank = unquoted(text)
+        for seg in segments(text, strict=True) if blank is not None else [["eval"]]:
+            words = list(itertools.dropwhile(lambda w: w in KEYWORDS or re.match(r"[A-Za-z_]\w*=", w), seg))
+            if not words:
+                continue
+            if base(words[0]) == "git":
+                g = Git(words[1:], {}, [None])
+                if g.configs or g.sub not in PLAIN_GIT:
+                    return None
+            elif base(words[0]) not in INERT:
+                return None
+        return blank
+    except Exception:  # noqa: BLE001 - unreadable: the floor reads the raw text
+        return None
+
+
 def main():
     try:
         data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
@@ -874,7 +913,10 @@ def main():
         command = re.sub(r"\$env:(\w+)\s*=\s*", r"export \1=", command.replace("\\", "/"), flags=re.I)
         # A `( ... )` operand is a sub-expression, PowerShell's `$( ... )`: an unknown operand, its text judged.
         command = re.sub(r"(?<!\$)\(", " $(", command)
-    floor = next((why for pattern, why in FLOOR if pattern.search(command)), None)
+    # On a plain line the parser judges a path checkout by those paths alone (#327).
+    text = plain(command)
+    floor = next((why for pattern, why in FLOOR if pattern.search(command if text is None else text)
+                  and (text is None or pattern is not FLOOR[1][0])), None)
     if floor:  # the base rule, first and never cleared by the parser below
         dirty = Git([], {}, [os.getcwd()]).dirty()
         if dirty:
@@ -896,6 +938,9 @@ def main():
 
 
 def lost(why, dirty):
+    lines = dirty.splitlines()
+    if len(lines) > 10:  # #327: a long list was printed whole on every refusal
+        dirty = "\n".join(lines[:10] + [f"... and {len(lines) - 10} more (git status --porcelain)"])
     return (f"{why}, and this tree has uncommitted changes:\n\n{dirty}\n\n"
             "Uncommitted work is NOT in the reflog. If any of the above is not yours — a file the "
             "owner edited by hand, a note written this session — this command is the last moment it "
