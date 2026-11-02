@@ -94,6 +94,7 @@ def main(argv=None, result_sink=None, claims=None):
             raise ValueError("required project guidance is missing or outside repository: " + name)
     carried, measured = prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head,
                                      diff, claims)
+    measured.pop("label_files", None)  # review_dispatch's, never the usage record's (review r-v0141-fields)
     prompt = (
         REVIEW_PROMPT % docs + REVIEW_RUNS + " Write exactly one "
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "

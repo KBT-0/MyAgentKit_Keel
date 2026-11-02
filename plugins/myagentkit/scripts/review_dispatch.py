@@ -434,7 +434,8 @@ def mode_reviewer(repo, default, explicit=False):
         return default
     family = re.search(r"family: ([^(),]+)", note)
     family = family[1].strip().lower() if family else "claude"
-    return family if family in ("claude", "codex") else author_family(family) or default
+    # explicit: any solo line is solo, a family the kit cannot run included (review r-v0141-fields Low)
+    return family if family in ("claude", "codex") else author_family(family) or (family if explicit else default)
 
 
 def main(argv=None):

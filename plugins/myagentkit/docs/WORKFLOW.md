@@ -541,6 +541,11 @@ is, and a command with no session id at all is the owner's terminal, let through
 The hooks enforce commits and merge commits only: a fast-forward merge, a rebase, a
 cherry-pick, a pull or a `git add` in the main checkout runs no hook, and the rule's text alone
 holds them.
+A branch that changes documentation only (no code, test, gate, hook or build file) sends no
+MERGE REQUEST of its own: it rides with the lead's next code merge request, or goes as one
+request at the end of the lead's session, and a request that replaces an earlier one says so,
+so the writer merges the newest only (leeway lead 43, item 7: five doc-only requests in 90
+minutes, four of them superseded).
 
 ## Parallel work — where a branch agent writes its notes
 
@@ -1642,6 +1647,10 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    its gate (the commit runs `./scripts/check.sh`). A merge-conflict resolution is a part
    authored by whoever resolved it, so the final review covers it. A member branch rejected
    or abandoned after the merge leaves by rebuilding the integration branch without it.
+   A merge whose two sides both changed a generator or a content check (code that writes or
+   validates generated content) runs that content validator once on the merged tree before
+   the merge commit: a green `./scripts/check.sh` does not prove the generated content still
+   validates (leeway lead 43, item 9: the gate passed, the package build failed its validator).
 2. Start the acceptance gate run (`./scripts/check.sh`) and the reviews on the same commit,
    following "Worker cost", rule 6. The gate runs the project's build, so it may share the
    reviews' worktree only when that run writes nothing but files Git ignores (owner decision,
@@ -1658,6 +1667,11 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    Low to `docs/BACKLOG.md` (`docs/REVIEW_GATE.md`, "Verdicts and who decides").
 5. A release gets one day of real use before the push; the lead records what it ran and
    what it saw in `docs/STATE.md`, and pushes on {{OWNER_NAME}}'s OK.
+   A measured performance regression (a quiet rerun confirmed it: `docs/GOTCHAS_KIT.md`, "A timing
+   taken on a busy machine is not a result") blocks the push as a red gate does, until it is fixed or {{OWNER_NAME}}
+   accepts a written plan for it; the lead does not propose the push meanwhile. A project with a
+   repeatable bench may make it a gate of its own (leeway lead 43, item 10: gate green, frame
+   time 20 % worse, push proposed and refused).
 6. Start the next worker while the gate run after a merge still runs. If that run
    fails, tell the next worker to rebase onto the fix.
 
