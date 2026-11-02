@@ -81,6 +81,29 @@ class AutopilotReportTests(unittest.TestCase):
         self.assertIn('night work', result.stdout)
         self.assertIn('- .claude/worktrees/w1/RESULT-w1.md: Kind: completed', result.stdout)
 
+    def test_a_committed_old_result_a_night_checkout_wrote_is_not_listed(self):
+        # #334 (labricore): a sync worktree made in the absence wrote nine committed RESULT files.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name)
+        now = datetime.now().astimezone().replace(microsecond=0)
+        since = now - timedelta(hours=1)
+        self.git('init', '-q', '-b', 'main')
+        (self.project / 'RESULT-old.md').write_text('Kind: completed\nTask: old\nAttempt: 1\nRemaining: none\n')
+        self.git('add', 'RESULT-old.md')
+        self.git('commit', '-q', '-m', 'old run', when=now - timedelta(days=3))
+        self.git('worktree', 'add', '-q', str(self.project / '.claude/worktrees/sync'))
+        night = self.project / '.claude/worktrees/w1/RESULT-w1.md'
+        night.parent.mkdir(parents=True)
+        night.write_text('Kind: completed\nTask: w1\nAttempt: 1\nRemaining: none\n')
+        (self.project / '.myagentkit').mkdir()
+        (self.project / '.myagentkit/presence').write_text('away %s\n' % since.isoformat(), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(self.project)],
+                                capture_output=True, text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('RESULT-w1.md', result.stdout)
+        self.assertNotIn('RESULT-old.md', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

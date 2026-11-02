@@ -48,9 +48,18 @@ def results(project, since, until):
     root = presence_record(project).parents[1]
     paths = [*root.glob('.claude/worktrees/*/RESULT-*.md'), *root.glob('.myagentkit/workers/RESULT-*.md')]
     for path in sorted(paths):
-        if start <= path.stat().st_mtime <= end:
+        if start <= path.stat().st_mtime <= end and not committed_before(path, start):
             head = path.read_text(encoding='utf-8', errors='replace').splitlines()[:4]
             yield '- ' + path.relative_to(root).as_posix() + ': ' + '; '.join(line.strip() for line in head)
+
+
+def committed_before(path, start):
+    """PATH is unchanged since its last commit, made before START: a checkout in the absence (a new
+    worktree) wrote an earlier run's committed result, not a worker of this absence (#334)."""
+    git = lambda *a: subprocess.run(['git', '-C', str(path.parent), *a, '--', path.name],
+                                    capture_output=True, text=True).stdout.strip()
+    made = git('log', '-1', '--format=%ct')
+    return made.isdigit() and int(made) < start and not git('status', '--porcelain')
 
 
 def cost(project):
