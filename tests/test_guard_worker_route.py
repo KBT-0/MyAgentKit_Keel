@@ -43,6 +43,10 @@ class LongWaitRouteTests(unittest.TestCase):
             ('Agent', {'description': 'x', 'prompt': "It's merging into master; report after."}),
             ('Agent', {'description': 'x', 'prompt': 'Rebase and re-merge the branch.'}),
             ('Agent', {'description': 'x', 'prompt': 'Wait for the ci-build to go green, then report.'}),
+            # Review r-leewayfield: a command whose object is a plural noun is a merge job.
+            ('Agent', {'description': 'x', 'prompt': 'Merge commits from w1 and w2 into master.'}),
+            ('Agent', {'description': 'x', 'prompt': 'Fix it, then merge requests from the workers in.'}),
+            ('Agent', {'description': 'x', 'prompt': 'Done. Merge results of w1 and w2 into one branch.'}),
         ]:
             with self.subTest(call=call):
                 result = run(dict(call, model='claude-opus-5-5', effort='high'), tool)

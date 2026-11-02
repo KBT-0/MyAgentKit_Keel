@@ -1421,7 +1421,8 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   with the id when Claude Code registered the session), which keeps `-n NAME`. A worker that
   published a completed or handoff result ends 60 s later, and a SendMessage that arrives after
   that is lost: a follow-up to a finished worker goes by `--resume` (leeway 2026-11-02); the
-  resume moves its earlier uncommitted result to `RESULT.prev` and tells it the task is new.
+  resume moves its earlier uncommitted result to `.myagentkit/workers/NAME.result-prev.md` and
+  tells it the file is a new instruction (a new task or an answer).
 - A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
   --resume`. The spawning checkout records `.myagentkit/workers/NAME.session`, outside

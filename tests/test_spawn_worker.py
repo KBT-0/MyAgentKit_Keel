@@ -2558,8 +2558,9 @@ class BackgroundHostTests(unittest.TestCase):
         old.write_text('old task\n')
         result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(old))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((self.cwd / 'RESULT-w1.md.prev').read_text(), 'old task\n')
-        self.assertIn('This resumes your session with a new instruction', self.launch()['argv'][0])
+        self.assertEqual((self.workers / 'w1.result-prev.md').read_text(), 'old task\n')
+        self.assertFalse((self.cwd / 'RESULT-w1.md.prev').exists())  # review r-leewayfield: no copy in the tree
+        self.assertIn("This resumes your session: that file is the lead's new instruction", self.launch()['argv'][0])
         self.ended()
 
     def test_a_resume_into_a_worktree_changed_after_the_result_says_so(self):
