@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **Context band and usage-limit waits (#329, labricore 2026-11-02).** `context_size.py` labels a foreground Bash
+  call that timed out and moved to the background by its description, not its bare id, and a moved watch on a
+  worker's result is no job, so it no longer reads "hand-off blocked". The "line on every call" figure was the same
+  injection counted in three transcript records: the band still speaks once per 50k step, and the yellow band's
+  advice stays as it is (owner, 2026-11-02). WORKFLOW rule 8: when a usage-limit note names a reset more than an
+  hour away, the lead updates STATE and the hand-off file before the stop and resumes in the same session after the
+  reset (one wait re-wrote ~250k tokens, 46% of the day's cache writes). test_context_hook 19, red without the fix.
+  **ACTION** (project-owned `.claude/hooks/context_size.py` and `docs/WORKFLOW.md`): `sync-kit.sh . --merge`.
 - **plain_report.py sees hand-offs in a hand-off folder and after a compaction (#328, labricore 2026-11-02).** The
   missing-opening-prompt bounce fired only for a file whose name holds "handoff"; a hand-off at
   `docs/handoffs/<date>-<label>.md` (a folder so named) now counts, and a compaction between the write and the final

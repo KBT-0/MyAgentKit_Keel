@@ -198,7 +198,8 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
                     inp = block.get('input') if isinstance(block.get('input'), dict) else {}
                     if block.get('name') == 'TaskStop':
                         running.pop(inp.get('task_id'), None)
-                    elif block.get('name') == 'Bash' and inp.get('run_in_background'):
+                    # Every Bash call: a foreground one that times out is moved to the background (labricore #329).
+                    elif block.get('name') == 'Bash':
                         described[block.get('id')] = None if WATCH.search(str(inp.get('command', ''))) else \
                             str(inp.get('description') or 'Bash')
                     elif block.get('name') == 'Agent':

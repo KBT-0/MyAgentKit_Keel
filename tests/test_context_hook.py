@@ -110,6 +110,14 @@ class ContextHookTests(unittest.TestCase):
         turns += [prompt(), {'type': 'assistant', 'timestamp': '2026-10-27T10:00:01.000Z',
                              'message': {'model': 'claude-x', 'usage': {'input_tokens': 310_000}}}]
         self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
+        # #329: a foreground call that timed out is moved to the background: a job under its description,
+        # never its bare id; a moved watch is no job.
+        self.transcript.with_suffix('.context-step').unlink()
+        turns = [prompt(), use('t8', 'Bash', description='Run the tests', command='sh scripts/check.sh'),
+                 result('t8', backgroundTaskId='b8', timedOutAfterMs=120000),
+                 use('t9', 'Bash', description='Watch w3', command='sh scripts/watch_workers.sh w3'),
+                 result('t9', backgroundTaskId='b9', timedOutAfterMs=600000), request(210_000)]
+        self.assertIn('1 job(s) started in this session still run (Run the tests (b8))', self.run_hook(turns + [prompt()]))
 
     def test_a_null_counter_is_zero(self):
         self.assertIn('Context is 210k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {

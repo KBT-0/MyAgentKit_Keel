@@ -1204,6 +1204,11 @@ Rules, binding for whoever routes workers:
    flight continues: one summary turn is cheaper than a handoff note plus a cold start, but
    only while the cache is warm; a session resumed after more than an hour writes a summary into the
    handoff first, since its context is re-written at full price on the next request anyway.
+   So when a usage-limit note names a reset more than an hour away, the lead brings STATE and
+   the hand-off file up to date before the stop, then resumes in the same session after the
+   reset (the note is no hand-off and no wrap-up): if the owner then chooses a fresh session,
+   it starts from a current hand-off instead of re-writing the old context (labricore #329: one
+   such wait re-wrote ~250k tokens, 46% of the day's cache writes).
    Never a bare `/compact`: `/compact keep the open decisions, the binding rules, the changed
    files, the next step and the owner's words verbatim`. A session compacted once hands off
    instead of compacting again, since a summary of a summary drifts.
