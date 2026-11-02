@@ -58,8 +58,9 @@ dialog      UNVERIFIED  -        near  ^ *❯ [0-9]+\. [^ ]
 # session has no pane: the text of the last user or assistant entry of its transcript is
 # matched, when Claude Code wrote that entry as an API error (2.1.308, 2026-10-22: "You've hit
 # your session limit · resets 8:40pm (Europe/Istanbul)"). The pane form is a guess: no limited
-# pane was captured, so the fixtures limit*.txt are made up.
-limit       UNVERIFIED  2.1.308  above  ^ *(⎿ +|⏺ +|● +)?You've hit your [A-Za-z ]*limit( · .+)?$
+# pane was captured, so the fixtures limit*.txt are made up. The kind may hold digits and a hyphen
+# ("You've hit your 5-hour limit · resets 5:20am (Europe/Istanbul)", leeway 2026-11-01, #323).
+limit       UNVERIFIED  2.1.308  above  ^ *(⎿ +|⏺ +|● +)?You've hit your [A-Za-z0-9 -]*limit( · .+)?$
 
 # The context figure in the status line, <used>/<window> with a k or M on each ("Opus 5.5
 # 58k/1.0M high", between `│` separators). The watcher reports it past --context-warn; a

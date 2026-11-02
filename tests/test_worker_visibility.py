@@ -1467,6 +1467,16 @@ class BackgroundTests(Base):
         self.assertIn('WAITING: w1, waiting for: no reason given', self.watch().stdout)
         self.assertEqual(self.run_bg(WATCH, '--limit', 'w1').returncode, 1)
 
+    def test_a_five_hour_limit_is_limit_not_a_wait(self):
+        # #323: leeway's worker said "You've hit your 5-hour limit" and was reported WAITING, no reason given
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
+        five = json.loads(json.dumps(LIMITED).replace('your session limit', 'your 5-hour limit'))
+        self.transcript(said('Running the next suite.'), five, TURN)
+        result = self.watch()
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, limit_bg('w1').replace('your session limit', 'your 5-hour limit'), ''))
+
     def test_a_limit_whose_reset_passed_says_resume_now_once(self):
         # L17: the line kept saying "resume it after the reset" after the reset, at every new watch.
         self.spawned('w1')

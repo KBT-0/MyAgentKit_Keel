@@ -49,6 +49,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `.claude/worktree-disposable`, `clean_worktrees.py` (and so `close_worker.sh`) also takes the `.pyc` files directly
   in a `__pycache__` below a place that holds work (`.claude/hooks`, `scripts`); every other file there still keeps the
   worktree. **ACTION** (`.claude/worktree-disposable`, project-owned): list `__pycache__` if it is not there.
+- **A 5-hour limit is LIMIT, not a wait (#323).** `waiting_patterns.txt`'s `limit` rule took only letters before
+  "limit"; Claude Code's "You've hit your 5-hour limit" fell through, and `watch_workers.sh` reported the stopped
+  worker as WAITING with no reason given. The kind may now hold digits and a hyphen.
 - **A sync names a root `AGENTS.md` over the gate's limit (#318).** `sync-kit.sh` ends with a NOTE when the root
   `AGENTS.md` is 24576 bytes or more, before the commit the gate's agents-size check would refuse (module chains:
   `check.sh` still measures each).
