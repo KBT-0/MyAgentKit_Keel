@@ -178,6 +178,13 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
                 compactions += 1
                 known = True
                 continue
+            attached = rec.get('attachment')
+            if rec.get('type') == 'attachment' and isinstance(attached, dict) and isinstance(attached.get('prompt'), str):
+                # A notification that arrives mid-turn is a queued_command attachment, not a user record
+                # (Claude Code 2.1.x, 2026-11-02: two ended reviews were still listed as running).
+                for ended in TASK_ID.findall(attached['prompt']):
+                    running.pop(ended, None)
+                continue
             msg = rec.get('message')
             content = msg.get('content') if isinstance(msg, dict) else None
             latest = max(latest, when(rec.get('timestamp')))

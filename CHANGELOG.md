@@ -17,7 +17,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **Context band and usage-limit waits (#329, labricore 2026-11-02).** `context_size.py` labels a foreground Bash
   call that timed out and moved to the background by its description, not its bare id, and a moved watch on a
-  worker's result is no job, so it no longer reads "hand-off blocked". The "line on every call" figure was the same
+  worker's result is no job, so it no longer reads "hand-off blocked"; a task notification delivered mid-turn (a
+  `queued_command` attachment record in Claude Code 2.1.x, not a user record) ends its job, where two finished reviews
+  were still listed as running. The "line on every call" figure was the same
   injection counted in three transcript records: the band still speaks once per 50k step, and the yellow band's
   advice stays as it is (owner, 2026-11-02). WORKFLOW rule 8: when a usage-limit note names a reset more than an
   hour away, the lead updates STATE and the hand-off file before the stop and resumes in the same session after the

@@ -118,6 +118,13 @@ class ContextHookTests(unittest.TestCase):
                  use('t9', 'Bash', description='Watch w3', command='sh scripts/watch_workers.sh w3'),
                  result('t9', backgroundTaskId='b9', timedOutAfterMs=600000), request(210_000)]
         self.assertIn('1 job(s) started in this session still run (Run the tests (b8))', self.run_hook(turns + [prompt()]))
+        # A notification delivered mid-turn is a queued_command attachment: it ends the job too.
+        turns += [{'type': 'attachment', 'attachment': {'type': 'queued_command', 'prompt':
+                   '<task-notification>\n<task-id>b8</task-id>\n<status>completed</status>\n</task-notification>'}},
+                  request(260_000)]
+        said = self.run_hook(turns + [prompt()])
+        self.assertNotIn('blocked', said)
+        self.assertIn('recommend ONE', said)
 
     def test_a_null_counter_is_zero(self):
         self.assertIn('Context is 210k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {
