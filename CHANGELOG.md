@@ -15,6 +15,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **Token costs: skill listing, whole STATE.md reads, STATE growth (#338, labricore 2026-11-02).** `token_audit.py`
+  prints a skill-listing table (each plugin's listed tokens and skill calls) and names the plugins never called; the
+  setup interview (item 11) asks which of the owner's plugins the project needs and sets the rest `false` under
+  `enabledPlugins` in `.claude/settings.json`, which reaches the lead, workers and sub-agents (measured on Claude Code
+  2.1.316: `skillOverrides` hides a bundled or user skill, never a plugin's; reviewers already start with
+  `--safe-mode`). `progress_reminder.py` adds one note on a second whole read of `docs/STATE.md` in a session (Read
+  without a range, or `cat`). `check.sh` prints a NOTE past `STATE_MAX_LINES` (default 300, 0 = off; never a FAIL)
+  and lists "Active work" lines still marked MERGED, COMMITTED, DONE and the like. test_gate_checks 18,
+  test_communication_hooks 44, test_token_audit 5, all red without the change. **ACTION** (project-owned
+  `.claude/hooks/progress_reminder.py`, `docs/AGENTS.md`): `sync-kit.sh . --merge`; to change the line count, set
+  `STATE_MAX_LINES` in `scripts/gate_config.sh`; then name each plugin this project does not need `false` under
+  `enabledPlugins` in `.claude/settings.json` (`token_audit.py` names the ones never called).
 - **Rule conflicts settled; a settled step is done, not offered (#336, #337, labricore 2026-11-02).** Autopilot's
   "never without the owner" list allows kit feedback under `kit_feedback: standing-approval` and a local message to
   another session of the owner's own; a high-tier merge parks for the owner's diff read, which wins over a standing

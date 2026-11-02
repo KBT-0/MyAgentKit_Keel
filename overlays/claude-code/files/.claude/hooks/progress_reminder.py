@@ -24,9 +24,14 @@ input, code.claude.com/docs/en/hooks) is skipped whole: the owner never reads a 
 text, the band is the lead's to act on, and a nudge it took was the lead's (#214). A worker
 session (MYAGENTKIT_ROLE=worker, set by spawn_worker.sh) gets the band but no nudge: it writes
 for the lead, whose chat the owner reads (#132).
+
+A second whole read of docs/STATE.md in a session (a Read without offset or limit, or a Bash
+`cat`) adds one note naming the section reading (#338: labricore's leads read it whole 3+ times
+a session, one 11 times). The count lives in the same state file and survives a compaction.
 """
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -36,6 +41,7 @@ import tempfile
 # ten and one are the owner's (2026-10-26).
 MAX_NUDGES = 1
 STEP = 10
+STATE_CAT = re.compile(r'(^|[;&|(]\s*)cat\s+["\']?(\S*/)?docs/STATE\.md["\']?\s*($|[;&|)])')
 RECOUNT = 512 * 1024  # re-read small transcripts; larger ones resume at the saved offset
 
 
@@ -90,6 +96,16 @@ def band_notice(data: dict) -> str:
         return ''
 
 
+def whole_state_read(data: dict) -> int:
+    """1 when this call read docs/STATE.md whole: a Read without offset or limit, or a Bash cat."""
+    tool, given = data.get('tool_name'), data.get('tool_input') or {}
+    if tool == 'Read':
+        path = str(given.get('file_path') or '').replace('\\', '/')
+        return int((path == 'docs/STATE.md' or path.endswith('/docs/STATE.md'))
+                   and given.get('offset') is None and given.get('limit') is None)
+    return int(tool == 'Bash' and bool(STATE_CAT.search(str(given.get('command') or ''))))
+
+
 def owner_away() -> bool:
     try:
         return context_size().away()
@@ -122,8 +138,12 @@ def main() -> None:
             if type(nudges) is not int or nudges < 0:
                 raise TypeError(saved)
             nudges = min(nudges, MAX_NUDGES)  # an older kit allowed three: its spent stretch stays spent (#340)
+            reads = saved.get('state_reads', 0)
+            if type(reads) is not int or reads < 0:
+                raise TypeError(saved)
         except (OSError, ValueError, KeyError, TypeError):
-            saved, said, nudges = {}, None, 0
+            saved, said, nudges, reads = {}, None, 0, 0
+        reads += whole_state_read(data)
         total, mark, offset = silent_calls(transcript, saved)
         if saved:
             if saved['mark'] != mark or said > total or saved['offset'] > offset:
@@ -134,7 +154,8 @@ def main() -> None:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({'said': total if nudge else (said or 0), 'mark': mark,
-                       'nudges': nudges + int(nudge), 'total': total, 'offset': offset}, stream)
+                       'nudges': nudges + int(nudge), 'total': total, 'offset': offset,
+                       'state_reads': reads}, stream)
         try:
             os.replace(temporary, state)
         finally:
@@ -142,6 +163,9 @@ def main() -> None:
     said = [('%d tool calls since the owner last saw a line from you. Say in one plain sentence, in the '
              'chat language, what you are doing now and what you found, then continue (docs/COMMUNICATION.md, '
              '"Progress"; core/docs/ in the kit).' % total)] if nudge else []
+    if reads == 2 and whole_state_read(data):
+        said.append('docs/STATE.md was read whole a second time this session. Read it by section: '
+                    "`grep -n '^## ' docs/STATE.md`, then a range (docs/AGENTS.md, \"STATE.md discipline\").")
     said = ' '.join(said + [band_notice(data)]).strip()
     if said:
         print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PostToolUse', 'additionalContext': said}}))

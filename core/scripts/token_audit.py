@@ -368,6 +368,23 @@ def summary(sessions: list[dict], top: int) -> str:
     lines += ['', '| carried source | items | tokens | carried $ |', '|---|---|---|---|']
     for key, (n, t, usd) in sorted(sources.items(), key=lambda kv: -kv[1][2])[:top * 2]:
         lines.append(f'| {key} | {n} | {t} | {usd:.2f} |')
+    # #338: every enabled plugin's skills are listed in every session, worker and sub-agent.
+    listed = collections.defaultdict(lambda: [0, 0, 0])
+    for s in sessions:
+        for owner, chars in s['skill_listing'].items():
+            listed[owner][0] += 1
+            listed[owner][1] += toks(chars)
+        for name, n in s['skill_calls'].items():
+            listed[name.split(':')[0] if ':' in name else 'user/bundled'][2] += n
+    if listed:
+        lines += ['', '| skill listing owner | sessions | listed tokens | calls |', '|---|---|---|---|']
+        lines += [f'| {o} | {n} | {t} | {c} |' for o, (n, t, c) in sorted(listed.items(), key=lambda kv: -kv[1][1])]
+        idle = [o for o, (n, _, c) in listed.items() if n and not c and o != 'user/bundled']
+        if idle:
+            # Measured on Claude Code 2.1.316: skillOverrides hides a bundled or user skill, not a plugin's.
+            lines += ['', 'Never called: ' + ', '.join(sorted(idle)) + '. A plugin this project does not need: '
+                      '"NAME@MARKETPLACE": false under enabledPlugins in .claude/settings.json (lead, workers '
+                      'and sub-agents); a bundled or user skill: "NAME": "off" under skillOverrides.']
     steps = sorted((dict(c, file=Path(s['file']).name, kind=s['kind']) for s in sessions for c in s['top']),
                    key=lambda c: -c['usd'])[:top]
     lines += ['', '| # | step | kind | tokens | re-read by | carried $ |', '|---|---|---|---|---|---|']

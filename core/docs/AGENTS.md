@@ -51,7 +51,9 @@ of each file. Keep it near 100 lines; it is read when a task crosses a module bo
 - Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
   and a pointer.
-- No size limit applies to STATE.md. What keeps it small is deleting finished work in the
+- No size limit fails the gate on STATE.md; past `STATE_MAX_LINES` (`scripts/gate_config.sh`)
+  a NOTE says so, and "Active work" lines still marked MERGED, COMMITTED, DONE and the like are
+  listed for deletion. What keeps it small is deleting finished work in the
   commit that finishes it, and the backlog living in `docs/BACKLOG.md`. It is read by section
   (`grep -n '^## '`, then a range), never whole.
 - Every entry carries a tool+model trace, and updating STATE.md at session end is the

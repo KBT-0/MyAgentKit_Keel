@@ -91,7 +91,7 @@ fi
 # none, and an unconfigured one FAILS below. A missing file stops the gate: deleting it must
 # not turn the configured build into "nothing configured".
 toolchain_path="" build_test_cmd="" docs_only_skip_build=1 docs_always_build=""
-build_cache_inputs="" cache_days=7 module_roots="" STRONG_REVIEW_DAYS=10 STRONG_REVIEW_TASKS=20
+build_cache_inputs="" cache_days=7 module_roots="" STRONG_REVIEW_DAYS=10 STRONG_REVIEW_TASKS=20 STATE_MAX_LINES=300
 [ -f scripts/gate_config.sh ] || {
   echo "FAIL [config]: scripts/gate_config.sh is missing; copy the kit's core/scripts/gate_config.sh there and set this project's values in it."
   exit 1; }
@@ -587,10 +587,13 @@ fi
 # ---------------------------------------------------------------------------
 # 2) STATE.md: present, and free of finished tasks
 # ---------------------------------------------------------------------------
-# Its LENGTH is not checked. A line or size limit cannot tell a live line from a finished
+# Its LENGTH never fails the gate. A line or size limit cannot tell a live line from a finished
 # one: a project that added a size limit hit it four times in one session, while half the
 # file was a backlog and much of the rest narrated work already in git. The backlog now has
-# its own file (docs/BACKLOG.md), and finished work is caught by name, below.
+# its own file (docs/BACKLOG.md), and finished work is caught by name, below. Past the
+# owner's STATE_MAX_LINES a NOTE says so, and "Active work" lines still marked finished
+# (MERGED, COMMITTED, DONE, ...) are listed for deletion: labricore's STATE.md reached 1,083
+# lines with such entries and was read whole 3+ times a session (#338).
 #
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole check could be disabled by deleting one file or editing one line.
@@ -602,6 +605,17 @@ elif ! grep -q "^## Active work" docs/STATE.md; then
   echo "FAIL [state]: docs/STATE.md has no '## Active work' heading. Restore the heading"
   echo "              rather than removing the check."
   fail=1
+else
+  awk -v max="$STATE_MAX_LINES" '
+    /^## / { active = ($0 ~ /^## Active work/) }
+    active && /(^|[^A-Za-z])(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)([^A-Za-z]|$)/ { done[++n] = FNR ": " $0 }
+    END {
+      if (max ~ /^[0-9]+$/ && max > 0 && NR > max)
+        printf "NOTE [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh);\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", NR, max
+      if (n) print "NOTE [state]: \"Active work\" lines marked finished; delete them (the history is in git):"
+      for (i = 1; i <= n && i <= 10; i++) print "              docs/STATE.md:" substr(done[i], 1, 100)
+      if (n > 10) print "              and " n - 10 " more"
+    }' docs/STATE.md
 fi
 
 # Finished work. The commit that finishes a task says so with a "Done: <id>" trailer

@@ -322,6 +322,16 @@ One topic per turn. Suggested order, because each answer informs the next:
     (a project setting overrides a user-level install, so this turns it off here too) and
     delete the `ponytail` marketplace entry; say so.
 
+    Then the owner's other plugins: each enabled one lists its skills in every session, worker
+    and sub-agent (labricore: 181,864 tokens of skill listing in 14 days, kit #338). Read
+    `enabledPlugins` in the owner's `~/.claude/settings.json`, name each plugin and its skills,
+    and ask which this project needs. Each one it does not need gets `"NAME@MARKETPLACE": false`
+    under `enabledPlugins` in `.claude/settings.json`, which reaches the lead, its workers and
+    sub-agents; `skillOverrides` does not hide a plugin's skills (measured, Claude Code
+    2.1.316). After a week, `python3 scripts/token_audit.py ~/.claude/projects/<encoded dir>`
+    (`python` on native Windows) lists each plugin's listed tokens and calls, and names the
+    ones never called.
+
 12. **In which language does the owner want to be talked to, and which terms need no
     explanation?** Two answers. The language goes into `{{CHAT_LANGUAGE}}` in `AGENTS.md`
     (identifiers stay English in backticks whatever the answer; `docs/COMMUNICATION.md` has

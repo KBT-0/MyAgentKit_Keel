@@ -97,14 +97,29 @@ class GateCheckTests(unittest.TestCase):
         write(self.project / 'docs/RESULT-w1.md', MARKER + '\n')  # only at the top
         self.assert_red('FAIL [setup]: unfilled placeholder markers remain')
 
-    def test_the_state_file_must_exist_with_its_heading_and_is_never_measured(self):
+    def test_the_state_file_must_exist_with_its_heading_and_its_length_never_fails(self):
         state = self.project / 'docs/STATE.md'
         write(state, '# STATE\n\n## Active work\n\n## Notes\n' + ''.join('line %d\n' % i for i in range(500)))
-        self.assert_green()
+        out = self.assert_green()
+        self.assertIn('NOTE [state]: docs/STATE.md has 505 lines, over STATE_MAX_LINES (300', out)
+        self.set_gate_line('STATE_MAX_LINES=300', 'STATE_MAX_LINES=0')
+        self.assertNotIn('NOTE [state]', self.assert_green())
         write(state, '# STATE\n\n## Current things\n')
         self.assert_red("FAIL [state]: docs/STATE.md has no '## Active work' heading")
         state.unlink()
         self.assert_red('FAIL [state]: docs/STATE.md does not exist')
+
+    def test_finished_active_work_lines_are_listed_for_deletion(self):
+        write(self.project / 'docs/STATE.md', '# STATE\n\n## Active work\n\n- auth: MERGED to main\n'
+              '- cache: in flight\n- docs: COMMITTED, CI green\n- MERGEDX is a word\n\n## Notes\n- MERGED in the notes section\n')
+        out = self.assert_green()
+        self.assertIn('NOTE [state]: "Active work" lines marked finished', out)
+        self.assertIn('docs/STATE.md:5: - auth: MERGED to main', out)
+        self.assertIn('docs/STATE.md:7: - docs: COMMITTED, CI green', out)
+        self.assertNotIn('in flight', out)
+        self.assertNotIn('MERGEDX', out)
+        self.assertNotIn('notes section', out)
+        self.assertNotIn('over STATE_MAX_LINES', out)
 
     def test_the_project_file_contents_must_list_every_numbered_section(self):
         project = self.project / 'docs/PROJECT.md'

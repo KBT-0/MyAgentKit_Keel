@@ -76,6 +76,10 @@ module_roots=""
 STRONG_REVIEW_DAYS=10
 STRONG_REVIEW_TASKS=20
 
+# docs/STATE.md past this many lines gets a NOTE, never a FAIL (check.sh, section 2); 0 turns it
+# off. The owner's number; 300 is AGENTS.md's "never read a file over 300 lines whole".
+STATE_MAX_LINES=300
+
 # --- scripts/review.sh -------------------------------------------------------------------
 #
 # Pins are fixed snapshots and per reviewer: Codex's JSONL names no model, so the pin is the only

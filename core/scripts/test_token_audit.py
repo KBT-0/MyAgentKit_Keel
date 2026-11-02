@@ -99,6 +99,19 @@ class TokenAuditTests(unittest.TestCase):
         table = token_audit.summary([s], 10)
         self.assertIn('| abc.jsonl | lead | 2% | STATE.md x3 | AGENTS.md |', table)
 
+    def test_the_skill_listing_table_names_plugins_never_called(self):
+        listing = '- ponytail:ponytail-audit: ' + 'a' * 94 + '\n- myagentkit:handoff: ' + 'b' * 70 + '\n- loop: c'
+        s = self.audit([
+            {'type': 'attachment', 'uuid': 'k1', 'attachment': {'type': 'skill_listing', 'content': listing}},
+            assistant('r1', usage(0, 5000, 10), [('t1', 'Skill', {'skill': 'myagentkit:handoff'})]),
+            result('t1', 'ok', 'u1'),
+        ])
+        table = token_audit.summary([s], 10)
+        self.assertIn('| ponytail | 1 | 50 | 0 |', table)
+        self.assertIn('| myagentkit | 1 | 38 | 1 |', table)
+        self.assertIn('Never called: ponytail. A plugin', table)
+        self.assertNotIn('Never called: myagentkit', table)
+
     def test_a_continued_transcript_does_not_count_its_parent_twice(self):
         parent = [assistant('r1', usage(0, 5000, 10)), assistant('r2', usage(5000, 100, 10))]
         with tempfile.TemporaryDirectory() as tmp:

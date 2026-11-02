@@ -123,15 +123,15 @@ def case_folds():
 
 
 REQUIRED_SUITES = {
-    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=10, test_context_buckets=8, test_owns_check=10, test_token_audit=4),
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=10, test_context_buckets=8, test_owns_check=10, test_token_audit=5),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 3, 'test_bootstrap': 42 if case_folds() else 41, 'test_acceptance': 20,
               'test_review_upgrade': (8 if symlinks_work() else 7) if os.name == 'nt' else 9,
-              'test_scan_gate': 1, 'test_gate_checks': 17 if symlinks_work() else 16, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
+              'test_scan_gate': 1, 'test_gate_checks': 18 if symlinks_work() else 17, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 24, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
-              'test_sync_kit': 70 if case_folds() else 69, 'test_doctor': 15, 'test_git_hooks': 39, 'test_stop_hook': 13, 'test_context_hook': 19, 'test_communication_hooks': 43, 'test_suggestions': 24, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 12, 'test_guard_worker_route': 4, 'test_guard_risky_review': 16, 'test_guard_destructive_git': 85 if os.name == 'nt' else 84, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
+              'test_sync_kit': 70 if case_folds() else 69, 'test_doctor': 15, 'test_git_hooks': 39, 'test_stop_hook': 13, 'test_context_hook': 19, 'test_communication_hooks': 44, 'test_suggestions': 24, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 12, 'test_guard_worker_route': 4, 'test_guard_risky_review': 16, 'test_guard_destructive_git': 85 if os.name == 'nt' else 84, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
               'test_spawn_worker': 89 if os.name == 'nt' else 110, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 68 if os.name == 'nt' else 70 if Path('/proc/self/fd').is_dir() else 69, 'test_working_mode': 61,
