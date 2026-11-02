@@ -1072,6 +1072,44 @@ class SyncKitTests(unittest.TestCase):
             self.assertIn('  placeholder: docs/STATE.md: {{OWNER_NAME}} line 3 (unfilled in the project\'s copy '
                           'too); fill by hand\n', out)
 
+    def test_an_agents_md_of_template_and_values_only_is_rebuilt_from_the_new_template(self):
+        # labricore A11: a 100+/203- line AGENTS.md merge was rebuilt by hand every release and its
+        # placeholders refilled from the old text.
+        base = (b'# Rules of {{PROJECT_NAME}} here\nintro\n\n{{BOUNDARY_RULES}}\n\n## Duties\n'
+                b'Ask {{OWNER_NAME}} before a push.\nOld line.\n')
+        now = (b'# Rules of {{PROJECT_NAME}} here\nNew intro.\n\n{{BOUNDARY_RULES}}\n\n## Duties\n'
+               b'Old line moved up.\nAsk {{OWNER_NAME}} before a push or a tag.\n\n{{NEW_ONE}}\n')
+        ours = b'# Rules of Leeway here\nintro\n\n- No engine in tools.\n- Contracts only.\n\n## Duties\nAsk Kemal before a push.\nOld line.\n'
+        built = (b'# Rules of Leeway here\nNew intro.\n\n- No engine in tools.\n- Contracts only.\n\n## Duties\n'
+                 b'Old line moved up.\nAsk Kemal before a push or a tag.\n\n')
+        for case in ('plain', 'recorded', 'own line'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project, kbase, env = self.merge_kit(tmp, '- A change.\n', {'AGENTS.md': (base, now)})
+                (project / 'docs/kit').mkdir(parents=True, exist_ok=True)
+                record = project / 'docs/kit/agents-values.md'
+                if case == 'recorded':  # a value only the record holds fills a new placeholder; the copy's win
+                    record.write_text('# x\n\n## NEW_ONE\n\nFrom the record.\n\n## OWNER_NAME\nSomeone else\n')
+                (project / 'AGENTS.md').write_bytes(ours + (b'My own rule.\n' if case == 'own line' else b''))
+                result = self.merge_run(kit, project, kbase, env)
+                out = result.stdout
+                self.assertEqual(result.returncode, 2, out + result.stderr)
+                if case == 'own line':  # the project's own line keeps the usual merge
+                    self.assertNotIn('rebuilt:', out)
+                    self.assertIn(b'My own rule.', (project / 'AGENTS.md').read_bytes())
+                    self.assertFalse(record.exists())
+                    continue
+                self.assertIn("  rebuilt:  AGENTS.md (the kit's template with your values, recorded in "
+                              "docs/kit/agents-values.md; read its git diff)\n", out)
+                if case == 'plain':
+                    self.assertEqual((project / 'AGENTS.md').read_bytes(), built + b'{{NEW_ONE}}\n')
+                    self.assertIn('  placeholder: AGENTS.md: {{NEW_ONE}} line 11', out)
+                    self.assertIn('## BOUNDARY_RULES\n- No engine in tools.\n- Contracts only.\n\n## OWNER_NAME\nKemal\n',
+                                  record.read_text())
+                else:
+                    self.assertEqual((project / 'AGENTS.md').read_bytes(), built + b'From the record.\n')
+                    self.assertIn('## OWNER_NAME\nKemal\n', record.read_text())
+                    self.assertIn('## NEW_ONE\nFrom the record.\n', record.read_text())
+
     def test_a_conflict_names_the_project_lines_found_in_no_kit_file(self):
         # leeway L4: GOTCHAS.md came back with 8 hunks over most of 960 lines, one with 87
         # project lines; a helper listing, per hunk, the project side's lines found in no kit

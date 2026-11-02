@@ -740,13 +740,13 @@ learn() {
       }
     }' "$1" -
 }
-# fill OURS < MERGED — MERGED with each placeholder the project's copy OURS does not hold
-# filled from $mdir/values (the value found most often); one left unfilled goes to $mdir/left
+# fill OURS [VALUES] < MERGED — MERGED with each placeholder the project's copy OURS does not hold
+# filled from VALUES, default $mdir/values (the value found most often); one left unfilled goes to $mdir/left
 # as "{{NAME}} line N (why)". A placeholder OURS still holds is the project's own, left to it,
 # and listed only on a line OURS does not hold (a new kit line, review Low).
 fill() {
   : > "$mdir/left"
-  awk -v vals="$mdir/values" -v ours="$1" -v left="$mdir/left" '
+  awk -v vals="${2:-$mdir/values}" -v ours="$1" -v left="$mdir/left" '
     function names(s) { while (match(s, /[{][{][A-Z0-9_]+[}][}]/)) { mine[substr(s, RSTART + 2, RLENGTH - 4)] = 1; s = substr(s, RSTART + RLENGTH) } }
     BEGIN { while ((getline l < vals) > 0) { t = index(l, "\t"); val[substr(l, 1, t - 1)] = substr(l, t + 1) }
             while ((getline l < ours) > 0) { names(l); had[l] = 1 } }
@@ -766,6 +766,39 @@ fill() {
         o = o substr(s, 1, RSTART - 1) r; s = substr(s, RSTART + RLENGTH)
       }
       print o s; out++ }'
+}
+# agents_regen — labricore A11: a 100+/203- line AGENTS.md merge was rebuilt by hand every
+# release and its placeholders refilled from the old text. When the project's AGENTS.md
+# ($mdir/ours) is the kit's text at the base ($mdir/base) with its placeholders filled and
+# nothing else, proven by filling the base with the values learned from it and comparing,
+# writes $mdir/merged as the kit's text now ($mdir/now) with those values, and records them in
+# docs/kit/agents-values.md (a value only that file holds fills a placeholder the copy no
+# longer shows). Any other copy fails, and the usual merge keeps the project's own lines.
+agents_vals=docs/kit/agents-values.md
+agents_regen() {
+  : > "$mdir/cands"
+  tr -d '\r' < "$mdir/base" > "$mdir/abase" && learn "$mdir/abase" < "$mdir/ours" || return 1
+  awk -F '\t' '!($1 in seen) { seen[$1] = 1; print }' "$mdir/cands" > "$mdir/avals" || return 1
+  fill "$mdir/ours" "$mdir/avals" < "$mdir/abase" > "$mdir/aproof" && cmp -s "$mdir/aproof" "$mdir/ours" || return 1
+  # The record's "## NAME" sections, a value's lines joined by \037, blank edges trimmed.
+  if [ -f "$target/$agents_vals" ]; then
+    tr -d '\r' < "$target/$agents_vals" | awk '
+      function flush(   i, j, v) { if (n == "") return; for (i = 1; i <= k && l[i] ~ /^[ \t]*$/; i++) ;
+        for (j = k; j >= i && l[j] ~ /^[ \t]*$/; j--) ; v = ""; for (; i <= j; i++) v = v (v != "" ? "\037" : "") l[i]
+        if (v != "") print n "\t" v }
+      /^## [A-Z0-9_]+$/ { flush(); n = substr($0, 4); k = 0; next }
+      n != "" { l[++k] = $0 }
+      END { flush() }' > "$mdir/fvals" || return 1
+  else : > "$mdir/fvals"; fi
+  awk -F '\t' 'FNR == NR { have[$1] = 1; print; next } !($1 in have)' "$mdir/avals" "$mdir/fvals" > "$mdir/allvals" &&
+    tr -d '\r' < "$mdir/now" | fill "$mdir/ours" "$mdir/allvals" > "$mdir/merged" || return 1
+  [ -d "$target/docs/kit" ] && [ -z "$(blocked "$agents_vals")" ] || return 0
+  awk -F '\t' 'BEGIN { print "# AGENTS.md placeholder values"; print ""
+      print "Written by sync-kit.sh --merge, which builds AGENTS.md from the kit\047s core/AGENTS.md and these"
+      print "values while AGENTS.md holds nothing else; it learns them from AGENTS.md each time, and a value"
+      print "only this file holds fills a placeholder AGENTS.md no longer shows."; print "" }
+    { print "## " $1; n = split($2, v, "\037"); for (i = 1; i <= n; i++) print v[i]; print "" }' "$mdir/allvals" > "$mdir/arecord" &&
+    put "$target/$agents_vals" "$mdir/arecord"
 }
 if [ "$merge" -eq 1 ]; then
   owned_list
@@ -823,17 +856,19 @@ if [ "$merge" -eq 1 ]; then
       open=1; continue
     fi
     tr -d '\r' < "$target/$rel" > "$mdir/ours" || die "cannot read $rel"
-    rc=0 union="" added=0
+    rc=0 union="" added=0 regen=""
+    [ "$rel" != AGENTS.md ] || ! agents_regen || regen=1
     # #330: a kit change that only appends merges as a union, the kit's lines after the project's own: labricore's
     # GOTCHAS.md, which ends in the project's entries, showed a 5-line kit append as a conflict of 400 project lines.
     # Only where every conflict is two insertions at one point (an empty base side in diff3): a project that edited
     # or deleted the base's tail keeps its conflict, or the union would bring the old lines back (review rlight High).
-    if head -c "$(wc -c < "$mdir/base")" "$mdir/now" | cmp -s - "$mdir/base" &&
+    if [ -n "$regen" ]; then :
+    elif head -c "$(wc -c < "$mdir/base")" "$mdir/now" | cmp -s - "$mdir/base" &&
       git merge-file --diff3 -p "$mdir/ours" "$mdir/base" "$mdir/now" |
         awk '/^\|\|\|\|\|\|\| /{b=1;n=0;next} /^=======$/{if(b&&n)bad=1;b=0;next} b{n++} END{exit bad}'; then
       union=--union added=$(( $(wc -l < "$mdir/now") - $(wc -l < "$mdir/base") ))
     fi
-    git merge-file $union -p -L project -L "kit base" -L "kit v$latest" \
+    [ -n "$regen" ] || git merge-file $union -p -L project -L "kit base" -L "kit v$latest" \
       "$mdir/ours" "$mdir/base" "$mdir/now" > "$mdir/merged" || rc=$?
     [ "$rc" -lt 128 ] || die "could not merge $rel; it and the files after it are unchanged"
     fill "$mdir/ours" < "$mdir/merged" > "$mdir/filled" && mv -f "$mdir/filled" "$mdir/merged" ||
@@ -845,7 +880,9 @@ if [ "$merge" -eq 1 ]; then
       mv -f "$mdir/merged" "$mdir/out"
     fi
     put "$target/$rel" "$mdir/out" || die "could not write $rel; it and the files after it are unchanged"
-    if [ "$rc" -eq 0 ] && [ -n "$union" ]; then
+    if [ -n "$regen" ]; then
+      printf '%s\n' "  rebuilt:  $rel (the kit's template with your values, recorded in $agents_vals; read its git diff)"
+    elif [ "$rc" -eq 0 ] && [ -n "$union" ]; then
       printf '%s\n' "  merged:   $rel (the kit appended $added lines; they follow the project's own)"
     elif [ "$rc" -eq 0 ]; then
       printf '%s\n' "  merged:   $rel"
