@@ -826,7 +826,11 @@ if [ "$merge" -eq 1 ]; then
     rc=0 union="" added=0
     # #330: a kit change that only appends merges as a union, the kit's lines after the project's own: labricore's
     # GOTCHAS.md, which ends in the project's entries, showed a 5-line kit append as a conflict of 400 project lines.
-    if head -c "$(wc -c < "$mdir/base")" "$mdir/now" | cmp -s - "$mdir/base"; then
+    # Only where every conflict is two insertions at one point (an empty base side in diff3): a project that edited
+    # or deleted the base's tail keeps its conflict, or the union would bring the old lines back (review rlight High).
+    if head -c "$(wc -c < "$mdir/base")" "$mdir/now" | cmp -s - "$mdir/base" &&
+      git merge-file --diff3 -p "$mdir/ours" "$mdir/base" "$mdir/now" |
+        awk '/^\|\|\|\|\|\|\| /{b=1;n=0;next} /^=======$/{if(b&&n)bad=1;b=0;next} b{n++} END{exit bad}'; then
       union=--union added=$(( $(wc -l < "$mdir/now") - $(wc -l < "$mdir/base") ))
     fi
     git merge-file $union -p -L project -L "kit base" -L "kit v$latest" \

@@ -26,8 +26,9 @@ without that record is not visible to a hook. This check needs no commit-msg gra
 missing one turns off only the label check.
 
 It also bounces a final message with no fenced block that names the hand-off when the turn
-wrote a hand-off file (a Write or Edit of a file whose name holds "handoff" since the owner's
-last prompt, read from the transcript's tail): the owner opens the next session and needs the
+wrote a hand-off file (a Write or Edit of a file whose name, or whose folder's name, holds
+"handoff", as in docs/handoffs/, since the owner's last prompt, read from the transcript's tail;
+a compaction's summary is no prompt): the owner opens the next session and needs the
 exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The trigger is that write, not the
 message's wording, which no pattern reads reliably. Not under the autopilot switch: nobody
 opens a session then. The hook runs after the owner has read the message, so the prompt
@@ -107,7 +108,8 @@ def without_code(text: str) -> str:
 
 
 def wrote_handoff(transcript) -> bool:
-    """A Write or Edit of a file named *handoff* since the owner's last prompt, from the transcript's tail."""
+    """A Write or Edit of a file named *handoff*, or in a folder so named (docs/handoffs/), since the
+    owner's last prompt, from the transcript's tail."""
     try:
         with open(transcript, 'rb') as file:
             file.seek(max(0, os.fstat(file.fileno()).st_size - TAIL))
@@ -121,14 +123,16 @@ def wrote_handoff(transcript) -> bool:
         except (ValueError, KeyError, TypeError):
             continue
         blocks = content if isinstance(content, list) else []
+        if record.get('isCompactSummary') or record.get('isMeta'):
+            continue  # a compaction's summary or a harness note, not the owner's prompt
         if record.get('type') == 'user' and not any(isinstance(b, dict) and b.get('type') == 'tool_result'
                                                      for b in blocks):
             return False  # the owner's prompt: the turn starts here
         for block in blocks:
             if isinstance(block, dict) and block.get('type') == 'tool_use' \
                     and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
-                    and HANDOFF.search(name := Path(str((block.get('input') or {}).get('file_path', ''))).name) \
-                    and name not in RULE_DOCS:
+                    and (path := Path(str((block.get('input') or {}).get('file_path', '')))).name not in RULE_DOCS \
+                    and (HANDOFF.search(path.name) or HANDOFF.search(path.parent.name)):
                 return True
     return False
 
@@ -277,9 +281,10 @@ def main() -> None:
     if found:
         said.append('BLOCKED: the message to the owner names a session label with no plain words beside it: %s. '
                     'The owner has already read the message: do not send it again. Send one short line that says '
-                    'what each one is in the chat language ("r2 = the second review round"), and write the '
-                    'next messages that way (docs/COMMUNICATION.md, "Language and terms"; core/docs/ in the kit).'
-                    % ', '.join(found))
+                    'what each one is in the chat language, in this shape: %s. Write the next messages with the '
+                    'plain words and the label in parentheses at most once; a backtick does not explain a label '
+                    '(docs/COMMUNICATION.md, "Language and terms"; core/docs/ in the kit).'
+                    % (', '.join(found), '; '.join('%s = <what it is>' % label for label in found)))
     if said:
         print('\n'.join(said), file=sys.stderr)
         sys.exit(2)

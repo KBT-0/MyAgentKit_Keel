@@ -40,7 +40,7 @@ kit: the kit's installer, in sync mode, updates the cached kit in `~/.myagentkit
 
    It needs the network and writes outside the project (the cache), so the sandbox may refuse
    it or ask for approval (Claude Code's auto mode refuses code piped from the network). When it
-   cannot run here and `git -C ~/.myagentkit/kit describe --tags` names this plugin's release, run
+   cannot run here and `git -C ~/.myagentkit/kit describe --tags --dirty` names this plugin's release, run
    the cache's own `sh ~/.myagentkit/kit/sync-kit.sh "$PWD" OPTIONS` instead (#330); otherwise give
    the user the command to run and stop. Do not try to work around the sandbox in any other way.
 4. No `install: kit` line in the installer's output means the download failed: say so and stop. Show the

@@ -1104,6 +1104,16 @@ class SyncKitTests(unittest.TestCase):
             self.assertIn("  merged:   docs/GOTCHAS.md (the kit appended 2 lines; they follow the project's own)\n",
                           result.stdout)
             self.assertNotIn('conflict:', result.stdout)
+        # Review rlight High: a project that edited or deleted the base's tail keeps its conflict; a union
+        # brought the rewritten line back beside its rewrite, or the removed kit lines back.
+        for name, ours in (('edited', b'a\nb\nlast edited\n'), ('deleted', b'a\nb\n')):
+            with self.subTest(project=name), tempfile.TemporaryDirectory() as tmp:
+                kit, project, base, env = self.merge_kit(tmp, '- A change.\n', {
+                    'docs/GOTCHAS.md': (b'a\nb\nlast\n', b'a\nb\nlast\nkit 1\n')})
+                (project / 'docs/GOTCHAS.md').write_bytes(ours)
+                result = self.merge_run(kit, project, base, env)
+                self.assertIn('  conflict: docs/GOTCHAS.md', result.stdout, result.stderr)
+                self.assertIn(b'<<<<<<< project', (project / 'docs/GOTCHAS.md').read_bytes())
 
     def test_merge_reads_kit_blobs_and_keeps_a_crlf_project_copy_crlf(self):
         # With autocrlf the kit's working-tree docs are CRLF over LF blobs: compared with the base

@@ -196,6 +196,8 @@ class PlainReportTests(unittest.TestCase):
         self.assertIn('BLOCKED', result.stderr)
         self.assertIn('D-5, r2, Accept-MC', result.stderr)
         self.assertIn('docs/COMMUNICATION.md', result.stderr)
+        # #328: the bounce prints the line to fill in, so the rewrite takes one turn.
+        self.assertIn('D-5 = <what it is>; r2 = <what it is>; Accept-MC = <what it is>', result.stderr)
 
     def test_labels_inside_code_paths_versions_and_hashes_pass(self):
         for message in ('The archive is `docs/reviews/r2-D-5.md`.',
@@ -328,11 +330,19 @@ class PlainReportTests(unittest.TestCase):
                 {'type': 'tool_use', 'name': name, 'input': {'file_path': path}}]}}
         wrote = transcript(prompt, write('/p/.myagentkit/v014/handoff-36.md'), result,
                            write('/p/docs/STATE.md', 'Edit'), result)
-        for message in ('Handoff hazır.', 'Hazır:\n```\nls\n```', 'Done.'):
-            with self.subTest(message=message):
-                bounced = stop(message, wrote)
-                self.assertEqual(bounced.returncode, 2, bounced.stderr)
-                self.assertIn('opening prompt', bounced.stderr)
+        # #328: a hand-off in a folder named for it (labricore's docs/handoffs/<date>-<label>.md), and a write
+        # before a compaction (its summary is a user record, not the owner's prompt).
+        summary = {'type': 'user', 'isCompactSummary': True, 'message': {'content': 'This session is being continued'}}
+        in_folder = transcript(prompt, write('/p/docs/handoffs/2026-11-02-sync.md'), result)
+        compacted = transcript(prompt, write('/p/.myagentkit/v014/handoff-36.md'), result,
+                               {'type': 'system', 'subtype': 'compact_boundary'}, summary,
+                               write('/p/docs/STATE.md', 'Edit'), result)
+        for path in (wrote, in_folder, compacted):
+            for message in ('Handoff hazır.', 'Hazır:\n```\nls\n```', 'Done.'):
+                with self.subTest(message=message, path=path):
+                    bounced = stop(message, path)
+                    self.assertEqual(bounced.returncode, 2, bounced.stderr)
+                    self.assertIn('opening prompt', bounced.stderr)
         passes = ((wrote, 'Handoff hazır. Yeni oturuma yapıştır:\n```\nhandoff-36\'yı oku, devam et\n```'),
                   # A hand-off written before the owner's last prompt, or only read, is not this turn's.
                   (transcript(write('/p/HANDOFF-35.md'), result, prompt, write('/p/notes.md', 'Edit'), result),

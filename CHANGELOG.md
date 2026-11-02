@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **plain_report.py sees hand-offs in a hand-off folder and after a compaction (#328, labricore 2026-11-02).** The
+  missing-opening-prompt bounce fired only for a file whose name holds "handoff"; a hand-off at
+  `docs/handoffs/<date>-<label>.md` (a folder so named) now counts, and a compaction between the write and the final
+  message no longer reads as the owner's prompt (its summary and harness notes are skipped). The label bounce prints
+  the line to fill in (`F22 = <what it is>; L10 = <what it is>`), so the rewrite takes one turn. Unchanged, by the
+  rule in COMMUNICATION ("Language and terms"): a backticked registered id and a label already explained once still
+  bounce, since a label never stands alone. test_communication_hooks 43, red without the fix. **ACTION**
+  (`.claude/hooks/plain_report.py`, project-owned): `sync-kit.sh . --merge`.
 - **guard_destructive_git.py refuses fewer harmless commands (#327, labricore 2026-11-02).** A `git/` is a folder,
   not the command (`awk '/git/{print $1}' f; git diff` was refused as a variable subcommand); in interpreter code a
   `'GIT'` label or a git that ends a string it did not start is prose; grep, head, tail, wc, uniq, cut and tr run
@@ -29,11 +37,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   project-owned): `sync-kit.sh . --merge`.
 - **sync-kit.sh and the sync command (#330, labricore's v0.14 sync).** `--merge` merges a kit change that only
   appends after the project's own lines, `merged: FILE (the kit appended N lines; they follow the project's own)`,
-  not as a conflict (GOTCHAS.md showed a 5-line append as 400+ project-only lines); a kit clone's
+  not as a conflict (GOTCHAS.md showed a 5-line append as 400+ project-only lines), unless the project edited or
+  deleted the kit's last lines, which stays a conflict; a kit clone's
   `__pycache__/*.pyc` is no kit-owned file (grep -I). `/myagentkit:sync` and the `myagentkit-sync` skill show a
   dry run's ACTION items once (they were printed, then read again from `docs/kit/UPGRADE.md`), and when the
   installer cannot run (auto mode refuses code piped from the network) run the cache's own `sync-kit.sh` if it is
-  at the plugin's release. The v0.14 ACTION that keeps a root `AGENTS.md` says to drop what `docs/AGENTS.md`
+  at the plugin's release, unedited (`describe --tags --dirty`). The v0.14 ACTION that keeps a root `AGENTS.md` says to drop what `docs/AGENTS.md`
   then repeats (24,789 bytes against the gate's 24 KiB). test_sync_kit 70 (69 without a case-folding file
   system), red without the fix.
 - **Small hook and doc defects from labricore's v0.14 sync review (#340).** `progress_reminder.py` keeps an
