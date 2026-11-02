@@ -87,6 +87,19 @@ class SyncKitTests(unittest.TestCase):
             self.assertIn("sync-kit: NOTE: AGENTS.md is 24576 bytes, not under the gate's 24576", result.stdout,
                           result.stdout + result.stderr)
 
+    def test_a_kit_clones_bytecode_is_never_copied(self):
+        # #330: a kit clone that ran its tests listed core/scripts/__pycache__/*.pyc as a new kit-owned file.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.sync(tmp, ACTION)  # makes the kit
+            kit = Path(tmp) / 'kit'
+            (kit / 'core/scripts/__pycache__').mkdir(parents=True)
+            (kit / 'core/scripts/tool.py').write_bytes(b'# KIT-OWNED: test\n')
+            (kit / 'core/scripts/__pycache__/tool.cpython-314.pyc').write_bytes(b'\x00\x01\n# KIT-OWNED: x\n\x00')
+            result, _ = self.sync(tmp, ACTION)
+            self.assertIn('scripts/tool.py', result.stdout, result.stdout + result.stderr)
+            self.assertNotIn('__pycache__', result.stdout)
+            self.assertFalse((Path(tmp) / 'project/scripts/__pycache__').exists())
+
     def test_unconfirmed_action_keeps_the_stamp_and_reappears(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / 'project'
@@ -1077,6 +1090,20 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual(merged[1:6], ['<<<<<<< project', 'b mine', '  moved line', 'own rule', '======='])
             self.assertIn('  conflict: docs/GOTCHAS.md, lines 2-8 (project-only 3, 5), 14-18 (project-only 15)\n',
                           result.stdout)
+
+    def test_a_kit_append_merges_after_the_projects_own_end(self):
+        # #330: labricore's GOTCHAS.md ended in its own entries; a 5-line kit append came back as
+        # a conflict with 400+ project-only lines.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, base, env = self.merge_kit(tmp, '- A change.\n', {
+                'docs/GOTCHAS.md': (b'a\nb\n', b'a\nb\nkit 1\nkit 2\n')})
+            (project / 'docs/GOTCHAS.md').write_bytes(b'a\nb\nown 1\nown 2\nown 3\n')
+            result = self.merge_run(kit, project, base, env)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual((project / 'docs/GOTCHAS.md').read_bytes(), b'a\nb\nown 1\nown 2\nown 3\nkit 1\nkit 2\n')
+            self.assertIn("  merged:   docs/GOTCHAS.md (the kit appended 2 lines; they follow the project's own)\n",
+                          result.stdout)
+            self.assertNotIn('conflict:', result.stdout)
 
     def test_merge_reads_kit_blobs_and_keeps_a_crlf_project_copy_crlf(self):
         # With autocrlf the kit's working-tree docs are CRLF over LF blobs: compared with the base

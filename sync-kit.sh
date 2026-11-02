@@ -323,7 +323,8 @@ overlay_fix=''
 # The marker is matched ANCHORED at the start of a line, as a header comment. Matching the
 # bare phrase anywhere once meant a document that merely MENTIONED "KIT-OWNED" in prose
 # would have been silently overwritten wholesale.
-grep -rlE '^(# |<!-- )KIT-OWNED:' "$kit/core" "$kit/setup" "$kit/overlays" 2>/dev/null \
+# -I: a kit clone that ran its tests holds __pycache__/*.pyc, whose bytes can carry the marker (#330).
+grep -rlIE '^(# |<!-- )KIT-OWNED:' "$kit/core" "$kit/setup" "$kit/overlays" 2>/dev/null \
   | sort > "$work_list"
 relpath() {
   overlay=0
@@ -822,8 +823,13 @@ if [ "$merge" -eq 1 ]; then
       open=1; continue
     fi
     tr -d '\r' < "$target/$rel" > "$mdir/ours" || die "cannot read $rel"
-    rc=0
-    git merge-file -p -L project -L "kit base" -L "kit v$latest" \
+    rc=0 union="" added=0
+    # #330: a kit change that only appends merges as a union, the kit's lines after the project's own: labricore's
+    # GOTCHAS.md, which ends in the project's entries, showed a 5-line kit append as a conflict of 400 project lines.
+    if head -c "$(wc -c < "$mdir/base")" "$mdir/now" | cmp -s - "$mdir/base"; then
+      union=--union added=$(( $(wc -l < "$mdir/now") - $(wc -l < "$mdir/base") ))
+    fi
+    git merge-file $union -p -L project -L "kit base" -L "kit v$latest" \
       "$mdir/ours" "$mdir/base" "$mdir/now" > "$mdir/merged" || rc=$?
     [ "$rc" -lt 128 ] || die "could not merge $rel; it and the files after it are unchanged"
     fill "$mdir/ours" < "$mdir/merged" > "$mdir/filled" && mv -f "$mdir/filled" "$mdir/merged" ||
@@ -835,7 +841,9 @@ if [ "$merge" -eq 1 ]; then
       mv -f "$mdir/merged" "$mdir/out"
     fi
     put "$target/$rel" "$mdir/out" || die "could not write $rel; it and the files after it are unchanged"
-    if [ "$rc" -eq 0 ]; then
+    if [ "$rc" -eq 0 ] && [ -n "$union" ]; then
+      printf '%s\n' "  merged:   $rel (the kit appended $added lines; they follow the project's own)"
+    elif [ "$rc" -eq 0 ]; then
       printf '%s\n' "  merged:   $rel"
     else
       open=1

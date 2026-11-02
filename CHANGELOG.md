@@ -15,6 +15,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.14.1 — 2026-11-02
 
+- **sync-kit.sh and the sync command (#330, labricore's v0.14 sync).** `--merge` merges a kit change that only
+  appends after the project's own lines, `merged: FILE (the kit appended N lines; they follow the project's own)`,
+  not as a conflict (GOTCHAS.md showed a 5-line append as 400+ project-only lines); a kit clone's
+  `__pycache__/*.pyc` is no kit-owned file (grep -I). `/myagentkit:sync` and the `myagentkit-sync` skill show a
+  dry run's ACTION items once (they were printed, then read again from `docs/kit/UPGRADE.md`), and when the
+  installer cannot run (auto mode refuses code piped from the network) run the cache's own `sync-kit.sh` if it is
+  at the plugin's release. The v0.14 ACTION that keeps a root `AGENTS.md` says to drop what `docs/AGENTS.md`
+  then repeats (24,789 bytes against the gate's 24 KiB). test_sync_kit 70 (69 without a case-folding file
+  system), red without the fix.
 - **Small hook and doc defects from labricore's v0.14 sync review (#340).** `progress_reminder.py` keeps an
   older kit's state with two or three nudges as spent (it threw the state away and nudged the same silent stretch
   once more; test_communication_hooks 43, red without the fix). `docs/COMMUNICATION.md` says a missing
@@ -323,7 +332,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   prompt in a code block.
 - **ACTION** (`AGENTS.md`, `docs/WORKFLOW.md`, `docs/COMMUNICATION.md`, `docs/REVIEW_GATE.md`,
   `docs/AGENTS.md`, all project-owned): run `sync-kit.sh . --merge`. Without it, keep your
-  `AGENTS.md` as it is (it still holds every rule), or replace it with the kit's and copy, from
+  `AGENTS.md` as it is (it still holds every rule; a merged `docs/AGENTS.md` then repeats its
+  reading-order item 4 as "## Writing docs/ARCHITECTURE.md": drop that section there, as the
+  root file and `docs/AGENTS.md` count together against the gate's 24 KiB, #330), or replace it with the kit's and copy, from
   the kit: WORKFLOW's "## Task discipline — the details" with its three subsections (before
   "## Task ids"), COMMUNICATION's "## The two registers", the tone paragraph closing
   "Principle" and the one-off-decision bullet of "Questions and approvals", REVIEW_GATE's
