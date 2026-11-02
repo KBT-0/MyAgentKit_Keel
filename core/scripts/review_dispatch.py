@@ -408,7 +408,7 @@ def note_reviewed(repo, scope="uncommitted", tip=None, files=()):
         print("NOTE [review]: the reviewed-paths record was not written (%s)" % error, flush=True)
 
 
-def mode_reviewer(repo, default):
+def mode_reviewer(repo, default, explicit=False):
     """The reviewer review.sh runs when none is named: solo reviews within its family
     (docs/REVIEW_GATE.md, "Invariant"), which STATE.md's mode line names (none: claude); cross and
     saver keep gate_config.sh's DEFAULT_REVIEWER. No mode line at all runs claude: the kit runs on
@@ -426,7 +426,7 @@ def mode_reviewer(repo, default):
         raise ValueError("docs/STATE.md needs one Working mode line written as **Working mode:** NAME: "
                          + working_mode.numbered(text))
     if not lines:
-        return "claude"
+        return None if explicit else "claude"  # explicit: only a solo line names a family
     name, _, note = lines[0][2].partition(" (")
     if working_mode.normalized(name) not in working_mode.MODES:
         raise ValueError("invalid docs/STATE.md Working mode: " + lines[0][2].strip())
@@ -604,6 +604,10 @@ def main(argv=None):
 
     checkpoint()  # No model is called if the chain cannot be recorded.
     other = "codex" if args.reviewer == "claude" else "claude"
+    try:
+        solo = mode_reviewer(repo, None, explicit=True) is not None
+    except (ImportError, OSError, ValueError):
+        solo = False  # an unreadable mode line is review.sh's to refuse; the fallback keeps its other checks
     exit_code = 5
     os.environ.pop(FALLBACK_ENV, None)
     queue, retries = [args.reviewer], 0
@@ -726,6 +730,11 @@ def main(argv=None):
             eligible = False
         if eligible and not args.allow_fallback and not switch:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
+            eligible = False
+        if eligible and not switch and solo:
+            # labricore L18: a solo mode line reviews within its family (docs/REVIEW_GATE.md, "Invariant")
+            chain["fallback_blocked"] = ("the working mode is solo (docs/STATE.md), which reviews within its family; "
+                                         "%s is not used as a fallback until the mode is cross" % other)
             eligible = False
         if eligible and not pin_valid(other, pins[other], args.backend):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"

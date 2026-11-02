@@ -256,10 +256,11 @@ class CheckGateTests(unittest.TestCase):
                 self.assertEqual(code, 1, out)
                 self.assertIn('FAIL [state]: docs/STATE.md:4 names K4, which commit %s closed' % closer, out)
         state.write_text('# STATE\n\n## Active work\n')
-        (self.project / 'docs/BACKLOG.md').write_text('- K4 again\n')
+        (self.project / 'docs/BACKLOG.md').write_text('- K4 again\n- K9 open\n')
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [state]: docs/BACKLOG.md:1 names K4', out)
+        self.assertIn('The next free K id: K10.', out)  # labricore A13
         # A shallow clone sees only what it holds, and says so.
         (self.project / 'docs/BACKLOG.md').unlink()
         git('add', '-A')

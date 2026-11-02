@@ -27,7 +27,9 @@ and `rm -rf "$copy" "$copy.patch"` at the end.
 Without a copy, mark the finding REASONED. Mark each finding REPRODUCED or REASONED
 (`docs/REVIEW_GATE.md`, "Invariant"). Do not run the project's full suite; run
 only the narrow test that proves or disproves a finding. The lead's gate runs the full suite.
-Report only gaps that affect correctness or the stated requirements.
+Report only gaps that affect correctness or the stated requirements. Review the whole uncommitted
+diff (`git diff HEAD` and the untracked files), whatever part the brief names: an Accept records every
+changed path as reviewed for the commit guard.
 
 Grep the callers of every changed public member before judging blast radius. If the diff
 touches a gate, a CI configuration or a check script, your first question is whether it has

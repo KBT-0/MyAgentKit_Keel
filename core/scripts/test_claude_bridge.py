@@ -6964,6 +6964,15 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('FALLBACK [review]: this review is by codex, not the requested claude',
                       result.stdout)
 
+    def test_a_solo_mode_line_keeps_the_fallback_in_its_family(self):
+        # labricore L18: solo reviews within its family, yet --fallback fell over to a pinned Codex
+        (self.repo / 'docs').mkdir(exist_ok=True)
+        (self.repo / 'docs/STATE.md').write_text('# STATE\n\n**Working mode:** solo\n')
+        result, chain = self.dispatch_result('claude', FIXTURE_CASE='quota')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(chain['attempts']), 1)
+        self.assertIn('the working mode is solo', chain['fallback_blocked'])
+
     def dispatch_result(self, primary='claude', fallback=True, args=(), **extra):
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
                    REVIEW_CODEX_MODEL='codex-fixture-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),

@@ -28,10 +28,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   on a committed worker branch before its merge; HANDOFF's worker brief says the same. AGENTS.md drops another
   project's label from the task-discipline rule. `guard_destructive_git.py`: a here-document written by `cat`, then a
   script run by an interpreter on a file the line does not write (`python3 x.py`), no longer reads the note's text
-  as a command (leeway lead 43). test_guard_risky_review (real worktrees), test_claude_bridge,
-  test_guard_destructive_git: each new case red without its fix. **ACTION** (project-owned `AGENTS.md`,
-  `docs/HANDOFF.md`, `.claude/hooks/guard_risky_review.py`, `.claude/hooks/record_review.py`,
-  `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
+  as a command (leeway lead 43). The diff-reviewer reviews the whole uncommitted diff, whatever part its brief
+  names, since its Accept records every changed path. A solo working-mode line keeps `--fallback` in its family:
+  a pinned `CODEX_MODEL` is no longer used as a fallback reviewer there (labricore L18). The state check that
+  refuses a closed task id names the next free id of its letter. test_guard_risky_review (real worktrees),
+  test_claude_bridge, test_guard_destructive_git, test_check_gate: each new case red without its fix. **ACTION**
+  (project-owned `AGENTS.md`, `docs/HANDOFF.md`, `.claude/agents/diff-reviewer.md`,
+  `.claude/hooks/guard_risky_review.py`, `.claude/hooks/record_review.py`, `.claude/hooks/guard_destructive_git.py`):
+  `sync-kit.sh . --merge`.
 - **Field reports from the leeway leads (2026-11-02).** `spawn_worker.sh --resume` moves the worker's earlier
   uncommitted result to `.myagentkit/workers/NAME.result-prev.md` and tells the worker the file is a new
   instruction (a new task or an answer): the watch said DONE at
