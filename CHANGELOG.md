@@ -19,11 +19,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the work. `guard_worker_route.py` refuses a sub-agent on a Fable model (`fable`, `claude-fable-*`), and a fork or a
   `model: inherit` type on a Fable session (read from the transcript's tail), unless the type is a reviewer or the
   prompt has a line `Fable consult: REASON` (read-only) or `Fable worker approved by the owner: REASON`.
-  `spawn_worker.sh` refuses a Fable worker without `--owner-approved-fable REASON`, which it prints and keeps in
-  `.myagentkit/workers/NAME.fable-approved`. `docs/WORKFLOW.md` "Worker cost" rule 2, the tier table and rule 7 say
+  A type whose definition pins a Fable model counts the same when the call names no model. `spawn_worker.sh`
+  refuses a Fable worker without `--owner-approved-fable REASON`, which it prints and keeps in
+  `.myagentkit/workers/NAME.fable-approved` (`close_worker.sh` removes it with the worker's other records). `docs/WORKFLOW.md` "Worker cost" rule 2, the tier table and rule 7 say
   the same; a Fable worker's code is reviewed by Opus in a fresh session plus the owner's diff read.
-  test_guard_worker_route, test_spawn_worker red without it. **ACTION** (project-owned
-  `.claude/hooks/guard_worker_route.py`, `scripts/spawn_worker.sh`, `docs/WORKFLOW.md`): `sync-kit.sh . --merge`.
+  test_guard_worker_route, test_spawn_worker, test_close_worker red without it. **ACTION** (project-owned
+  `.claude/hooks/guard_worker_route.py`, `scripts/spawn_worker.sh`, `scripts/close_worker.sh`, `docs/WORKFLOW.md`):
+  `sync-kit.sh . --merge`.
 
 ## v0.14.1 — 2026-11-02
 

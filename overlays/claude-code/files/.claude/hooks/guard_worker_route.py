@@ -139,9 +139,12 @@ if jobs and not re.search(r"^\s*No long wait:", text, re.M | re.I):
 kind = call.get("subagent_type") or ""
 if "review" not in kind.lower():
     # A fork runs on the session's model whatever the call names; so does a type pinned `model: inherit`.
-    inherits = kind == "fork" or (not call.get("model") and any(h.get("model") == "inherit" for h in definitions(kind)))
-    model = session_model(data.get("transcript_path")) if inherits else call.get("model")
-    if (isinstance(model, str) and re.match(r"(?:claude-)?fable(?:-|\b)", model, re.I)
+    # With no per-call model a type runs on its definition's pin (review 20261103T200903Z-9741b0f48830).
+    pins = [] if call.get("model") or kind == "fork" else [h.get("model") for h in definitions(kind)]
+    inherits = kind == "fork" or "inherit" in pins
+    models = ([session_model(data.get("transcript_path"))] if inherits else [call.get("model")]) + pins
+    model = next((m for m in models if isinstance(m, str) and re.match(r"(?:claude-)?fable(?:-|\b)", m, re.I)), None)
+    if (model
             and not re.search(r"^[ \t]*(?:Fable consult|Fable worker approved by the owner):[ \t]*\S",
                               call.get("prompt") or "", re.M)):
         print(

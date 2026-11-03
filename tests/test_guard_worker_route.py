@@ -178,6 +178,29 @@ class FableNeverAWorkerTests(unittest.TestCase):
                                         timeout=60, env=env)
                 self.assertEqual(result.returncode, code, result.stderr)
 
+    def test_a_definition_pinned_to_fable_is_a_fable_worker(self):
+        # Review 20261103T200903Z-9741b0f48830 (Medium): a pinned Fable model passed with no per-call model.
+        project = tempfile.TemporaryDirectory()
+        self.addCleanup(project.cleanup)
+        agents = Path(project.name, '.claude', 'agents')
+        agents.mkdir(parents=True)
+        for name, model in (('builder', 'claude-fable-5-1'), ('quick', 'fable'), ('opus-builder', 'claude-opus-5-5'),
+                            ('fable-reviewer', 'claude-fable-5-1')):
+            (agents / (name + '.md')).write_text('---\nname: %s\nmodel: %s\neffort: high\n---\nDo.\n' % (name, model),
+                                                 encoding='utf-8')
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=project.name)
+        for kind, prompt, code in (('builder', 'Do it.', 2), ('quick', 'Do it.', 2),
+                                   ('builder', 'Do it.\nFable consult: reads and answers', 0),
+                                   ('opus-builder', 'Do it.', 0), ('fable-reviewer', 'Review it.', 0)):
+            payload = json.dumps({'tool_name': 'Agent',
+                                  'tool_input': {'subagent_type': kind, 'description': 'x', 'prompt': prompt}})
+            with self.subTest(kind=kind, prompt=prompt):
+                result = subprocess.run([sys.executable, str(HOOK)], input=payload.encode(), capture_output=True,
+                                        timeout=60, env=env)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn(b'Fable worker approved by the owner: REASON', result.stderr)
+
     def test_a_missing_or_unreadable_transcript_passes(self):
         fork = {'subagent_type': 'fork', 'description': 'x', 'prompt': 'Write the parser.'}
         folder = tempfile.TemporaryDirectory()
