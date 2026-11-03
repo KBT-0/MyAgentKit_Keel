@@ -155,7 +155,8 @@ def earlier_run(directory, blob, since):
                              capture_output=True, text=True, timeout=60).stdout
     except (OSError, subprocess.SubprocessError):
         return False
-    return any(int(t) < since for t in out.split() if t.isdigit())
+    # Commit times are whole seconds: one in the start's own second is this run's, not earlier.
+    return any(int(t) < int(since) for t in out.split() if t.isdigit())
 
 
 def not_a_result(path, since, stale):

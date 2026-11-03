@@ -387,6 +387,12 @@ class CodexWorkerTests(unittest.TestCase):
             git('commit', '-q', '-am', 'this run')  # the worker's own commit of its result still counts
             worker.SEEN.clear()
             self.assertEqual(worker.result_kind(result, since)[0], 'DONE')
+            # CI 41645139627: a commit in the run's first second (commit time 100, start 100.7) read as earlier.
+            result.write_text(old.replace('Task: old', 'Task: same second'))
+            git('commit', '-q', '-am', 'same second', GIT_COMMITTER_DATE='@1700000000 +0000')
+            blob = git('rev-parse', 'HEAD:RESULT-w1.md').stdout.decode().strip()
+            self.assertFalse(worker.earlier_run(tmp, blob, 1700000000.7))
+            self.assertTrue(worker.earlier_run(tmp, blob, 1700000001.0))
 
     def test_progress_result_leaves_the_worker_running(self):
         with tempfile.TemporaryDirectory() as tmp:

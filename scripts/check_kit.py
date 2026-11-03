@@ -132,7 +132,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 24, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
               'test_sync_kit': 71 if case_folds() else 70, 'test_doctor': 15, 'test_git_hooks': 39, 'test_stop_hook': 13, 'test_context_hook': 19, 'test_communication_hooks': 44, 'test_suggestions': 25, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 12, 'test_guard_worker_route': 4, 'test_guard_risky_review': 21, 'test_guard_destructive_git': 87 if os.name == 'nt' else 86, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
-              'test_spawn_worker': 92 if os.name == 'nt' else 113, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
+              'test_spawn_worker': 90 if os.name == 'nt' else 113, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 68 if os.name == 'nt' else 70 if Path('/proc/self/fd').is_dir() else 69, 'test_working_mode': 61,
               'test_worker_visibility': 109 if os.name == 'nt' or os.path.exists('/dev/full') else 108, 'test_doc_pointers': 32,

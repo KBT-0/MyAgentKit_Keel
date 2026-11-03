@@ -55,7 +55,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
 SUITE_MINIMUMS = {'test_claude_bridge': 293, 'test_agent_usage': 40, 'test_codex_quota': 6}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 264, 'test_agent_usage': 36, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 265, 'test_agent_usage': 36, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
