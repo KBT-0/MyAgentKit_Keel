@@ -236,7 +236,7 @@ class RiskyReviewTests(unittest.TestCase):
         self.git('add', '-A')
         self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'link')
         head = subprocess.run(['git', '-C', str(self.root), 'rev-parse', 'HEAD'], check=True, capture_output=True,
-                              text=True).stdout.strip()
+                              text=True, encoding='utf-8').stdout.strip()
         review_dispatch.note_reviewed(self.root, 'commit', head, ['src/money/link.py'])
         self.git('rm', '-q', '--cached', 'src/money/link.py')  # the link is a change against HEAD again
         self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
