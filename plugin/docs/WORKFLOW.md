@@ -600,13 +600,13 @@ The tiers below sort the work; the working mode in force ("Working modes, by nam
 which side takes each tier. The model names are this kit's as of 2026-10-08: replace them
 with what the owner's subscriptions offer today (rule 4). The top model the plan has is the
 lead (it plans, briefs, routes and merges); the workers are the tiers below it (owner's
-choice, 2026-10-19; rule 2 says when the top model takes an errand itself).
+choice, 2026-10-19; rule 2 says when the top model takes an errand itself, and that Fable never works).
 
 | Tier | Work | Codex | Claude |
 |---|---|---|---|
 | 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5, medium effort |
 | 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, high effort, only for design-bearing work |
-| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, high effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.1 when the lead picks it |
+| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, high effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.1 only as a design consultation (a read-only sub-agent that answers and edits nothing, rule 2) |
 | Review | The required review of any change, chosen per task like a worker | at least the author's tier: the author's own in a fresh session by default, a stronger one when the lead names why (`docs/REVIEW_GATE.md`, "Invariant") | the same rule: Fable for a data-loss or gate risk, a release or security |
 
 The review row is `docs/REVIEW_GATE.md`, "Invariant", with its sources (Anthropic's separate
@@ -692,8 +692,13 @@ Rules for whoever routes work, binding with any table:
    63% of a five-hour allowance in about 25 minutes).
 2. **The top models are the lead's pick, and only where the subscription has them.** A model
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
-   default. The lead picks it for one errand when the errand needs it, without asking the
-   owner. The lead first checks that the current subscription includes that model; a basic
+   default. Codex Astra: the lead picks it for one errand when the errand needs it, without
+   asking the owner. Claude Fable leads, reviews and consults (read-only, it edits nothing),
+   and is never a worker; a Fable worker needs the owner's words for that one task, carried in
+   the call as a line `Fable worker approved by the owner: REASON` (a consultation's line:
+   `Fable consult: REASON`) or `spawn_worker.sh --owner-approved-fable REASON`;
+   `guard_worker_route.py` and `spawn_worker.sh` refuse it otherwise (owner decision,
+   2026-11-03). The lead first checks that the current subscription includes that model; a basic
    plan does not, and then the strongest routine model takes the errand. While that side's
    allowance is low (a saver mode, below),
    the top model and the highest effort need the owner's yes. Sources: both vendors name a
@@ -737,7 +742,9 @@ Rules for whoever routes work, binding with any table:
    review it (its content classifier stopped the review, `content_flagged`), the strongest
    Claude tier the plan has reviews it in a fresh session, at high effort, one round; on a plan
    without Fable that is Opus, the author's tier, in a fresh session (owner decisions,
-   2026-10-15). No source
+   2026-10-15). Work an owner-approved Fable worker wrote is never reviewed by Fable, in any
+   session: Opus 5.5 at high effort in a fresh session, plus {{OWNER_NAME}}'s own diff read
+   (owner decision, 2026-11-03). No source
    measured routing by criticality (`docs/research/claude-lead-codex.md`, finding 9): the
    rule is the owner's judgement and is measured like the tiers (rule 5).
 
@@ -998,7 +1005,8 @@ a commit made while away) follows the away line until a switch records it there.
   (leeway 2026-11-02). Kit feedback waits as a draft even under `kit_feedback:
   standing-approval`: its one gate is {{OWNER_NAME}} reading the printed body
   (`/myagentkit:kit-feedback`, §5).
-- **Proxy consult:** a sub-agent with model and effort stated: Fable 5.1 first; when it is
+- **Proxy consult:** a read-only sub-agent with model and effort stated and a line `Fable
+  consult: REASON` in its prompt ("Worker cost" rule 2): Fable 5.1 first; when it is
   unavailable or asks to bill usage credits, never approve them: Opus 5.5 at high. First the
   question, why now, the binding rules and the owner's words verbatim, the evidence and the
   options in neutral order; the lead's own view only after the answer, for the proxy to
