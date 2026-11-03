@@ -272,11 +272,14 @@ class CheckGateTests(unittest.TestCase):
                            '### Sub\n2. again\n## Parked\n1. d\n1. e\n1. f\n')
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 0, out)
-        backlog.write_text('## Next\n1. a\n2. b\n2. c\n- **K7** d\n- k7: e\n')
+        backlog.write_text('## Next\n1. a\n2. b\n2. c\n- **K7** d\n- k7: e\n- **K13:** f\n- **K13:** g\n- K12. h\n- K12. i\n')
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [state]: docs/BACKLOG.md:4 defines item 2 again (first at line 3)', out)
         self.assertIn('FAIL [state]: docs/BACKLOG.md:6 defines task id k7 again (first at line 5)', out)
+        # review v0141 r2 Medium: a bold id with its colon inside and a dot-ended id define too.
+        self.assertIn('FAIL [state]: docs/BACKLOG.md:8 defines task id K13 again (first at line 7)', out)
+        self.assertIn('FAIL [state]: docs/BACKLOG.md:10 defines task id K12 again (first at line 9)', out)
         # A shallow clone sees only what it holds, and says so.
         (self.project / 'docs/BACKLOG.md').unlink()
         git('add', '-A')

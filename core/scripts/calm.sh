@@ -26,6 +26,7 @@ py=python3; command -v python3 >/dev/null 2>&1 || py=python
 #   sh scripts/calm.sh window                a heavy job waits, up to CALM_WAIT, for no live hold
 # spawn_worker.sh refuses a new worker while the window is held.
 # A fixed /tmp path, never $TMPDIR: a sandboxed Claude Code shell and the owner's terminal differ there.
+# A sandboxed shell reads a hold but cannot take one: hold a bench from an unsandboxed shell.
 window=${CALM_WINDOW_FILE:-/tmp/myagentkit-quiet-window-$(id -u)}
 window_live() {  # prints the live hold, or fails: none, expired or unreadable
   { IFS= read -r until && IFS= read -r why; } 2>/dev/null < "$window" || return 1
