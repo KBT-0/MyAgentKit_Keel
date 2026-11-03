@@ -16,8 +16,9 @@ accepted review saw (the common git folder's myagentkit-reviewed-content, path -
 which a --commit or --base review.sh round and a diff-reviewer record: so the commit or the merge of a
 branch reviewed after its commits passes in any checkout (labricore A1), and a risky file that differs
 from what was reviewed does not. A symlink's content is its target text, as git stores it. The tree
-judged is every one the commit may stand in: a `cd DIR` before it adds DIR, as in
-guard_destructive_git.py, and a `cd` the hook cannot resolve is refused like such a `-C`.
+judged is every one the commit may stand in: a `cd DIR` before it adds DIR, read by
+guard_destructive_git.commit_folders (one reader for both guards), and a `cd` the hook cannot resolve is
+refused like such a `-C`.
 shortcut: it reads the shell command for `git ... commit` on one line, so a commit inside a script
 (`sh scripts/sync_kit.sh`) is not seen, and it runs before the command, so a risky file the same
 command writes first (`git apply fix.patch && git commit -am fix`) is not seen either; upgrade to
@@ -26,11 +27,9 @@ the git hook if an agent commits that way.
 Exit 2 blocks the call and returns the message to the agent (Claude Code hook protocol).
 """
 import fnmatch
-import itertools
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 
@@ -151,25 +150,21 @@ def project_root(data, command=""):
     return where
 
 
-def folders(cwd, text):
-    """Every folder the commit may stand in after the `cd`s before it, as guard_destructive_git.py reads them:
-    a `cd` may not run (after `||`, in a subshell), so it only adds a folder; None for one the hook cannot name
-    (leeway v0.14.1 sync review: `cd wt && git commit -am x` was judged against the caller's tree)."""
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|()\n")
-    lexer.whitespace, lexer.whitespace_split, lexer.commenters = " \t\r", True, ""
+def folders(command, cwd, tool_name=None):
+    """Every folder the commit may stand in, read by guard_destructive_git.commit_folders, so both guards follow
+    the same `cd`s (keywords, if bodies, PowerShell's Set-Location/sl/Push-Location and `.\\wt`; review
+    leewayfix High); None for one the hook cannot name; a folder that does not exist is left out. A missing
+    or unreadable reader, or an unbalanced quote, is None too."""
     try:
-        tokens = list(lexer)
-    except ValueError:  # an unbalanced quote: a `cd` in it cannot be followed
-        return [None] if re.search(r"\b(?:cd|pushd)\b", text) else [cwd]
-    cwds = [cwd]
-    for k, token in enumerate(tokens):
-        if token in ("cd", "pushd") and (k == 0 or set(tokens[k - 1]) <= set(";&|()\n")):
-            args = [t for t in itertools.takewhile(lambda t: not set(t) <= set(";&|()\n"), tokens[k + 1:])
-                    if not t.startswith("-") or t == "-"]
-            target = os.path.expanduser(os.path.expandvars(args[0])) if args else None
-            unknown = target is None or target == "-" or re.search(r"[$`]", target)
-            cwds = list(dict.fromkeys(cwds + [None if unknown or c is None else os.path.join(c, target) for c in cwds]))
-    return cwds
+        sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import guard_destructive_git
+        found = guard_destructive_git.commit_folders(command, cwd, tool_name)
+    except Exception:  # noqa: BLE001 - an older or missing guard_destructive_git.py, or Unreadable
+        return [None]
+    # A shell cannot stand in a folder that does not exist (`cd wt; cd wt` adds wt/wt), so none is judged there:
+    # project_root would judge the session's tree in its place.
+    return [c for c in found if c is None or c == cwd or os.path.isdir(c)]
 
 
 def main():
@@ -180,11 +175,11 @@ def main():
         return 0
     cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
     roots = [None if c is None else project_root(dict(data, cwd=c), command)
-             for c in folders(cwd, command[:match.start()])]
+             for c in folders(command, cwd, data.get("tool_name"))]
     if None in roots:
         print("BLOCKED: this commit's git -C folder, or the folder a cd before it moves to, cannot be resolved by the "
-              "hook (a variable or a shell-only expansion), so its risky paths cannot be checked. Run it with a "
-              "literal folder.",
+              "hook (a variable, a shell-only expansion, an unbalanced quote, or guard_destructive_git.py missing "
+              "beside this hook), so its risky paths cannot be checked. Run it with a literal folder.",
               file=sys.stderr)
         return 2
     missing = []

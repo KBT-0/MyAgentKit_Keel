@@ -264,6 +264,39 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertEqual(self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
             'command': 'cd src && echo "it\'s" && git commit -m x'}}).returncode, 0)
 
+    def test_review_leewayfix_every_cd_form_moves_the_tree(self):
+        # Review leewayfix (High): Set-Location, sl, Push-Location, `cd .\wt` (PowerShell) and a cd after a keyword
+        # or in an if body were not followed, so the caller's clean tree passed the worktree's unreviewed edit.
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', str(tree))
+        (tree / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        cases = [('PowerShell', c) for c in ('Set-Location wt; git commit -am x', 'sl wt; git commit -am x',
+                                              'cd .\\wt; git commit -am x', 'Push-Location wt; git commit -am x')]
+        cases += [('Bash', c) for c in ('if true; then cd wt; fi; git commit -am x', '{ cd wt; git commit -am x; }',
+                                        'for d in 1; do cd wt; done; git commit -am x', 'true && cd wt && git commit -am x')]
+        for tool, command in cases:
+            with self.subTest(tool=tool, command=command):
+                refused = self.hook('guard_risky_review.py', {'tool_name': tool, 'cwd': str(self.root),
+                                                              'tool_input': {'command': command}})
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+                self.assertIn('src/money/round.py', refused.stderr.decode())
+        self.assertEqual(self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
+            'command': 'cd no-such-dir; git commit -m x'}}).returncode, 0)
+
+    @unittest.skipIf(os.name == 'nt', 'a git symlink (mode 120000) needs core.symlinks, off on native Windows')
+    def test_review_leewayfix_an_uncommitted_review_of_a_symlink_records_its_text(self):
+        # Review leewayfix (Low): review_dispatch's --uncommitted record hashed the link's target, the guard the link
+        # text; both now hash the text (one symlink, both sides).
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core/scripts'))
+        import review_dispatch
+        os.symlink('../../scripts/gate_config.sh', self.root / 'src/money/link.py')
+        review_dispatch.note_reviewed(self.root, 'uncommitted', None, ['src/money/link.py'])
+        self.git('add', '-A')
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'link')  # voids the paths record
+        self.git('rm', '-q', '--cached', 'src/money/link.py')
+        self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
+    test_review_leewayfix_an_uncommitted_review_of_a_symlink_records_its_text._kit_platform_skip = os.name == 'nt'
+
     def test_git_exe_commit_is_seen(self):
         # labricore A7: native Windows spells it git.exe
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

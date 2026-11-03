@@ -1119,6 +1119,61 @@ class V0141FieldReportTests(GuardCase):
                             'git checkout --pathspec-from-file=nul.txt --pathspec-file-nul',
                             'git checkout HEAD --pathspec-from-file=other.txt'], 0)
 
+    def test_review_leewayfix_unreadable_revision_and_rewritten_pathspec_file(self):
+        # Review leewayfix (High): a revision the hook cannot read ($(...), $R) or git cannot resolve holds every
+        # ignored path, as before the ignored-file fix; (Medium) a pathspec file the line also names may be written
+        # before the checkout reads it.
+        (self.repo / 'build').mkdir()
+        (self.repo / 'build/x.o').write_text('object\n', encoding='utf-8')
+        git(self.repo, 'add', 'build/x.o')
+        git(self.repo, 'commit', '-q', '-m', 'kept')
+        git(self.repo, 'rm', '-q', '--cached', 'build/x.o')
+        (self.repo / '.gitignore').write_text('build/\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignored')
+        for command in ('git checkout "$(git rev-parse HEAD~1)" -- build', 'git checkout $R -- build',
+                        'git checkout `git rev-parse HEAD~1` -- build'):
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'revision cannot be read', result.stderr)
+        self.assertVerdict(['git checkout no-such-rev -- build', 'git checkout HEAD~1 -- build'], 2)
+        self.assertVerdict(['git checkout HEAD -- build'], 0)
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')
+        git(self.repo, 'commit', '-q', '-m', 'g')
+        (self.repo / 'other.txt').write_text('g.txt\n', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict(['echo f.txt > other.txt && git checkout --pathspec-from-file=other.txt',
+                            'git diff --name-only > other.txt && git checkout --pathspec-from-file=other.txt',
+                            'git diff --name-only | tee other.txt && git checkout --pathspec-from-file=other.txt',
+                            "sed -i s/g/f/ other.txt && git checkout --pathspec-from-file=other.txt",
+                            'cp x other.txt; git checkout --pathspec-from-file=other.txt',
+                            'printf f.txt >> ./other.txt; git checkout --pathspec-from-file other.txt'], 2)
+        self.assertVerdict(['git checkout --pathspec-from-file=other.txt'], 0)
+
+    def test_review_leewayfix_cd_forms_reach_the_tree(self):
+        # Review leewayfix (High): the cd reader guard_risky_review.py now shares follows a cd after a keyword,
+        # in an if body, and PowerShell's Set-Location/sl/Push-Location and `.\wt`.
+        sub = self.repo / 'wt'
+        sub.mkdir()
+        git(sub, 'init', '-q')
+        (sub / 'a.txt').write_text('a\n', encoding='utf-8')
+        git(sub, 'add', 'a.txt')
+        git(sub, 'commit', '-q', '-m', 'a')
+        (sub / 'a.txt').write_text('changed\n', encoding='utf-8')
+        (self.repo / '.gitignore').write_text('wt/\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignore wt')
+        self.assertVerdict(['if true; then cd wt; fi; git reset --hard', '{ cd wt; git reset --hard; }'], 2)
+        for command in ('Set-Location wt; git reset --hard', 'sl wt; git reset --hard', 'cd .\\wt; git reset --hard',
+                        'Push-Location wt; git reset --hard'):
+            with self.subTest(command=command):
+                result = self.run_hook(None, payload=json.dumps({'tool_name': 'PowerShell',
+                                                                 'tool_input': {'command': command}}))
+                self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertVerdict(['git reset --hard'], 0)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')
