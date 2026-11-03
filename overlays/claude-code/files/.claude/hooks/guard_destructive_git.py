@@ -129,6 +129,10 @@ CALM = {"cd", "pushd", "echo", "printf", "pwd", "ls", "cat", "true", ":", "test"
 # arguments are data, and on a line of these and PLAIN_GIT alone the floor reads the line with quotes,
 # comments and here-document bodies blanked, so a message that names a hard reset is no reset.
 INERT = CALM | {"grep", "egrep", "fgrep", "head", "tail", "wc", "uniq", "cut", "tr"}
+# Programs whose quoted arguments are prose (a title, a body) and that run no text of this line: a git word
+# inside such an argument is no git for commit_folders (the cb35ca5 review). An allowlist: any other command
+# that names git may be a wrapper or an interpreter the hook cannot look through.
+TEXT_ARGS = {"gh", "glab"}
 READ_ONLY = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "describe", "blame",
              "grep", "help", "version", "reflog", "shortlog", "remote", "config", "branch", "tag"}
 HOOK_SUBS = {"commit", "merge", "push", "rebase", "am", "pull", "cherry-pick", "revert"}
@@ -310,7 +314,8 @@ def strip_heredocs(text):
     interpreter's (`cat <<EOF | python`) as loose text. Any other is judged as shell when a
     command elsewhere is a shell (it may run the file the body writes), up to a quote that never
     closes. A quoted or commented `<<` is an argument, not a here-document. Every body is cut
-    first, so one body's apostrophes never read as a quote while another's readers are found."""
+    first, so one body's apostrophes never read as a quote while another's readers are found. The part after
+    that never-closing quote is listed with None (falsy, judged as an interpreter's is), as no reader runs it."""
     cut, pos, marker, expanded = [], 0, "__guard_heredoc_input__", []
     while True:
         m = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2").search(text, pos)
@@ -373,7 +378,7 @@ def strip_heredocs(text):
                 start = next((m.start() for m in UNCLOSED.finditer(body) if m.group("open")), None)
                 bodies.append((True, body[:start]))
                 if start is not None:
-                    bodies.append((False, body[start:]))
+                    bodies.append((None, body[start:]))  # data no reader runs: falsy, judged as code is
                 bodies.extend(nested)
     return text, bodies + expanded
 
@@ -1052,10 +1057,14 @@ def commits(command, cwds):
             found += commits(" ".join(rest[1:]), cwds)
         elif at is not None and (at == 0 or name not in INERT):
             found += cwds if Git(rest[at + 1:], {}, cwds).sub == "commit" else []
-        elif has_git and name not in INERT:
-            found.append(None)  # code or a wrapper's text that names git: the hook cannot tell where it runs
+        elif has_git and name not in INERT and not (
+                name in TEXT_ARGS and not any(GIT_WORD.match(t.lstrip("($`")) for t in rest[1:])):
+            # Code or a wrapper's text that names git: the hook cannot tell where it runs. Only a git inside
+            # the prose argument of a TEXT_ARGS program (gh --title "fix the git hook") is none (cb35ca5 review).
+            found.append(None)
     for shell, body in bodies:
-        found += commits(body, cwds) if shell and GIT_WORD.search(body) else []
+        if GIT_WORD.search(body) and shell is not None:  # an interpreter's body is code (cb35ca5 review)
+            found += commits(body, cwds) if shell else [None]
     for inner in substitutions(text):
         found += commits(inner, cwds) if GIT_WORD.search(inner) else []
     return found

@@ -1197,6 +1197,30 @@ class V0141FieldReportTests(GuardCase):
         self.assertVerdict(['git checkout --pathspec-from-file=paths', 'git checkout --pathspec-from-file paths'], 0)
         self.assertVerdict(['echo f.txt > paths && git checkout --pathspec-from-file=paths'], 2)
 
+    def test_review_cb35ca5_interpreter_heredoc_and_argument_text(self):
+        # The cb35ca5 review (Medium x2): an interpreter's here-document that names git is None, as `python3 -c`
+        # is; a git inside another command's argument text is not a git (judge() lets that line pass too).
+        sys.path.insert(0, str(HOOK.parent))
+        sys.dont_write_bytecode = True
+        import guard_destructive_git as guard
+        here = os.path.abspath('r')
+        heredoc = "cd wt && python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git', 'commit', '-am', 'x'])\nEOF"
+        self.assertIn(None, guard.commit_folders(heredoc, here))
+        self.assertEqual(guard.commit_folders("python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -m x", here), [here])
+        gh = 'git commit --allow-empty -m x && gh pr create --title "fix the git hook" --body b'
+        self.assertEqual(guard.commit_folders(gh, here), [here])
+        self.assertIn(None, guard.commit_folders('watch "git commit -am x"', here))
+        # Review round 1 of 29eeae0 (High): code or shell text behind a wrapper the hook cannot look through.
+        for command in ('cd wt && timeout 60 python3 -c "import os; os.system(\'git commit -am x\')"',
+                        'cd wt && uv run python -c "import subprocess; subprocess.run([\'git\',\'commit\',\'-am\',\'x\'])"',
+                        "watch -n 60 'cd wt && git commit -am x'"):
+            with self.subTest(command=command):
+                self.assertIn(None, guard.commit_folders(command, here))
+        # (Medium): a commit message's here-document after an apostrophe, on a line that also runs a shell, is data.
+        message = 'bash scripts/x.sh; git commit --allow-empty -m "$(cat <<\'EOF\'\nDon\'t touch the git hook\nEOF\n)"'
+        self.assertEqual(guard.commit_folders(message, here), [here])
+        self.assertVerdict([gh], 0)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')
