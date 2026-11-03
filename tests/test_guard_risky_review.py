@@ -297,6 +297,24 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
     test_review_leewayfix_an_uncommitted_review_of_a_symlink_records_its_text._kit_platform_skip = os.name == 'nt'
 
+    def test_review_leewayfix_r3_a_wrapped_commit_moves_the_tree(self):
+        # Review leewayfix r3 (High): a commit behind a wrapper or in a shell's text was not found, so only the
+        # caller's clean tree was judged and the worktree's unreviewed risky edit committed.
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', str(tree))
+        (tree / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        for command in ('cd wt && env FOO=1 git commit -am x', 'cd wt && command git commit -am x',
+                        'cd wt && timeout 60 git commit -am x', "sh -c 'cd wt && git commit -am x'"):
+            with self.subTest(command=command):
+                refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root),
+                                                              'tool_input': {'command': command}})
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+                self.assertIn('src/money/round.py', refused.stderr.decode())
+        refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
+            'command': 'python3 -c "import os; os.system(\'git commit -am x\')" && git commit -m y'}})
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('cannot be resolved', refused.stderr.decode())
+
     def test_git_exe_commit_is_seen(self):
         # labricore A7: native Windows spells it git.exe
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

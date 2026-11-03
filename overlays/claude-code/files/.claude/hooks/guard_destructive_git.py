@@ -644,7 +644,8 @@ def listed_paths(g, name, nul):
     steps = [v for k, v in zip(g.route, g.route[1:]) if k == "-C"]  # git reads it after -C
     if name in ("-", None) or g.cwd is None or unknowable(name) or any(unknowable(s) for s in steps):
         return None
-    if not once(name, LINE):  # review leewayfix Medium: `echo f.txt > list.txt && git checkout --pathspec-from-file=list.txt`
+    # the option names hold `paths`, `spec`, `file`: a file so named is counted outside them (review leewayfix r3 Low)
+    if not once(name, re.sub(r"--pathspec-(?:from-file|file-nul)", " ", LINE)):  # review leewayfix Medium: `echo f.txt > list.txt && git checkout --pathspec-from-file=list.txt`
         return None  # the line names the file elsewhere, so it may write it before the checkout reads it
     try:
         with open(os.path.join(g.cwd, *steps, native(os.path.expanduser(name))), encoding="utf-8") as file:
@@ -890,6 +891,36 @@ def verdict(g, depth=0):
     return None
 
 
+def start(seg):
+    """Where a simple command's own name stands: after keywords, VAR=value words and the TRANSPARENT wrappers
+    with their options (judge() and commit_folders() read a segment alike). Raises Unreadable."""
+    i = 0
+    while i < len(seg):
+        if seg[i] in KEYWORDS or re.match(r"[A-Za-z_]\w*=", seg[i]):
+            i += 1
+        elif base(seg[i]) in TRANSPARENT:
+            wrapper = base(seg[i])
+            i += 1
+            while i < len(seg) and seg[i].startswith("-"):
+                # env/exec options may consume or split the next word, or change cwd.
+                # Do not mistake an option VALUE named `git` for the command itself.
+                if wrapper in {"env", "exec"} and seg[i] != "--" and any(GIT_WORD.search(t) for t in seg[i:]):
+                    raise Unreadable(f"git run through {wrapper} options")
+                i += 1
+        else:
+            break
+    return i
+
+
+def shell_flag(rest, name):
+    """The index of the `-c` of a shell this command runs, itself or behind a wrapper (`timeout 60 sh -c`,
+    `xargs sh -c`): the words after it are the shell's text. None when there is none."""
+    shell = next((k for k, t in enumerate(rest) if base(t) in SHELLS and not interpreter(base(t))
+                  and (k == 0 or base(t) not in {".", "source"})), None) if name not in CALM | {"git"} else None
+    return None if shell is None else next((k for k, t in enumerate(rest[shell + 1:], shell + 1)
+                                            if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
+
+
 def judge(command, cwds, changed=False, env=None):
     """(always, why, (git, ignored, changed)) findings; raises Unreadable."""
     text, bodies = strip_heredocs(command)
@@ -905,41 +936,21 @@ def judge(command, cwds, changed=False, env=None):
     for seg, ending in segments(text, with_endings=True):
         input_git = pipeline_git
         pipeline_git = ending in {"|", "|&"} and (input_git or any(GIT_WORD.search(t) for t in seg))
-        local, i = {}, 0
-        while i < len(seg):
-            if seg[i] in KEYWORDS:
-                i += 1
-            elif re.match(r"[A-Za-z_]\w*=", seg[i]):
-                k, v = seg[i].split("=", 1)
-                local[k] = v
-                i += 1
-                if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
-                    yield from judge(v, cwds, changed, env)
-                    # GIT_CONFIG_PARAMETERS holds 'key=value' pairs; core.editor, diff.external or
-                    # core.sshCommand there runs as a command (r327 r2 Low).
-                    for pair in re.findall(r"'([^']*)'", v):
-                        if GIT_WORD.search(pair.partition("=")[2]):
-                            yield from judge(pair.partition("=")[2], cwds, changed, env)
-            elif base(seg[i]) in TRANSPARENT:
-                wrapper = base(seg[i])
-                i += 1
-                while i < len(seg) and seg[i].startswith("-"):
-                    # env/exec options may consume or split the next word, or change cwd.
-                    # Do not mistake an option VALUE named `git` for the command itself.
-                    if wrapper in {"env", "exec"} and seg[i] != "--" and any(GIT_WORD.search(t) for t in seg[i:]):
-                        raise Unreadable(f"git run through {wrapper} options")
-                    i += 1
-            else:
-                break
+        local, i = {}, start(seg)
+        for k, _, v in (w.partition("=") for w in seg[:i] if re.match(r"[A-Za-z_]\w*=", w)):
+            local[k] = v
+            if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
+                yield from judge(v, cwds, changed, env)
+                # GIT_CONFIG_PARAMETERS holds 'key=value' pairs; core.editor, diff.external or
+                # core.sshCommand there runs as a command (r327 r2 Low).
+                for pair in re.findall(r"'([^']*)'", v):
+                    if GIT_WORD.search(pair.partition("=")[2]):
+                        yield from judge(pair.partition("=")[2], cwds, changed, env)
         rest = seg[i:]
         name = base(rest[0]) if rest else ""
         has_git = any(GIT_WORD.search(t) for t in rest)
         here = {**env, **local}
-        # A shell this command runs, itself or behind a wrapper (`timeout 60 sh -c`, `xargs sh -c`).
-        shell = next((k for k, t in enumerate(rest) if base(t) in SHELLS and not interpreter(base(t))
-                      and (k == 0 or base(t) not in {".", "source"})), None) if name not in CALM | {"git"} else None
-        flag = None if shell is None else next((k for k, t in enumerate(rest[shell + 1:], shell + 1)
-                                                if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
+        flag = shell_flag(rest, name)
         leading = list(itertools.takewhile(lambda t: t.startswith("-"), rest[1:]))
         if rest and rest[0].startswith("$") and any(t in SPEC or t in ("stash", "remote", "config") for t in rest[1:]):
             raise Unreadable("a command named by a variable")
@@ -1017,15 +1028,37 @@ def commit_folders(command, cwd, tool_name=None):
     the hook cannot name. Raises Unreadable (an unbalanced quote). For guard_risky_review.py (review leewayfix)."""
     if tool_name == "PowerShell":
         command = powershell(command)
-    cwds, found = [cwd], []
-    for seg in segments(strip_heredocs(command)[0], strict=True):
-        rest = list(itertools.dropwhile(lambda t: t in KEYWORDS or re.match(r"[A-Za-z_]\w*=", t), seg))
+    return list(dict.fromkeys(commits(command, [cwd]))) or [cwd]
+
+
+def commits(command, cwds):
+    """commit_folders() for one shell text: a segment is read as judge() reads it (start(), shell_flag()); a
+    shell's text (`sh -c`, eval, a shell's here-document, a substitution) is read with the same folders, its own
+    `cd`s moving only it; a wrapper that runs git (timeout, xargs, sudo) is looked through to its git word. A
+    segment that holds git the hook does not read as a git command is None (review leewayfix r3 High)."""
+    text, bodies = strip_heredocs(command)
+    found = []
+    for seg in segments(text, strict=True):
+        rest = seg[start(seg):]
         name = base(rest[0]) if rest else ""
+        has_git = any(GIT_WORD.search(t) for t in rest)
+        flag = shell_flag(rest, name)
+        at = next((k for k, t in enumerate(rest) if base(t) == "git"), None)
         if name in CD:
             cwds = moved(rest, cwds)
-        elif name == "git" and Git(rest[1:], {}, cwds).sub == "commit":
-            found += cwds
-    return list(dict.fromkeys(found)) or [cwd]
+        elif flag is not None and has_git:
+            found += commits(" ".join(rest[flag + 1:]), cwds)
+        elif name == "eval" and has_git:
+            found += commits(" ".join(rest[1:]), cwds)
+        elif at is not None and (at == 0 or name not in INERT):
+            found += cwds if Git(rest[at + 1:], {}, cwds).sub == "commit" else []
+        elif has_git and name not in INERT:
+            found.append(None)  # code or a wrapper's text that names git: the hook cannot tell where it runs
+    for shell, body in bodies:
+        found += commits(body, cwds) if shell and GIT_WORD.search(body) else []
+    for inner in substitutions(text):
+        found += commits(inner, cwds) if GIT_WORD.search(inner) else []
+    return found
 
 
 def once(operand, text):

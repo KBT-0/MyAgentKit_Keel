@@ -1174,6 +1174,29 @@ class V0141FieldReportTests(GuardCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
         self.assertVerdict(['git reset --hard'], 0)
 
+    def test_review_leewayfix_r3_commit_folders_and_a_file_named_paths(self):
+        # Review leewayfix r3 (High): commit_folders() reads a segment as judge() does: wrappers, a shell's text,
+        # and git it cannot read as a command is None; (Low) a pathspec file named `paths` is counted outside the
+        # option's own name.
+        sys.path.insert(0, str(HOOK.parent))
+        sys.dont_write_bytecode = True
+        import guard_destructive_git as guard
+        here, wt = os.path.abspath('r'), os.path.join(os.path.abspath('r'), 'wt')
+        for command in ('cd wt && env FOO=1 git commit -am x', 'cd wt && command git commit -am x',
+                        'cd wt && timeout 60 git commit -am x', 'cd wt && nohup git commit -am x',
+                        "sh -c 'cd wt && git commit -am x'", 'cd wt && xargs git commit -m x'):
+            with self.subTest(command=command):
+                self.assertEqual(guard.commit_folders(command, here), [here, wt])
+        self.assertIn(None, guard.commit_folders('python3 -c "import os; os.system(\'git commit\')"', here))
+        self.assertEqual(guard.commit_folders('echo "git done" && git commit -m x', here), [here])
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')
+        git(self.repo, 'commit', '-q', '-m', 'g')
+        (self.repo / 'paths').write_text('g.txt\n', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict(['git checkout --pathspec-from-file=paths', 'git checkout --pathspec-from-file paths'], 0)
+        self.assertVerdict(['echo f.txt > paths && git checkout --pathspec-from-file=paths'], 2)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')
