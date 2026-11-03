@@ -29,8 +29,10 @@ or stash before any command that discards work" still covers every destructive c
   worktree or folder named by a `$var`, a `$(...)`, an operand xargs appends, a `{}`, an
   interpolated part of a code string (`{b}`, `#{b}`, `%s`) or a PowerShell splat (`git @a`) is the
   worst case (a variable refspec on push is not: a force push's `+`/`:` is typed by hand).
-- While the target tree has uncommitted work: `git reset --hard`, `git checkout` of paths or
-  with `-f`, `git switch -f`, `git restore` (unless index-only: `--staged` without
+- While the target tree has uncommitted work: `git reset --hard`, `git checkout` of paths
+  (only those paths are asked, the ones a `--pathspec-from-file` lists included; its stdin or an
+  unreadable file asks the whole tree; an ignored file counts only where the checkout's revision
+  holds its path) or with `-f`, `git switch -f`, `git restore` (unless index-only: `--staged` without
   `--worktree`), `git clean` (unless `-n`/`--dry-run`; with `-x`/`-X` ignored files count) and
   an alias the hook cannot read. Uncommitted changes are not in the reflog: once they are gone,
   they are gone. The tree checked is the one the command reaches (`cd X &&`, `git -C`,
@@ -114,8 +116,11 @@ FLOOR = [(re.compile(p, re.I), why) for p, why in [
 PLAIN_GIT = {"status", "log", "diff", "show", "commit", "tag", "add", "checkout", "rev-parse", "ls-files"}
 TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
 # A variable git or a tool runs as a command (GIT_EDITOR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND, ...): its value is shell
-# text, judged as such (review r327 High: `GIT_EDITOR='git reset --hard #' git commit` ran the reset).
-COMMAND_VAR = re.compile(r"GIT_\w+|EDITOR|VISUAL|PAGER|\w*ASKPASS")
+# text, judged as such (review r327 High: `GIT_EDITOR='git reset --hard #' git commit` ran the reset). Only the ones
+# git(1) ENVIRONMENT gives a command or config: GIT_AUTHOR_NAME="O'Brien git" is a name, not shell text with an
+# unbalanced quote (leeway v0.14.1 sync review).
+COMMAND_VAR = re.compile(r"GIT_(?:SSH|SSH_COMMAND|PROXY_COMMAND|EDITOR|SEQUENCE_EDITOR|PAGER|EXTERNAL_DIFF|CONFIG\w*)"
+                         r"|EDITOR|VISUAL|PAGER|\w*ASKPASS")
 # Names and dates only: a plain line keeps its blanked floor with these (any other GIT_* may carry a command or config).
 NAME_VAR = re.compile(r"GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)")
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
@@ -572,6 +577,7 @@ class Git:
     def __init__(self, tokens, env, cwds):
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
         self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
+        self.tree = None  # a path checkout's revision: an ignored file is lost only where it holds the path
         self.options = []  # the global options, their separate values skipped (r327 r2: `-C . --icase-pathspecs`)
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -613,9 +619,34 @@ class Git:
             # costs a sentence; allowing an unsafe one costs the work.
             if code != 0:
                 return "(could not read git status — assuming there is uncommitted work)"
+            if ignored and self.paths:  # leeway v0.14.1 sync review: `checkout REV -- build/` keeps build/x.o
+                out = "\n".join(line for line in out.splitlines()  # unless REV holds it
+                                 if not line.startswith("!! ") or self.holds(line[3:], where))
             if out:
                 return out
         return ""
+
+    def holds(self, path, where):
+        """Whether the path checkout's revision holds this root-relative path (a C-quoted name: assumed)."""
+        try:
+            return path.startswith('"') or self.ask("cat-file", "-e", f"{self.tree}:{path}", where=where)[0] == 0
+        except Exception:  # noqa: BLE001 - cannot tell: the ignored file counts
+            return True
+
+
+def listed_paths(g, name, nul):
+    """The paths a --pathspec-from-file names, or None for stdin, an unreadable or empty file, a name the
+    hook cannot read or a C-quoted line (leeway v0.14.1 sync review)."""
+    steps = [v for k, v in zip(g.route, g.route[1:]) if k == "-C"]  # git reads it after -C
+    if name in ("-", None) or g.cwd is None or unknowable(name) or any(unknowable(s) for s in steps):
+        return None
+    try:
+        with open(os.path.join(g.cwd, *steps, native(os.path.expanduser(name))), encoding="utf-8") as file:
+            text = file.read()
+    except (OSError, ValueError):
+        return None
+    paths = [p for p in (text.split("\0") if nul else text.splitlines()) if p]
+    return None if not paths or any(p.startswith('"') and not nul for p in paths) else paths
 
 
 def hooks_config_allowed(g):
@@ -752,16 +783,25 @@ def verdict(g, depth=0):
         if [n for n, _ in opts if n in ("hard", "soft", "mixed", "merge", "keep")][-1] == "hard":
             return False, "git reset --hard discards every uncommitted change", False
     if sub == "checkout" and not names & {"b", "B", "orphan", "patch"}:
-        if "force" in names or "--" in args or len(words) != 1:
+        if "force" in names or "--" in args or len(words) != 1 or "pathspec-from-file" in names:
             paths = args[args.index("--") + 1:] if "--" in args else []
+            rev = (options(sub, args[:args.index("--")])[1] if "--" in args else words)[:1]
+            if "pathspec-from-file" in names:  # leeway v0.14.1 sync review: no path word, no `--`, still a path checkout
+                paths = listed_paths(g, dict(opts)["pathspec-from-file"], "pathspec-file-nul" in names)
+                if paths is None:
+                    return False, ("git checkout --pathspec-from-file overwrites the paths it lists, which the hook "
+                                   "cannot read (stdin, an empty or unreadable file), so the whole tree is judged"), False
             # A pathspec option or variable (--icase-pathspecs) changes what the paths match: the whole tree is asked
             # (review r327 Medium; status would get the paths without it).
-            if (paths and not names & {"force", "pathspec-from-file"} and not any(unknowable(p) for p in paths)
+            if (paths and "force" not in names and not any(unknowable(p) for p in paths)
                     and not any("pathspecs" in t for t in g.options)
                     and not any(k.endswith("_PATHSPECS") for k in g.env)):
                 # #327: labricore's path checkouts were refused over staged files elsewhere (59 hits).
-                g.paths = paths
-                return False, "git checkout of these paths overwrites their working copy", True
+                # An ignored file counts only for a revision that holds its path: from the index it is never touched.
+                g.paths, g.tree = paths, (rev or [None])[0]
+                return False, "git checkout of these paths overwrites their working copy", bool(rev)
+            if "pathspec-from-file" in names:
+                return False, "git checkout of the listed paths, or -f, overwrites the working copy", False
             if "force" in names or words:
                 return False, "git checkout of a path, or -f, overwrites the working copy", False
         else:
@@ -961,7 +1001,7 @@ def plain(command):
         if any(shell for shell, _ in bodies):
             return None  # a body the shell runs or expands (review r327 High)
         for seg in segments(text, strict=True) if blank is not None else [["eval"]]:
-            if any(COMMAND_VAR.fullmatch(k := w.split("=", 1)[0]) and not NAME_VAR.fullmatch(k)
+            if any((COMMAND_VAR.fullmatch(k := w.split("=", 1)[0]) or k.startswith("GIT_")) and not NAME_VAR.fullmatch(k)
                    for w in seg if re.match(r"[A-Za-z_]\w*=", w)):
                 return None  # a variable git runs as a command (review r327 High)
             words = list(itertools.dropwhile(lambda w: w in KEYWORDS or re.match(r"[A-Za-z_]\w*=", w), seg))

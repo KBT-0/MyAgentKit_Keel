@@ -368,6 +368,12 @@ class PlainReportTests(unittest.TestCase):
                   # A note whose name only holds the word (a memory rule about hand-offs) is no hand-off.
                   (transcript(prompt, write('/h/.claude/memory/no-handoff-while-work-runs.md', 'Edit'), result,
                               write('/p/.myagentkit/nohandoff-dispositions.md'), result), 'Memory updated.'),
+                  # leeway v0.14.1 sync review: a worker's brief, result or question in docs/handoffs/ is no
+                  # hand-off, as before_compact.newest_handoff reads it (one shared test).
+                  (transcript(prompt, write('/p/docs/handoffs/ao-fold.brief.md'), result,
+                              write('/p/docs/handoffs/ao-fold.result.md'), result,
+                              write('/p/docs/handoffs/RESULT-w1.md'), result,
+                              write('/p/docs/handoffs/QUESTION-w1.md'), result), 'Brief written and the worker started.'),
                   # A code folder named for hand-offs holds code, not a hand-off.
                   (transcript(prompt, write('/p/src/handoff/router.py', 'Edit'), result), 'Done: the router retries once.'),
                   (str(self.project / 'missing.jsonl'), 'Handoff hazır.'), (None, 'Handoff hazır.'))

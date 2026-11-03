@@ -13,6 +13,38 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.15
+
+- **Worker briefs are no hand-off (leeway v0.14.1 sync review).** `plain_report.py` blocked a lead turn that wrote a
+  worker brief, result or question into `docs/handoffs/` as "this turn wrote a hand-off file". It now asks
+  `before_compact.py`'s one test for a worker's file (`*.brief.md`, `*.result.md`, `RESULT*`, `QUESTION*`), so the
+  two hooks cannot disagree again. test_communication_hooks: red without the fix. **ACTION** (project-owned
+  `.claude/hooks/plain_report.py`, `.claude/hooks/before_compact.py`): `sync-kit.sh . --merge`.
+- **A path checkout no longer counts ignored files (leeway v0.14.1 sync review).** `guard_destructive_git.py`
+  refused `git checkout -- .` on a clean tree because an ignored `build/` was listed as uncommitted work; a path
+  checkout from the index never touches an ignored file. An ignored file still counts for `checkout REV -- PATHS`
+  when REV holds its path, and for `git clean -x`. test_guard_destructive_git: red without the fix. **ACTION**
+  (project-owned `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
+- **Author names are plain values (leeway v0.14.1 sync review).** `guard_destructive_git.py` read every `GIT_*`
+  variable as a command, so an author name with an apostrophe and the word git before `git commit` was refused as
+  an unbalanced quote. Only the variables git runs or reads as config (`GIT_SSH`, `GIT_SSH_COMMAND`,
+  `GIT_PROXY_COMMAND`, `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`, `GIT_PAGER`, `GIT_EXTERNAL_DIFF`, `GIT_CONFIG*`) are
+  read as shell text now. test_guard_destructive_git: red without the fix. **ACTION** (project-owned
+  `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
+- **A reviewed symlink merges (leeway v0.14.1 sync review).** `guard_risky_review.py` hashed a risky symlink's
+  target file, while a `--commit` or `--base` review records the link itself, so the merge was always refused. It
+  hashes the link text, as git does; a changed link target still differs. test_guard_risky_review: red without the
+  fix. **ACTION** (project-owned `.claude/hooks/guard_risky_review.py`): `sync-kit.sh . --merge`.
+- **A `cd` before a commit moves the risky-review check (leeway v0.14.1 sync review).** `guard_risky_review.py`
+  judged `cd wt && git commit -am x` against the caller's tree, so an unreviewed risky edit in the worktree
+  committed. It now checks every tree the commit may stand in after its `cd`s, as `guard_destructive_git.py` does,
+  and refuses a `cd` it cannot resolve. test_guard_risky_review: red without the fix. **ACTION** (project-owned
+  `.claude/hooks/guard_risky_review.py`): `sync-kit.sh . --merge`.
+- **`git checkout --pathspec-from-file` is judged (leeway v0.14.1 sync review).** On a dirty tree it passed (no
+  path word, no `--`) although it overwrites the listed paths. `guard_destructive_git.py` reads the file and
+  judges those paths; stdin, an empty or unreadable file asks the whole tree. test_guard_destructive_git: red
+  without the fix. **ACTION** (project-owned `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
+
 ## v0.14.1 — 2026-11-02
 
 - **Leeway lead 43's field report (2026-11-02).** `guard_destructive_git.py` lets `git stash drop` through when every

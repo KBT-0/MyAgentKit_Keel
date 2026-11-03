@@ -226,6 +226,44 @@ class RiskyReviewTests(unittest.TestCase):
                 self.assertIn('-C folder', refused.stderr.decode())
         self.assertEqual(self.commit('git -C "%s" commit -m x' % self.root).returncode, 0)
 
+    @unittest.skipIf(os.name == 'nt', 'a git symlink (mode 120000) needs core.symlinks, off on native Windows')
+    def test_leeway_sync_review_a_reviewed_symlink_passes(self):
+        # leeway v0.14.1 sync review (Low): review_dispatch records a link's blob (its target text); the guard
+        # hashed the target's content, so the reviewed link's merge was refused.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core/scripts'))
+        import review_dispatch
+        os.symlink('../../scripts/gate_config.sh', self.root / 'src/money/link.py')
+        self.git('add', '-A')
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'link')
+        head = subprocess.run(['git', '-C', str(self.root), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                              text=True).stdout.strip()
+        review_dispatch.note_reviewed(self.root, 'commit', head, ['src/money/link.py'])
+        self.git('rm', '-q', '--cached', 'src/money/link.py')  # the link is a change against HEAD again
+        self.assertEqual(self.commit().returncode, 0, self.commit().stderr)
+        os.remove(self.root / 'src/money/link.py')
+        os.symlink('../../notes.md', self.root / 'src/money/link.py')  # a changed target differs
+        self.assertEqual(self.commit().returncode, 2)
+    test_leeway_sync_review_a_reviewed_symlink_passes._kit_platform_skip = os.name == 'nt'
+
+    def test_leeway_sync_review_a_cd_before_the_commit_moves_the_tree(self):
+        # leeway v0.14.1 sync review (pre-existing): `cd wt && git commit` was judged against the caller's tree
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', str(tree))
+        (tree / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        for command in ('cd wt && git commit -am x', 'cd "%s" && git commit -am x' % tree,
+                        '(cd wt; git add -A) && cd wt && git commit -m x', 'cd wt/src && git commit -am x'):
+            with self.subTest(command=command):
+                refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root),
+                                                              'tool_input': {'command': command}})
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+                self.assertIn('src/money/round.py', refused.stderr.decode())
+        refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root),
+                                                      'tool_input': {'command': 'cd "$NO_SUCH_WT_VAR" && git commit -m x'}})
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('cd before it', refused.stderr.decode())
+        self.assertEqual(self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
+            'command': 'cd src && echo "it\'s" && git commit -m x'}}).returncode, 0)
+
     def test_git_exe_commit_is_seen(self):
         # labricore A7: native Windows spells it git.exe
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

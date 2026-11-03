@@ -29,7 +29,8 @@ It also bounces a final message with no fenced block that names the hand-off whe
 wrote a hand-off file (a Write or Edit of a file whose name, or whose folder's name, starts
 with "handoff", as in handoff-65.md or docs/handoffs/, since the owner's last prompt, read from
 the transcript's tail; a name that only holds the word, as a no-handoff-rule.md memory, is none;
-a compaction's summary is no prompt): the owner opens the next session and needs the
+a compaction's summary is no prompt; a worker's brief, result or question, before_compact.worker_file,
+is none): the owner opens the next session and needs the
 exact text to paste (`docs/COMMUNICATION.md`, "Handoff"). The trigger is that write, not the
 message's wording, which no pattern reads reliably. Not under the autopilot switch: nobody
 opens a session then. The hook runs after the owner has read the message, so the prompt
@@ -115,6 +116,18 @@ def without_code(text: str) -> str:
     return SPAN.sub(' ', split_fences(text)[0])
 
 
+def worker_file(name: str) -> bool:
+    """before_compact.worker_file, the hooks' one test for a worker's brief or result; False when it
+    is not beside this file (an older sync: the write counts, as before)."""
+    try:
+        sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import before_compact
+        return before_compact.worker_file(name)
+    except Exception:  # noqa: BLE001 - an older or missing before_compact.py
+        return False
+
+
 def wrote_handoff(transcript) -> bool:
     """A Write or Edit of a file named handoff*, or of a Markdown file in a folder so named
     (docs/handoffs/), since the owner's last prompt or a wake-up, from the transcript's tail."""
@@ -143,6 +156,7 @@ def wrote_handoff(transcript) -> bool:
             if isinstance(block, dict) and block.get('type') == 'tool_use' \
                     and block.get('name') in ('Write', 'Edit', 'MultiEdit') \
                     and (path := Path(str((block.get('input') or {}).get('file_path', '')))).name not in RULE_DOCS \
+                    and not worker_file(path.name) \
                     and (HANDOFF_NAME.match(path.name) or HANDOFF_NAME.match(path.parent.name) and path.suffix.lower() == '.md'):
                 return True
     return False

@@ -28,11 +28,15 @@ def git(root, *args):
     return result.stdout.rstrip('\n') if result.returncode == 0 else ''
 
 
+def worker_file(name: str) -> bool:
+    """A worker's brief, result or question (leeway lead 43), no lead hand-off; plain_report.py reads
+    this one test too, so the two hooks cannot disagree (leeway v0.14.1 sync review)."""
+    return name.lower().endswith(('.brief.md', '.result.md')) or name.startswith(('RESULT', 'QUESTION'))
+
+
 def newest_handoff(root: Path) -> str:
     patterns = ('docs/handoffs/*.md', '.myagentkit/handoff*.md', '.myagentkit/*/handoff*.md')
-    # leeway lead 43: a worker's brief or result in docs/handoffs/ is no lead hand-off
-    found = [p for pattern in patterns for p in root.glob(pattern)
-             if not (p.name.endswith('.brief.md') or p.name.startswith(('RESULT', 'QUESTION')))]
+    found = [p for pattern in patterns for p in root.glob(pattern) if not worker_file(p.name)]
     return str(max(found, key=lambda p: p.stat().st_mtime).relative_to(root)) if found else 'none found'
 
 

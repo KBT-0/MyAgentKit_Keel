@@ -1079,6 +1079,46 @@ class V0141FieldReportTests(GuardCase):
                             "GIT_AUTHOR_NAME=me git commit -m 'never git reset --hard'",
                             "git -c user.name=git commit -m x"], 0)
 
+    def test_leeway_sync_review_ignored_files_and_author_names(self):
+        # leeway v0.14.1 sync review (Medium): a path checkout never touches an ignored file, unless its revision
+        # holds that path; (Low) an author name holding an apostrophe and "git" is a name, not shell text.
+        (self.repo / '.gitignore').write_text('build/\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignore')
+        (self.repo / 'build').mkdir()
+        (self.repo / 'build/x.o').write_text('object\n', encoding='utf-8')
+        self.assertVerdict(['git checkout -- .', 'git checkout -- build', 'git checkout HEAD -- .',
+                            'GIT_AUTHOR_NAME="O\'Brien git" git commit --allow-empty -m x',
+                            'GIT_COMMITTER_NAME="O\'Brien git" git commit --allow-empty -m x'], 0)
+        git(self.repo, 'add', '-f', 'build/x.o')
+        git(self.repo, 'commit', '-q', '-m', 'kept')
+        git(self.repo, 'rm', '-q', '--cached', 'build/x.o')
+        git(self.repo, 'commit', '-q', '-m', 'dropped')
+        # HEAD~1 holds build/x.o: checking it out overwrites the ignored file the tree holds now
+        self.assertVerdict(['git checkout HEAD~1 -- .', 'git checkout HEAD~1 -- build'], 2)
+        self.assertVerdict(['git checkout -- .', 'git checkout HEAD -- build'], 0)
+        self.assertVerdict(["GIT_SEQUENCE_EDITOR='git stash drop #' git rebase -i HEAD~1",
+                            "GIT_SSH_COMMAND='git stash drop #' git fetch"], 2)
+
+    def test_leeway_sync_review_pathspec_from_file(self):
+        # leeway v0.14.1 sync review (pre-existing): --pathspec-from-file names paths with no path word and no `--`.
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')
+        git(self.repo, 'commit', '-q', '-m', 'g')
+        (self.repo / 'list.txt').write_text('f.txt\n', encoding='utf-8')
+        (self.repo / 'other.txt').write_text('g.txt\n', encoding='utf-8')
+        (self.repo / 'nul.txt').write_bytes(b'g.txt\0')
+        (self.repo / 'empty.txt').write_text('', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict(['git checkout --pathspec-from-file=list.txt', 'git checkout --pathspec-from-file list.txt',
+                            'git checkout HEAD --pathspec-from-file=list.txt', 'git checkout --pathspec-from-file=-',
+                            'git checkout --pathspec-from-file=missing.txt', 'git checkout --pathspec-from-file=empty.txt',
+                            'git checkout --pathspec-from-file=$f', 'git -C . checkout --pathspec-from-file=list.txt'], 2)
+        # the listed paths alone are judged: g.txt holds no change
+        self.assertVerdict(['git checkout --pathspec-from-file=other.txt',
+                            'git checkout --pathspec-from-file=nul.txt --pathspec-file-nul',
+                            'git checkout HEAD --pathspec-from-file=other.txt'], 0)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')
