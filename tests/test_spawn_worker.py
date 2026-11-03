@@ -2606,9 +2606,9 @@ class BackgroundHostTests(unittest.TestCase):
         (tree / 'lead-edit.txt').write_text('the other session\n')
         result = self.spawn('--resume', '1a2b3c4d', '--result', str(out), SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(out))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("NOTE: files in the worker's worktree changed after its result %s: lead-edit.txt. If" % out,
-                      result.stdout)
-        self.ended()
+        self.ended()  # first: on Windows a failed assertion left the supervisor holding w1.supervisor.log
+        self.assertIn("NOTE: files in the worker's worktree changed after its result %s: lead-edit.txt. If"
+                      % out.as_posix(), result.stdout)  # the script names paths with forward slashes
         # In the main checkout the lead works by design: no note there.
         main = self.cwd / 'RESULT-w1.md'
         main.write_text(DONE)
@@ -2616,8 +2616,8 @@ class BackgroundHostTests(unittest.TestCase):
         (self.cwd / 'lead-edit.txt').write_text('the lead\n')
         result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(main))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn('NOTE: files', result.stdout)
         self.ended()
+        self.assertNotIn('NOTE: files', result.stdout)
 
     def test_an_untrusted_folder_stops_the_spawn_with_the_plain_fix_and_leaves_no_worktree(self):
         result = self.spawn('--worktree', SPAWN_UNTRUSTED='1')
