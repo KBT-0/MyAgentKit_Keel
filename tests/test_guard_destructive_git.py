@@ -1079,6 +1079,124 @@ class V0141FieldReportTests(GuardCase):
                             "GIT_AUTHOR_NAME=me git commit -m 'never git reset --hard'",
                             "git -c user.name=git commit -m x"], 0)
 
+    def test_leeway_sync_review_ignored_files_and_author_names(self):
+        # leeway v0.14.1 sync review (Medium): a path checkout never touches an ignored file, unless its revision
+        # holds that path; (Low) an author name holding an apostrophe and "git" is a name, not shell text.
+        (self.repo / '.gitignore').write_text('build/\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignore')
+        (self.repo / 'build').mkdir()
+        (self.repo / 'build/x.o').write_text('object\n', encoding='utf-8')
+        self.assertVerdict(['git checkout -- .', 'git checkout -- build', 'git checkout HEAD -- .',
+                            'GIT_AUTHOR_NAME="O\'Brien git" git commit --allow-empty -m x',
+                            'GIT_COMMITTER_NAME="O\'Brien git" git commit --allow-empty -m x'], 0)
+        git(self.repo, 'add', '-f', 'build/x.o')
+        git(self.repo, 'commit', '-q', '-m', 'kept')
+        git(self.repo, 'rm', '-q', '--cached', 'build/x.o')
+        git(self.repo, 'commit', '-q', '-m', 'dropped')
+        # HEAD~1 holds build/x.o: checking it out overwrites the ignored file the tree holds now
+        self.assertVerdict(['git checkout HEAD~1 -- .', 'git checkout HEAD~1 -- build'], 2)
+        self.assertVerdict(['git checkout -- .', 'git checkout HEAD -- build'], 0)
+        self.assertVerdict(["GIT_SEQUENCE_EDITOR='git stash drop #' git rebase -i HEAD~1",
+                            "GIT_SSH_COMMAND='git stash drop #' git fetch"], 2)
+
+    def test_leeway_sync_review_pathspec_from_file(self):
+        # leeway v0.14.1 sync review (pre-existing): --pathspec-from-file names paths with no path word and no `--`.
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')
+        git(self.repo, 'commit', '-q', '-m', 'g')
+        (self.repo / 'list.txt').write_text('f.txt\n', encoding='utf-8')
+        (self.repo / 'other.txt').write_text('g.txt\n', encoding='utf-8')
+        (self.repo / 'nul.txt').write_bytes(b'g.txt\0')
+        (self.repo / 'empty.txt').write_text('', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict(['git checkout --pathspec-from-file=list.txt', 'git checkout --pathspec-from-file list.txt',
+                            'git checkout HEAD --pathspec-from-file=list.txt', 'git checkout --pathspec-from-file=-',
+                            'git checkout --pathspec-from-file=missing.txt', 'git checkout --pathspec-from-file=empty.txt',
+                            'git checkout --pathspec-from-file=$f', 'git -C . checkout --pathspec-from-file=list.txt'], 2)
+        # the listed paths alone are judged: g.txt holds no change
+        self.assertVerdict(['git checkout --pathspec-from-file=other.txt',
+                            'git checkout --pathspec-from-file=nul.txt --pathspec-file-nul',
+                            'git checkout HEAD --pathspec-from-file=other.txt'], 0)
+
+    def test_review_leewayfix_unreadable_revision_and_rewritten_pathspec_file(self):
+        # Review leewayfix (High): a revision the hook cannot read ($(...), $R) or git cannot resolve holds every
+        # ignored path, as before the ignored-file fix; (Medium) a pathspec file the line also names may be written
+        # before the checkout reads it.
+        (self.repo / 'build').mkdir()
+        (self.repo / 'build/x.o').write_text('object\n', encoding='utf-8')
+        git(self.repo, 'add', 'build/x.o')
+        git(self.repo, 'commit', '-q', '-m', 'kept')
+        git(self.repo, 'rm', '-q', '--cached', 'build/x.o')
+        (self.repo / '.gitignore').write_text('build/\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignored')
+        for command in ('git checkout "$(git rev-parse HEAD~1)" -- build', 'git checkout $R -- build',
+                        'git checkout `git rev-parse HEAD~1` -- build'):
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'revision cannot be read', result.stderr)
+        self.assertVerdict(['git checkout no-such-rev -- build', 'git checkout HEAD~1 -- build'], 2)
+        self.assertVerdict(['git checkout HEAD -- build'], 0)
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')
+        git(self.repo, 'commit', '-q', '-m', 'g')
+        (self.repo / 'other.txt').write_text('g.txt\n', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict(['echo f.txt > other.txt && git checkout --pathspec-from-file=other.txt',
+                            'git diff --name-only > other.txt && git checkout --pathspec-from-file=other.txt',
+                            'git diff --name-only | tee other.txt && git checkout --pathspec-from-file=other.txt',
+                            "sed -i s/g/f/ other.txt && git checkout --pathspec-from-file=other.txt",
+                            'cp x other.txt; git checkout --pathspec-from-file=other.txt',
+                            'printf f.txt >> ./other.txt; git checkout --pathspec-from-file other.txt'], 2)
+        self.assertVerdict(['git checkout --pathspec-from-file=other.txt'], 0)
+
+    def test_review_leewayfix_cd_forms_reach_the_tree(self):
+        # Review leewayfix (High): the cd reader guard_risky_review.py now shares follows a cd after a keyword,
+        # in an if body, and PowerShell's Set-Location/sl/Push-Location and `.\wt`.
+        sub = self.repo / 'wt'
+        sub.mkdir()
+        git(sub, 'init', '-q')
+        (sub / 'a.txt').write_text('a\n', encoding='utf-8')
+        git(sub, 'add', 'a.txt')
+        git(sub, 'commit', '-q', '-m', 'a')
+        (sub / 'a.txt').write_text('changed\n', encoding='utf-8')
+        (self.repo / '.gitignore').write_text('wt/\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignore wt')
+        self.assertVerdict(['if true; then cd wt; fi; git reset --hard', '{ cd wt; git reset --hard; }'], 2)
+        for command in ('Set-Location wt; git reset --hard', 'sl wt; git reset --hard', 'cd .\\wt; git reset --hard',
+                        'Push-Location wt; git reset --hard'):
+            with self.subTest(command=command):
+                result = self.run_hook(None, payload=json.dumps({'tool_name': 'PowerShell',
+                                                                 'tool_input': {'command': command}}))
+                self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertVerdict(['git reset --hard'], 0)
+
+    def test_review_leewayfix_r3_commit_folders_and_a_file_named_paths(self):
+        # Review leewayfix r3 (High): commit_folders() reads a segment as judge() does: wrappers, a shell's text,
+        # and git it cannot read as a command is None; (Low) a pathspec file named `paths` is counted outside the
+        # option's own name.
+        sys.path.insert(0, str(HOOK.parent))
+        sys.dont_write_bytecode = True
+        import guard_destructive_git as guard
+        here, wt = os.path.abspath('r'), os.path.join(os.path.abspath('r'), 'wt')
+        for command in ('cd wt && env FOO=1 git commit -am x', 'cd wt && command git commit -am x',
+                        'cd wt && timeout 60 git commit -am x', 'cd wt && nohup git commit -am x',
+                        "sh -c 'cd wt && git commit -am x'", 'cd wt && xargs git commit -m x'):
+            with self.subTest(command=command):
+                self.assertEqual(guard.commit_folders(command, here), [here, wt])
+        self.assertIn(None, guard.commit_folders('python3 -c "import os; os.system(\'git commit\')"', here))
+        self.assertEqual(guard.commit_folders('echo "git done" && git commit -m x', here), [here])
+        (self.repo / 'g.txt').write_text('g\n', encoding='utf-8')
+        git(self.repo, 'add', 'g.txt')
+        git(self.repo, 'commit', '-q', '-m', 'g')
+        (self.repo / 'paths').write_text('g.txt\n', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict(['git checkout --pathspec-from-file=paths', 'git checkout --pathspec-from-file paths'], 0)
+        self.assertVerdict(['echo f.txt > paths && git checkout --pathspec-from-file=paths'], 2)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')

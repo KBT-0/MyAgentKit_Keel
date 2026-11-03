@@ -29,8 +29,10 @@ or stash before any command that discards work" still covers every destructive c
   worktree or folder named by a `$var`, a `$(...)`, an operand xargs appends, a `{}`, an
   interpolated part of a code string (`{b}`, `#{b}`, `%s`) or a PowerShell splat (`git @a`) is the
   worst case (a variable refspec on push is not: a force push's `+`/`:` is typed by hand).
-- While the target tree has uncommitted work: `git reset --hard`, `git checkout` of paths or
-  with `-f`, `git switch -f`, `git restore` (unless index-only: `--staged` without
+- While the target tree has uncommitted work: `git reset --hard`, `git checkout` of paths
+  (only those paths are asked, the ones a `--pathspec-from-file` lists included; its stdin or an
+  unreadable file asks the whole tree; an ignored file counts only where the checkout's revision
+  holds its path) or with `-f`, `git switch -f`, `git restore` (unless index-only: `--staged` without
   `--worktree`), `git clean` (unless `-n`/`--dry-run`; with `-x`/`-X` ignored files count) and
   an alias the hook cannot read. Uncommitted changes are not in the reflog: once they are gone,
   they are gone. The tree checked is the one the command reaches (`cd X &&`, `git -C`,
@@ -114,8 +116,11 @@ FLOOR = [(re.compile(p, re.I), why) for p, why in [
 PLAIN_GIT = {"status", "log", "diff", "show", "commit", "tag", "add", "checkout", "rev-parse", "ls-files"}
 TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
 # A variable git or a tool runs as a command (GIT_EDITOR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND, ...): its value is shell
-# text, judged as such (review r327 High: `GIT_EDITOR='git reset --hard #' git commit` ran the reset).
-COMMAND_VAR = re.compile(r"GIT_\w+|EDITOR|VISUAL|PAGER|\w*ASKPASS")
+# text, judged as such (review r327 High: `GIT_EDITOR='git reset --hard #' git commit` ran the reset). Only the ones
+# git(1) ENVIRONMENT gives a command or config: GIT_AUTHOR_NAME="O'Brien git" is a name, not shell text with an
+# unbalanced quote (leeway v0.14.1 sync review).
+COMMAND_VAR = re.compile(r"GIT_(?:SSH|SSH_COMMAND|PROXY_COMMAND|EDITOR|SEQUENCE_EDITOR|PAGER|EXTERNAL_DIFF|CONFIG\w*)"
+                         r"|EDITOR|VISUAL|PAGER|\w*ASKPASS")
 # Names and dates only: a plain line keeps its blanked floor with these (any other GIT_* may carry a command or config).
 NAME_VAR = re.compile(r"GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)")
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
@@ -222,6 +227,7 @@ MOVES = re.compile(r"\bcwd\b|chdir|\b(?:cd|pushd|popd|sl)\b|set-location|push-lo
 # A string's interpolated part (`{b}`, `{0}`, Ruby `#{b}`, `%s`, `%(b)s`), not git's `@{u}`/`^{tree}`.
 INTERPOLATED = re.compile(r"(?<![@^])\{[^{}]*\}|%(?:\(\w+\))?[-#0 +\d.]*[sdr]")
 SPLAT = False  # set for PowerShell input, where `git @a` splats an array the hook cannot read
+LINE = ""  # the whole command line, for a file a path option reads (--pathspec-from-file)
 
 
 def splat(word):
@@ -572,6 +578,7 @@ class Git:
     def __init__(self, tokens, env, cwds):
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
         self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
+        self.tree = None  # a path checkout's revision: an ignored file is lost only where it holds the path
         self.options = []  # the global options, their separate values skipped (r327 r2: `-C . --icase-pathspecs`)
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -613,9 +620,40 @@ class Git:
             # costs a sentence; allowing an unsafe one costs the work.
             if code != 0:
                 return "(could not read git status — assuming there is uncommitted work)"
+            if ignored and self.paths:  # leeway v0.14.1 sync review: `checkout REV -- build/` keeps build/x.o
+                out = "\n".join(line for line in out.splitlines()  # unless REV holds it
+                                 if not line.startswith("!! ") or self.holds(line[3:], where))
             if out:
                 return out
         return ""
+
+    def holds(self, path, where):
+        """Whether the path checkout's revision holds this root-relative path. A C-quoted name, or a revision
+        the hook cannot read or git cannot resolve (`$(...)`, `$R`: review leewayfix High), holds it."""
+        try:
+            return (path.startswith('"') or unknowable(self.tree)
+                    or self.ask("rev-parse", "--verify", "-q", self.tree + "^{tree}", where=where)[0] != 0
+                    or self.ask("cat-file", "-e", f"{self.tree}:{path}", where=where)[0] == 0)
+        except Exception:  # noqa: BLE001 - cannot tell: the ignored file counts
+            return True
+
+
+def listed_paths(g, name, nul):
+    """The paths a --pathspec-from-file names, or None for stdin, an unreadable or empty file, a name the
+    hook cannot read or a C-quoted line (leeway v0.14.1 sync review)."""
+    steps = [v for k, v in zip(g.route, g.route[1:]) if k == "-C"]  # git reads it after -C
+    if name in ("-", None) or g.cwd is None or unknowable(name) or any(unknowable(s) for s in steps):
+        return None
+    # the option names hold `paths`, `spec`, `file`: a file so named is counted outside them (review leewayfix r3 Low)
+    if not once(name, re.sub(r"--pathspec-(?:from-file|file-nul)", " ", LINE)):  # review leewayfix Medium: `echo f.txt > list.txt && git checkout --pathspec-from-file=list.txt`
+        return None  # the line names the file elsewhere, so it may write it before the checkout reads it
+    try:
+        with open(os.path.join(g.cwd, *steps, native(os.path.expanduser(name))), encoding="utf-8") as file:
+            text = file.read()
+    except (OSError, ValueError):
+        return None
+    paths = [p for p in (text.split("\0") if nul else text.splitlines()) if p]
+    return None if not paths or any(p.startswith('"') and not nul for p in paths) else paths
 
 
 def hooks_config_allowed(g):
@@ -752,16 +790,28 @@ def verdict(g, depth=0):
         if [n for n, _ in opts if n in ("hard", "soft", "mixed", "merge", "keep")][-1] == "hard":
             return False, "git reset --hard discards every uncommitted change", False
     if sub == "checkout" and not names & {"b", "B", "orphan", "patch"}:
-        if "force" in names or "--" in args or len(words) != 1:
+        if "force" in names or "--" in args or len(words) != 1 or "pathspec-from-file" in names:
             paths = args[args.index("--") + 1:] if "--" in args else []
+            rev = (options(sub, args[:args.index("--")])[1] if "--" in args else words)[:1]
+            if "pathspec-from-file" in names:  # leeway v0.14.1 sync review: no path word, no `--`, still a path checkout
+                paths = listed_paths(g, dict(opts)["pathspec-from-file"], "pathspec-file-nul" in names)
+                if paths is None:
+                    return False, ("git checkout --pathspec-from-file overwrites the paths it lists, which the hook "
+                                   "cannot see (stdin, an empty or unreadable file, or one this line also names and so "
+                                   "may write first), so the whole tree is judged"), False
             # A pathspec option or variable (--icase-pathspecs) changes what the paths match: the whole tree is asked
             # (review r327 Medium; status would get the paths without it).
-            if (paths and not names & {"force", "pathspec-from-file"} and not any(unknowable(p) for p in paths)
+            if (paths and "force" not in names and not any(unknowable(p) for p in paths)
                     and not any("pathspecs" in t for t in g.options)
                     and not any(k.endswith("_PATHSPECS") for k in g.env)):
                 # #327: labricore's path checkouts were refused over staged files elsewhere (59 hits).
-                g.paths = paths
-                return False, "git checkout of these paths overwrites their working copy", True
+                # An ignored file counts only for a revision that holds its path: from the index it is never touched.
+                g.paths, g.tree = paths, (rev or [None])[0]
+                return False, ("git checkout of these paths overwrites their working copy" + (
+                    " (its revision cannot be read, so ignored files count as well)"
+                    if rev and unknowable(rev[0]) else "")), bool(rev)
+            if "pathspec-from-file" in names:
+                return False, "git checkout of the listed paths, or -f, overwrites the working copy", False
             if "force" in names or words:
                 return False, "git checkout of a path, or -f, overwrites the working copy", False
         else:
@@ -841,6 +891,36 @@ def verdict(g, depth=0):
     return None
 
 
+def start(seg):
+    """Where a simple command's own name stands: after keywords, VAR=value words and the TRANSPARENT wrappers
+    with their options (judge() and commit_folders() read a segment alike). Raises Unreadable."""
+    i = 0
+    while i < len(seg):
+        if seg[i] in KEYWORDS or re.match(r"[A-Za-z_]\w*=", seg[i]):
+            i += 1
+        elif base(seg[i]) in TRANSPARENT:
+            wrapper = base(seg[i])
+            i += 1
+            while i < len(seg) and seg[i].startswith("-"):
+                # env/exec options may consume or split the next word, or change cwd.
+                # Do not mistake an option VALUE named `git` for the command itself.
+                if wrapper in {"env", "exec"} and seg[i] != "--" and any(GIT_WORD.search(t) for t in seg[i:]):
+                    raise Unreadable(f"git run through {wrapper} options")
+                i += 1
+        else:
+            break
+    return i
+
+
+def shell_flag(rest, name):
+    """The index of the `-c` of a shell this command runs, itself or behind a wrapper (`timeout 60 sh -c`,
+    `xargs sh -c`): the words after it are the shell's text. None when there is none."""
+    shell = next((k for k, t in enumerate(rest) if base(t) in SHELLS and not interpreter(base(t))
+                  and (k == 0 or base(t) not in {".", "source"})), None) if name not in CALM | {"git"} else None
+    return None if shell is None else next((k for k, t in enumerate(rest[shell + 1:], shell + 1)
+                                            if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
+
+
 def judge(command, cwds, changed=False, env=None):
     """(always, why, (git, ignored, changed)) findings; raises Unreadable."""
     text, bodies = strip_heredocs(command)
@@ -856,41 +936,21 @@ def judge(command, cwds, changed=False, env=None):
     for seg, ending in segments(text, with_endings=True):
         input_git = pipeline_git
         pipeline_git = ending in {"|", "|&"} and (input_git or any(GIT_WORD.search(t) for t in seg))
-        local, i = {}, 0
-        while i < len(seg):
-            if seg[i] in KEYWORDS:
-                i += 1
-            elif re.match(r"[A-Za-z_]\w*=", seg[i]):
-                k, v = seg[i].split("=", 1)
-                local[k] = v
-                i += 1
-                if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
-                    yield from judge(v, cwds, changed, env)
-                    # GIT_CONFIG_PARAMETERS holds 'key=value' pairs; core.editor, diff.external or
-                    # core.sshCommand there runs as a command (r327 r2 Low).
-                    for pair in re.findall(r"'([^']*)'", v):
-                        if GIT_WORD.search(pair.partition("=")[2]):
-                            yield from judge(pair.partition("=")[2], cwds, changed, env)
-            elif base(seg[i]) in TRANSPARENT:
-                wrapper = base(seg[i])
-                i += 1
-                while i < len(seg) and seg[i].startswith("-"):
-                    # env/exec options may consume or split the next word, or change cwd.
-                    # Do not mistake an option VALUE named `git` for the command itself.
-                    if wrapper in {"env", "exec"} and seg[i] != "--" and any(GIT_WORD.search(t) for t in seg[i:]):
-                        raise Unreadable(f"git run through {wrapper} options")
-                    i += 1
-            else:
-                break
+        local, i = {}, start(seg)
+        for k, _, v in (w.partition("=") for w in seg[:i] if re.match(r"[A-Za-z_]\w*=", w)):
+            local[k] = v
+            if COMMAND_VAR.fullmatch(k) and GIT_WORD.search(v):
+                yield from judge(v, cwds, changed, env)
+                # GIT_CONFIG_PARAMETERS holds 'key=value' pairs; core.editor, diff.external or
+                # core.sshCommand there runs as a command (r327 r2 Low).
+                for pair in re.findall(r"'([^']*)'", v):
+                    if GIT_WORD.search(pair.partition("=")[2]):
+                        yield from judge(pair.partition("=")[2], cwds, changed, env)
         rest = seg[i:]
         name = base(rest[0]) if rest else ""
         has_git = any(GIT_WORD.search(t) for t in rest)
         here = {**env, **local}
-        # A shell this command runs, itself or behind a wrapper (`timeout 60 sh -c`, `xargs sh -c`).
-        shell = next((k for k, t in enumerate(rest) if base(t) in SHELLS and not interpreter(base(t))
-                      and (k == 0 or base(t) not in {".", "source"})), None) if name not in CALM | {"git"} else None
-        flag = None if shell is None else next((k for k, t in enumerate(rest[shell + 1:], shell + 1)
-                                                if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
+        flag = shell_flag(rest, name)
         leading = list(itertools.takewhile(lambda t: t.startswith("-"), rest[1:]))
         if rest and rest[0].startswith("$") and any(t in SPEC or t in ("stash", "remote", "config") for t in rest[1:]):
             raise Unreadable("a command named by a variable")
@@ -919,12 +979,8 @@ def judge(command, cwds, changed=False, env=None):
                     for pair in re.findall(r"'([^']*)'", v):
                         if GIT_WORD.search(pair.partition("=")[2]):
                             yield from judge(pair.partition("=")[2], cwds, changed, env)
-        if name in ("cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"):
-            args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
-            target = native(os.path.expanduser(os.path.expandvars(args[0]))) if args and "pop" not in name else None
-            moved = [None if target is None or unknowable(target) or target == "-" or c is None else os.path.join(c, target)
-                     for c in cwds]
-            cwds = list(dict.fromkeys(cwds + moved))
+        if name in CD:
+            cwds = moved(rest, cwds)
             continue
         if name == "git":
             g = Git(rest[1:], here, cwds)
@@ -945,6 +1001,66 @@ def judge(command, cwds, changed=False, env=None):
             yield from judge(inner, cwds, changed, env)
 
 
+CD = {"cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"}
+
+
+def moved(rest, cwds):
+    """The folders after `cd DIR` (a CD command and its words): a `cd` may not run (after `||`, in a subshell), so it
+    only adds a folder; None for one the hook cannot name. guard_risky_review.py reads its tree with this too."""
+    args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
+    target = native(os.path.expanduser(os.path.expandvars(args[0]))) if args and "pop" not in base(rest[0]) else None
+    return list(dict.fromkeys(cwds + [None if target is None or unknowable(target) or target == "-" or c is None
+                                      else os.path.join(c, target) for c in cwds]))
+
+
+def powershell(command):
+    """A PowerShell line as the shell reader reads it: a backslash is a path's (`cd .\\wt`), `$env:NAME = v` sets NAME
+    for later commands, and a `( ... )` operand is a sub-expression, PowerShell's `$( ... )`."""
+    global SPLAT
+    SPLAT = True
+    command = re.sub(r"\$env:(\w+)\s*=\s*", r"export \1=", command.replace("\\", "/"), flags=re.I)
+    return re.sub(r"(?<!\$)\(", " $(", command)
+
+
+def commit_folders(command, cwd, tool_name=None):
+    """Every folder a `git commit` on this line may stand in, its `cd`s read as judge() reads them (after a
+    keyword, in an if body, PowerShell's Set-Location/sl/Push-Location, a Git Bash drive path); None for one
+    the hook cannot name. Raises Unreadable (an unbalanced quote). For guard_risky_review.py (review leewayfix)."""
+    if tool_name == "PowerShell":
+        command = powershell(command)
+    return list(dict.fromkeys(commits(command, [cwd]))) or [cwd]
+
+
+def commits(command, cwds):
+    """commit_folders() for one shell text: a segment is read as judge() reads it (start(), shell_flag()); a
+    shell's text (`sh -c`, eval, a shell's here-document, a substitution) is read with the same folders, its own
+    `cd`s moving only it; a wrapper that runs git (timeout, xargs, sudo) is looked through to its git word. A
+    segment that holds git the hook does not read as a git command is None (review leewayfix r3 High)."""
+    text, bodies = strip_heredocs(command)
+    found = []
+    for seg in segments(text, strict=True):
+        rest = seg[start(seg):]
+        name = base(rest[0]) if rest else ""
+        has_git = any(GIT_WORD.search(t) for t in rest)
+        flag = shell_flag(rest, name)
+        at = next((k for k, t in enumerate(rest) if base(t) == "git"), None)
+        if name in CD:
+            cwds = moved(rest, cwds)
+        elif flag is not None and has_git:
+            found += commits(" ".join(rest[flag + 1:]), cwds)
+        elif name == "eval" and has_git:
+            found += commits(" ".join(rest[1:]), cwds)
+        elif at is not None and (at == 0 or name not in INERT):
+            found += cwds if Git(rest[at + 1:], {}, cwds).sub == "commit" else []
+        elif has_git and name not in INERT:
+            found.append(None)  # code or a wrapper's text that names git: the hook cannot tell where it runs
+    for shell, body in bodies:
+        found += commits(body, cwds) if shell and GIT_WORD.search(body) else []
+    for inner in substitutions(text):
+        found += commits(inner, cwds) if GIT_WORD.search(inner) else []
+    return found
+
+
 def once(operand, text):
     """Whether the line names the operand's file only as the operand: by its base name, any case
     (a case-folding disk), quotes and backslashes dropped (`x".py"`, `./x.py`; review r-v0141-fields)."""
@@ -961,7 +1077,7 @@ def plain(command):
         if any(shell for shell, _ in bodies):
             return None  # a body the shell runs or expands (review r327 High)
         for seg in segments(text, strict=True) if blank is not None else [["eval"]]:
-            if any(COMMAND_VAR.fullmatch(k := w.split("=", 1)[0]) and not NAME_VAR.fullmatch(k)
+            if any((COMMAND_VAR.fullmatch(k := w.split("=", 1)[0]) or k.startswith("GIT_")) and not NAME_VAR.fullmatch(k)
                    for w in seg if re.match(r"[A-Za-z_]\w*=", w)):
                 return None  # a variable git runs as a command (review r327 High)
             words = list(itertools.dropwhile(lambda w: w in KEYWORDS or re.match(r"[A-Za-z_]\w*=", w), seg))
@@ -997,14 +1113,11 @@ def main():
     unreadable = ("this command holds git inside {}, which this hook cannot read, so it cannot tell "
                   "whether the command loses work; run the git command directly, as its own command")
     if data.get("tool_name") == "PowerShell":
-        global SPLAT
-        SPLAT = True
         if "`" in command and GIT_WORD.search(command):
             return unreadable.format("a PowerShell backtick (an escape or a line continuation)")
-        # PowerShell keeps a backslash (paths), and `$env:NAME = v` sets NAME for later commands.
-        command = re.sub(r"\$env:(\w+)\s*=\s*", r"export \1=", command.replace("\\", "/"), flags=re.I)
-        # A `( ... )` operand is a sub-expression, PowerShell's `$( ... )`: an unknown operand, its text judged.
-        command = re.sub(r"(?<!\$)\(", " $(", command)
+        command = powershell(command)
+    global LINE
+    LINE = command
     # On a plain line the parser judges a path checkout by those paths alone (#327).
     text = plain(command)
     floor = next((why for pattern, why in FLOOR if pattern.search(command if text is None else text)
@@ -1049,7 +1162,8 @@ def lost(why, dirty):
             "and ask them to run the command themselves")
 
 
-refusal = main()
-if refusal:
-    print("BLOCKED: " + refusal + ".", file=sys.stderr)
-    sys.exit(2)
+if __name__ == "__main__":  # guard_risky_review.py imports commit_folders
+    refusal = main()
+    if refusal:
+        print("BLOCKED: " + refusal + ".", file=sys.stderr)
+        sys.exit(2)

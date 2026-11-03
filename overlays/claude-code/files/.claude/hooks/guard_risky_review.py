@@ -15,7 +15,10 @@ a new commit moves HEAD and starts the next record. A path also passes when it h
 accepted review saw (the common git folder's myagentkit-reviewed-content, path -> blob, "" = deleted),
 which a --commit or --base review.sh round and a diff-reviewer record: so the commit or the merge of a
 branch reviewed after its commits passes in any checkout (labricore A1), and a risky file that differs
-from what was reviewed does not.
+from what was reviewed does not. A symlink's content is its target text, as git stores it. The tree
+judged is every one the commit may stand in: a `cd DIR` before it adds DIR, read by
+guard_destructive_git.commit_folders (one reader for both guards), and a `cd` the hook cannot resolve is
+refused like such a `-C`.
 shortcut: it reads the shell command for `git ... commit` on one line, so a commit inside a script
 (`sh scripts/sync_kit.sh`) is not seen, and it runs before the command, so a risky file the same
 command writes first (`git apply fix.patch && git commit -am fix`) is not seen either; upgrade to
@@ -105,7 +108,16 @@ def reviewed_content(root):
 
 def blob(root, path):
     """The working tree's content of `path` as a git blob id, "" when it is gone."""
-    if not os.path.isfile(os.path.join(root, path)):
+    full = os.path.join(root, path)
+    if os.path.islink(full):  # git's blob of a link (mode 120000) is its target text, as review_dispatch records it
+        target = os.readlink(full)  # leeway v0.14.1 sync review: hash-object hashed the target's content
+        try:
+            run = subprocess.run(["git", "-C", root, "hash-object", "--stdin"], capture_output=True, timeout=20,
+                                 input=os.fsencode(target.replace("\\", "/") if os.name == "nt" else target))
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return run.stdout.decode("ascii", "replace").strip() or None if run.returncode == 0 else None
+    if not os.path.isfile(full):
         return ""
     return (git(root, "hash-object", "--", path) or "").strip() or None
 
@@ -138,23 +150,44 @@ def project_root(data, command=""):
     return where
 
 
+def folders(command, cwd, tool_name=None):
+    """Every folder the commit may stand in, read by guard_destructive_git.commit_folders, so both guards follow
+    the same `cd`s (keywords, if bodies, PowerShell's Set-Location/sl/Push-Location and `.\\wt`; review
+    leewayfix High); None for one the hook cannot name; a folder that does not exist is left out. A missing
+    or unreadable reader, or an unbalanced quote, is None too."""
+    try:
+        sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import guard_destructive_git
+        found = guard_destructive_git.commit_folders(command, cwd, tool_name)
+    except Exception:  # noqa: BLE001 - an older or missing guard_destructive_git.py, or Unreadable
+        return [None]
+    # A shell cannot stand in a folder that does not exist (`cd wt; cd wt` adds wt/wt), so none is judged there:
+    # project_root would judge the session's tree in its place.
+    return [c for c in found if c is None or c == cwd or os.path.isdir(c)]
+
+
 def main():
     data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     command = (data.get("tool_input") or {}).get("command") or ""
-    if not COMMIT.search(command):
+    match = COMMIT.search(command)
+    if not match:
         return 0
-    root = project_root(data, command)
-    if root is None:
-        print("BLOCKED: this commit's git -C folder cannot be resolved by the hook (a variable or a shell-only "
-              "expansion), so its risky paths cannot be checked. Run it with a literal folder, or cd there first.",
+    cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    roots = [None if c is None else project_root(dict(data, cwd=c), command)
+             for c in folders(command, cwd, data.get("tool_name"))]
+    if None in roots:
+        print("BLOCKED: this commit's git -C folder, or the folder a cd before it moves to, cannot be resolved by the "
+              "hook (a variable, a shell-only expansion, an unbalanced quote, or guard_destructive_git.py missing "
+              "beside this hook), so its risky paths cannot be checked. Run it with a literal folder.",
               file=sys.stderr)
         return 2
-    globs = risky_globs(root)
-    if not globs:
-        return 0
-    risky = sorted(p for p in changed(root) if any(fnmatch.fnmatchcase(p, g) for g in globs))
-    content = reviewed_content(root)
-    missing = [p for p in risky if p not in reviewed(root) and (p not in content or content[p] != blob(root, p))]
+    missing = []
+    for root in dict.fromkeys(roots):
+        globs = risky_globs(root)
+        risky = sorted(p for p in changed(root) if any(fnmatch.fnmatchcase(p, g) for g in globs)) if globs else []
+        content = reviewed_content(root)
+        missing += [p for p in risky if p not in reviewed(root) and (p not in content or content[p] != blob(root, p))]
     if not missing:
         return 0
     print("BLOCKED: this commit changes risky paths no diff review has seen since HEAD (%s). Start the "

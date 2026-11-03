@@ -367,9 +367,9 @@ def note_reviewed(repo, scope="uncommitted", tip=None, files=()):
     of `files` (all rounds of the label) in the common git folder's myagentkit-reviewed-content, so a
     commit or a merge of a branch reviewed with --commit or --base passes when its risky files hold
     that content (labricore A1). A failure only means the guard asks for a diff-reviewer review."""
-    def git(*args):
+    def git(*args, text=None):
         return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=20, check=True).stdout
+                              errors="replace", timeout=20, check=True, input=text).stdout
 
     def load(path):
         try:
@@ -396,7 +396,11 @@ def note_reviewed(repo, scope="uncommitted", tip=None, files=()):
         path = absolute(git("rev-parse", "--git-common-dir")) / "myagentkit-reviewed-content"
         content = load(path)
         for name in files:
-            if scope == "uncommitted":
+            if scope == "uncommitted" and (Path(repo) / name).is_symlink():
+                # a link's blob is its target text, as git stores it and guard_risky_review.blob() hashes it
+                target = os.readlink(Path(repo) / name)
+                blob = git("hash-object", "--stdin", text=target.replace("\\", "/") if os.name == "nt" else target).strip()
+            elif scope == "uncommitted":
                 blob = git("hash-object", "--", name).strip() if (Path(repo) / name).is_file() else ""
             else:
                 listed = git("ls-tree", "-z", tip, "--", name).split("\0")[0].split("\t")[0].split()
