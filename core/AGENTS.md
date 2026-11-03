@@ -148,8 +148,8 @@ the commit hook and reads its `CHECK: PASS`; a risky diff still takes its review
 
 # Compact instructions
 
-Claude Code reads this section at every compaction, the automatic and the idle one too: it comes
-through `CLAUDE.md`, whose `@AGENTS.md` line imports this file (code.claude.com/docs/en/costs).
+Claude Code's docs name a `# Compact instructions` section of `CLAUDE.md` as the way to steer
+compaction (code.claude.com/docs/en/costs); this file reaches it through `CLAUDE.md`'s `@AGENTS.md` import.
 Keep: the open decisions, the binding rules, the changed files and their commits, the next step,
 and {{OWNER_NAME}}'s words verbatim. Drop: the tool output of finished work (test runs, file
 reads, logs), which its commit already records.

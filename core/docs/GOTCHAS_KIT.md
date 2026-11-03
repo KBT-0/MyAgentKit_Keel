@@ -381,8 +381,9 @@ Its login stores Google cookies that open the whole account, so use a secondary 
 
 ## A session idle for an hour is compacted on its own
 
-Claude Code's `idleCompaction` (on by default) compacts a session left idle about an hour at 200k
-or more, a lead waiting on a worker too (code.claude.com/docs/en/settings-reference): the kit keeps it
-on, since it runs while the cache is warm, and counts it like any compaction, so the second one is
+Claude Code's `idleCompaction` (on by default) compacts a session on the one-hour cache TTL left idle
+about an hour once its context reached 200k (the default threshold), a lead waiting on a worker too
+(code.claude.com/docs/en/settings-reference, "idleCompaction"): the kit keeps it on, since it runs
+before the prompt cache expires, and counts it like any compaction, so the second one is
 a hand-off signal as before (`docs/WORKFLOW.md`, "Worker cost", rule 8; the kit's
 `docs/research/context-hygiene.md`, Öneri 5).

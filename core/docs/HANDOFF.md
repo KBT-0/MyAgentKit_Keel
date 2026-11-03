@@ -120,11 +120,13 @@ runs `claim --force`, tells {{OWNER_NAME}} so in one line and announces itself t
 The lead's hand-off steps: update `docs/STATE.md`; write the hand-off file, whose first line
 names the next session's model id AND effort, chosen from `docs/WORKFLOW.md`, "Model routing",
 for the work it opens (the effort is decided per hand-off: owner, 2026-11-03); commit; write
-`.myagentkit/handoff-pending`, one line `HANDOFF_PATH COMMIT`; then tell {{OWNER_NAME}}: type
+`.myagentkit/handoff-pending` in the main checkout (a lead in a linked worktree too), one line
+`HANDOFF_PATH COMMIT`; then tell {{OWNER_NAME}}: type
 `/clear` in this terminal (and `/model` or `/effort` first when the line names others). In the
 Claude Code overlay the `handoff_pending.py` hook (`SessionStart`, `clear` and `startup`) then
 tells the fresh context to read that file first and deletes the marker; on a tree with
-uncommitted changes it says so and the marker stays until the new session has checked them.
+uncommitted changes (the session's own tree, a worktree included) it says so and the marker
+stays until the new session has checked them. A worker session never gets the line.
 
 The result file starts with four lines, exact keys, in this order:
 
