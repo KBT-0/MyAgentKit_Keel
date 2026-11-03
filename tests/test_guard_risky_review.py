@@ -328,9 +328,21 @@ class RiskyReviewTests(unittest.TestCase):
                 self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
             'command': "python3 -c \"print(['git', 'log'])\""}}).returncode, 0)
-        passed = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
-            'command': 'git commit --allow-empty -m x && gh pr create --title "fix the git hook" --body b'}})
-        self.assertEqual(passed.returncode, 0, passed.stderr)
+        # Review round 1 of 29eeae0 (High): code or shell text behind a wrapper the hook cannot look through.
+        for command in ('cd wt && timeout 60 python3 -c "import os; os.system(\'git commit -am x\')"',
+                        'cd wt && uv run python -c "import subprocess; subprocess.run([\'git\',\'commit\',\'-am\',\'x\'])"',
+                        "watch -n 60 'cd wt && git commit -am x'"):
+            with self.subTest(command=command):
+                refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root),
+                                                              'tool_input': {'command': command}})
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+        # (Medium): a commit message's here-document after an apostrophe, on a line that also runs a shell, is data.
+        for command in ('git commit --allow-empty -m x && gh pr create --title "fix the git hook" --body b',
+                        'bash scripts/x.sh; git commit --allow-empty -m "$(cat <<\'EOF\'\nDon\'t touch the git hook\nEOF\n)"'):
+            with self.subTest(command=command):
+                passed = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root),
+                                                             'tool_input': {'command': command}})
+                self.assertEqual(passed.returncode, 0, passed.stderr)
 
     def test_git_exe_commit_is_seen(self):
         # labricore A7: native Windows spells it git.exe

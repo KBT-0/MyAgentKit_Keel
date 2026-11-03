@@ -90,8 +90,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `xargs`) or in a shell's text (`sh -c 'cd wt && git commit'`) is found the way the destructive guard reads it,
   and git the hook cannot read as a command (inside interpreter code) refuses the commit. Python code fed through
   a here-document (`python3 - <<'EOF'`) that runs git commit, as text or as a `['git', 'commit']` list, now refuses
-  the commit too, like `python3 -c` does (the cb35ca5 review). A word git inside another command's argument text
-  (`gh pr create --title "fix the git hook"`) no longer refuses a commit on the same line (the cb35ca5 review).
+  the commit too, like `python3 -c` does, while a commit message's here-document that only names git stays data
+  (the cb35ca5 review). The word git inside a `gh` or `glab` argument (`gh pr create --title "fix the git hook"`)
+  no longer refuses a commit on the same line; any other command that names git, such as a wrapper (`timeout`,
+  `uv run`, `watch`), still does (the cb35ca5 review).
   test_guard_risky_review and test_guard_destructive_git: red without the fix. **ACTION** (project-owned `.claude/hooks/guard_risky_review.py`,
   `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
 - **`git checkout --pathspec-from-file` is judged (leeway v0.14.1 sync review).** On a dirty tree it passed (no

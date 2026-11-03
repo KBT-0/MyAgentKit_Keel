@@ -1210,6 +1210,15 @@ class V0141FieldReportTests(GuardCase):
         gh = 'git commit --allow-empty -m x && gh pr create --title "fix the git hook" --body b'
         self.assertEqual(guard.commit_folders(gh, here), [here])
         self.assertIn(None, guard.commit_folders('watch "git commit -am x"', here))
+        # Review round 1 of 29eeae0 (High): code or shell text behind a wrapper the hook cannot look through.
+        for command in ('cd wt && timeout 60 python3 -c "import os; os.system(\'git commit -am x\')"',
+                        'cd wt && uv run python -c "import subprocess; subprocess.run([\'git\',\'commit\',\'-am\',\'x\'])"',
+                        "watch -n 60 'cd wt && git commit -am x'"):
+            with self.subTest(command=command):
+                self.assertIn(None, guard.commit_folders(command, here))
+        # (Medium): a commit message's here-document after an apostrophe, on a line that also runs a shell, is data.
+        message = 'bash scripts/x.sh; git commit --allow-empty -m "$(cat <<\'EOF\'\nDon\'t touch the git hook\nEOF\n)"'
+        self.assertEqual(guard.commit_folders(message, here), [here])
         self.assertVerdict([gh], 0)
 
     def test_a_long_list_of_changes_is_cut(self):
