@@ -204,3 +204,8 @@ failure a rule prevents rather than only the rule. Match that. If you are adding
 sentence that matters most is the one describing what went wrong without it.
 
 Commit messages describe what changed and why in plain language. No AI attribution trailers.
+
+An agent working on the kit reads code with `grep -n` and a narrow `sed -n` range, never a whole
+long file, and reads a check's output as its failures and last line only: the kit lead's own
+check and review output filled about 5% of its context (`docs/research/context-hygiene.md`,
+Öneri 8).

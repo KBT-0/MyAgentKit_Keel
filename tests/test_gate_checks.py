@@ -97,7 +97,7 @@ class GateCheckTests(unittest.TestCase):
         write(self.project / 'docs/RESULT-w1.md', MARKER + '\n')  # only at the top
         self.assert_red('FAIL [setup]: unfilled placeholder markers remain')
 
-    def test_the_state_file_must_exist_with_its_heading_and_its_length_never_fails(self):
+    def test_the_state_file_must_exist_with_its_heading_and_its_length_alone_never_fails(self):
         state = self.project / 'docs/STATE.md'
         write(state, '# STATE\n\n## Active work\n\n## Notes\n' + ''.join('line %d\n' % i for i in range(500)))
         out = self.assert_green()
@@ -123,6 +123,20 @@ class GateCheckTests(unittest.TestCase):
         self.assertNotIn('MERGEDX', out)
         self.assertNotIn('notes section', out)
         self.assertNotIn('over STATE_MAX_LINES', out)
+
+    def test_over_the_limit_with_finished_active_work_lines_fails(self):
+        # #338, labricore 1,150 lines: the NOTE alone let a STATE.md of finished entries grow.
+        finished = ''.join('- w%d: MERGED\n' % i for i in range(12))
+        write(self.project / 'docs/STATE.md', '# STATE\n\n## Active work\n\n' + finished + '- live: in flight\n'
+              '\n## Notes\n' + ''.join('line %d\n' % i for i in range(300)))
+        out = self.assert_red('FAIL [state]: "Active work" lines that look finished; delete them (the history is in git)')
+        self.assertIn('FAIL [state]: docs/STATE.md has 319 lines, over STATE_MAX_LINES (300', out)
+        self.assertIn('docs/STATE.md:5: - w0: MERGED', out)
+        self.assertIn('docs/STATE.md:14: - w9: MERGED', out)
+        self.assertNotIn('w10:', out)
+        self.assertIn('and 2 more', out)
+        self.set_gate_line('STATE_MAX_LINES=300', 'STATE_MAX_LINES=400')
+        self.assertIn('NOTE [state]: "Active work" lines that look finished', self.assert_green())
 
     def test_the_project_file_contents_must_list_every_numbered_section(self):
         project = self.project / 'docs/PROJECT.md'

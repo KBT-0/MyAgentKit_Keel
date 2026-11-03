@@ -51,7 +51,8 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    reading order; a sub-agent, reviewer or briefed session reads what its brief names
    instead, as `AGENTS.md` says at its top). Do not explore beyond the files the
    task lists; context is a budget.
-   `docs/PROJECT.md` is read by SECTION, only when the task needs one.
+   `docs/PROJECT.md` is read by SECTION, only when the task needs one; so is `docs/STATE.md`
+   after the session's first read (`grep -n '^## '`, then a Read with offset and limit, #338).
 2. **Plan:** LIST the files you will touch; a diff you can describe in one sentence skips the
    list, and the brief's `Owns:` line holds either way. If the files exceed one module, STOP
    and propose splitting the task. Check the task against the current phase's out-of-scope
@@ -82,7 +83,10 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    tool+model trace ("The state, backlog and phase files" says why). Unwritten progress does
    not exist. A next task or a parked item goes to
    `docs/BACKLOG.md`, which is read when the next task is chosen, not every session.
-   Edit it as `docs/AGENTS.md`, "STATE.md discipline", says, never touching the "Working mode:" line.
+   Edit it as `docs/AGENTS.md`, "STATE.md discipline", says, never touching the "Working mode:" line:
+   a ranged Read of the section is all the Edit needs, never the whole file (#338). STATE.md
+   holds only live entries (in flight, blocked, next); a closed entry moves to
+   `docs/state/ARCHIVE-YYYY-MM.md` or is deleted, and the gate enforces it ("state" in `scripts/check.sh`).
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it, and go on with work that does not depend on it.
 
@@ -1012,7 +1016,7 @@ a commit made while away) follows the away line until a switch records it there.
   options in neutral order; the lead's own view only after the answer, for the proxy to
   refute.
 - **Checkpoints:** each finished item is committed; STATE and the hand-off file are current
-  after each; at red (300k) the hand-off file is written and the session goes on (rule 8).
+  after each; at red (200k) the hand-off file is written and the session goes on (rule 8).
   Reviews run by tier; only Critical and High block. A wait on another session (its merge,
   its message) with nothing else to do runs as one background watch on that session's signal
   (a file it writes, its idle notice): a turn that ends instead is bounced by the goal's Stop
@@ -1059,7 +1063,7 @@ for independent work that runs in parallel, a sub-agent only for wide reading or
 6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
 7. Worker reports are short (about 350 words); long output goes to a file.
-8. The context band: plan the cut at 200k, cut at the next clean stop at 300k, stop at 400k.
+8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k.
 9. A worker runs the cheapest check that proves its change; the expensive step runs once.
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
@@ -1117,7 +1121,7 @@ Rules, binding for whoever routes workers:
    after two failed corrections a fresh context does better (code.claude.com/docs/en/best-practices);
    Anthropic's research system hands work to fresh sub-agents near the context limit
    ("How we built our multi-agent research system").
-3. **One small task per worker.** Size it to end under the context band (about 200k): the
+3. **One small task per worker.** Size it to end under the context band (about 150k): the
    worker definition sets `maxTurns` as a backstop (about 150 turns, the tool-using model
    requests `maxTurns` counts; a worker stopped there returns partial output and can be
    resumed) and `autoCompactWindow` at the band (code.claude.com/docs/en/sub-agents). 150 is a
@@ -1211,16 +1215,17 @@ Rules, binding for whoever routes workers:
    baseline; investigate lower hits with `cWrite>TTL` and `poll`. The analyzer compares each
    write bucket with its recorded TTL (B03 inv2/(h)); a gap is diagnostic, not proof of the
    cause of a miss. The line
-   is a band of context, the same for every model: **yellow at 200k** (plan the cut: no new
+   is a band of context, the same for every model: **yellow at 150k** (plan the cut: no new
    round, let the running batch finish, commit, keep STATE and the handoff current), **red at
-   300k** (cut at the next clean stop), **ceiling at 400k** (stop now and secure the work).
+   200k** (cut at the next clean stop), **ceiling at 300k** (stop now and secure the work;
+   owner, 2026-11-03, lowered from 200k/300k/400k on the field token reports).
    Quality, not only cost, sets it: accuracy falls as context grows and compaction is lossy
    (Anthropic names no number); practitioners cut between 120k and 400k; at today's cache
    prices a fresh session pays itself back in about 25 requests from 200k (Opus, Sonnet) or
    49 (Fable). The numbers are a judgement, not a measurement (the kit's
    `docs/research/context-limit.md`). A symptom cuts at any size: the owner corrected the
    same rule twice, or the worker-route hook refused twice. The Claude Code overlay's
-   `context_size.py` hook names the band once per 50k step past 200k (the step is the owner's
+   `context_size.py` hook names the band once per 50k step past 150k (the step is the owner's
    choice, like the band), at a prompt and after a tool call, so a long turn meets it too;
    the lead then
    recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
@@ -1238,9 +1243,11 @@ Rules, binding for whoever routes workers:
    Never a bare `/compact`: `/compact keep the open decisions, the binding rules, the changed
    files, the next step and the owner's words verbatim`. A session compacted once hands off
    instead of compacting again, since a summary of a summary drifts.
-   **Hand off** (update STATE, write the handoff, `/clear`, start fresh) when the work
+   **Hand off** (update STATE, write the handoff and its marker, the owner types `/clear`) when the work
    changes direction, a batch has just closed, or most of the context is the detail of
-   finished work that a summary would still carry. A Codex lead sets
+   finished work that a summary would still carry; the marker `.myagentkit/handoff-pending`
+   lets the overlay's `handoff_pending.py` hook point the cleared session at the file
+   (`docs/HANDOFF.md`, the lead's hand-off steps). A Codex lead sets
    `model_auto_compact_token_limit` to 200k–250k in `~/.codex/config.toml` for the same
    line. At red the lead stops at the next clean point and proposes a hand-off or `/compact`,
    because a session end kills the background jobs started from its tool shell (survivors:
@@ -1255,7 +1262,7 @@ Rules, binding for whoever routes workers:
    when jobs are in flight, and continues, after a second compaction too; it does not wait
    for an answer.
    A worker session uses the same absolute band: `scripts/watch_workers.sh --context-warn`
-   warns at the smaller of 200k and 50% of the window (`NNNk` or `NN%` changes it).
+   warns at the smaller of 150k and 50% of the window (`NNNk` or `NN%` changes it).
    A sub-agent compacts near 168k, before the red band (rule 3), and its compactions never end
    its task.
    A worktree worker carries the project's hooks, and at red the lead sends
@@ -1524,7 +1531,7 @@ starts the watcher in the background: the default background limit there is 30 m
 the maximum two hours (code.claude.com/docs/en/tools-reference). It returns DONE, BLOCKED,
 HANDOFF or PROGRESS once the file is committed on a clean tree, QUESTIONS when the file holds
 open questions, CONTEXT when the session's context passes the warning line (the smaller of
-200k and 50% of the window by default, rule 8), WAITING on a dialog, and GONE. The lead acts on the report's first line
+150k and 50% of the window by default, rule 8), WAITING on a dialog, and GONE. The lead acts on the report's first line
 ("The lead's steps when a branch is ready"). Exit 3 means the watcher could not observe:
 a pane of a session that exists could not be read, or tmux could not say whether it exists
 (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
@@ -1701,6 +1708,11 @@ What the watcher reports decides the lead's next step for a spawned worker:
   sends "finish the item, commit, Kind: handoff". A session with two short steps left finishes;
   one with a long operation ahead hands off or compacts, because it pays the figure on every
   remaining request.
+- **Reading a result:** the lead reads its four header lines with `head -n 4` through Bash
+  (Kind, Task, Attempt, Remaining), and the body only section by section when a decision needs
+  it (`grep -n '^## '`, then `sed -n`), never the whole file with Read: a file the lead has
+  Read also brings the worker's later edits of it into the lead's context (the kit's
+  `docs/research/context-hygiene.md`, Öneri 3).
 - **DONE:** the lead reads the result file before anything else.
 - **HANDOFF:** the lead reads the result file and starts a fresh session from it. A
   `Kind: handoff` file is not done.

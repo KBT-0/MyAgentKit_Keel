@@ -587,13 +587,16 @@ fi
 # ---------------------------------------------------------------------------
 # 2) STATE.md: present, and free of finished tasks
 # ---------------------------------------------------------------------------
-# Its LENGTH never fails the gate. A line or size limit cannot tell a live line from a finished
+# LENGTH alone never fails the gate. A line or size limit cannot tell a live line from a finished
 # one: a project that added a size limit hit it four times in one session, while half the
 # file was a backlog and much of the rest narrated work already in git. The backlog now has
 # its own file (docs/BACKLOG.md), and finished work is caught by name, below. Past the
-# owner's STATE_MAX_LINES a NOTE says so, and "Active work" lines still marked finished
-# (MERGED, COMMITTED, DONE, ...) are listed for deletion: labricore's STATE.md reached 1,083
-# lines with such entries and was read whole 3+ times a session (#338).
+# owner's STATE_MAX_LINES with "Active work" lines still marked finished (MERGED, COMMITTED,
+# DONE, ...) is a FAILURE: both together are no false alarm, since the lines it names are
+# finished and deleting them shrinks the file. A NOTE alone was not enough: labricore's
+# STATE.md reached 1,083 and then 1,150 lines of such entries and was read whole 3+ times a
+# session (#338; owner, 2026-11-03). Over the limit with nothing finished, or finished lines
+# under it, is a NOTE.
 #
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole check could be disabled by deleting one file or editing one line.
@@ -612,12 +615,15 @@ else
     active && /(^|[^A-Za-z])(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)([^A-Za-z]|$)/ &&
       !/([Nn][Oo][Tt]|until|once|after|when|before|is|be) +(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)/ { done[++n] = FNR ": " $0 }
     END {
-      if (max ~ /^[0-9]+$/ && max > 0 && NR > max)
-        printf "NOTE [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh);\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", NR, max
-      if (n) print "NOTE [state]: \"Active work\" lines that look finished; delete the finished ones (the history is in git):"
+      over = (max ~ /^[0-9]+$/ && max > 0 && NR > max)
+      tag = (over && n) ? "FAIL" : "NOTE"
+      if (over)
+        printf "%s [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh);\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", tag, NR, max
+      if (n) print tag " [state]: \"Active work\" lines that look finished; delete them (the history is in git):"
       for (i = 1; i <= n && i <= 10; i++) print "              docs/STATE.md:" substr(done[i], 1, 100)
       if (n > 10) print "              and " n - 10 " more"
-    }' docs/STATE.md
+      exit (tag == "FAIL")
+    }' docs/STATE.md || fail=1
 fi
 
 # Finished work. The commit that finishes a task says so with a "Done: <id>" trailer

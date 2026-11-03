@@ -36,6 +36,7 @@ installed is listed in `docs/GOTCHAS_KIT.md`, "Contents".
 - A PowerShell probe whose Set-Location fails goes on in the current folder
 - Claude Code's worktree points every tree at the main checkout's hooks
 - A research worker's web fetch cannot read reddit.com
+- A session idle for an hour is compacted on its own
 
 ---
 
@@ -123,3 +124,7 @@ Kit rules: docs/GOTCHAS_KIT.md, "Claude Code's worktree points every tree at the
 ## A research worker's web fetch cannot read reddit.com
 
 Kit rules: docs/GOTCHAS_KIT.md, "A research worker's web fetch cannot read reddit.com".
+
+## A session idle for an hour is compacted on its own
+
+Kit rules: docs/GOTCHAS_KIT.md, "A session idle for an hour is compacted on its own".

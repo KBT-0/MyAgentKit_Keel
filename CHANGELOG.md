@@ -15,6 +15,36 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **Context band 150k / 200k / 300k (owner 2026-11-03).** Sessions reach 200k in about 100 requests (the field token
+  reports), so the band moves down: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k
+  (`context_size.py`, `watch_workers.sh`'s default worker line, `docs/WORKFLOW.md` "Worker cost" rule 8).
+  test_context_hook red without it. **ACTION**: `sync-kit.sh . --merge`.
+- **One-key hand-off with `/clear`.** The lead commits its hand-off file, writes `.myagentkit/handoff-pending`
+  (`HANDOFF_PATH COMMIT`) and tells the owner to type `/clear` in the same terminal: the new `handoff_pending.py`
+  SessionStart hook (`clear`, `startup`) tells the fresh context to read that file first and deletes the marker; on
+  a tree with uncommitted changes it says so and keeps the marker. The hand-off's first line names the next model and
+  effort (`docs/HANDOFF.md`). The band line's hand-off advice says the same. A lead in a linked worktree is
+  judged by its own tree; a worker session is skipped. test_handoff_pending (new).
+  **ACTION** (Claude Code overlay): `sync-kit.sh . --merge` brings the `docs/HANDOFF.md` and `docs/WORKFLOW.md`
+  text but neither the hook nor its entry: copy the new `.claude/hooks/handoff_pending.py` from the kit (sync lists
+  it as `kit-new`) and add this entry to the `SessionStart` list of `.claude/settings.json` by hand, beside the
+  `compact` one:
+  `{"matcher": "clear|startup", "hooks": [{"type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/handoff_pending.py\"", "timeout": 30}]}`.
+- **STATE.md gate.** Over `STATE_MAX_LINES` with "Active work" lines still marked finished (MERGED, DONE, ...)
+  is now a FAIL that lists them (10 and "N more") and says delete them; either alone stays a NOTE (#338,
+  labricore's STATE.md reached 1,150 lines). STATE.md keeps only live entries, a closed one moves to
+  `docs/state/ARCHIVE-YYYY-MM.md` or is deleted, and it is read by section after the first read
+  (`docs/AGENTS.md`, `docs/WORKFLOW.md` steps 1 and 7). test_gate_checks red without it. **ACTION**: delete the
+  finished lines a red gate lists; `sync-kit.sh . --merge`.
+- **doctor names user-level plugins a project leaves on.** Each enabled plugin of `~/.claude/settings.json` (or
+  `$CLAUDE_CONFIG_DIR`) that `.claude/settings.json` does not set false costs about 10k tokens of skill listing a
+  request; doctor's NOTE names them and the line that turns one off. test_doctor.
+- **Smaller reads.** The lead reads a worker's result with `head -n 4` and its body by section, never whole
+  (`docs/WORKFLOW.md`, "Reading a result"); `spawn_worker.sh` opens with a ten-line usage summary (and prints it
+  when called without arguments); the kit's own `CONTRIBUTING.md` says to read code with `grep -n` and narrow
+  ranges. `core/AGENTS.md` ends with a "# Compact instructions" section, the `CLAUDE.md` section Claude Code's
+  docs name for steering compaction (code.claude.com/docs/en/costs), reached through `CLAUDE.md`'s `@AGENTS.md` import; `docs/GOTCHAS_KIT.md` says why idle compaction stays on.
+  **ACTION** (project-owned `AGENTS.md`): copy the "# Compact instructions" section to its end.
 - **Fable never a worker (owner 2026-11-03).** Fable leads, reviews and answers design questions; it never does
   the work. `guard_worker_route.py` refuses a sub-agent on a Fable model (`fable`, `claude-fable-*`), and a fork or a
   `model: inherit` type on a Fable session (read from the transcript's tail), unless the type is a reviewer or the

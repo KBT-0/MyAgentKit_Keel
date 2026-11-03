@@ -57,14 +57,15 @@ created snapshot; CWE-377).
   those files are the ones checked ("Task ids"). No outside kit enforces the deletion; the
   check is the kit's own lesson (its RESEARCH_LOG, 2026-10-03).
 
-- No size limit applies to STATE.md. A limit cannot tell a live line from a finished one,
+- Size alone never fails STATE.md. A limit cannot tell a live line from a finished one,
   and a project that added one hit it again and again while half the file was backlog and
   much of the rest narrated work already in git. What keeps an always-read file useful is
   what it holds, not a line count: a long or conflicting file is followed less
-  (code.claude.com/docs/en/memory; IFScale, arxiv.org/abs/2507.11538). The gate only tells:
-  past the owner's `STATE_MAX_LINES` a NOTE, and the "Active work" lines still marked finished,
-  after labricore's file reached 1,083 lines with such entries and was read whole 3+ times a
-  session (kit #338).
+  (code.claude.com/docs/en/memory; IFScale, arxiv.org/abs/2507.11538). Past the owner's
+  `STATE_MAX_LINES` alone the gate gives a NOTE; past it with "Active work" lines still marked
+  finished it FAILS and lists them, since those lines are finished by name and deleting them
+  shrinks the file: labricore's reached 1,083 and then 1,150 lines of such entries and was
+  read whole 3+ times a session while a NOTE said so (kit #338; owner, 2026-11-03).
 
 **The non-goals are the useful half.** "Build the inventory system" gives an agent no edge
 to stop at, so it invents scope: it adds persistence, a UI, an event system, and returns one

@@ -329,6 +329,29 @@ if [ -f .claude/settings.json ] && grep -q '"onFailure"' .claude/settings.json 2
   fi
 fi
 
+# --- user-level plugins this project does not turn off --------------------------------
+# Each enabled plugin lists its skills in every session, worker and sub-agent of the project:
+# about 10k tokens per request, measured in leeway and labricore (#338). A project's false
+# turns a user-level plugin off here (setup/INTERVIEW.md, question 11). No settings file, or
+# one Python cannot read, is silent: the note is advice, never a fault.
+plugins=$(python3 -I -c 'import json, os
+def enabled(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            found = json.load(stream).get("enabledPlugins")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return found if isinstance(found, dict) else {}
+home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+project = enabled(os.path.join(".claude", "settings.json"))
+names = sorted(str(n) for n, on in enabled(os.path.join(home, "settings.json")).items()
+               if on is True and project.get(n) is not False)
+if names:
+    print(len(names), ", ".join(names))' 2>/dev/null) || plugins=""
+if [ -n "$plugins" ]; then
+  printf '%s\n' "NOTE: ${plugins%% *} user-level plugins reach every session of this project (${plugins#* }; ~10k tokens of skill listing per request measured in two projects); turn off the unused ones per project: each one this project does not need gets \"NAME@MARKETPLACE\": false under enabledPlugins in .claude/settings.json, which reaches the lead, its workers and sub-agents (setup/INTERVIEW.md, question 11)"
+fi
+
 # --- guard hooks the committed settings do not register (Claude Code overlay) ---------
 # A worktree worker runs HEAD's .claude/settings.json (spawn_worker.sh; the working file only
 # when HEAD has none): a sync copied five guards, the merged settings stayed uncommitted, and

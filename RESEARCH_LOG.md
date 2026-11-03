@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-03 — v0.15 context batch: band 150/200/300, one-key /clear hand-off, STATE gate, plugins note
+
+Backflow (the leeway lead 46 and labricore field token reports, 2026-11-03) and `docs/research/context-hygiene.md`
+(Bulgu 2, 3 and 7; Öneri 1-3, 5, 8). Sessions reach 200k in about 100 requests, so the owner lowered the band to 150k
+plan, 200k cut, 300k ceiling. A hand-off now ends with `.myagentkit/handoff-pending` and the owner's `/clear`, read by a
+SessionStart hook, instead of a new terminal and a typed model id. A STATE.md over its line limit with finished
+"Active work" entries fails the gate (labricore 1,150 lines, #338); STATE.md and RESULT files are read by section or
+`head -n 4`; doctor names user-level plugins a project leaves on (~10k tokens a request). Verdict: shipped with tests.
+
 ### 2026-11-02 — v0.14.1: worker identity, autopilot questions, owner records, fetch gap; leeway v0.14 sync
 
 Backflow (kit issues #310-#313 from leeway and labricore sessions, leeway lead 41's v0.14 sync report 2026-11-02).

@@ -23,7 +23,9 @@ of each file. Keep it near 100 lines; it is read when a task crosses a module bo
 
 ## STATE.md discipline
 
-- An authorized session edit is a direct Read, then Edit of `docs/STATE.md`: Claude Code's Edit
+- An authorized session edit is a ranged Read, then Edit of `docs/STATE.md`: `grep -n '^## '`
+  finds the section, a Read with offset and limit takes it, and the Edit needs no more (leeway
+  measured 3 to 11 whole reads a lead session, #338). Claude Code's Edit
   refuses a file changed since its Read, so on refusal read it again and redo the edit. Never
   change the "Working mode:" line; it belongs to the mode switch.
 - A shell write uses the state helper from the project root:
@@ -31,8 +33,9 @@ of each file. Keep it near 100 lines; it is read when a task crosses a module bo
   Windows) prints `SHA256 PATH`; edit that PATH, then run
   `python3 scripts/working_mode.py --replace-state "PATH" --expect SHA256`. On refusal, run
   `--read-state` again, redo the edit there, and retry; a changed "Working mode:" line is refused.
-- `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
-  someone.
+- `docs/STATE.md` is TRANSIENT: current state only (what is in flight, what is blocked or waits on
+  someone, what comes next). A closed entry worth a record moves to
+  `docs/state/ARCHIVE-YYYY-MM.md` (the month it closed); the rest is deleted.
 - A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.
 - **Completed work is DELETED, not marked DONE.** The history lives in git. The commit that
   finishes a task with an id carries a `Done: <id>` trailer, and the commit-msg hook and
@@ -51,9 +54,9 @@ of each file. Keep it near 100 lines; it is read when a task crosses a module bo
 - Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
   and a pointer.
-- No size limit fails the gate on STATE.md; past `STATE_MAX_LINES` (`scripts/gate_config.sh`)
-  a NOTE says so, and "Active work" lines still marked MERGED, COMMITTED, DONE and the like are
-  listed for deletion. What keeps it small is deleting finished work in the
+- Size alone never fails the gate on STATE.md: past `STATE_MAX_LINES` (`scripts/gate_config.sh`)
+  a NOTE says so. Past it with "Active work" lines still marked MERGED, COMMITTED, DONE and the
+  like, the gate FAILS and lists them for deletion (#338; labricore's reached 1,150 lines). What keeps it small is deleting finished work in the
   commit that finishes it, and the backlog living in `docs/BACKLOG.md`. It is read by section
   (`grep -n '^## '`, then a range), never whole.
 - Every entry carries a tool+model trace, and updating STATE.md at session end is the

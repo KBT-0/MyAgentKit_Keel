@@ -62,9 +62,9 @@
 #   only), which is the second or third line from the bottom (the mode line may follow), with
 #   two or more ` │ ` separators. A figure anywhere else in the pane, a quoted status line too,
 #   is output, not the status. Past the warning line it is CONTEXT, once per session. The
-#   line is the smaller of an absolute count (default 200k, the lead's band: docs/WORKFLOW.md,
+#   line is the smaller of an absolute count (default 150k, the lead's band: docs/WORKFLOW.md,
 #   "Worker cost", rule 8) and a share of the window (default 50%): on a 1M window 50% is 500k,
-#   past the band's 400k ceiling, and context rot grows with tokens, not with the share
+#   past the band's 300k ceiling, and context rot grows with tokens, not with the share
 #   (Anthropic, "Context windows"). `--context-warn NNNk` sets the count, `--context-warn NN%`
 #   (or a bare NN) the share. A status line without the figure, or none, is a CONTEXT note
 #   once too, and the figure is never guessed. The note is printed but ends no watch: it
@@ -767,11 +767,11 @@ gone_tab() {
 context() {
   if [ -z "$warn_abs" ]; then
     # A project's older context_size.py (it has no KIT-OWNED line, so sync keeps it) cannot
-    # answer --line, and with no Python nothing can: the built-in 200k line, never a stop (the
+    # answer --line, and with no Python nothing can: the built-in 150k line, never a stop (the
     # watcher died, and every tmux spawn with it; ultrareview part 7 #1). stdin is closed: the
     # older hook reads its JSON payload there and waited on a terminal.
     warn_abs=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --line </dev/null 2>/dev/null) || warn_abs=""
-    case $warn_abs in ''|*[!0-9]*) warn_abs=200000 ;; esac
+    case $warn_abs in ''|*[!0-9]*) warn_abs=150000 ;; esac
   fi
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v abs="$warn_abs" -v pct="$warn_pct" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
