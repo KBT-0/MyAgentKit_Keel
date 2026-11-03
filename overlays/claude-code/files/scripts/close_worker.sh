@@ -102,7 +102,7 @@
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
 # NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid, NAME.brief.md and
-# NAME.hooks-ignore-spawned, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
+# NAME.hooks-ignore-spawned and NAME.fable-approved, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
 # NAME.merged-running (also gone once the worktree is unlocked);
 # a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
@@ -914,7 +914,7 @@ for name; do
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
       "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" \
-      "$record.supervisor.log" "$record.brief.md" || fail "$name: could not remove its Codex session records"
+      "$record.supervisor.log" "$record.brief.md" "$record.fable-approved" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

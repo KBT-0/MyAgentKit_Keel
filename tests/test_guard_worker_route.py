@@ -6,16 +6,18 @@ review gate findings" and "Merge three branches" (#307 baseline, docs/WORKFLOW.m
 rule 1). The model and effort checks live in test_overlay_permissions.py.
 """
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 HOOK = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/.claude/hooks/guard_worker_route.py'
 
 
-def run(tool_input, tool='Agent'):
-    payload = json.dumps({'tool_name': tool, 'tool_input': tool_input})
+def run(tool_input, tool='Agent', **extra):
+    payload = json.dumps(dict({'tool_name': tool, 'tool_input': tool_input}, **extra))
     return subprocess.run([sys.executable, str(HOOK)], input=payload.encode(), capture_output=True, timeout=60)
 
 
@@ -103,6 +105,115 @@ class LongWaitRouteTests(unittest.TestCase):
 
     def test_other_tools_pass(self):
         self.assertEqual(run({'command': 'gh run watch 1'}, 'Bash').returncode, 0)
+
+
+class FableNeverAWorkerTests(unittest.TestCase):
+    # docs/WORKFLOW.md "Worker cost" rule 2 (owner 2026-11-03): Fable leads, reviews and consults only.
+    def transcript(self, model):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = os.path.join(folder.name, 's.jsonl')
+        lines = [{'type': 'user', 'message': {'role': 'user', 'content': 'hi'}},
+                 {'type': 'assistant', 'message': {'model': 'claude-opus-5-5', 'content': []}},
+                 {'type': 'assistant', 'message': {'model': model, 'content': []}},
+                 {'type': 'user', 'message': {'role': 'user', 'content': 'go'}}]
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('x' * 70000 + '\n' + '\n'.join(json.dumps(line) for line in lines) + '\n')
+        return path
+
+    def test_a_fable_worker_is_refused(self):
+        for model in ('claude-fable-5-1', 'fable', 'Fable', 'claude-fable-6'):
+            for kind in (None, 'general-purpose', 'claude', 'worker', 'my-builder'):
+                call = {'description': 'Build it', 'prompt': 'Write the parser.', 'model': model, 'effort': 'high'}
+                if kind:
+                    call['subagent_type'] = kind
+                with self.subTest(model=model, kind=kind):
+                    result = run(call)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(b'"Worker cost" rule 2', result.stderr)
+                    self.assertIn(b'Fable consult: REASON', result.stderr)
+                    self.assertIn(b'Fable worker approved by the owner: REASON', result.stderr)
+
+    def test_a_fable_reviewer_or_an_escape_line_passes(self):
+        for kind, prompt in (('diff-reviewer', 'Review the diff.'), ('myagentkit:pipeline-reviewer', 'Review it.'),
+                             ('general-purpose', 'Weigh the two designs.\nFable consult: a design question, edits nothing'),
+                             (None, 'Build it.\n  Fable worker approved by the owner: "do it on Fable" (2026-11-03)')):
+            call = {'description': 'x', 'prompt': prompt, 'model': 'claude-fable-5-1', 'effort': 'high'}
+            if kind:
+                call['subagent_type'] = kind
+            with self.subTest(kind=kind, prompt=prompt):
+                self.assertEqual(run(call).returncode, 0)
+
+    def test_an_escape_line_inside_a_sentence_or_without_a_reason_does_not_pass(self):
+        for prompt in ('Build it; no Fable consult: needed here.', 'Fable consult:', 'Fable consult:   \nBuild it.',
+                       'Write it. Fable worker approved by the owner: yes'):
+            with self.subTest(prompt=prompt):
+                result = run({'description': 'x', 'prompt': prompt, 'model': 'claude-fable-5-1', 'effort': 'high'})
+                self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_a_fork_takes_the_sessions_model(self):
+        fork = {'subagent_type': 'fork', 'description': 'x', 'prompt': 'Write the parser.'}
+        result = run(fork, transcript_path=self.transcript('claude-fable-5-1'))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b'Fable consult: REASON', result.stderr)
+        # A fork ignores a per-call model: it still runs on Fable.
+        self.assertEqual(run(dict(fork, model='claude-opus-5-5'), transcript_path=self.transcript('claude-fable-5-1')).returncode, 2)
+        self.assertEqual(run(dict(fork, prompt='Fable consult: reads and answers'),
+                             transcript_path=self.transcript('claude-fable-5-1')).returncode, 0)
+        self.assertEqual(run(fork, transcript_path=self.transcript('claude-opus-5-5')).returncode, 0)
+
+    def test_an_inherit_pinned_worker_on_a_fable_session_is_refused(self):
+        project = tempfile.TemporaryDirectory()
+        self.addCleanup(project.cleanup)
+        agents = Path(project.name, '.claude', 'agents')
+        agents.mkdir(parents=True)
+        (agents / 'builder.md').write_text('---\nname: builder\nmodel: inherit\n---\nBuild.\n', encoding='utf-8')
+        (agents / 'code-reviewer.md').write_text('---\nname: code-reviewer\nmodel: inherit\n---\nReview.\n', encoding='utf-8')
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=project.name)
+        for kind, code in (('builder', 2), ('code-reviewer', 0)):
+            payload = json.dumps({'tool_name': 'Agent', 'transcript_path': self.transcript('claude-fable-5-1'),
+                                  'tool_input': {'subagent_type': kind, 'description': 'x', 'prompt': 'Do it.'}})
+            with self.subTest(kind=kind):
+                result = subprocess.run([sys.executable, str(HOOK)], input=payload.encode(), capture_output=True,
+                                        timeout=60, env=env)
+                self.assertEqual(result.returncode, code, result.stderr)
+
+    def test_a_definition_pinned_to_fable_is_a_fable_worker(self):
+        # Review 20261103T200903Z-9741b0f48830 (Medium): a pinned Fable model passed with no per-call model.
+        project = tempfile.TemporaryDirectory()
+        self.addCleanup(project.cleanup)
+        agents = Path(project.name, '.claude', 'agents')
+        agents.mkdir(parents=True)
+        for name, model in (('builder', 'claude-fable-5-1'), ('quick', 'fable'), ('opus-builder', 'claude-opus-5-5'),
+                            ('fable-reviewer', 'claude-fable-5-1')):
+            (agents / (name + '.md')).write_text('---\nname: %s\nmodel: %s\neffort: high\n---\nDo.\n' % (name, model),
+                                                 encoding='utf-8')
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=project.name)
+        for kind, prompt, code in (('builder', 'Do it.', 2), ('quick', 'Do it.', 2),
+                                   ('builder', 'Do it.\nFable consult: reads and answers', 0),
+                                   ('opus-builder', 'Do it.', 0), ('fable-reviewer', 'Review it.', 0)):
+            payload = json.dumps({'tool_name': 'Agent',
+                                  'tool_input': {'subagent_type': kind, 'description': 'x', 'prompt': prompt}})
+            with self.subTest(kind=kind, prompt=prompt):
+                result = subprocess.run([sys.executable, str(HOOK)], input=payload.encode(), capture_output=True,
+                                        timeout=60, env=env)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn(b'Fable worker approved by the owner: REASON', result.stderr)
+
+    def test_a_missing_or_unreadable_transcript_passes(self):
+        fork = {'subagent_type': 'fork', 'description': 'x', 'prompt': 'Write the parser.'}
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        for path in (None, os.path.join(folder.name, 'gone.jsonl'), folder.name):
+            with self.subTest(path=path):
+                extra = {'transcript_path': path} if path else {}
+                self.assertEqual(run(fork, **extra).returncode, 0)
+
+    def test_an_opus_worker_is_untouched(self):
+        result = run({'subagent_type': 'general-purpose', 'description': 'x', 'prompt': 'Write the parser.',
+                      'model': 'claude-opus-5-5', 'effort': 'high'}, transcript_path=self.transcript('claude-fable-5-1'))
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':

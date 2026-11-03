@@ -841,6 +841,16 @@ exit 0
                 self.assertIn(words, line)
             (self.state / 'claude.json').unlink()
 
+    def test_a_backend_models_alias_is_no_fable_worker(self):
+        # A backend maps its own ids and aliases: the Fable refusal is for Anthropic's model alone.
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', '--model', 'fable', **tab)
+            self.assertNotIn('Worker cost', result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (self.state / 'claude.json').unlink()
+
     def test_backend_duplicate_keys_cannot_empty_final_values(self):
         for key, reason in (('ANTHROPIC_BASE_URL', 'sets no ANTHROPIC_BASE_URL'),
                             ('ANTHROPIC_MODEL', 'sets no model')):
@@ -908,6 +918,36 @@ exit 0
                 self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
                 self.assertIsNone(self.launched(), 'a worker started without its model or effort')
                 self.assertEqual(self.tmux_log(), '')
+
+    def test_a_fable_worker_needs_the_owners_words(self):
+        # docs/WORKFLOW.md "Worker cost" rule 2 (owner 2026-11-03): Fable leads, reviews and consults only.
+        for model in ('claude-fable-5-1', 'fable', 'Claude-Fable-6', 'fable[1m]'):
+            with self.subTest(model=model):
+                result = self.spawn('w1', str(self.brief), '--model', model)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('"Worker cost" rule 2', result.stderr)
+                self.assertIn('--owner-approved-fable REASON', result.stderr)
+                self.assertIsNone(self.launched(), 'a Fable worker started without the owner\'s words')
+        result = self.spawn('w1', str(self.brief), '--model', 'fable', '--owner-approved-fable', '')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('--owner-approved-fable needs', result.stderr)
+        self.assertIsNone(self.launched())
+        reason = 'owner: "run this one on Fable" (2026-11-03)'
+        result = self.spawn('w1', str(self.brief), '--model', 'claude-fable-5-1', '--owner-approved-fable', reason)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.launched()['argv'][:4], ['-n', 'w1', '--model', 'claude-fable-5-1'])
+        self.assertIn("about to run 'w1': model claude-fable-5-1, effort high, owner-approved Fable: " + reason, result.stdout)
+        (record,) = (self.tmp / 'real').rglob('w1.fable-approved')
+        self.assertEqual(record.read_text(), reason + '\n')
+        line = next(l for l in result.stdout.splitlines() if 'to answer it in its own session' in l)
+        self.assertIn('--owner-approved-fable ' + shq(reason), line)
+        # An Opus worker carries no approval, and a later spawn of the name drops the old one.
+        for done in ('claude.json', 'started'):
+            (self.state / done).unlink(missing_ok=True)
+        result = self.spawn('w1', str(self.brief), '--model', 'claude-opus-5-5')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('owner-approved', result.stdout)
+        self.assertEqual(list((self.tmp / 'real').rglob('w1.fable-approved')), [])
 
     def test_unsafe_names_are_refused_without_changing_worker_files(self):
         (self.bin / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0\n')

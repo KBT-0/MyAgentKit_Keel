@@ -759,6 +759,17 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual((self.main / '.claude/worktrees/w2/.myagentkit/workers/w2.brief.md').read_text(),
                          'the brief, edited by the worker\n')
 
+    def test_a_clean_close_removes_the_fable_approval_record(self):
+        # spawn_worker.sh --owner-approved-fable keeps the owner's words in NAME.fable-approved (review
+        # 20261103T200903Z-9741b0f48830, Low): a clean close removes it with the other records.
+        self.worker('w1')
+        record = self.main / '.myagentkit/workers/w1.fable-approved'
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text('owner: "run this one on Fable"\n')
+        out = self.close('w1')
+        self.assertFalse((self.main / '.claude/worktrees/w1').exists(), out)
+        self.assertFalse(record.exists(), out)
+
     def test_an_ignore_file_the_worker_extended_keeps_the_worktree_and_its_rules(self):
         # Codex review r1 (Critical): a spawn ignore file with the worker's own rules added still
         # matched by its first line; it was set aside, the worktree removed and the copy deleted.

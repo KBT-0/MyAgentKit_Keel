@@ -31,6 +31,14 @@ shortcut: the hook reads only the call's description and prompt, so "Read briefs
 it" with the merge inside the brief file passes, as does a verb and its job split across two
 lines; upgrade to reading the files a prompt names if such a wait costs again (#307 baseline).
 
+It refuses a Fable worker too (docs/WORKFLOW.md "Worker cost" rule 2, owner 2026-11-03): Fable
+leads, reviews and consults, it never does the work. A call whose model is Fable (`fable`,
+`claude-fable-*`) passes only for a reviewer (a type whose name holds "review") or with a line
+`Fable consult: REASON` (reads and answers, edits nothing) or `Fable worker approved by the owner:
+REASON` (the owner's words for this task) at a line's start. A fork, and a type pinned `model:
+inherit`, run on the session's model, which the last `message.model` in the tail of the hook
+input's transcript gives; that check runs before the fork exemption.
+
 Exit 2 blocks the call and returns the message to the agent (Claude Code hook protocol).
 """
 import json
@@ -50,24 +58,51 @@ def frontmatter(path):
     return {k: v.strip().strip("'\"") for k, v in re.findall(r"^(\w+):[ \t]*(.*?)[ \t]*$", head, re.M)}
 
 
-def pinned(kind):
-    """Whether the agent definition named `kind` pins both model and effort (not a setup
-    placeholder), or writes `model: inherit`, which chooses the session's model and effort. Claude Code finds a definition by its `name:` field in any .md
-    under the folder, not by the file name, and the project folder wins over the user folder
-    (code.claude.com/docs/en/sub-agents). Two definitions with one name: both must pin. A plugin
-    agent (`plugin:name`) is not looked up."""
+def definitions(kind):
+    """The frontmatter of the agent definitions named `kind`. Claude Code finds a definition by its
+    `name:` field in any .md under the folder, not by the file name, and the project folder wins
+    over the user folder (code.claude.com/docs/en/sub-agents). A plugin agent (`plugin:name`) is
+    not looked up."""
     if not re.fullmatch(r"[\w.-]+", kind or ""):
-        return False
+        return []
     for folder in (os.path.join(os.environ.get("CLAUDE_PROJECT_DIR") or ".", ".claude", "agents"),
                    os.path.join(os.path.expanduser("~"), ".claude", "agents")):
         found = [head for root, _, files in os.walk(folder) for name in files if name.endswith(".md")
                  for head in [frontmatter(os.path.join(root, name))] if head.get("name") == kind]
         if found:
-            # `model: inherit` is a written choice (the reviewer runs on the session's tier, #307).
-            chosen = lambda head, field: bool(re.match(r"[^\s{]", head.get(field, "")))
-            return all(chosen(head, "model") and (head["model"] == "inherit" or chosen(head, "effort"))
-                       for head in found)
-    return False
+            return found
+    return []
+
+
+def pinned(kind):
+    """Whether the agent definition named `kind` pins both model and effort (not a setup
+    placeholder), or writes `model: inherit`, which chooses the session's model and effort. Two
+    definitions with one name: both must pin."""
+    found = definitions(kind)
+    # `model: inherit` is a written choice (the reviewer runs on the session's tier, #307).
+    chosen = lambda head, field: bool(re.match(r"[^\s{]", head.get(field, "")))
+    return bool(found) and all(chosen(head, "model") and (head["model"] == "inherit" or chosen(head, "effort"))
+                               for head in found)
+
+
+def session_model(path):
+    """The session's model: the last transcript line whose JSON has message.model, read from the
+    last 64 KiB. Missing, unreadable or none found: None, and the call passes (fail-open: the
+    explicit-model check is the main guard, and a hook must not stop every fork on a bad read)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, os.fstat(f.fileno()).st_size - 65536))
+            tail = f.read().decode("utf-8", "replace").splitlines()
+    except (OSError, TypeError, ValueError):
+        return None
+    for line in reversed(tail):
+        try:
+            model = (json.loads(line).get("message") or {}).get("model")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(model, str) and model and not model.startswith("<"):  # not "<synthetic>"
+            return model
+    return None
 
 
 data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
@@ -101,7 +136,27 @@ if jobs and not re.search(r"^\s*No long wait:", text, re.M | re.I):
         file=sys.stderr,
     )
     sys.exit(2)
-if call.get("subagent_type") == "fork":
+kind = call.get("subagent_type") or ""
+if "review" not in kind.lower():
+    # A fork runs on the session's model whatever the call names; so does a type pinned `model: inherit`.
+    # With no per-call model a type runs on its definition's pin (review 20261103T200903Z-9741b0f48830).
+    pins = [] if call.get("model") or kind == "fork" else [h.get("model") for h in definitions(kind)]
+    inherits = kind == "fork" or "inherit" in pins
+    models = ([session_model(data.get("transcript_path"))] if inherits else [call.get("model")]) + pins
+    model = next((m for m in models if isinstance(m, str) and re.match(r"(?:claude-)?fable(?:-|\b)", m, re.I)), None)
+    if (model
+            and not re.search(r"^[ \t]*(?:Fable consult|Fable worker approved by the owner):[ \t]*\S",
+                              call.get("prompt") or "", re.M)):
+        print(
+            "BLOCKED: this sub-agent would be a Fable (%s) worker. Fable leads, reviews and consults; it never "
+            "does the work (docs/WORKFLOW.md \"Worker cost\" rule 2, owner 2026-11-03): pick the routine model "
+            "from \"Model routing\". For a read-only consultation that edits nothing, add a line \"Fable consult: "
+            "REASON\"; for a worker the owner approved for this task, a line \"Fable worker approved by the owner: "
+            "REASON\" with the owner's words; then call again." % model,
+            file=sys.stderr,
+        )
+        sys.exit(2)
+if kind == "fork":
     sys.exit(0)
 missing = [name for name in ("model", "effort") if not call.get(name)]
 if not missing or pinned(call.get("subagent_type")):

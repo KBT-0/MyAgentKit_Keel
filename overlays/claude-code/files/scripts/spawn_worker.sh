@@ -24,7 +24,11 @@
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
-#                        [--result FILE] [--resume SESSION_ID]
+#                        [--result FILE] [--resume SESSION_ID] [--owner-approved-fable REASON]
+#
+# --owner-approved-fable REASON: a Fable model (fable, claude-fable-*) is refused without it (docs/WORKFLOW.md
+# "Worker cost" rule 2, owner 2026-11-03: Fable leads, reviews and consults, never works); REASON is the owner's
+# words for this task, printed in the spend line and kept in .myagentkit/workers/NAME.fable-approved.
 #
 # --resume SESSION_ID continues that worker's own conversation under the same NAME, with
 # BRIEF_FILE holding the answer or the next step: with --worktree in its existing
@@ -188,7 +192,7 @@ brief=${brief_dir%"${nl}x"}/${brief##*/}
 ctl "brief path" "$brief"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""; result=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""; result=""; fable=""
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
@@ -201,6 +205,7 @@ while [ $# -gt 0 ]; do
     --batch)         batch=1; shift ;;
     --backend)       backend=$2; shift 2 ;;
     --result)        result=${2-}; [ -n "$result" ] || die "--result needs a file"; shift 2 ;;
+    --owner-approved-fable) fable=${2-}; [ -n "$fable" ] || die "--owner-approved-fable needs the owner's words for this task"; shift 2 ;;
     --resume)        case ${2-} in ""|-*) die "--resume needs the session id of the worker's conversation: --resume SESSION_ID" ;; esac
                      resume=$2; shift 2 ;;
     *) die "unknown option: $1" ;;
@@ -210,6 +215,13 @@ done
 # session silently took the user's default.
 [ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
 [ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
+# A backend's model is its own id or alias, never Anthropic's Fable.
+if [ -z "$backend" ] && [ -z "$fable" ]; then
+  case $(printf '%s' "$model" | tr 'A-Z' 'a-z') in
+    fable|fable[!a-z0-9_]*|claude-fable|claude-fable[!a-z0-9_]*)
+      die "refused a Fable ($model) worker: Fable leads, reviews and consults; it never does the work (docs/WORKFLOW.md \"Worker cost\" rule 2, owner 2026-11-03). Pick the routine model from \"Model routing\"; for a worker the owner approved for this task, add --owner-approved-fable REASON with the owner's words" ;;
+  esac
+fi
 ctl "session id" "$resume"
 ctl "result path" "$result"
 # The host, which MYAGENTKIT_WORKER_HOST=bg|tab|tmux forces: a Claude Code background session
@@ -379,6 +391,7 @@ again="--model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree}"
 [ -z "$settings" ] || again="$again --settings $(q "$settings")"
 [ -z "$tools" ]    || again="$again --allowed-tools $(q "$tools")"
 [ -z "$result" ]   || again="$again --result $(q "$result")"
+[ -z "$fable" ]    || again="$again --owner-approved-fable $(q "$fable")"
 # Validate the lead checkout's generated paths before creating a worktree or worker files.
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
 project_settings=$dir/.claude/settings.json
@@ -389,7 +402,7 @@ if [ -n "$windows" ]; then
 fi
 # The spend line, as review.sh prints its own before a review: the owner sees what each worker
 # costs before it runs (issue #68; docs/WORKFLOW.md, "Model routing").
-printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
+printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort${fable:+, owner-approved Fable: $fable}" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   project_settings=$top/.claude/settings.json
@@ -534,6 +547,8 @@ record_result() {
   fi
   mkdir -p -- "$wdir" && printf '%s\n' "$cresult" > "$wdir/$name.result-path" &&
     printf '%s\n' "$host" > "$wdir/$name.host" || die "cannot record the result path and host in $wdir"
+  if [ -n "$fable" ]; then printf '%s\n' "$fable" > "$wdir/$name.fable-approved" || die "cannot record the Fable approval in $wdir"
+  else rm -f -- "$wdir/$name.fable-approved"; fi
 }
 
 # Worktree sessions read shared project settings from their own working directory
