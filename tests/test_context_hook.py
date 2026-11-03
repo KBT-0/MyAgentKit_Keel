@@ -1,4 +1,4 @@
-"""The context hook must speak once per 50k step past 200k, choose nothing itself, and never block."""
+"""The context hook must speak once per 50k step past 150k, choose nothing itself, and never block."""
 import importlib.util
 import json
 import os
@@ -45,23 +45,23 @@ class ContextHookTests(unittest.TestCase):
         return result.stdout
 
     def test_once_per_step_past_the_line(self):
-        turns = [prompt(), request(150_000), prompt(), request(190_000), prompt(), request(210_000)]
+        turns = [prompt(), request(100_000), prompt(), request(140_000), prompt(), request(160_000)]
         said = self.run_hook(turns + [prompt()])
-        self.assertIn('Context is 210k tokens', said)
+        self.assertIn('Context is 160k tokens', said)
         self.assertIn('/compact', said)
         self.assertIn('hand-off', said)
         self.assertIn("closing summary", said)  # when AGENTS.md's MENTION ONCE list says
         self.assertEqual(self.run_hook(turns + [prompt(), prompt()]), '')  # a retry with no request
-        turns += [prompt(), request(240_000)]
+        turns += [prompt(), request(190_000)]
         self.assertEqual(self.run_hook(turns + [prompt()]), '')  # same step: said already
-        turns += [prompt(), request(255_000)]
-        self.assertIn('Context is 255k tokens', self.run_hook(turns + [prompt()]))
+        turns += [prompt(), request(205_000)]
+        self.assertIn('Context is 205k tokens', self.run_hook(turns + [prompt()]))
         # /compact: the boundary comes before any new request, and the old size is gone.
         turns += [prompt('/compact'), {'type': 'system', 'subtype': 'compact_boundary'},
                   {'type': 'user', 'isCompactSummary': True, 'message': {'content': 'summary'}}]
         self.assertEqual(self.run_hook(turns + [prompt()]), '')
-        turns += [request(60_000), prompt(), request(205_000)]
-        self.assertIn('Context is 205k tokens', self.run_hook(turns + [prompt()]))  # armed again
+        turns += [request(60_000), prompt(), request(155_000)]
+        self.assertIn('Context is 155k tokens', self.run_hook(turns + [prompt()]))  # armed again
 
     def test_running_work_of_the_session_blocks_the_hand_off(self):
         # Owner 2026-10-26 (leeway, no-handoff-while-work-runs): a bg Bash task or async sub-agent
@@ -77,22 +77,22 @@ class ContextHookTests(unittest.TestCase):
             return prompt(f'<task-notification>\n<task-id>{job}</task-id>\n<status>completed</status>\n</task-notification>')
 
         turns = [prompt(), use('t1', 'Bash', command='sh x', run_in_background=True, description='Run the gate'),
-                 result('t1', backgroundTaskId='b1'), request(210_000)]
+                 result('t1', backgroundTaskId='b1'), request(160_000)]
         said = self.run_hook(turns + [prompt()])
         self.assertIn('Hand-off blocked: 1 job(s) started in this session still run (Run the gate (b1))', said)
         self.assertNotIn('recommend ONE', said)
-        turns += [ended('b1'), request(260_000)]
+        turns += [ended('b1'), request(210_000)]
         said = self.run_hook(turns + [prompt()])  # the state file resumes the scan with the job ended
         self.assertNotIn('blocked', said)
         self.assertIn('recommend ONE', said)
         turns += [use('t2', 'Agent', prompt='x', description='Review the diff'),
                   result('t2', status='async_launched', agentId='a2'),
                   use('t3', 'Agent', prompt='y', description='Sync one'), result('t3', status='completed'),
-                  {'type': 'system', 'subtype': 'compact_boundary'}, request(310_000)]
+                  {'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]
         said = self.run_hook(turns + [prompt()])  # the running list survives the compaction
         self.assertIn('1 job(s) started in this session still run (Review the diff (a2))', said)
         self.assertIn('never a second /compact', said)
-        turns += [use('t4', 'TaskStop', task_id='a2'), request(360_000)]
+        turns += [use('t4', 'TaskStop', task_id='a2'), request(310_000)]
         self.assertIn('recommend a hand-off', self.run_hook(turns + [prompt()]))
         # A watch on a worker's result is the worker's, not this session's (review v014-nohandoff, High);
         # a job with no end record for a day died with an earlier session (Medium).
@@ -101,14 +101,14 @@ class ContextHookTests(unittest.TestCase):
                  result('t5', backgroundTaskId='b5'),
                  use('t7', 'Bash', run_in_background=True, description='Wait w2',
                      command='python3 scripts/codex_worker.py --wait R --since S --stale I --exit E'),
-                 result('t7', backgroundTaskId='b7'), request(210_000)]
+                 result('t7', backgroundTaskId='b7'), request(160_000)]
         self.transcript.with_suffix('.context-step').unlink()
         self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
         turns += [use('t6', 'Bash', run_in_background=True, description='Run the gate', command='sh scripts/check.sh'),
-                  result('t6', backgroundTaskId='b6'), request(260_000)]
+                  result('t6', backgroundTaskId='b6'), request(210_000)]
         self.assertIn('still run (Run the gate (b6))', self.run_hook(turns + [prompt()]))
         turns += [prompt(), {'type': 'assistant', 'timestamp': '2026-10-27T10:00:01.000Z',
-                             'message': {'model': 'claude-x', 'usage': {'input_tokens': 310_000}}}]
+                             'message': {'model': 'claude-x', 'usage': {'input_tokens': 260_000}}}]
         self.assertIn('recommend ONE', self.run_hook(turns + [prompt()]))
         # #329: a foreground call that timed out is moved to the background: a job under its description,
         # never its bare id; a moved watch is no job.
@@ -116,28 +116,28 @@ class ContextHookTests(unittest.TestCase):
         turns = [prompt(), use('t8', 'Bash', description='Run the tests', command='sh scripts/check.sh'),
                  result('t8', backgroundTaskId='b8', timedOutAfterMs=120000),
                  use('t9', 'Bash', description='Watch w3', command='sh scripts/watch_workers.sh w3'),
-                 result('t9', backgroundTaskId='b9', timedOutAfterMs=600000), request(210_000)]
+                 result('t9', backgroundTaskId='b9', timedOutAfterMs=600000), request(160_000)]
         self.assertIn('1 job(s) started in this session still run (Run the tests (b8))', self.run_hook(turns + [prompt()]))
         # A notification delivered mid-turn is a queued_command attachment: it ends the job too.
         turns += [{'type': 'attachment', 'attachment': {'type': 'queued_command', 'prompt':
                    '<task-notification>\n<task-id>b8</task-id>\n<status>completed</status>\n</task-notification>'}},
-                  request(260_000)]
+                  request(210_000)]
         said = self.run_hook(turns + [prompt()])
         self.assertNotIn('blocked', said)
         self.assertIn('recommend ONE', said)
 
     def test_a_null_counter_is_zero(self):
-        self.assertIn('Context is 210k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {
-            'model': 'claude-x', 'usage': {'input_tokens': 210_000, 'cache_read_input_tokens': None,
+        self.assertIn('Context is 160k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {
+            'model': 'claude-x', 'usage': {'input_tokens': 160_000, 'cache_read_input_tokens': None,
                                            'cache_creation_input_tokens': None}}}]))
 
     def test_legacy_step_after_compaction_is_not_announced_again(self):
         self.transcript.with_suffix('.context-step').write_text('1', encoding='utf-8')
-        turns = [{'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]
+        turns = [{'type': 'system', 'subtype': 'compact_boundary'}, request(210_000)]
         self.assertEqual(self.run_hook(turns), '')
-        self.assertIn('Context is 260k tokens', self.run_hook(
-            turns + [{'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]))
-        self.assertIn('Context is 310k tokens', self.run_hook(turns + [request(310_000)]))
+        self.assertIn('Context is 210k tokens', self.run_hook(
+            turns + [{'type': 'system', 'subtype': 'compact_boundary'}, request(210_000)]))
+        self.assertIn('Context is 260k tokens', self.run_hook(turns + [request(260_000)]))
 
     def test_a_state_of_the_wrong_type_is_a_missing_state(self):
         # Compared, a null or string step raised TypeError, the hook swallowed it and never
@@ -147,14 +147,14 @@ class ContextHookTests(unittest.TestCase):
                       '{"step": 0, "compactions": true}', 'true'):
             with self.subTest(saved=saved):
                 state.write_text(saved, encoding='utf-8')
-                self.assertIn('Context is 260k tokens', self.run_hook([prompt(), request(260_000)]))
-                self.assertIn('Context is 400k tokens', self.run_hook([prompt(), request(400_000)]))
+                self.assertIn('Context is 210k tokens', self.run_hook([prompt(), request(210_000)]))
+                self.assertIn('Context is 350k tokens', self.run_hook([prompt(), request(350_000)]))
 
     def test_each_band_names_itself(self):
-        for ctx, band, others in ((210_000, 'yellow (200k)', ('red', 'ceiling')),
-                                  (299_000, 'yellow (200k)', ('red', 'ceiling')),
-                                  (300_000, 'red (300k)', ('yellow', 'ceiling')),
-                                  (420_000, 'ceiling (400k)', ('yellow', 'red'))):
+        for ctx, band, others in ((160_000, 'yellow (150k)', ('red', 'ceiling')),
+                                  (199_000, 'yellow (150k)', ('red', 'ceiling')),
+                                  (200_000, 'red (200k)', ('yellow', 'ceiling')),
+                                  (320_000, 'ceiling (300k)', ('yellow', 'red'))):
             with self.subTest(ctx=ctx):
                 self.transcript.with_suffix('.context-step').unlink(missing_ok=True)
                 said = self.run_hook([prompt(), request(ctx), prompt()])
@@ -171,48 +171,48 @@ class ContextHookTests(unittest.TestCase):
                            '    time.sleep(60)\n'
                            'hook["main"].__globals__["scan"] = held\n'
                            'hook["main"]()\n' % str(HOOK), encoding='utf-8')
-        self.transcript.write_text(json.dumps(request(260_000)) + '\n', encoding='utf-8')
+        self.transcript.write_text(json.dumps(request(210_000)) + '\n', encoding='utf-8')
         holder = subprocess.Popen([sys.executable, str(wrapper)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', env=self.env)
         try:
             holder.stdin.write(json.dumps({'transcript_path': str(self.transcript)}))
             holder.stdin.close()
             self.assertEqual(holder.stdout.readline().strip(), 'held')
-            self.assertEqual(self.run_hook([request(260_000)]), '')
+            self.assertEqual(self.run_hook([request(210_000)]), '')
         finally:
             holder.kill()
             holder.wait(timeout=5)
             holder.stdout.close()
             holder.stderr.close()
-        self.assertIn('Context is 260k tokens', self.run_hook([request(260_000)]))
+        self.assertIn('Context is 210k tokens', self.run_hook([request(210_000)]))
 
     def test_compaction_rearms_even_when_a_request_already_followed_it(self):
-        turns = [request(310_000)]
-        self.assertIn('Context is 310k tokens', self.run_hook(turns))
-        turns += [{'type': 'system', 'subtype': 'compact_boundary'}, request(210_000)]
-        self.assertIn('Context is 210k tokens', self.run_hook(turns))
+        turns = [request(260_000)]
+        self.assertIn('Context is 260k tokens', self.run_hook(turns))
+        turns += [{'type': 'system', 'subtype': 'compact_boundary'}, request(160_000)]
+        self.assertIn('Context is 160k tokens', self.run_hook(turns))
         self.assertEqual(self.run_hook(turns), '')
 
     def test_after_a_compaction_only_a_hand_off_is_recommended(self):
-        turns = [request(210_000)]
+        turns = [request(160_000)]
         said = self.run_hook(turns)
         self.assertIn('"/compact keep the open decisions', said)  # never a bare /compact
-        turns += [{'type': 'system', 'subtype': 'compact_boundary'}, request(210_000)]
+        turns += [{'type': 'system', 'subtype': 'compact_boundary'}, request(160_000)]
         said = self.run_hook(turns)
         self.assertIn('compacted already', said)
         self.assertIn('recommend a hand-off', said)
         self.assertNotIn('/compact keep', said)
 
     def test_a_drop_without_compaction_does_not_rearm(self):
-        turns = [request(255_000)]
-        self.assertIn('Context is 255k tokens', self.run_hook(turns))
-        turns += [request(240_000)]
+        turns = [request(205_000)]
+        self.assertIn('Context is 205k tokens', self.run_hook(turns))
+        turns += [request(190_000)]
         self.assertEqual(self.run_hook(turns), '')
-        turns += [request(255_000)]
+        turns += [request(205_000)]
         self.assertEqual(self.run_hook(turns), '')
 
     def test_concurrent_prompts_announce_a_step_once(self):
-        self.transcript.write_text(json.dumps(request(255_000)) + '\n', encoding='utf-8')
+        self.transcript.write_text(json.dumps(request(205_000)) + '\n', encoding='utf-8')
         state = self.transcript.with_suffix('.context-step')
         state.write_text('-1', encoding='utf-8')  # the earlier hook's state is also accepted on upgrade
         # Slow the read after it got the old value: without a lock, every child announces.
@@ -235,11 +235,11 @@ class ContextHookTests(unittest.TestCase):
             results = list(pool.map(invoke, range(6)))
         for result in results:
             self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(sum('Context is 255k tokens' in r.stdout for r in results), 1)
-        self.assertEqual(self.run_hook([request(255_000)]), '')
+        self.assertEqual(sum('Context is 205k tokens' in r.stdout for r in results), 1)
+        self.assertEqual(self.run_hook([request(205_000)]), '')
 
     def test_silent_below_the_line_and_on_a_broken_transcript(self):
-        self.assertEqual(self.run_hook([prompt(), request(199_000)]), '')
+        self.assertEqual(self.run_hook([prompt(), request(149_000)]), '')
         self.assertEqual(self.run_hook([], raw='not json\n5\n{"type": "assistant", "message": 5}\n'), '')
         result = subprocess.run([sys.executable, str(HOOK)], input='{}', text=True, encoding='utf-8', capture_output=True,
                                 timeout=30, env=self.env)
@@ -249,10 +249,10 @@ class ContextHookTests(unittest.TestCase):
         # Projects' transcripts share file names; the step one named must not silence another.
         other = self.tmp / 'other'
         other.mkdir()
-        turns = [prompt(), request(210_000)]
-        self.assertIn('Context is 210k tokens', self.run_hook(turns))
+        turns = [prompt(), request(160_000)]
+        self.assertIn('Context is 160k tokens', self.run_hook(turns))
         self.transcript = other / self.transcript.name
-        self.assertIn('Context is 210k tokens', self.run_hook(turns))
+        self.assertIn('Context is 160k tokens', self.run_hook(turns))
 
     def test_a_large_transcript_resumes_at_the_saved_offset(self):
         # A full read of a 33 MB transcript took 0.9 s, too slow for every tool call (#138).
@@ -260,17 +260,17 @@ class ContextHookTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.RECOUNT = 0
-        first = json.dumps(request(210_000)) + '\n'
+        first = json.dumps(request(160_000)) + '\n'
         self.transcript.write_bytes(first.encode())
-        self.assertEqual(module.scan(self.transcript), (210_000, 0, True, len(first), {}, {}))
+        self.assertEqual(module.scan(self.transcript), (160_000, 0, True, len(first), {}, {}))
         with self.transcript.open('ab') as stream:
-            stream.write((json.dumps(request(260_000)) + '\n' + '{"type": "system", "subtype": "compact_bou').encode())
-        size = len(first) + len(json.dumps(request(260_000))) + 1
+            stream.write((json.dumps(request(210_000)) + '\n' + '{"type": "system", "subtype": "compact_bou').encode())
+        size = len(first) + len(json.dumps(request(210_000))) + 1
         saved = {'offset': len(first), 'last': 1, 'compactions': 5, 'known': True, 'running': {'b9': ['old job', 0]},
                  'pending': {'t9': 'Run x'}}
         # The saved compaction count proves the prefix was not read again; a partial record waits.
-        self.assertEqual(module.scan(self.transcript, saved), (260_000, 5, True, size, {'b9': ['old job', 0]}, {'t9': 'Run x'}))
-        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (260_000, 0, True, size, {}, {}))
+        self.assertEqual(module.scan(self.transcript, saved), (210_000, 5, True, size, {'b9': ['old job', 0]}, {'t9': 'Run x'}))
+        self.assertEqual(module.scan(self.transcript, dict(saved, offset=10 ** 9)), (210_000, 0, True, size, {}, {}))
 
     def run_progress(self, records, **extra):
         self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
@@ -282,13 +282,14 @@ class ContextHookTests(unittest.TestCase):
 
     def test_a_tool_call_names_the_band_inside_a_long_turn(self):
         # #138: a long autonomous turn crossed 300k and 400k with no notice until the next prompt.
-        self.assertEqual(self.run_progress([request(250_000)], agent_id='a1'), '')  # a sub-agent's call
-        said = self.run_progress([request(250_000)])
-        self.assertIn('Context is 250k tokens, yellow (200k)', said)
+        self.assertEqual(self.run_progress([request(200_000)], agent_id='a1'), '')  # a sub-agent's call
+        said = self.run_progress([request(200_000)])
+        self.assertIn('Context is 200k tokens, red (200k)', said)
+        self.assertIn('then the owner types /clear', said)
         self.assertNotIn('tool calls since', said)
-        self.assertEqual(self.run_progress([request(250_000), request(260_000)]), '')  # same step
-        self.assertEqual(self.run_hook([request(260_000)]), '')  # the prompt hook shares the step
-        self.assertIn('Context is 310k tokens, red (300k)', self.run_progress([request(250_000), request(310_000)]))
+        self.assertEqual(self.run_progress([request(200_000), request(210_000)]), '')  # same step
+        self.assertEqual(self.run_hook([request(210_000)]), '')  # the prompt hook shares the step
+        self.assertIn('Context is 310k tokens, ceiling (300k)', self.run_progress([request(200_000), request(310_000)]))
 
     def away(self):
         (self.tmp / '.myagentkit').mkdir(exist_ok=True)
@@ -297,8 +298,8 @@ class ContextHookTests(unittest.TestCase):
     def test_while_away_the_band_and_a_second_compaction_say_keep_going(self):
         # v0.13 autopilot: the lead stopped at a band line overnight and the night was lost.
         self.away()
-        for turns in ([request(410_000)], [request(410_000), {'type': 'system', 'subtype': 'compact_boundary'},
-                                          request(210_000)]):
+        for turns in ([request(360_000)], [request(360_000), {'type': 'system', 'subtype': 'compact_boundary'},
+                                          request(160_000)]):
             said = self.run_progress(turns)
             with self.subTest(said=said):
                 self.assertIn('Context is', said)
@@ -310,7 +311,7 @@ class ContextHookTests(unittest.TestCase):
                 self.assertIn('docs/STATE.md', said)
         # leeway L14: a worker leaves STATE.md to the lead (docs/HANDOFF.md).
         self.env['MYAGENTKIT_ROLE'] = 'worker'
-        said = self.run_progress([request(410_000)])
+        said = self.run_progress([request(360_000)])
         self.assertIn('keep going', said)
         self.assertNotIn('STATE.md', said)
 

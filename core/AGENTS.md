@@ -134,7 +134,7 @@ review (`docs/REVIEW_GATE.md`, "Risk tiers") and commit, never handed back to {{
 - Risky area touched → "review gate applies before the merge (in a single session on the main branch, before the commit)".
 - A duplicate system, a README contradicting its API, a two-job file, a task spanning modules, a
   procedure done a third time (a skill), bulk work fit for a cheaper model.
-- Context past 200k → no new round; 300k: `/compact` or a hand-off; 400k: stop
+- Context past 150k → no new round; 200k: `/compact` or a hand-off (then the owner types `/clear`); 300k: stop
   (`docs/WORKFLOW.md`, "Worker cost", rule 8).
 - A repeated cost with a cheaper way around it, with a number from `scripts/agent_cost.py`; never hunt for savings.
 {{KIT_FEEDBACK_RULE}}
@@ -144,5 +144,12 @@ review (`docs/REVIEW_GATE.md`, "Risk tiers") and commit, never handed back to {{
 One module; `./scripts/check.sh` PASS; no boundary, DECIDED or scope conflict; README matches the API;
 `docs/STATE.md` updated with a tool+model trace; a short what-and-why summary. A small fix (one commit,
 one module; owner 2026-10-25) skips `doctor.sh` and the STATE.md trace and leaves `./scripts/check.sh` to
-the commit hook and reads its `CHECK: PASS`; a risky diff still takes its review, and its manual checks still go to STATE.md with their tool+model trace. On compaction keep
-open decisions, binding rules, changed files, the next step and {{OWNER_NAME}}'s words verbatim.
+the commit hook and reads its `CHECK: PASS`; a risky diff still takes its review, and its manual checks still go to STATE.md with their tool+model trace.
+
+# Compact instructions
+
+Claude Code reads this section at every compaction, the automatic and the idle one too: it comes
+through `CLAUDE.md`, whose `@AGENTS.md` line imports this file (code.claude.com/docs/en/costs).
+Keep: the open decisions, the binding rules, the changed files and their commits, the next step,
+and {{OWNER_NAME}}'s words verbatim. Drop: the tool output of finished work (test runs, file
+reads, logs), which its commit already records.

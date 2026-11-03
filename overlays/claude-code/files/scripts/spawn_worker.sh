@@ -1,5 +1,15 @@
 #!/usr/bin/env sh
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
+# Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
+#                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
+#                        [--result FILE] [--resume SESSION_ID] [--owner-approved-fable REASON]
+# Four facts to know before the details below:
+# - --model and --effort are required, from docs/WORKFLOW.md, "Model routing"; nothing is inherited.
+# - --worktree makes .claude/worktrees/NAME on branch worktree-NAME and locks it for the worker.
+# - The result file (RESULT-NAME.md, or --result FILE) is the done signal: only Kind: completed is done.
+# - --resume SESSION_ID continues the same worker; pass the launch's options again, as the printed
+#   resume command does (it repeats --model, --effort, --worktree, --backend, --settings, --allowed-tools).
+#
 # Open a SEPARATE Claude Code worker session and hand it a brief file. By default it is a Claude
 # Code background session (`claude --bg`) on every platform whose CLI lists --bg; the tab and
 # tmux paths below are the fallback, and MYAGENTKIT_WORKER_HOST=bg|tab|tmux forces one (see
@@ -21,10 +31,6 @@
 # Worker names use letters, digits, - and _, not starting with -. The longest generated
 # filename (NAME.state.XXXXXXXX) must fit in 255 bytes; on native Windows its full path
 # must fit in 259 characters too, including the checkout's .myagentkit/workers folder.
-#
-# Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
-#                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
-#                        [--result FILE] [--resume SESSION_ID] [--owner-approved-fable REASON]
 #
 # --owner-approved-fable REASON: a Fable model (fable, claude-fable-*) is refused without it (docs/WORKFLOW.md
 # "Worker cost" rule 2, owner 2026-11-03: Fable leads, reviews and consults, never works); REASON is the owner's
@@ -142,7 +148,7 @@ stranded() {
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '3,27p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,12p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the

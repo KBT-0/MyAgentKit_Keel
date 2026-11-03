@@ -1147,6 +1147,30 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
+    def test_user_level_plugins_the_project_does_not_turn_off_are_named(self):
+        # Field token reports (leeway, labricore): each plugin's skill listing rides every request.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            project, config = tmp / 'project', tmp / 'config'
+            (project / '.claude').mkdir(parents=True)
+            config.mkdir()
+            env = dict(os.environ, CLAUDE_CONFIG_DIR=str(config))
+            run = lambda: self.doctor_section('# --- user-level plugins', '# --- guard hooks the committed',
+                                              project, env)
+            self.assertEqual(run(), '')  # no settings file: silent
+            (config / 'settings.json').write_text('not json')
+            self.assertEqual(run(), '')
+            (config / 'settings.json').write_text(json.dumps({'enabledPlugins': {
+                'a@m': True, 'b@m': True, 'c@m': True, 'off@m': False}}))
+            out = run()
+            self.assertIn('NOTE: 3 user-level plugins reach every session of this project (a@m, b@m, c@m;', out)
+            self.assertIn('"NAME@MARKETPLACE": false under enabledPlugins in .claude/settings.json', out)
+            (project / '.claude/settings.json').write_text(json.dumps({'enabledPlugins': {'a@m': False, 'b@m': True}}))
+            self.assertIn('NOTE: 2 user-level plugins reach every session of this project (b@m, c@m;', run())
+            (project / '.claude/settings.json').write_text(json.dumps({'enabledPlugins': {
+                'a@m': False, 'b@m': False, 'c@m': False}}))
+            self.assertEqual(run(), '')
+
     def test_the_unity_gate_without_an_editor_or_its_path_converter_is_not_ready(self):
         # #216: doctor said ready while the gate could find no editor, or only Unity's CLI.
         with tempfile.TemporaryDirectory() as tmp:

@@ -38,6 +38,7 @@ entries it was installed with; one the kit added later is listed here.
 - A PowerShell probe whose Set-Location fails goes on in the current folder
 - Claude Code's worktree points every tree at the main checkout's hooks
 - A research worker's web fetch cannot read reddit.com
+- A session idle for an hour is compacted on its own
 
 ---
 
@@ -377,3 +378,11 @@ through the community package `notebooklm-mcp-cli` (`nlm research start --mode d
 Google's and uses undocumented endpoints). It is a new dependency: the owner approves it per project.
 Its login stores Google cookies that open the whole account, so use a secondary account and
 `--storage protected`, and never upload a private design document: queries and uploads go to Google.
+
+## A session idle for an hour is compacted on its own
+
+Claude Code's `idleCompaction` (on by default) compacts a session left idle about an hour at 200k
+or more, a lead waiting on a worker too (code.claude.com/docs/en/settings-reference): the kit keeps it
+on, since it runs while the cache is warm, and counts it like any compaction, so the second one is
+a hand-off signal as before (`docs/WORKFLOW.md`, "Worker cost", rule 8; the kit's
+`docs/research/context-hygiene.md`, Öneri 5).

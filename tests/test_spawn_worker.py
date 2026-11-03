@@ -1064,6 +1064,9 @@ exit 0
         result = self.spawn(choose=False)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn('Usage: spawn_worker.sh', result.stdout)
+        # leeway idea d: the usage and its four facts come first, the long prose after them.
+        self.assertIn('only Kind: completed is done', result.stdout)
+        self.assertNotIn('Open a SEPARATE', result.stdout)
 
     def test_a_leftover_question_refuses_a_fresh_spawn_before_any_session(self):
         # #235: the supervisor refused it inside the new tmux session, whose pane closed with the error.
@@ -2112,13 +2115,13 @@ class WorkerStateHookTests(unittest.TestCase):
                                         cwd=repo, env=env, capture_output=True, text=True, timeout=30 * SCALE)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 return result.stdout
-            for count, notice in ((200000, True), (250000, False), (300000, True),
-                                  (315000, False), (250001, False), (400000, True), (401000, False)):
+            for count, notice in ((150000, True), (175000, False), (200000, True),
+                                  (215000, False), (175001, False), (300000, True), (301000, False)):
                 with self.subTest(count=count):
                     self.assertEqual('CONTEXT:' in watch(count), notice)
             (repo / 'mark').unlink(missing_ok=True)
             self.assertEqual(watch(250000, '--context-warn', '300k'), '')
-            self.assertIn('red', watch(310000, '--context-warn', '300k'))
+            self.assertIn('ceiling', watch(310000, '--context-warn', '300k'))
             (repo / 'mark').unlink(missing_ok=True)
             self.assertEqual(watch(90000, '--context-warn', '10%'), '')
             self.assertIn('CONTEXT:', watch(110000, '--context-warn', '10%'))
@@ -2143,7 +2146,7 @@ class WorkerStateHookTests(unittest.TestCase):
     def test_the_watcher_keeps_the_default_line_when_the_hook_cannot_answer(self):
         # Ultrareview part 7 #1: a project's v0.10 context_size.py (sync never updates it) cannot
         # answer --line, and with no Python nothing can: the watcher died, and with it every tmux
-        # spawn before its brief was typed. It keeps the built-in 200k line instead.
+        # spawn before its brief was typed. It keeps the built-in 150k line instead.
         old_hook = 'import json, sys\ntry:\n    json.load(sys.stdin)\nexcept Exception:\n    pass\n'
         no_python = '#!/bin/sh\nprintf "%s\\n" "no Python found" >&2\nexit 1\n'
         for case, hook, launcher in (('old hook', old_hook, None), ('no Python', None, no_python)):
@@ -2173,7 +2176,7 @@ class WorkerStateHookTests(unittest.TestCase):
                                         stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30 * SCALE)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('CONTEXT: w1, 250k/1.0M', result.stdout)
-                self.assertIn('past its 200k warning line', result.stdout)
+                self.assertIn('past its 150k warning line', result.stdout)
 
     def test_tmux_watcher_reports_the_hook_context_when_the_pane_is_below_the_band(self):
         with tempfile.TemporaryDirectory(prefix='tmux context ') as tmp:
@@ -2195,7 +2198,7 @@ class WorkerStateHookTests(unittest.TestCase):
                                     cwd=repo, env=env, capture_output=True, text=True, timeout=30 * SCALE)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('CONTEXT: w1', result.stdout)
-            self.assertIn('314000 tokens, red', result.stdout)
+            self.assertIn('314000 tokens, ceiling', result.stdout)
 
     def test_state_context_uses_the_last_request_and_resets_at_compaction(self):
         with tempfile.TemporaryDirectory(prefix='worker context ') as tmp:
@@ -2240,8 +2243,8 @@ class WorkerStateHookTests(unittest.TestCase):
                 (bin_dir / name).write_text(body, newline='\n')
                 (bin_dir / name).chmod(0o755)
             env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
-            for count, band in ((199999, ''), (200000, 'yellow'), (299999, 'yellow'),
-                                (300000, 'red'), (399999, 'red'), (400000, 'ceiling')):
+            for count, band in ((149999, ''), (150000, 'yellow'), (199999, 'yellow'),
+                                (200000, 'red'), (299999, 'red'), (300000, 'ceiling')):
                 for state in ('idle', 'waiting permission'):
                     with self.subTest(count=count, state=state):
                         (workers / 'w1.state').write_text(f'{state} 2026-10-16T12:00:00 {count} context_tokens={count}\n')

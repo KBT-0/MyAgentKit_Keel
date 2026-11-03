@@ -7,11 +7,11 @@ step file, so each step is named once. A large transcript is read from the byte 
 last check saved (progress_reminder.py's method): a full read of 33 MB took 0.9 s.
 
 Every request re-sends the whole context, and accuracy falls as it grows (`docs/WORKFLOW.md`,
-"Worker cost", rule 8: a band, yellow at 200k, red at 300k, ceiling at 400k). The context is
+"Worker cost", rule 8: a band, yellow at 150k, red at 200k, ceiling at 300k; owner 2026-11-03). The context is
 the last API request's input plus cache read plus cache write, read from the transcript; a
 compaction boundary resets it until the next request.
 
-Past LINE the hook adds one line to the agent's context, once per STEP: at 200k, 250k, 300k...,
+Past LINE the hook adds one line to the agent's context, once per STEP: at 150k, 200k, 250k...,
 opening with the band the size is in.
 The last step it named is kept beside the transcript (`<session>.context-step`, in the
 user's own Claude folder, not a shared temporary one), so a retried prompt or one that
@@ -49,15 +49,16 @@ import subprocess
 import sys
 import tempfile
 
-LINE = 200_000  # yellow: plan the cut
-RED = 300_000  # cut at the next clean stop
-CEILING = 400_000  # stop now
+LINE = 150_000  # yellow: plan the cut
+RED = 200_000  # cut at the next clean stop
+CEILING = 300_000  # stop now
 STEP = 50_000
 RECOUNT = 512 * 1024  # re-read small transcripts; larger ones resume at the saved offset
-BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE, handoff) '
+BANDS = ((CEILING, 'ceiling (300k): stop now and secure the work (commit, STATE, handoff) '
                    'without waiting for a clean stop'),
-         (RED, 'red (300k): cut at the next clean stop; start no new round'),
-         (LINE, 'yellow (200k): plan the cut; start no new round, let the running batch finish, '
+         (RED, 'red (200k): cut at the next clean stop (write the hand-off, then the owner types /clear); '
+                'start no new round'),
+         (LINE, 'yellow (150k): plan the cut; start no new round, let the running batch finish, '
                 'commit, and keep docs/STATE.md and the handoff current'))
 COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
            "and the owner's words verbatim")
@@ -286,14 +287,15 @@ def notice(transcript: Path) -> str:
                      f'; "{COMPACT}" stays open while the work in flight continues'))
     elif compactions:
         advice = ('The lead session was compacted already, and a summary of a summary drifts: in this '
-                  "turn's closing summary, recommend a hand-off (update STATE, write the handoff, "
-                  'fresh session) to the owner in one line with this number, never a second /compact; '
+                  "turn's closing summary, recommend a hand-off (update STATE, write the handoff and "
+                  '.myagentkit/handoff-pending, then the owner types /clear) to the owner in one line with this number, never a second /compact; '
                   'a worker follows its own rule: docs/HANDOFF.md')
     else:
         advice = ("In this turn's closing summary, recommend ONE to the owner in one line with this "
                   'number and the reason: /compact when docs/STATE.md and the open operation files '
                   'already hold what matters and the work in flight continues, never bare but as '
-                  f'"{COMPACT}"; a hand-off (update STATE, write the handoff, fresh session) when the '
+                  f'"{COMPACT}"; a hand-off (update STATE, write the handoff and its marker, then the owner '
+                  'types /clear) when the '
                   'work changes direction, a batch has just closed, or most of the context is detail '
                   'of finished work. Neither is the default')
     return (f'Context is {ctx // 1000}k tokens, ' + next(text for floor, text in BANDS if ctx >= floor)

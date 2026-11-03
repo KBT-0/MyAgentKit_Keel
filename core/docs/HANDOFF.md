@@ -117,6 +117,15 @@ next session runs `claim`, then sends every peer the line `claim` prints ("new l
 merge requests there"). After a crash the marker still names the old session: the successor
 runs `claim --force`, tells {{OWNER_NAME}} so in one line and announces itself the same way.
 
+The lead's hand-off steps: update `docs/STATE.md`; write the hand-off file, whose first line
+names the next session's model id AND effort, chosen from `docs/WORKFLOW.md`, "Model routing",
+for the work it opens (the effort is decided per hand-off: owner, 2026-11-03); commit; write
+`.myagentkit/handoff-pending`, one line `HANDOFF_PATH COMMIT`; then tell {{OWNER_NAME}}: type
+`/clear` in this terminal (and `/model` or `/effort` first when the line names others). In the
+Claude Code overlay the `handoff_pending.py` hook (`SessionStart`, `clear` and `startup`) then
+tells the fresh context to read that file first and deletes the marker; on a tree with
+uncommitted changes it says so and the marker stays until the new session has checked them.
+
 The result file starts with four lines, exact keys, in this order:
 
 ```

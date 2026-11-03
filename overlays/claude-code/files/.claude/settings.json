@@ -250,6 +250,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "clear|startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/handoff_pending.py\"",
+            "timeout": 30
+          }
+        ]
       }
     ]
   }

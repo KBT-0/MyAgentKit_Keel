@@ -1315,21 +1315,21 @@ class ContextTests(Base):
                                path_first=path_first)
 
     def test_the_figure_is_reported_past_the_warning_line(self):
-        # The line is the smaller of an absolute count (default 200k, the lead's band) and a
+        # The line is the smaller of an absolute count (default 150k, the lead's band) and a
         # share of the window (default 50%): a bare number is a share, as before.
         for status, args, out, line in (
                 ('58k/1.0M', ('--context-warn', '50'), '', ''),
                 ('58k/1.0M', ('--context-warn', '5'), '58k/1.0M is 5%', '50k'),
                 ('113k/1.0M', ('--context-warn', '50'), '', ''),
                 ('113k/1.0M', ('--context-warn', '10%'), '113k/1.0M is 11%', '100k'),
-                ('1.2M/1.0M', ('--context-warn', '50'), '1.2M/1.0M is 120%', '200k'),
+                ('1.2M/1.0M', ('--context-warn', '50'), '1.2M/1.0M is 120%', '150k'),
                 ('36k/200k', ('--context-warn', '17'), '36k/200k is 18%', '34k'),
-                # The default: 200k on a 1M window (50% would be 500k, past the 400k ceiling),
+                # The default: 150k on a 1M window (50% would be 500k, past the 300k ceiling),
                 # half of a 200k window.
-                ('250k/1.0M', (), '250k/1.0M is 25%', '200k'),
+                ('250k/1.0M', (), '250k/1.0M is 25%', '150k'),
                 ('120k/200k', (), '120k/200k is 60%', '100k'),
-                ('190k/1.0M', (), '', ''),
-                # An absolute line replaces the 200k; the share still applies.
+                ('140k/1.0M', (), '', ''),
+                # An absolute line replaces the 150k; the share still applies.
                 ('250k/1.0M', ('--context-warn', '300k'), '', ''),
                 ('120k/1.0M', ('--context-warn', '100k'), '120k/1.0M is 12%', '100k'),
                 ('120k/200k', ('--context-warn', '300k'), '120k/200k is 60%', '100k')):
