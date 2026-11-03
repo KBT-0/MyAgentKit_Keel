@@ -1052,10 +1052,13 @@ def commits(command, cwds):
             found += commits(" ".join(rest[1:]), cwds)
         elif at is not None and (at == 0 or name not in INERT):
             found += cwds if Git(rest[at + 1:], {}, cwds).sub == "commit" else []
-        elif has_git and name not in INERT:
-            found.append(None)  # code or a wrapper's text that names git: the hook cannot tell where it runs
+        elif has_git and name not in INERT and (interpreter(name) or any(GIT_WORD.match(t.lstrip("($`")) for t in rest[1:])):
+            # Code, or a wrapper's text that starts with git: the hook cannot tell where it runs. A git
+            # inside another command's argument text (gh --title "fix the git hook") is not one (cb35ca5 review).
+            found.append(None)
     for shell, body in bodies:
-        found += commits(body, cwds) if shell and GIT_WORD.search(body) else []
+        if GIT_WORD.search(body):  # an interpreter's body is code: where its git runs is unknown (cb35ca5 review)
+            found += commits(body, cwds) if shell else [None]
     for inner in substitutions(text):
         found += commits(inner, cwds) if GIT_WORD.search(inner) else []
     return found

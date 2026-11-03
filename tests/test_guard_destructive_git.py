@@ -1197,6 +1197,21 @@ class V0141FieldReportTests(GuardCase):
         self.assertVerdict(['git checkout --pathspec-from-file=paths', 'git checkout --pathspec-from-file paths'], 0)
         self.assertVerdict(['echo f.txt > paths && git checkout --pathspec-from-file=paths'], 2)
 
+    def test_review_cb35ca5_interpreter_heredoc_and_argument_text(self):
+        # The cb35ca5 review (Medium x2): an interpreter's here-document that names git is None, as `python3 -c`
+        # is; a git inside another command's argument text is not a git (judge() lets that line pass too).
+        sys.path.insert(0, str(HOOK.parent))
+        sys.dont_write_bytecode = True
+        import guard_destructive_git as guard
+        here = os.path.abspath('r')
+        heredoc = "cd wt && python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git', 'commit', '-am', 'x'])\nEOF"
+        self.assertIn(None, guard.commit_folders(heredoc, here))
+        self.assertEqual(guard.commit_folders("python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -m x", here), [here])
+        gh = 'git commit --allow-empty -m x && gh pr create --title "fix the git hook" --body b'
+        self.assertEqual(guard.commit_folders(gh, here), [here])
+        self.assertIn(None, guard.commit_folders('watch "git commit -am x"', here))
+        self.assertVerdict([gh], 0)
+
     def test_a_long_list_of_changes_is_cut(self):
         for n in range(15):
             (self.repo / f'n{n:02}.txt').write_text('x\n', encoding='utf-8')

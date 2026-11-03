@@ -37,6 +37,8 @@ import sys
 # The two option forms never match the same text (-c/-C take a value; others never are -c/-C): no backtracking blow-up.
 COMMIT = re.compile(r"\bgit(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|-(?![Cc]\s)[\w-]+(?:=\S+)?))*"
                     r"\s+commit(?![\w-])")
+# A commit as an argv list in code (`subprocess.run(['git', '-C', 'wt', 'commit'])`; the cb35ca5 review).
+ARGV_COMMIT = re.compile(r"""(['"])git(?:\.exe)?\1\s*,(?:\s*(['"])[^'"\n]*\2\s*,)*?\s*(['"])commit\3""")
 
 
 def git(root, *args):
@@ -170,8 +172,7 @@ def folders(command, cwd, tool_name=None):
 def main():
     data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     command = (data.get("tool_input") or {}).get("command") or ""
-    match = COMMIT.search(command)
-    if not match:
+    if not (COMMIT.search(command) or ARGV_COMMIT.search(command)):
         return 0
     cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
     roots = [None if c is None else project_root(dict(data, cwd=c), command)

@@ -315,6 +315,23 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertEqual(refused.returncode, 2)
         self.assertIn('cannot be resolved', refused.stderr.decode())
 
+    def test_review_cb35ca5_interpreter_heredoc_refused_argument_text_passes(self):
+        # The cb35ca5 review (Medium x2): `python3 - <<EOF` running git commit after `cd wt` passed on the
+        # caller's clean tree; a gh title naming git refused a clean tree's commit as "cannot be resolved".
+        tree = self.root / 'wt'
+        self.git('worktree', 'add', '-q', str(tree))
+        (tree / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        for body in ("import subprocess\nsubprocess.run(['git', 'commit', '-am', 'x'])", "import os\nos.system('git commit -am x')"):
+            with self.subTest(body=body):
+                refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
+                    'command': "cd wt && python3 - <<'EOF'\n%s\nEOF" % body}})
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+        self.assertEqual(self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
+            'command': "python3 -c \"print(['git', 'log'])\""}}).returncode, 0)
+        passed = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
+            'command': 'git commit --allow-empty -m x && gh pr create --title "fix the git hook" --body b'}})
+        self.assertEqual(passed.returncode, 0, passed.stderr)
+
     def test_git_exe_commit_is_seen(self):
         # labricore A7: native Windows spells it git.exe
         (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')

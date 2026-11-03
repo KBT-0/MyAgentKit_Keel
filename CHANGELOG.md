@@ -88,8 +88,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (`guard_destructive_git.commit_folders`): after a keyword, in an if body, and PowerShell's `Set-Location`, `sl`,
   `Push-Location` and `cd .\wt`. A commit behind a wrapper (`env FOO=1`, `command`, `nohup`, `timeout 60`,
   `xargs`) or in a shell's text (`sh -c 'cd wt && git commit'`) is found the way the destructive guard reads it,
-  and git the hook cannot read as a command (inside interpreter code) refuses the commit. test_guard_risky_review:
-  red without the fix. **ACTION** (project-owned `.claude/hooks/guard_risky_review.py`,
+  and git the hook cannot read as a command (inside interpreter code) refuses the commit. Python code fed through
+  a here-document (`python3 - <<'EOF'`) that runs git commit, as text or as a `['git', 'commit']` list, now refuses
+  the commit too, like `python3 -c` does (the cb35ca5 review). A word git inside another command's argument text
+  (`gh pr create --title "fix the git hook"`) no longer refuses a commit on the same line (the cb35ca5 review).
+  test_guard_risky_review and test_guard_destructive_git: red without the fix. **ACTION** (project-owned `.claude/hooks/guard_risky_review.py`,
   `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
 - **`git checkout --pathspec-from-file` is judged (leeway v0.14.1 sync review).** On a dirty tree it passed (no
   path word, no `--`) although it overwrites the listed paths. `guard_destructive_git.py` reads the file and
