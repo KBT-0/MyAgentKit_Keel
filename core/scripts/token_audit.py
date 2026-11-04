@@ -302,7 +302,7 @@ def audit(path: Path, seen: set) -> dict:
     prompt = out['prompt'] or ''
     if out['kind'] == 'lead' and prompt.startswith('[Workflow harness'):
         out['kind'] = 'workflow'
-    elif out['kind'] == 'lead' and re.match(r"Read '[^']*\.brief\.md' and follow it", prompt):
+    elif out['kind'] == 'lead' and re.match(r"Read '[^']*(\.brief\.md' and follow it|' and follow it\. Your result file is )", prompt):
         out['kind'] = 'worker'
     elif out['kind'] == 'lead' and len(rows) <= 3:
         out['kind'] = 'probe'

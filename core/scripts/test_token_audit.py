@@ -59,6 +59,14 @@ class TokenAuditTests(unittest.TestCase):
         self.assertEqual(s['narration_chars'], len('Reading.'))
         self.assertEqual(s['kind'], 'lead')
 
+    def test_worker_is_told_by_the_spawn_instruction_not_the_brief_suffix(self):
+        def kind(prompt):
+            return self.audit([{'type': 'user', 'uuid': 'u0', 'message': {'content': prompt}}]
+                              + [assistant('r%d' % i, usage(0, 100, 1)) for i in range(4)])['kind']
+        self.assertEqual(kind("Read '/w/docs/handoffs/x.md' and follow it. Your result file is '/w/R.md': ..."), 'worker')
+        self.assertEqual(kind("Read '/w/x.brief.md' and follow it."), 'worker')
+        self.assertEqual(kind("Please read the notes and follow it."), 'lead')
+
     def test_injections_bash_kinds_and_session_kinds(self):
         s = self.audit([
             {'type': 'user', 'uuid': 'u0', 'message': {'content': "Read '/w/x.brief.md' and follow it. Your result"}},
