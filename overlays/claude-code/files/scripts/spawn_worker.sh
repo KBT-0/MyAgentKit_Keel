@@ -428,6 +428,13 @@ if [ -n "$worktree" ]; then
       die "branch worktree-$name already exists and may be stale; delete it or pick another name"
     [ ! -e "$dir" ] || die "worktree path already exists: $dir"
   fi
+elif [ -n "$resume" ]; then
+  # A resume without --worktree of a worker whose worktree git still lists ran in this folder: its
+  # result, records and session landed in the lead's checkout, where close_worker.sh then refused to
+  # stop it (resumefix, 2026-11-03: the lead typed the resume line without --worktree).
+  listed=$(git worktree list --porcelain 2>/dev/null | awk -v b="branch refs/heads/worktree-$name" '/^worktree /{p=substr($0,10)} $0==b{print p; exit}')
+  [ -z "$listed" ] || [ ! -d "$listed" ] || [ "$(CDPATH= cd -P -- "$listed" && pwd -P)" = "$dir" ] ||
+    die "--resume without --worktree: '$name' has its worktree at $listed; resume it there with the launch's options again, as its printed resume line has them (--worktree, --settings, ...)"
 fi
 # The first line of the ignore file for copied hooks (close_worker.sh compares it).
 hooks_mark="# spawn_worker.sh: hook files copied from the lead's checkout; close_worker.sh sets this file aside"
