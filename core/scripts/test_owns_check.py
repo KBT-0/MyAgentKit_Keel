@@ -161,6 +161,81 @@ class OwnsCheckTests(unittest.TestCase):
             self.write(name)
             self.assertIn('  ' + name + '\n', self.check('Owns: src/')[1])
 
+    def test_an_owned_source_owns_its_packaged_copies_and_the_manifest_stamp(self):
+        # leewayfix: a worker refreshing a core file's plugin copy failed the review until the lead
+        # added the copy and plugin.json to Owns by hand. The kit packager's own list maps them.
+        packager = SCRIPT.parents[2] / 'scripts/package_codex_plugin.py'
+        copy, manifest = 'plugins/myagentkit/scripts/review_dispatch.py', 'plugins/myagentkit/.codex-plugin/plugin.json'
+        for path in ('core/scripts/review_dispatch.py', copy, manifest):
+            self.write(path, 'one\n')
+        self.commit()
+        for path in ('core/scripts/review_dispatch.py', copy, manifest):
+            self.write(path)
+        owns = 'Owns: core/scripts/review_dispatch.py'
+        # A project has no packager: nothing more is owned.
+        self.assertEqual(self.check(owns)[1].split(':\n', 1)[1], '  %s\n  %s\n' % (manifest, copy))
+        self.write('scripts/package_codex_plugin.py', packager.read_text(encoding='utf-8'))
+        self.commit()
+        for path in ('core/scripts/review_dispatch.py', copy, manifest):
+            self.write(path, 'two\n')
+        self.assertEqual(self.check(owns), (0, ''))
+        self.assertFalse((self.repo / 'scripts/__pycache__').exists())
+        # The commit and base scopes read the packager of the commit their diff starts from.
+        self.commit()
+        self.assertEqual(self.check(owns, '--commit', 'HEAD'), (0, ''))
+        self.assertEqual(self.check(owns, '--base', 'HEAD~1'), (0, ''))
+        self.git('reset', '-q', '--soft', 'HEAD~1')
+        # A copy whose source is not owned still leaves the Owns: line; the stamp too, unless an
+        # owned source is packaged (codex_quota.py is).
+        code, errors = self.check('Owns: core/scripts/codex_quota.py')
+        self.assertEqual(code, 1, errors)
+        self.assertEqual(errors.split(':\n', 1)[1], '  core/scripts/review_dispatch.py\n  %s\n' % copy)
+        self.assertIn('  %s\n' % manifest, self.check('Owns: src/')[1])
+
+    def test_the_packager_is_read_as_data_from_before_the_diff(self):
+        # Review of 59acc77: owns_check ran the packager of the tree under review, so a diff that put
+        # os._exit(0) at its top passed with an unowned path. It is read, never run, and from the
+        # commit the diff starts from, so the diff's own COPIES owns nothing either.
+        real = (SCRIPT.parents[2] / 'scripts/package_codex_plugin.py').read_text(encoding='utf-8')
+        copy, manifest = 'plugins/myagentkit/scripts/review_dispatch.py', 'plugins/myagentkit/.codex-plugin/plugin.json'
+        packager, owns = 'scripts/package_codex_plugin.py', 'Owns: core/scripts/review_dispatch.py'
+        self.write(packager, real)
+        for path in ('core/scripts/review_dispatch.py', copy, manifest, 'secret.txt'):
+            self.write(path, 'one\n')
+        self.commit()
+        self.write('secret.txt')
+        self.write(packager, 'import os\nos._exit(0)\n' + real)
+        code, errors = self.check(owns)
+        self.assertEqual(code, 1, errors)
+        self.assertEqual(errors.split(':\n', 1)[1], '  %s\n  secret.txt\n' % packager)
+        self.write(packager, real.replace('COPIES = [', 'COPIES = [("core/scripts/", "", ["review_dispatch.py"]),', 1))
+        self.write('review_dispatch.py')
+        self.assertIn('  review_dispatch.py\n', self.check(owns)[1])
+        # A committed packager that would exit 3 is only read: its extra literal copy is owned.
+        self.write(packager, 'raise SystemExit(3)\n' + real.replace(
+            'COPIES = [', 'COPIES = [("core/scripts/", "scripts/", ["review_dispatch.py"]),', 1))
+        (self.repo / 'review_dispatch.py').unlink()
+        self.commit()
+        for path in ('core/scripts/review_dispatch.py', copy, manifest):
+            self.write(path)
+        self.assertEqual(self.check(owns), (0, ''))
+        self.write('scripts/review_dispatch.py')
+        self.assertEqual(self.check(owns), (0, ''))
+        # It never makes itself a copy; a packager without literal lists owns no copy and says so.
+        self.write(packager, 'COPIES = [("core/scripts/", "scripts/", ["package_codex_plugin.py"])]\n'
+                             'STAMPED = "x"\n')
+        self.commit()
+        self.write(packager, 'changed\n')
+        self.assertIn('  %s\n' % packager, self.check('Owns: core/scripts/package_codex_plugin.py')[1])
+        self.write(packager, 'COPIES = list(())\nSTAMPED = "x"\n')
+        self.commit()
+        self.write('core/scripts/review_dispatch.py', 'three\n')
+        self.write(copy, 'three\n')
+        code, errors = self.check(owns)
+        self.assertEqual(code, 1, errors)
+        self.assertIn('holds no literal COPIES and STAMPED', errors)
+        self.assertTrue(errors.endswith(':\n  %s\n' % copy), errors)
+
     def test_review_sh_checks_the_linked_worktree_it_runs_in(self):
         # #302: the main checkout's review.sh run from a worker's linked worktree diffed the
         # main checkout, so an unrelated commit on main left the brief's Owns: line.

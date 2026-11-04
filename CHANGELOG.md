@@ -109,6 +109,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   now stops before any session and says to pass the launch's options again (`--worktree`, `--settings`, ...), as the
   printed resume line has them. test_spawn_worker red without it. **ACTION** (project-owned
   `scripts/spawn_worker.sh`; `scripts/close_worker.sh` is unchanged): `sync-kit.sh . --merge`.
+- **An owned core file owns its packaged copies (leewayfix, kit-internal).** `owns_check.py` failed a review that
+  refreshed `plugins/myagentkit/` copies of an owned core file (and the `plugin.json` stamp) until the lead added
+  them to Owns by hand. It now reads the packager's `COPIES` and `STAMPED` literals as data, never running it, from
+  the commit the diff starts from (so a diff's own packager edit can neither stop the check nor own a path): the copy
+  of an owned source and the manifest are owned; a copy of an unowned source still fails, a packager without those
+  literals owns no copy (said on stderr), and a project (no packager) is unchanged. test_owns_check red without it.
 
 ## v0.14.1 — 2026-11-02
 

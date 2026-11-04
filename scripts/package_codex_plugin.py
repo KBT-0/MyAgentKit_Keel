@@ -10,8 +10,20 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins/myagentkit"
-MANIFEST = PLUGIN / ".codex-plugin/plugin.json"
+# owns_check.py reads STAMPED and COPIES as literals, never running this file: keep them literals.
+STAMPED = "plugins/myagentkit/.codex-plugin/plugin.json"
+MANIFEST = ROOT / STAMPED
 STAMP = re.compile(rb"This plugin is kit v\d+(?:\.\d+)+\.")
+# (source folder, copy folder, names), repository paths: a brief owning a source owns its copy and STAMPED.
+# The mode helper and the rules it falls back to for a project older than them (L11) go to both plugins.
+COPIES = [
+    ("core/scripts/", "plugins/myagentkit/scripts/",
+     ["claude_bridge.py", "codex_bridge.py", "review_dispatch.py",
+      "codex_quota.py", "agent_process.py", "agent_usage.py", "working_mode.py"]),
+    ("core/scripts/", "plugin/scripts/", ["working_mode.py"]),
+    ("core/docs/", "plugins/myagentkit/docs/", ["WORKFLOW.md"]),
+    ("core/docs/", "plugin/docs/", ["WORKFLOW.md"]),
+]
 
 
 def stamped():
@@ -49,15 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    copies = [("core/scripts/" + name, PLUGIN / "scripts" / name)
-              for name in ["claude_bridge.py", "codex_bridge.py", "review_dispatch.py",
-                           "codex_quota.py", "agent_process.py", "agent_usage.py", "working_mode.py"]]
-    # The mode helper and the rules it falls back to for a project older than them (L11), in both plugins.
-    copies += [("core/scripts/working_mode.py", ROOT / "plugin/scripts/working_mode.py"),
-               ("core/docs/WORKFLOW.md", PLUGIN / "docs/WORKFLOW.md"),
-               ("core/docs/WORKFLOW.md", ROOT / "plugin/docs/WORKFLOW.md")]
-    for name, target in copies:
-        source = ROOT / name
+    for source, target in ((ROOT / (src + name), ROOT / (dst + name)) for src, dst, names in COPIES for name in names):
         if args.check:
             if not target.is_file() or source.read_bytes() != target.read_bytes():
                 raise SystemExit("FAIL: packaged runtime is missing or stale; run scripts/package_codex_plugin.py")
