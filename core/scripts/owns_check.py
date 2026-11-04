@@ -7,17 +7,21 @@ A brief without an Owns: line, or with more than one outside fenced code blocks,
 (exit 2). A pattern ending in '/' owns that folder; any other is a glob on the repository path
 with git's rules: '*' and '?' stay inside one folder, '**/' matches zero or more folders and a
 trailing '/**' everything below. docs/STATE.md and docs/BACKLOG.md are always allowed: every
-worker records its state there. Exit 1 lists the paths outside; exit 2 is a usage or git error.
+worker records its state there. In the kit, an owned source also owns the packaged copies
+scripts/package_codex_plugin.py makes of it and the manifest stamp they change. Exit 1 lists
+the paths outside; exit 2 is a usage or git error.
 Run from the repository root (scripts/review.sh does). --brief checks the line alone, before a
 worker starts (spawn_worker.sh): a brief without one passes, a pattern holding a space is prose.
 """
 from fnmatch import fnmatchcase
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
 import sys
 
 ALWAYS = ('docs/STATE.md', 'docs/BACKLOG.md')
+PACKAGER = 'scripts/package_codex_plugin.py'
 OWNS = re.compile(r'^[\s>*+-]*(?:\d+[.)]\s+)?(?:\*\*)?Owns:(?:\*\*)?(.*)$', re.M)
 # A fence line (CommonMark): an opener may follow a list marker; group 1 is that marker.
 FENCE = re.compile(r'[ \t>]*((?:[*+-]|\d+[.)])[ \t]+)?(`{3,}|~{3,})(.*)$')
@@ -95,10 +99,27 @@ def changed(scope, ref=None):
     return git('diff-tree', '--no-commit-id', '--no-renames', '-r', '-z', '--root', '--name-only', ref)
 
 
+def packaged(owns):
+    """The packaged copies of the sources OWNS accepts, plus the manifest whose stamp they change,
+    from the packager's own list (leewayfix: each copy was added to Owns by hand). A project has
+    no packager, so nothing more is owned there; the packager itself is never a copy."""
+    if not Path(PACKAGER).is_file():
+        return set()
+    spec = importlib.util.spec_from_file_location('package_codex_plugin', PACKAGER)
+    module = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True  # an untracked __pycache__ would leave the Owns: line itself
+    spec.loader.exec_module(module)
+    copies = {copy for source, copy in module.COPIES if owns(source)} - {PACKAGER}
+    return copies | {module.MANIFEST.relative_to(module.ROOT).as_posix()} if copies else copies
+
+
 def outside(paths, patterns):
-    return sorted({path for path in paths if path not in ALWAYS and not WORKER_REPORT.fullmatch(path) and not any(
-        path.startswith(p) if p.endswith('/') else glob_match(path.split('/'), p.split('/'))
-        for p in patterns)})
+    def owns(path):
+        return any(path.startswith(p) if p.endswith('/') else glob_match(path.split('/'), p.split('/'))
+                   for p in patterns)
+    copies = packaged(owns)
+    return sorted({path for path in paths if path not in ALWAYS and path not in copies
+                   and not WORKER_REPORT.fullmatch(path) and not owns(path)})
 
 
 def main(argv):

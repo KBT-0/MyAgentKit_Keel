@@ -12,6 +12,15 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins/myagentkit"
 MANIFEST = PLUGIN / ".codex-plugin/plugin.json"
 STAMP = re.compile(rb"This plugin is kit v\d+(?:\.\d+)+\.")
+# (canonical source, packaged copy) as repository paths; owns_check.py reads it, so a brief owning
+# a source owns its copy and the manifest's version stamp.
+COPIES = [("core/scripts/" + name, "plugins/myagentkit/scripts/" + name)
+          for name in ["claude_bridge.py", "codex_bridge.py", "review_dispatch.py",
+                       "codex_quota.py", "agent_process.py", "agent_usage.py", "working_mode.py"]]
+# The mode helper and the rules it falls back to for a project older than them (L11), in both plugins.
+COPIES += [("core/scripts/working_mode.py", "plugin/scripts/working_mode.py"),
+           ("core/docs/WORKFLOW.md", "plugins/myagentkit/docs/WORKFLOW.md"),
+           ("core/docs/WORKFLOW.md", "plugin/docs/WORKFLOW.md")]
 
 
 def stamped():
@@ -49,15 +58,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    copies = [("core/scripts/" + name, PLUGIN / "scripts" / name)
-              for name in ["claude_bridge.py", "codex_bridge.py", "review_dispatch.py",
-                           "codex_quota.py", "agent_process.py", "agent_usage.py", "working_mode.py"]]
-    # The mode helper and the rules it falls back to for a project older than them (L11), in both plugins.
-    copies += [("core/scripts/working_mode.py", ROOT / "plugin/scripts/working_mode.py"),
-               ("core/docs/WORKFLOW.md", PLUGIN / "docs/WORKFLOW.md"),
-               ("core/docs/WORKFLOW.md", ROOT / "plugin/docs/WORKFLOW.md")]
-    for name, target in copies:
-        source = ROOT / name
+    for name, copy in COPIES:
+        source, target = ROOT / name, ROOT / copy
         if args.check:
             if not target.is_file() or source.read_bytes() != target.read_bytes():
                 raise SystemExit("FAIL: packaged runtime is missing or stale; run scripts/package_codex_plugin.py")
