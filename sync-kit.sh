@@ -646,16 +646,22 @@ list=docs/kit/UPGRADE.md
 review=""
 own_repo && review="./scripts/review.sh --reviewer claude --commit <upgrade commit> --kit-verified --kit '$(printf '%s\n' "$kit" | sed "s/'/'\\\\''/g")'" &&
   copied=$(git -C "$kit" rev-parse -q --verify HEAD) && review="$review --kit-commit $copied"
+# The version the newest "## Unreleased — vX" heading names, above every release: the checklist says it is
+# the upgrade's end ("v0.14.1 to v0.14.1" headed twelve v0.15 items, leeway v0.15 sync review). The stamp still
+# records the last release ($latest): the unreleased section may grow, and its ticked items stay ticked past the
+# release (test_an_unreleased_section_is_listed_as_its_version_and_stays_ticked_past_the_release).
+upcoming=$(awk '/^## / { if ($2 == "Unreleased" && match($0, /v[0-9][0-9.]*/)) print substr($0, RSTART + 1, RLENGTH - 1); exit }' "$kit/CHANGELOG.md")
 render() {
   # The review line through the environment: -v reads its '\'' as an escape.
-  review="$review" awk -v ck="$1" -v from="$have" -v to="$latest" -v src="$kit/CHANGELOG.md" '
+  review="$review" awk -v ck="$1" -v from="$have" -v to="$latest" -v next_="$upcoming" -v src="$kit/CHANGELOG.md" '
     FILENAME == ck { sub(/\r$/, ""); if (sub(/^- \[[xX]\] /, "")) done[$0] = 1; next }
     !head { head = 1
-      print "# Upgrade checklist, v" from " to v" to; print ""
+      print "# Upgrade checklist, v" from " to v" (next_ != "" ? next_ " (unreleased)" : to); print ""
       print "Written by sync-kit.sh, one box per ACTION item, the oldest version first. Apply each item"
       print "and tick its box (- [x]) when it is done; each one'\''s whole entry is in " src "."
       print "Then rerun sync-kit.sh with --actions-applied: it records v" to " only when every box is"
       print "ticked, and deletes this file."
+      if (next_ != "") print "v" to " is the kit'\''s last release: v" next_ " is recorded by the first sync after its release."
       print "A hook an item adds runs only in a session started after it (#321): the commit that adds it"
       print "is not guarded by it, so restart the session before relying on it."
       review = ENVIRON["review"]

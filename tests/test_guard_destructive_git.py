@@ -80,6 +80,7 @@ class GuardDestructiveGitTests(GuardCase):
         self.dirty()
         self.assertVerdict([
             'git reset --hard', 'git -C . reset --hard', 'git -c x.y=1 reset --hard HEAD',
+            'git -C $(pwd) reset --hard',  # syncfind: the lexer split the line at $( and read a command named reset
             'git checkout -- f.txt', 'git checkout -f', 'git restore f.txt', 'git restore --staged --worktree f.txt',
             'git restore -SW f.txt', 'git clean -fd', 'git clean -x -f', 'git clean --force',
         ], 2)

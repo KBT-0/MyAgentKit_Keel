@@ -402,8 +402,37 @@ def substitutions(text):
 WORD = r'''(?:[^\s;&|()<>'"\\]+|\\.|'[^']*'|"(?:\\.|[^"\\])*")+'''
 
 
+def blank_substitutions(text):
+    """text with each unquoted `$( )` made one unknown word: the lexer split `git -C $(pwd) reset --hard` at the
+    parentheses and read `reset --hard` as a command named reset, so a dirty tree's reset passed (syncfind). Its inner
+    text is still judged, by substitutions(); a `$(` that never closes is left as it was."""
+    out, i, quote = [], 0, ""
+    while i < len(text):
+        if text[i] == "\\" and quote != "'":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            quote = "" if text[i] == quote else quote
+        elif text[i] in "'\"":
+            quote = text[i]
+        elif text.startswith("$(", i):
+            depth, j = 1, i + 2
+            while j < len(text) and depth:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            if not depth:
+                out.append(UNKNOWN)
+                i = j
+                continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
 def shell_tokens(text, strict=False):
     """Shell words and separators, with redirections removed before quote information is lost."""
+    text = blank_substitutions(text)
     # Consume complete raw shell words so quoted/escaped >, < and descriptor numbers survive.
     # Strip a redirection together with its target before shlex discards quote information or
     # splits `2>&1` at `&`. A separate `2 >out` leaves 2 as an argument, as the shell does.
@@ -585,6 +614,7 @@ class Git:
         self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
         self.tree = None  # a path checkout's revision: an ignored file is lost only where it holds the path
         self.options = []  # the global options, their separate values skipped (r327 r2: `-C . --icase-pathspecs`)
+        self.dirs = []  # the -C values, in order: where commits() says the commit stands
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
@@ -592,6 +622,7 @@ class Git:
             self.options.append(tok)
             if tok in ("-C", "--git-dir", "--work-tree"):
                 self.route += [tok, native(nxt)]
+                self.dirs += [nxt] if tok == "-C" else []
             elif tok.startswith(("--git-dir=", "--work-tree=")):
                 key, value = tok.split("=", 1)
                 self.route.append(key + "=" + native(value))
@@ -1027,20 +1058,39 @@ def powershell(command):
     return re.sub(r"(?<!\$)\(", " $(", command)
 
 
-def commit_folders(command, cwd, tool_name=None):
-    """Every folder a `git commit` on this line may stand in, its `cd`s read as judge() reads them (after a
-    keyword, in an if body, PowerShell's Set-Location/sl/Push-Location, a Git Bash drive path); None for one
-    the hook cannot name. Raises Unreadable (an unbalanced quote). For guard_risky_review.py (review leewayfix)."""
+def commit_folders(command, cwd, tool_name=None, why=None):
+    """Every folder a `git commit` on this line stands in, its `cd`s read as judge() reads them (after a keyword,
+    in an if body, PowerShell's Set-Location/sl/Push-Location, a Git Bash drive path) and its -C values applied;
+    None for one the hook cannot name; [] for a line that holds no commit. `why`, a list, gets the text of each
+    command that names a git commit the hook cannot look through. Raises Unreadable (an unbalanced quote). The one
+    commit reader of guard_risky_review.py, which had a regex of its own that missed `"git" commit` and
+    `git --namespace x commit` (syncfind; review leewayfix)."""
     if tool_name == "PowerShell":
         command = powershell(command)
-    return list(dict.fromkeys(commits(command, [cwd]))) or [cwd]
+    return list(dict.fromkeys(commits(command, [cwd], [] if why is None else why)))
 
 
-def commits(command, cwds):
+def into(cwd, dirs):
+    """The folder `git -C DIR ...` stands in from cwd; None when a DIR is only known at run time or is no folder
+    (labricore A4: it fell back to the session's tree). A cwd that is no folder is left as it is: no shell stands
+    there, and guard_risky_review.folders() leaves it out."""
+    for value in dirs:
+        if cwd is None or not os.path.isdir(cwd):
+            break
+        value = re.sub(r"\$\{?PWD\}?|\$\(pwd\)|`pwd`", lambda _: cwd, value)
+        value = native(os.path.expanduser(os.path.expandvars(value)))
+        cwd = None if unknowable(value) or not os.path.isdir(os.path.join(cwd, value)) else os.path.join(cwd, value)
+    return cwd
+
+
+def commits(command, cwds, why):
     """commit_folders() for one shell text: a segment is read as judge() reads it (start(), shell_flag()); a
     shell's text (`sh -c`, eval, a shell's here-document, a substitution) is read with the same folders, its own
     `cd`s moving only it; a wrapper that runs git (timeout, xargs, sudo) is looked through to its git word. A
-    segment that holds git the hook does not read as a git command is None (review leewayfix r3 High)."""
+    segment with a word that holds git and commit (code, a wrapper's text) the hook does not read as a git command
+    is None (review leewayfix r3 High); without one it commits nothing and cannot move a later commit (a program
+    never changes its shell's folder), so `rg -n "git log" docs/commit.md` holds no commit. shortcut: a commit is read by its word, so an alias (`git ci`) is not seen;
+    upgrade to the git hook if an agent commits that way."""
     text, bodies = strip_heredocs(command)
     found = []
     for seg in segments(text, strict=True):
@@ -1052,21 +1102,26 @@ def commits(command, cwds):
         if name in CD:
             cwds = moved(rest, cwds)
         elif flag is not None and has_git:
-            found += commits(" ".join(rest[flag + 1:]), cwds)
+            found += commits(" ".join(rest[flag + 1:]), cwds, why)
         elif name == "eval" and has_git:
-            found += commits(" ".join(rest[1:]), cwds)
+            found += commits(" ".join(rest[1:]), cwds, why)
         elif at is not None and (at == 0 or name not in INERT):
-            found += cwds if Git(rest[at + 1:], {}, cwds).sub == "commit" else []
-        elif has_git and name not in INERT and not (
+            g = Git(rest[at + 1:], {}, cwds)
+            found += [into(c, g.dirs) for c in cwds] if g.sub == "commit" else []
+        elif any(GIT_WORD.search(t) and "commit" in t for t in rest) and name not in INERT and not (
                 name in TEXT_ARGS and not any(GIT_WORD.match(t.lstrip("($`")) for t in rest[1:])):
             # Code or a wrapper's text that names git: the hook cannot tell where it runs. Only a git inside
             # the prose argument of a TEXT_ARGS program (gh --title "fix the git hook") is none (cb35ca5 review).
             found.append(None)
+            why.append(shlex.join(rest))
     for shell, body in bodies:
-        if GIT_WORD.search(body) and shell is not None:  # an interpreter's body is code (cb35ca5 review)
-            found += commits(body, cwds) if shell else [None]
+        if GIT_WORD.search(body) and shell:
+            found += commits(body, cwds, why)
+        elif GIT_WORD.search(body) and shell is not None and "commit" in body:  # an interpreter's body is code
+            found.append(None)  # (cb35ca5 review)
+            why.append(body.strip().splitlines()[0])
     for inner in substitutions(text):
-        found += commits(inner, cwds) if GIT_WORD.search(inner) else []
+        found += commits(inner, cwds, why) if GIT_WORD.search(inner) else []
     return found
 
 

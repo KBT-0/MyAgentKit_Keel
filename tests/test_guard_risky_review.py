@@ -313,7 +313,7 @@ class RiskyReviewTests(unittest.TestCase):
         refused = self.hook('guard_risky_review.py', {'tool_name': 'Bash', 'cwd': str(self.root), 'tool_input': {
             'command': 'python3 -c "import os; os.system(\'git commit -am x\')" && git commit -m y'}})
         self.assertEqual(refused.returncode, 2)
-        self.assertIn('cannot be resolved', refused.stderr.decode())
+        self.assertIn('`python3 -c', refused.stderr.decode())  # the message names the command (leeway v0.15)
 
     def test_review_cb35ca5_interpreter_heredoc_refused_argument_text_passes(self):
         # The cb35ca5 review (Medium x2): `python3 - <<EOF` running git commit after `cd wt` passed on the
@@ -424,6 +424,25 @@ class RiskyReviewTests(unittest.TestCase):
                 self.git('add', 'scripts/gate_config.sh')
                 self.git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'off')
                 self.assertEqual(self.commit().returncode, 0)
+
+    def test_leeway_v015_sync_review_commit_forms_and_quoted_git_text(self):
+        # Pre-existing: this hook's own regex missed these forms and passed an unreviewed risky change; the shared
+        # reader (guard_destructive_git.commit_folders) finds them.
+        (self.root / 'src/money/round.py').write_text('x = 2\n', encoding='utf-8')
+        for command in ('git --namespace x commit -am x', 'git -C"." commit -am x', '"git" commit -am x',
+                        'git -C $(pwd) commit -am x'):
+            with self.subTest(command=command):
+                self.assertEqual(self.commit(command).returncode, 2, command)
+        self.review()
+        # Low: a quoted "git commit" for a program the hook cannot look through stays refused, and the message
+        # names that command, not a cd or -C the line does not hold. A git word without the commit is no commit.
+        refused = self.commit('git commit -am x && rg -n "git commit" docs')
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("`rg -n 'git commit' docs`", refused.stderr.decode())
+        self.assertNotIn('-C folder', refused.stderr.decode())
+        for command in ('rg -n "git" docs && git commit -am x', 'rg -n "git log" docs/commit.md'):
+            with self.subTest(command=command):
+                self.assertEqual(self.commit(command).returncode, 0, self.commit(command).stderr)
 
     def test_the_overlay_wires_both_hooks(self):
         settings = json.loads((HOOKS.parent / 'settings.json').read_text(encoding='utf-8'))['hooks']
