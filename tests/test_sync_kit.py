@@ -271,7 +271,12 @@ class SyncKitTests(unittest.TestCase):
             result, stamp = self.sync(tmp, '', env=env)
             self.assertEqual((result.returncode, stamp), (2, '0.2'), result.stdout + result.stderr)
             self.assertNotIn('already current', result.stdout)
-            self.assertIn('- [ ] v0.3: **ACTION:** register it.', (project / 'docs/kit/UPGRADE.md').read_text(encoding='utf-8'))
+            listing = (project / 'docs/kit/UPGRADE.md').read_text(encoding='utf-8')
+            self.assertIn('- [ ] v0.3: **ACTION:** register it.', listing)
+            # leeway v0.15 sync review: the header said "v0.2 to v0.2" over v0.3's items.
+            self.assertTrue(listing.startswith('# Upgrade checklist, v0.2 to v0.3 (unreleased)\n'), listing)
+            self.assertIn('it records v0.2 only', listing)
+            self.assertIn('v0.3 is recorded by the first sync after its release', listing)
             self.tick(project)
             result, stamp = self.sync(tmp, '', '--actions-applied', env=env)
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)

@@ -80,6 +80,7 @@ class GuardDestructiveGitTests(GuardCase):
         self.dirty()
         self.assertVerdict([
             'git reset --hard', 'git -C . reset --hard', 'git -c x.y=1 reset --hard HEAD',
+            'git -C $(pwd) reset --hard',  # syncfind: the lexer split the line at $( and read a command named reset
             'git checkout -- f.txt', 'git checkout -f', 'git restore f.txt', 'git restore --staged --worktree f.txt',
             'git restore -SW f.txt', 'git clean -fd', 'git clean -x -f', 'git clean --force',
         ], 2)
@@ -945,6 +946,8 @@ class V014FieldReportTests(GuardCase):
             "cat > x.sh <<'EOF'\nHUSKY=0 git commit -m x\necho it's\nEOF\nsh x.sh",
             "cat > x.sh <<'EOF'\ng=git; $g stash drop\necho it's\nEOF\nsh x.sh",
             "cat > x.sh <<'EOF'\necho it's\ngit stash drop\nEOF\nsh x.sh",
+            # syncfind r2 (High): the shell that runs the body inside an unquoted $( ) is still its reader
+            "cat > x.sh <<'EOF'\nHUSKY=0 git commit -m x\nEOF\nx=$(bash x.sh)",
             # review v014-mergerev: a nested body's apostrophe is not a quote the shell leaves open
             "cat > run.sh <<'EOF'\ncat <<'MSG'\nthe lead's note\nMSG\n"
             "GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/dev/null'\" git commit -m x\nEOF\nsh run.sh",

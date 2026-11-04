@@ -19,6 +19,8 @@ from what was reviewed does not. A symlink's content is its target text, as git 
 judged is every one the commit may stand in: a `cd DIR` before it adds DIR, read by
 guard_destructive_git.commit_folders (one reader for both guards), and a `cd` the hook cannot resolve is
 refused like such a `-C`.
+A commit is found by guard_destructive_git.commit_folders too, the one git reader of both guards: this hook had
+a regex of its own that missed `"git" commit` and `git --namespace x commit` (syncfind).
 shortcut: it reads the shell command for `git ... commit` on one line, so a commit inside a script
 (`sh scripts/sync_kit.sh`) is not seen, and it runs before the command, so a risky file the same
 command writes first (`git apply fix.patch && git commit -am fix`) is not seen either; upgrade to
@@ -32,14 +34,6 @@ import os
 import re
 import subprocess
 import sys
-
-# `commit` as git's subcommand, after global options (-C dir, -c k=v, --no-pager): `git show HEAD:commit.md` is none
-# The two option forms never match the same text (-c/-C take a value; others never are -c/-C): no backtracking blow-up.
-COMMIT = re.compile(r"\bgit(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|-(?![Cc]\s)[\w-]+(?:=\S+)?))*"
-                    r"\s+commit(?![\w-])")
-# A commit as an argv list in code (`subprocess.run(['git', '-C', 'wt', 'commit'])`; the cb35ca5 review).
-ARGV_COMMIT = re.compile(r"""(['"])git(?:\.exe)?\1\s*,(?:\s*(['"])[^'"\n]*\2\s*,)*?\s*(['"])commit\3""")
-
 
 def git(root, *args):
     result = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
@@ -132,19 +126,11 @@ def note_content(root, paths):
         json.dump(content, f, sort_keys=True)
 
 
-def project_root(data, command=""):
+def project_root(data):
     """The work tree the call runs in (a worktree session's own), not the folder the session started in (#317):
-    the commit's -C folders on the call's cwd, their top folder; outside any work tree, the session's."""
+    the top folder of the call's cwd (for a commit, a folder commit_folders gives, its -C values applied);
+    outside any work tree, the session's."""
     cwd = where = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
-    match = COMMIT.search(command)
-    values = re.findall(r"\s-C\s+((?:[^\s\"']|\"[^\"]*\"|'[^']*')+)", match.group(0) if match else "")
-    for value in values:
-        value = re.sub(r"\$\{?PWD\}?|\$\(pwd\)|`pwd`", lambda _: cwd, re.sub(r"[\"']", "", value))
-        where = os.path.join(where, os.path.expanduser(os.path.expandvars(value)))
-    if values:
-        # labricore A4: a -C the hook cannot resolve ($WT, a shell-only expansion) is no tree to judge
-        top = (git(where, "rev-parse", "--show-toplevel") or "").strip() if os.path.isdir(where) else ""
-        return top or None
     for folder in (where, cwd, os.environ.get("CLAUDE_PROJECT_DIR") or "."):
         top = (git(folder, "rev-parse", "--show-toplevel") or "").strip() if os.path.isdir(folder) else ""
         if top:
@@ -152,18 +138,18 @@ def project_root(data, command=""):
     return where
 
 
-def folders(command, cwd, tool_name=None):
+def folders(command, cwd, tool_name=None, why=None):
     """Every folder the commit may stand in, read by guard_destructive_git.commit_folders, so both guards follow
     the same `cd`s (keywords, if bodies, PowerShell's Set-Location/sl/Push-Location and `.\\wt`; review
-    leewayfix High); None for one the hook cannot name; a folder that does not exist is left out. A missing
-    or unreadable reader, or an unbalanced quote, is None too."""
+    leewayfix High), [] when the line holds no commit; None for one the hook cannot name; a folder that does not
+    exist is left out. A missing or unreadable reader, or an unbalanced quote, is None too on a line naming git."""
     try:
         sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import guard_destructive_git
-        found = guard_destructive_git.commit_folders(command, cwd, tool_name)
+        found = guard_destructive_git.commit_folders(command, cwd, tool_name, why)
     except Exception:  # noqa: BLE001 - an older or missing guard_destructive_git.py, or Unreadable
-        return [None]
+        return [None] if re.search("git", command, re.I) else []
     # A shell cannot stand in a folder that does not exist (`cd wt; cd wt` adds wt/wt), so none is judged there:
     # project_root would judge the session's tree in its place.
     return [c for c in found if c is None or c == cwd or os.path.isdir(c)]
@@ -172,11 +158,20 @@ def folders(command, cwd, tool_name=None):
 def main():
     data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     command = (data.get("tool_input") or {}).get("command") or ""
-    if not (COMMIT.search(command) or ARGV_COMMIT.search(command)):
+    if "commit" not in command:  # each commit the reader finds holds the word; most calls end here, unparsed
         return 0
     cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
-    roots = [None if c is None else project_root(dict(data, cwd=c), command)
-             for c in folders(command, cwd, data.get("tool_name"))]
+    why = []
+    roots = [None if c is None else project_root(dict(data, cwd=c))
+             for c in folders(command, cwd, data.get("tool_name"), why)]
+    if None in roots and why:
+        # leeway v0.15 sync review: `git commit -am x && rg -n "git commit" docs` was refused with a message about
+        # a cd or -C the line does not hold. Still refused: rg may run its text (--pre), as a wrapper or code may.
+        print("BLOCKED: this line also runs %s, which names a git commit in the text of a program the hook cannot "
+              "look through, so where that commit would stand, and its risky paths, cannot be checked. Run the "
+              "commit as a command of its own, and the other command apart (grep reads its text as data)."
+              % ", ".join("`%s`" % w for w in dict.fromkeys(why)), file=sys.stderr)
+        return 2
     if None in roots:
         print("BLOCKED: this commit's git -C folder, or the folder a cd before it moves to, cannot be resolved by the "
               "hook (a variable, a shell-only expansion, an unbalanced quote, or guard_destructive_git.py missing "

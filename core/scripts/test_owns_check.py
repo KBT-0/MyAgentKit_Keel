@@ -10,6 +10,11 @@ import unittest
 SCRIPT = Path(__file__).resolve().parent / 'owns_check.py'
 # Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run side by side.
 SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
+# The kit's packager, in the kit's layout only (core/scripts/ here): a synced project's scripts/ has neither, and
+# its two tests errored there (leeway v0.15 sync review). In the kit check_kit counts a skip as no pass and fails it.
+PACKAGER = SCRIPT.parents[2] / 'scripts/package_codex_plugin.py'
+KIT_ONLY = unittest.skipUnless(SCRIPT.parent.parent.name == 'core' and PACKAGER.is_file(),
+                               "the kit's scripts/package_codex_plugin.py is not here (a synced project)")
 
 
 class OwnsCheckTests(unittest.TestCase):
@@ -161,10 +166,11 @@ class OwnsCheckTests(unittest.TestCase):
             self.write(name)
             self.assertIn('  ' + name + '\n', self.check('Owns: src/')[1])
 
+    @KIT_ONLY
     def test_an_owned_source_owns_its_packaged_copies_and_the_manifest_stamp(self):
         # leewayfix: a worker refreshing a core file's plugin copy failed the review until the lead
         # added the copy and plugin.json to Owns by hand. The kit packager's own list maps them.
-        packager = SCRIPT.parents[2] / 'scripts/package_codex_plugin.py'
+        packager = PACKAGER
         copy, manifest = 'plugins/myagentkit/scripts/review_dispatch.py', 'plugins/myagentkit/.codex-plugin/plugin.json'
         for path in ('core/scripts/review_dispatch.py', copy, manifest):
             self.write(path, 'one\n')
@@ -192,11 +198,12 @@ class OwnsCheckTests(unittest.TestCase):
         self.assertEqual(errors.split(':\n', 1)[1], '  core/scripts/review_dispatch.py\n  %s\n' % copy)
         self.assertIn('  %s\n' % manifest, self.check('Owns: src/')[1])
 
+    @KIT_ONLY
     def test_the_packager_is_read_as_data_from_before_the_diff(self):
         # Review of 59acc77: owns_check ran the packager of the tree under review, so a diff that put
         # os._exit(0) at its top passed with an unowned path. It is read, never run, and from the
         # commit the diff starts from, so the diff's own COPIES owns nothing either.
-        real = (SCRIPT.parents[2] / 'scripts/package_codex_plugin.py').read_text(encoding='utf-8')
+        real = PACKAGER.read_text(encoding='utf-8')
         copy, manifest = 'plugins/myagentkit/scripts/review_dispatch.py', 'plugins/myagentkit/.codex-plugin/plugin.json'
         packager, owns = 'scripts/package_codex_plugin.py', 'Owns: core/scripts/review_dispatch.py'
         self.write(packager, real)
