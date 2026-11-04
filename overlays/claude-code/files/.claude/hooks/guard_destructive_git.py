@@ -344,7 +344,10 @@ def strip_heredocs(text):
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
     cut = [(header, body) for header, body in cut if GIT_WORD.search(body)]
     # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
-    commands = [w for seg in segments(text) if base(seg[0]) not in CALM | {"git"} for w in seg] if cut else []
+    # A substitution's own commands too: the lexer reads each unquoted $( ) as one word, so `x=$(bash run.sh)`
+    # hid its shell (syncfind r2 High).
+    commands = [w for t in [text, *substitutions(text)] for seg in segments(t)
+                if base(seg[0]) not in CALM | {"git"} for w in seg] if cut else []
     shell_reads = any(base(w) in SHELLS and not interpreter(base(w)) for w in commands)
     bodies = []
     for header, body in cut:
@@ -422,7 +425,8 @@ def blank_substitutions(text):
                 depth += {"(": 1, ")": -1}.get(text[j], 0)
                 j += 1
             if not depth:
-                out.append(UNKNOWN)
+                # `$(pwd)` stays a word into() and commit_folders resolve, as its quoted form (syncfind r2 Medium)
+                out.append('"$(pwd)"' if text[i + 2:j - 1].strip() == "pwd" else UNKNOWN)
                 i = j
                 continue
         out.append(text[i])
@@ -1107,7 +1111,12 @@ def commits(command, cwds, why):
             found += commits(" ".join(rest[1:]), cwds, why)
         elif at is not None and (at == 0 or name not in INERT):
             g = Git(rest[at + 1:], {}, cwds)
-            found += [into(c, g.dirs) for c in cwds] if g.sub == "commit" else []
+            # --git-dir/--work-tree name a tree rev-parse may not find from a folder: unresolvable (syncfind r2).
+            # An attached -Cwt needs nothing: git refuses it ("unknown option").
+            other = any(r.startswith(("--git-dir", "--work-tree")) for r in g.route)
+            found += [None if other else into(c, g.dirs) for c in cwds] if g.sub == "commit" else []
+        elif rest and unknowable(rest[0]) and "commit" in rest[1:]:
+            found.append(None)  # `$GIT commit`: judge() refuses a command named by a variable (syncfind r2)
         elif any(GIT_WORD.search(t) and "commit" in t for t in rest) and name not in INERT and not (
                 name in TEXT_ARGS and not any(GIT_WORD.match(t.lstrip("($`")) for t in rest[1:])):
             # Code or a wrapper's text that names git: the hook cannot tell where it runs. Only a git inside

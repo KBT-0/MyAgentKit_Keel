@@ -124,8 +124,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   a git word without the word commit (`rg -n "git" docs && git commit`) no longer refuses the commit. (4)
   `guard_risky_review.py` finds a commit with `guard_destructive_git.commit_folders`, the one git reader of both
   guards, so `"git" commit`, `git --namespace x commit` and `git -C $(pwd) commit` are judged, not passed; its own
-  regex is gone. That reader also no longer splits a line at an unquoted `$( )`: `git -C $(pwd) reset --hard`
-  passed on a dirty tree. test_guard_risky_review and test_guard_destructive_git red without it. **ACTION**
+  regex is gone; a commit by a git named in a variable (`$GIT commit`) or with `--git-dir`/`--work-tree` is refused
+  as a tree the hook cannot name. That reader also no longer splits a line at an unquoted `$( )`:
+  `git -C $(pwd) reset --hard` passed on a dirty tree; a shell inside one still reads a here-document's body. test_guard_risky_review and test_guard_destructive_git red without it. **ACTION**
   (project-owned `.claude/hooks/guard_risky_review.py`, `.claude/hooks/guard_destructive_git.py`):
   `sync-kit.sh . --merge`.
 

@@ -434,6 +434,16 @@ class RiskyReviewTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.commit(command).returncode, 2, command)
         self.review()
+        # Judged, not refused as unresolvable: after the review they pass (syncfind r2 Medium: unquoted $(pwd)).
+        for command in ('git -C $(pwd) commit -am x', 'git -C "$(pwd)" commit -am x', '"git" commit -am x'):
+            with self.subTest(command=command):
+                self.assertEqual(self.commit(command).returncode, 0, self.commit(command).stderr)
+        # A git named by a variable, or a tree named by --git-dir/--work-tree, is one the hook cannot name (r2).
+        for command in ('GIT=git; $GIT commit -am x', 'git --work-tree=. --git-dir=.git commit -am x'):
+            with self.subTest(command=command):
+                refused = self.commit(command)
+                self.assertEqual(refused.returncode, 2, command)
+                self.assertIn('cannot be resolved', refused.stderr.decode())
         # Low: a quoted "git commit" for a program the hook cannot look through stays refused, and the message
         # names that command, not a cd or -C the line does not hold. A git word without the commit is no commit.
         refused = self.commit('git commit -am x && rg -n "git commit" docs')

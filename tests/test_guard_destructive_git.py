@@ -946,6 +946,8 @@ class V014FieldReportTests(GuardCase):
             "cat > x.sh <<'EOF'\nHUSKY=0 git commit -m x\necho it's\nEOF\nsh x.sh",
             "cat > x.sh <<'EOF'\ng=git; $g stash drop\necho it's\nEOF\nsh x.sh",
             "cat > x.sh <<'EOF'\necho it's\ngit stash drop\nEOF\nsh x.sh",
+            # syncfind r2 (High): the shell that runs the body inside an unquoted $( ) is still its reader
+            "cat > x.sh <<'EOF'\nHUSKY=0 git commit -m x\nEOF\nx=$(bash x.sh)",
             # review v014-mergerev: a nested body's apostrophe is not a quote the shell leaves open
             "cat > run.sh <<'EOF'\ncat <<'MSG'\nthe lead's note\nMSG\n"
             "GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/dev/null'\" git commit -m x\nEOF\nsh run.sh",
