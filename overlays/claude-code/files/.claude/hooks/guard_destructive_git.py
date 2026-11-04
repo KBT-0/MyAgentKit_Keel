@@ -42,7 +42,9 @@ or stash before any command that discards work" still covers every destructive c
   one the hook cannot name, judged dirty. A command after one that changes the tree (anything
   but `cd`, `echo`, a read-only git command ...) is judged dirty. `git rm -f` (not `--cached`),
   `mv -f`, `checkout-index -f` and `read-tree -u --reset` are judged the same way, and so is a
-  command named by a substitution (`$(which git) reset --hard`, backticks): its words are read as git's.
+  command named by a substitution or a variable (`$(which git) reset --hard`, backticks), first or behind a
+  wrapper (`timeout 60 $(which git) ...`): the words after it are read as git's. The cost, accepted: a non-git
+  program so named whose words spell a git verb (`$(which make) clean`) is refused on a dirty tree.
 
 The floor runs first: the base implementation's patterns (`git reset ... --hard`, `checkout --`,
 `checkout -f`, `restore` without `--staged`, `clean -f/-d/-x` without `-n`, `stash drop/clear`,
@@ -1030,6 +1032,7 @@ def judge(command, cwds, changed=False, env=None):
         if name in CD:
             cwds = moved(rest, cwds)
             continue
+        at = next((k for k, t in enumerate(rest) if unknowable(t)), None) if name not in INERT else None
         if name == "git":
             g = Git(rest[1:], here, cwds)
             # A -c value git may run (core.editor, diff.external, core.sshCommand, alias.x=!...) is shell text (r327 r2).
@@ -1038,11 +1041,13 @@ def judge(command, cwds, changed=False, env=None):
                     yield from judge(config.partition("=")[2].lstrip("!"), cwds, changed, here)
             yield from findings(g, changed)
             changed = changed or g.sub not in READ_ONLY
-        elif rest and unknowable(rest[0]):
-            # whichgit: `$(which git) reset --hard` names its command by a substitution the hook cannot resolve, so it
-            # may be git: its words are read as git's, by the same verdict(), without an alias lookup.
-            word = rest[0].replace(UNKNOWN, "$(...)")
-            for always, why, found in findings(Git(rest[1:], here, cwds), changed, aliases=False):
+        elif at is not None:
+            # whichgit: `$(which git) reset --hard`, first or behind a wrapper (`timeout 60 $(which git) ...`, r2), names
+            # a command the hook cannot resolve, so it may be git: the words after it are read as git's, by the same
+            # verdict(), without an alias lookup. An unreadable subcommand (`$(which python3) "$f"`) is no git verb.
+            g = Git(rest[at + 1:] + [UNKNOWN] * (at > 0 and name in ("xargs", "parallel")), here, cwds)
+            word = rest[at].replace(UNKNOWN, "$(...)")
+            for always, why, found in [] if unknowable(g.sub) else findings(g, changed, aliases=False):
                 yield always, f"`{word}` names a command the hook cannot resolve, so it is read as git: {why}", found
             changed = True
         elif name not in CALM:
