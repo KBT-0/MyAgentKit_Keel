@@ -15,6 +15,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **Peers address a project's master lead by its marker (owner 2026-11-04).** `docs/COMMUNICATION.md`
+  "Addressing a lead": a message for the master lead goes to line 2 of `PROJECT/.myagentkit/master-writer`, never
+  to a name guessed from the session list (a sync order reached a probe lead). Docs only. **ACTION** (project-owned
+  `docs/COMMUNICATION.md`): `sync-kit.sh . --merge`.
 - **Context band 150k / 200k / 300k (owner 2026-11-03).** Sessions reach 200k in about 100 requests (the field token
   reports), so the band moves down: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k
   (`context_size.py`, `watch_workers.sh`'s default worker line, `docs/WORKFLOW.md` "Worker cost" rule 8).

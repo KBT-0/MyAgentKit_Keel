@@ -535,7 +535,7 @@ a plain commit instead of the merge; (3) a retry hit `.git/index.lock`, held by 
 gated commit. The writer runs `python3 scripts/master_writer.py claim` (`python` on native Windows) once: it writes the session's
 id (`CLAUDE_CODE_SESSION_ID`) and its session name (the one peers send to, from `claude agents
 --json --all` or `MYAGENTKIT_SESSION_NAME`) to the Git-ignored `.myagentkit/master-writer` and to the
-STATE line, `release` clears both, `show` (or `status`) prints them (from a worktree too), and the hand-over around MAIN
+STATE line, `release` clears both, `show` (or `status`) prints them (from a worktree too; also how a peer or another project's lead finds whom to message, `docs/COMMUNICATION.md`, "Addressing a lead"), and the hand-over around MAIN
 CHECKOUT IDLE is the sender's `release` and the receiver's `claim`. A session without
 `CLAUDE_CODE_SESSION_ID` (another CLI) sets `MYAGENTKIT_SESSION_ID` for the claim and for every
 git command it runs; `spawn_worker.sh` and `spawn_codex.sh` set it to `worker-NAME` for every worker they start. While the marker names a session, the pre-commit and pre-merge-commit hooks

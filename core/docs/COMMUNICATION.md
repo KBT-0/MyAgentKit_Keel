@@ -205,6 +205,14 @@ worktree policy"):
 The commit hooks' master-writer refusal prints the MERGE REQUEST line above as it stands here:
 this line is the one place its shape lives.
 
+**Addressing a lead:** a message meant for a project's master lead goes to the session name on line 2 of that
+project's `.myagentkit/master-writer` (`cat PROJECT/.myagentkit/master-writer` from any checkout,
+`python3 scripts/master_writer.py show` from inside it; `python` on native Windows), never to a name guessed from the session list
+(ListAgents, `claude agents`): names say nothing about roles, and a project runs probe leads, workers and the
+master lead side by side (a sync order reached a probe lead, 2026-11-04). An empty or missing marker means no
+master lead is running: write the request as a file for the next lead (`docs/HANDOFF.md`), do not message. A
+session that receives a message meant for the master lead forwards it to the marker's name and says so in one line.
+
 A report to another project's lead (a field report, kit feedback) goes into a file; the message
 carries only its path and one line on what it holds. A pasted report filled a lead's context
 with about 14k tokens of peer messages in one session (owner, 2026-10-26).

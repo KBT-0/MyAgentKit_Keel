@@ -111,7 +111,7 @@ the hand-off: finish the work, or wait and tell {{OWNER_NAME}} when the hand-off
 worker in its own session does not block: the next lead's announcement reaches it (owner,
 2026-10-26); the hand-off file names each such running worker (`scripts/list_workers.sh`: name, id,
 state) with its `claude stop ID` line, so {{OWNER_NAME}} can end one nobody waits for. A master writer that hands off (`docs/WORKFLOW.md`, "Parallel work — worktree policy") runs
-`python3 scripts/master_writer.py release` (`python` on native Windows) before it ends and sends
+`python3 scripts/master_writer.py release` (`python` on native Windows) before it ends (so a peer reading the marker learns that no lead is running) and sends
 every peer lead of the project "I am leaving; the next lead will announce itself", and the
 next session runs `claim`, then sends every peer the line `claim` prints ("new lead is NAME, send
 merge requests there"). After a crash the marker still names the old session: the successor
