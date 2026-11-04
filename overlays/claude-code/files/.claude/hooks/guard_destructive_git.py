@@ -41,7 +41,8 @@ or stash before any command that discards work" still covers every destructive c
   `xargs`) is judged with its own `cd`s; code that names a folder (`cwd=`, `chdir`, a `cd`) adds
   one the hook cannot name, judged dirty. A command after one that changes the tree (anything
   but `cd`, `echo`, a read-only git command ...) is judged dirty. `git rm -f` (not `--cached`),
-  `mv -f`, `checkout-index -f` and `read-tree -u --reset` are judged the same way.
+  `mv -f`, `checkout-index -f` and `read-tree -u --reset` are judged the same way, and so is a
+  command named by a substitution (`$(which git) reset --hard`, backticks): its words are read as git's.
 
 The floor runs first: the base implementation's patterns (`git reset ... --hard`, `checkout --`,
 `checkout -f`, `restore` without `--staged`, `clean -f/-d/-x` without `-n`, `stash drop/clear`,
@@ -406,9 +407,10 @@ WORD = r'''(?:[^\s;&|()<>'"\\]+|\\.|'[^']*'|"(?:\\.|[^"\\])*")+'''
 
 
 def blank_substitutions(text):
-    """text with each unquoted `$( )` made one unknown word: the lexer split `git -C $(pwd) reset --hard` at the
-    parentheses and read `reset --hard` as a command named reset, so a dirty tree's reset passed (syncfind). Its inner
-    text is still judged, by substitutions(); a `$(` that never closes is left as it was."""
+    """text with each unquoted `$( )` and backtick pair made one unknown word: the lexer split `git -C $(pwd) reset
+    --hard` at the parentheses and read `reset --hard` as a command named reset, so a dirty tree's reset passed
+    (syncfind), and split `` `which git` reset `` into `` `which `` and `` git` `` (whichgit). Its inner text is still
+    judged, by substitutions(); a `$(` or backtick that never closes is left as it was."""
     out, i, quote = [], 0, ""
     while i < len(text):
         if text[i] == "\\" and quote != "'":
@@ -419,6 +421,11 @@ def blank_substitutions(text):
             quote = "" if text[i] == quote else quote
         elif text[i] in "'\"":
             quote = text[i]
+        elif text[i] == "`" and text.find("`", i + 1) > 0:
+            j = text.find("`", i + 1)
+            out.append('"$(pwd)"' if text[i + 1:j].strip() == "pwd" else UNKNOWN)
+            i = j + 1
+            continue
         elif text.startswith("$(", i):
             depth, j = 1, i + 2
             while j < len(text) and depth:
@@ -495,10 +502,10 @@ def loose(text, cwds, changed=False, env=None, appended=False):
         yield from findings(Git(words + [UNKNOWN] * appended, dict(env or {}), cwds), changed)
 
 
-def findings(g, changed):
+def findings(g, changed, aliases=True):
     """The verdict on one git invocation as judge's findings. A shell alias or `submodule foreach`
     has its shell text judged where it runs."""
-    found = verdict(g)
+    found = verdict(g, aliases=aliases)
     if found and found[0] == "shell":
         _, text, cwds, fallback = found
         inner = list(judge(text, cwds, changed, g.env))
@@ -780,9 +787,10 @@ def stash_in_head(g, ref):
         return False
 
 
-def verdict(g, depth=0):
+def verdict(g, depth=0, aliases=True):
     """None, or (always, why, ignored_counts) for one git invocation, or ("shell", text, cwds,
-    fallback why) when git runs shell text (findings() judges it)."""
+    fallback why) when git runs shell text (findings() judges it). `aliases=False`: an unknown
+    subcommand is no alias (a command that may not be git: `$(which python3) x.py`)."""
     sub, args = g.sub, g.args
     if any(c.split("=", 1)[0].lower() == "core.hookspath" for c in g.configs):
         return True, GATE, False
@@ -905,7 +913,7 @@ def verdict(g, depth=0):
         while rest and rest[0] in ("--recursive", "-q", "--quiet"):
             rest = rest[1:]
         return "shell", " ".join(rest), [None], None
-    if sub and sub not in SPEC and sub not in READ_ONLY and sub not in ("stash", "add", "init", "clone"):
+    if aliases and sub and sub not in SPEC and sub not in READ_ONLY and sub not in ("stash", "add", "init", "clone"):
         if g.cwd and not os.path.isdir(g.cwd):  # made by an earlier command of the line (a clone)
             return False, (f"git {sub} runs in {g.cwd}, a folder that does not exist yet, so the hook "
                            "cannot read whether it is an alias"), False
@@ -1030,6 +1038,13 @@ def judge(command, cwds, changed=False, env=None):
                     yield from judge(config.partition("=")[2].lstrip("!"), cwds, changed, here)
             yield from findings(g, changed)
             changed = changed or g.sub not in READ_ONLY
+        elif rest and unknowable(rest[0]):
+            # whichgit: `$(which git) reset --hard` names its command by a substitution the hook cannot resolve, so it
+            # may be git: its words are read as git's, by the same verdict(), without an alias lookup.
+            word = rest[0].replace(UNKNOWN, "$(...)")
+            for always, why, found in findings(Git(rest[1:], here, cwds), changed, aliases=False):
+                yield always, f"`{word}` names a command the hook cannot resolve, so it is read as git: {why}", found
+            changed = True
         elif name not in CALM:
             changed = True
     # Here-document bodies and substitutions run inside some command of the line: judged with

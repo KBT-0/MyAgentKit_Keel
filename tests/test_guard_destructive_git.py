@@ -1233,6 +1233,22 @@ class V0141FieldReportTests(GuardCase):
         self.assertNotIn(b'n14.txt', result.stderr)
         self.assertIn(b'... and 5 more (git status --porcelain)', result.stderr)
 
+    def test_whichgit_a_command_named_by_a_substitution_is_read_as_git(self):
+        # Review 20261104T141939Z-ed179f909c60 (pre-existing, reproduced): `$(which git) reset --hard` passed.
+        named = ['$(which git) reset --hard', '"$(command -v git)" reset --hard', '$(type -p git) reset --hard',
+                 '`which git` reset --hard', '"`which git`" reset --hard', '$GIT reset --hard',
+                 '$(which git) checkout -- f.txt', '$(which git) restore f.txt', '$(which git) clean -fd']
+        harmless = ['$(which python3) x.py', '$(which python3) -c "print(1)"', '$(which git) status',
+                    '`which git` log', 'echo `date` && git status']
+        self.assertVerdict(['$(which git) stash drop', '`which git` push -f'], 2)  # loss-certain: any tree
+        # A clean tree loses nothing; a quoted "$(...)" and $GIT stay refused as a command named by a variable.
+        self.assertVerdict(harmless + [c for c in named if not c.startswith(('"$', '$G'))], 0)
+        self.dirty()
+        self.assertVerdict(named, 2)
+        self.assertVerdict(harmless, 0)
+        self.assertIn(b'`$(...)` names a command the hook cannot resolve, so it is read as git: git reset --hard',
+                      self.run_hook(named[0]).stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
