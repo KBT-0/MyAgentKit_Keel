@@ -123,7 +123,7 @@ def case_folds():
 
 
 REQUIRED_SUITES = {
-    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=10, test_context_buckets=8, test_owns_check=12, test_token_audit=5),
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=10, test_context_buckets=8, test_owns_check=13, test_token_audit=5),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 3, 'test_bootstrap': 42 if case_folds() else 41, 'test_acceptance': 20,

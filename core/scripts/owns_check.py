@@ -8,13 +8,13 @@ A brief without an Owns: line, or with more than one outside fenced code blocks,
 with git's rules: '*' and '?' stay inside one folder, '**/' matches zero or more folders and a
 trailing '/**' everything below. docs/STATE.md and docs/BACKLOG.md are always allowed: every
 worker records its state there. In the kit, an owned source also owns the packaged copies
-scripts/package_codex_plugin.py makes of it and the manifest stamp they change. Exit 1 lists
-the paths outside; exit 2 is a usage or git error.
+scripts/package_codex_plugin.py makes of it and the manifest stamp they change, read as data
+from the packager before the diff. Exit 1 lists the paths outside; exit 2 is a usage or git error.
 Run from the repository root (scripts/review.sh does). --brief checks the line alone, before a
 worker starts (spawn_worker.sh): a brief without one passes, a pattern holding a space is prose.
 """
+import ast
 from fnmatch import fnmatchcase
-import importlib.util
 from pathlib import Path
 import re
 import subprocess
@@ -83,6 +83,11 @@ def git(*args):
             .decode('utf-8', 'surrogateescape').split('\0') if p]
 
 
+def first_parent(ref):
+    parents = git('rev-list', '--parents', '-n', '1', ref)[0].split()[1:]
+    return parents[0] if parents else None
+
+
 def changed(scope, ref=None):
     """Every path the review of SCOPE would see changed, renames counted as delete plus add."""
     if scope == '--uncommitted':
@@ -93,31 +98,53 @@ def changed(scope, ref=None):
         return (git('diff', '--name-only', '--no-renames', '-z', ref + '...HEAD')
                 + git('ls-files', '--others', '--exclude-standard', '-z'))
     # The review diffs a commit against its first parent, merges included (claude_bridge.snapshot).
-    parents = git('rev-list', '--parents', '-n', '1', ref)[0].split()[1:]
-    if parents:
-        return git('diff', '--name-only', '--no-renames', '-z', parents[0], ref)
+    parent = first_parent(ref)
+    if parent:
+        return git('diff', '--name-only', '--no-renames', '-z', parent, ref)
     return git('diff-tree', '--no-commit-id', '--no-renames', '-r', '-z', '--root', '--name-only', ref)
 
 
-def packaged(owns):
-    """The packaged copies of the sources OWNS accepts, plus the manifest whose stamp they change,
-    from the packager's own list (leewayfix: each copy was added to Owns by hand). A project has
-    no packager, so nothing more is owned there; the packager itself is never a copy."""
-    if not Path(PACKAGER).is_file():
+def before(scope, ref=None):
+    """The commit SCOPE's diff starts from, or None (a root commit)."""
+    if scope == '--uncommitted':
+        return 'HEAD'
+    if scope == '--base':
+        return git('merge-base', ref, 'HEAD')[0].strip()
+    return first_parent(ref)
+
+
+def packaged(owns, commit):
+    """The packaged copies of the sources OWNS accepts, plus the manifest whose stamp they change
+    (leewayfix: each copy was added to Owns by hand). The packager's COPIES and STAMPED are read
+    as literals from COMMIT, before the diff: run, or read from the diff, its edit could pass the
+    check or own any path. No packager there (a project) owns nothing more; nor does one that
+    holds no such literals, said on stderr. The packager itself is never a copy."""
+    if not commit:
         return set()
-    spec = importlib.util.spec_from_file_location('package_codex_plugin', PACKAGER)
-    module = importlib.util.module_from_spec(spec)
-    sys.dont_write_bytecode = True  # an untracked __pycache__ would leave the Owns: line itself
-    spec.loader.exec_module(module)
-    copies = {copy for source, copy in module.COPIES if owns(source)} - {PACKAGER}
-    return copies | {module.MANIFEST.relative_to(module.ROOT).as_posix()} if copies else copies
+    shown = subprocess.run(['git', 'cat-file', 'blob', '%s:%s' % (commit, PACKAGER)], capture_output=True)
+    if shown.returncode:
+        return set()
+    try:
+        values = {node.targets[0].id: node.value for node in ast.parse(shown.stdout).body
+                  if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
+        copies = {copy + name for source, copy, names in ast.literal_eval(values['COPIES'])
+                  for name in names if owns(source + name)}
+        stamped = ast.literal_eval(values['STAMPED'])
+        if not all(isinstance(path, str) for path in copies | {stamped}):
+            raise ValueError('a path is no string')
+    except (KeyError, SyntaxError, TypeError, ValueError) as error:
+        print('owns_check: %s at %s holds no literal COPIES and STAMPED (%s %s); no packaged copy is owned'
+              % (PACKAGER, commit, type(error).__name__, str(error)[:80]), file=sys.stderr)
+        return set()
+    copies -= {PACKAGER}
+    return copies | {stamped} if copies else copies
 
 
-def outside(paths, patterns):
+def outside(paths, patterns, commit=None):
     def owns(path):
         return any(path.startswith(p) if p.endswith('/') else glob_match(path.split('/'), p.split('/'))
                    for p in patterns)
-    copies = packaged(owns)
+    copies = packaged(owns, commit)
     return sorted({path for path in paths if path not in ALWAYS and path not in copies
                    and not WORKER_REPORT.fullmatch(path) and not owns(path)})
 
@@ -151,7 +178,7 @@ def main(argv):
         if not patterns:
             print('owns_check: the Owns: line of %s names no path' % argv[0], file=sys.stderr)
             return 2
-        stray = outside(changed(*argv[1:]), patterns)
+        stray = outside(changed(*argv[1:]), patterns, before(*argv[1:]))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         detail = getattr(error, 'stderr', b'') or b''
         print('owns_check: %s %s' % (error, detail.decode('utf-8', 'replace').strip()), file=sys.stderr)
