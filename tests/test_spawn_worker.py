@@ -1988,7 +1988,9 @@ exit 0
         # A resume without the id, or of a worktree that is not there, is refused before any tab.
         for args, words in ((('--worktree', '--resume'), '--resume needs the session id'),
                             (('--resume', '--worktree'), '--resume needs the session id'),
-                            (('--worktree', '--resume', 'sid-1'), None)):
+                            (('--worktree', '--resume', 'sid-1'), None),
+                            # resumefix: without --worktree it ran in the lead's checkout, out of close's reach.
+                            (('--resume', 'sid-1'), "--resume without --worktree: 'rw' has its worktree at")):
             with self.subTest(args=args):
                 name = 'gone' if words is None else 'rw'
                 (self.state / 'wt.json').unlink(missing_ok=True)

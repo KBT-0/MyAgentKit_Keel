@@ -102,6 +102,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `echo f.txt > list.txt &&`; the option's own name does not count, so a file named `paths` passes) asks the
   whole tree. test_guard_destructive_git: red
   without the fix. **ACTION** (project-owned `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
+- **A resume without `--worktree` of a worktree worker is refused.** `spawn_worker.sh NAME FILE --resume ID` typed
+  without `--worktree` ran the resumed session in the lead's checkout: its RESULT landed at the repo root and
+  `close_worker.sh` then refused to stop it ("runs in <repo>, not in this worker's folder"). Reproduced twice
+  (leewayfix, tokfield, 2026-11-03). When git still lists the worker's `worktree-NAME` worktree elsewhere, the resume
+  now stops before any session and says to pass the launch's options again (`--worktree`, `--settings`, ...), as the
+  printed resume line has them. test_spawn_worker red without it. **ACTION** (project-owned
+  `scripts/spawn_worker.sh`; `scripts/close_worker.sh` is unchanged): `sync-kit.sh . --merge`.
 
 ## v0.14.1 — 2026-11-02
 
