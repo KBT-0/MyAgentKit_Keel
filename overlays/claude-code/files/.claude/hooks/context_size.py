@@ -26,6 +26,9 @@ hand-off file and keep going instead, since nobody is there to take a recommenda
 second compaction is no stop then; and each prompt tells the lead how to judge it, since only
 an owner message that says or implies the return ends the autopilot (docs/WORKFLOW.md,
 "autopilot, the owner-away switch").
+While away with no active /goal in this session (the last `/goal` command record in the transcript,
+`/goal clear` ends it), every prompt also shows the owner the exact /goal line (systemMessage) and
+tells the lead: the owner and the lead both forgot it, instruction text alone failed (leeway, 2026-11-05).
 
 While work started inside this session still runs (a background Bash task, an async sub-agent:
 started by a tool result's `backgroundTaskId` or `agentId`, ended by its `<task-id>` notification
@@ -77,6 +80,50 @@ BACK = ("Autopilot is on (.myagentkit/presence or the STATE.md Owner line says a
         "the owner to type `/goal clear` (the goal stays active), give the report in two layers, then ask its questions one by one with AskUserQuestion. Any other message "
         "(a farewell, the /goal line, a late instruction, a worker's message, a task notification) does not "
         f'end it: act on it and stay in autopilot ({AUTOPILOT}, Ends).')
+
+
+# The owner's /goal line; the same text as working_mode.py prints on the switch to autopilot.
+GOAL = ('/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '
+        'the report .myagentkit/autopilot/%s.md is written')
+GOAL_MARK = b'<command-name>/goal</command-name>'
+GOAL_ARGS = re.compile(r'<command-args>([^<]*)</command-args>')
+
+
+def goal_active(transcript: Path) -> bool:
+    """The last /goal command record in TRANSCRIPT set a goal (not `/goal clear`, not bare)."""
+    # shortcut: a goal the session met and closed by itself still reads as active; upgrade if Claude Code records that.
+    data = Path(transcript).read_bytes()
+    end = len(data)
+    while (hit := data.rfind(GOAL_MARK, 0, end)) >= 0:
+        start, end = data.rfind(b'\n', 0, hit) + 1, hit
+        stop = data.find(b'\n', hit)
+        try:
+            rec = json.loads(data[start:stop if stop >= 0 else len(data)])
+        except ValueError:
+            continue
+        content = rec.get('message', {}).get('content') if isinstance(rec, dict) and isinstance(rec.get('message'), dict) else None
+        # Only the owner's own command record; a read of this file or a quote in a reply is no goal.
+        if not isinstance(rec, dict) or rec.get('type') != 'user' or not isinstance(content, str) or not content.startswith(GOAL_MARK.decode()):
+            continue
+        args = GOAL_ARGS.search(content)
+        return bool(args) and args[1].strip() not in ('', 'clear')
+    return False
+
+
+def since() -> str:
+    """The autopilot start date (YYYY-MM-DD) from the presence record or STATE.md's away line."""
+    root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    try:
+        words = ((main_checkout(root) or root) / '.myagentkit/presence').read_text(encoding='utf-8').split()
+        if words[:1] == ['away'] and len(words) > 1:
+            return words[1][:10]
+    except (OSError, ValueError):
+        pass
+    try:
+        found = re.search(r'away \(autopilot since (\S{10})', (root / 'docs/STATE.md').read_text(encoding='utf-8'))
+        return found[1] if found else 'YYYY-MM-DD'
+    except (OSError, ValueError):
+        return 'YYYY-MM-DD'
 
 
 def main_checkout(root: Path):
@@ -305,9 +352,28 @@ def notice(transcript: Path) -> str:
 
 def main() -> None:
     data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
-    if away() and os.environ.get('MYAGENTKIT_ROLE') != 'worker':
+    transcript = Path(data['transcript_path'])
+    lead_away = away() and os.environ.get('MYAGENTKIT_ROLE') != 'worker'
+    try:
+        missing = lead_away and not goal_active(transcript)
+    except OSError:
+        missing = False
+    if missing:
+        line = GOAL % since()
+        # One JSON object: systemMessage reaches the owner, additionalContext the lead.
+        try:
+            said = notice(transcript)
+        except Exception:  # noqa: BLE001 - the goal line must still show
+            said = ''
+        print(json.dumps({'systemMessage': 'Autopilot is on but this session has no /goal. Type:\n' + line,
+                          'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': '\n'.join(
+                              filter(None, (BACK, 'No /goal is active in this session: in this reply, give the owner '
+                                         'this exact line to type (a slash command; the lead cannot run it):\n' + line,
+                                         said)))}}))
+        return
+    if lead_away:
         print(BACK, flush=True)  # before the band, which a competing prompt's lock may silence
-    said = notice(Path(data['transcript_path']))
+    said = notice(transcript)
     if said:
         print(said)
 

@@ -341,6 +341,29 @@ class ContextHookTests(unittest.TestCase):
         (self.tmp / '.myagentkit/presence').write_text('present 2026-10-22T23:00:00+03:00 x\n', encoding='utf-8')
         self.assertEqual(self.run_hook([request(10_000)]), '')
 
+    def test_away_without_a_goal_shows_the_owner_the_goal_line_until_one_is_set(self):
+        # leeway 2026-11-05: autopilot ran a night with no /goal; owner and lead both forgot it.
+        goal = '<command-name>/goal</command-name> <command-message>goal</command-message> <command-args>%s</command-args>'
+        line = '/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and ' \
+               'the report .myagentkit/autopilot/2026-10-22.md is written'
+        self.away()
+        for turns in ([request(10_000)], [prompt(goal % 'x'), prompt(goal % 'clear')],
+                      [{'type': 'assistant', 'message': {'content': goal % 'quoted'}}]):
+            out = json.loads(self.run_hook(turns))
+            with self.subTest(turns=turns):
+                self.assertIn(line, out['systemMessage'])
+                context = out['hookSpecificOutput']['additionalContext']
+                self.assertIn(line, context)
+                self.assertIn('working_mode.py present', context)
+        said = self.run_hook([prompt(goal % 'the autopilot list is done'), request(10_000)])
+        self.assertIn('working_mode.py present', said)
+        self.assertNotIn('/goal is active', said)
+        self.assertNotIn('systemMessage', said)
+        # The band line still arrives inside the JSON.
+        out = json.loads(self.run_hook([request(10_000), request(160_000)]))
+        self.assertIn('Context is 160k', out['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(self.run_hook([request(10_000)], env=dict(self.env, MYAGENTKIT_ROLE='worker')), '')
+
 
 class BeforeCompactTests(unittest.TestCase):
     """PreCompact writes the git facts; SessionStart(compact) prints them after the summary (handoff-48 item 10)."""
