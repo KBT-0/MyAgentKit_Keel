@@ -144,3 +144,4 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   spawn now refuses it and names a RESULT a limit-stopped worker never wrote.
 - Low: run_checks.sh native-Windows lock path (`msvcrt.locking` holder) is unrun; with an absolute `--out` MSYS path the
   re-run compares a converted path and exits 75 forever; check.sh fixes the same with `cygpath -m` (check.sh ~109-116).
+- Low: `limit_watchdog_install.sh` should check `loginctl show-user "$USER" -p Linger` and warn when it is no (the user manager stops with the last login; the timer and scope go with it).

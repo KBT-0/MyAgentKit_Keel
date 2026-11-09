@@ -31,7 +31,7 @@ man systemd.kill recommends against `KillMode=process`: what it spares stays in 
 systemd 262 showed the scope's own cgroup and the command's exit code passing through. The drop-in's PATH is now the
 installer's whole PATH, so the lead and its workers keep their tools. The review's manual checks led the owner to move
 the stop: a model the API refused cannot run `limit_stop.py`, so the lead stops at the spawn refusal caps and keeps the
-master writer. The real timer and a real launch were not run: the review's manual check 1 stays with the owner.
+master writer. Round-2 review 20261109T121654Z-78d0c630e049 rejected that (an open terminal held the launch back); the owner chose that the lead releases the master writer again. The real timer and a real launch were not run: the review's manual check 1 stays with the owner.
 
 ### 2026-11-09 — v0.16 revscope: review scope in one place
 

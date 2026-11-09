@@ -788,6 +788,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertFalse((self.project / '.myagentkit/mode').exists())
         self.assertIn('### autopilot, the owner-away switch', result.stdout)  # the contract, from WORKFLOW.md
         self.assertIn('/goal every item', result.stdout)
+        self.assertIn('parked with a reason, or .myagentkit/limit-stop exists, and', result.stdout)
         self.assertIn('.myagentkit/autopilot/' + stamp[:10] + '.md', result.stdout)
         self.assertIn('Owner: away (autopilot since ' + stamp + ')', self.run_mode().stdout)
         # A second switch keeps the first stamp: the report covers the whole absence.
@@ -976,6 +977,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('### autopilot, the owner-away switch (kit repo copy)', result.stdout)
         self.assertNotIn('{{OWNER_NAME}}', result.stdout)
         self.assertIn('/goal every item', result.stdout)
+        self.assertIn('parked with a reason, or .myagentkit/limit-stop exists, and', result.stdout)
         self.assertIn('.myagentkit/autopilot/' + stamp[:10] + '.md', result.stdout)
         self.assertFalse(self.state.exists())
         result = self.run_mode('present')

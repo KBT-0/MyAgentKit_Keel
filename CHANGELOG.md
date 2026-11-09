@@ -21,8 +21,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **`spawn_worker.sh --resume` is refused above 150,000 tokens of context** (owner, 2026-11-09; was 100,000): start a fresh
   worker from the RESULT; `MYAGENTKIT_RESUME_FORCE=REASON` still passes.
 - **The limit watchdog: `scripts/limit_stop.py`, `scripts/limit_watchdog.sh`, `scripts/limit_watchdog_install.sh`.** Under
-  autopilot a lead at a spawn refusal cap hands off, writes `.myagentkit/limit-stop`, keeps the master writer and stops;
-  a systemd user timer opens the next lead once the reset has passed and that session is closed. **ACTION** (Linux
+  autopilot a lead at a spawn refusal cap hands off, writes `.myagentkit/limit-stop`, releases the master writer and stops;
+  a systemd user timer opens the next lead once the reset has passed. **ACTION** (Linux
   owners who want it): run `scripts/limit_watchdog_install.sh PROJECT_DIR` once per project; nothing enables it for you.
 - **Review scope (owner 2026-11-09, PLAN.md item 4).** A review is required only for the risk classes (money, data
   loss, security, gate): the low row takes none, the gate and the author's checks are its acceptance; the high row takes

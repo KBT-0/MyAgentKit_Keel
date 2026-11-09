@@ -18,8 +18,8 @@
 #      no limit stop); the file's first line names the model and the effort (docs/HANDOFF.md);
 #   7. no live lead: .myagentkit/master-writer names nobody, or `claude agents --json --all`
 #      lists that session with no process and neither working nor blocked (a blocked session
-#      can be woken, so it counts as running; an unreadable list is a doubt). A lead keeps the
-#      marker at a limit stop, so this waits until that session is closed.
+#      can be woken, so it counts as running; an unreadable list is a doubt). The lead
+#      releases the marker at a limit stop; a marker still naming a live session holds the launch back.
 # Then ONE `claude PROMPT --bg --model M --effort E --settings AUTO` in PROJECT_DIR, in its own
 # systemd scope, the bg host's form (spawn_worker.sh, "The bg host": the prompt first), one log line (time, session
 # id, hand-off) in .myagentkit/limit-watchdog.log, and limit-stop deleted. A failed launch keeps
@@ -190,7 +190,7 @@ if command -v systemd-run >/dev/null 2>&1; then set -- systemd-run --user --scop
 rc=0
 out=$(CDPATH='' cd -- "$project" && exec env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID \
   -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED \
-  -u CLAUDE_CODE_ENTRYPOINT "$@" claude "Read $handoff and follow it" --bg --model "$model" --effort "$effort" \
+  -u CLAUDE_CODE_ENTRYPOINT "$@" claude "Read $handoff and follow it. The limit watchdog opened this session after a limit stop (docs/WORKFLOW.md, \"The watchdog\"); the master writer was released: run claim." --bg --model "$model" --effort "$effort" \
   --settings "$settings" </dev/null 2>&1 9>&-) || rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$stop_line" >"$store/limit-watchdog.failed" || :

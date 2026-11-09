@@ -347,7 +347,7 @@ class ContextHookTests(unittest.TestCase):
     def test_away_without_a_goal_shows_the_owner_the_goal_line_until_one_is_set(self):
         # leeway 2026-11-05: autopilot ran a night with no /goal; owner and lead both forgot it.
         goal = '<command-name>/goal</command-name> <command-message>goal</command-message> <command-args>%s</command-args>'
-        line = '/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and ' \
+        line = '/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, or .myagentkit/limit-stop exists, and ' \
                'the report .myagentkit/autopilot/2026-10-22.md is written'
         self.away()
         for turns in ([request(10_000)], [prompt(goal % 'x'), prompt(goal % 'clear')],

@@ -131,8 +131,9 @@ wrong trigger spends money or opens two leads.
 Changed again on 2026-11-09 (owner: at 95 %, before the limit): a model the API refused cannot
 run `limit_stop.py`, so a lead waiting for the hard limit would never write the marker and the
 watchdog would never fire; the lead now acts at the spawn refusal caps. A lead that stops before
-the limit also never auto-continues after the reset beside the watchdog's new lead. It keeps the
-master writer, so the watchdog's "no live lead" condition still sees it while it lives.
+the limit never auto-continues after the reset, so releasing the master writer is safe. A kept-marker
+variant held the launch back for as long as the terminal stayed open (round-2 review
+20261109T121654Z-78d0c630e049).
 
 ## Worker cost — waits and long lives are what you pay for
 

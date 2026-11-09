@@ -97,7 +97,7 @@ BACK = ("Autopilot is on (.myagentkit/presence or the STATE.md Owner line says a
 
 
 # The owner's /goal line; the same text as working_mode.py prints on the switch to autopilot.
-GOAL = ('/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '
+GOAL = ('/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, or .myagentkit/limit-stop exists, and '
         'the report .myagentkit/autopilot/%s.md is written')
 GOAL_MARK = b'<command-name>/goal</command-name>'
 GOAL_ARGS = re.compile(r'<command-args>([^<]*)</command-args>')

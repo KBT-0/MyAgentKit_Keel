@@ -3,7 +3,7 @@
 """Write .myagentkit/limit-stop: the lead stops for a usage limit under autopilot.
 
 The lead runs it at the spawn refusal caps, before the API stops it (a refused model can run
-nothing), then stops and keeps the master writer (docs/WORKFLOW.md, "Stops").
+nothing), then releases the master writer and stops (docs/WORKFLOW.md, "Stops").
 
 Usage: limit_stop.py [--project DIR]   DIR: the lead's checkout, default the current folder
 
@@ -76,8 +76,9 @@ def main():
     temporary.write_text(line, encoding='utf-8')
     os.replace(temporary, marker)
     print('limit_stop: wrote %s: %s' % (marker, line.strip()))
-    print('limit_stop: stop now; the watchdog timer (scripts/limit_watchdog_install.sh) opens the next lead after '
-          'the reset while autopilot is on, or another account continues')
+    print('limit_stop: release the master writer (python3 scripts/master_writer.py release), then stop; the watchdog '
+          'timer (scripts/limit_watchdog_install.sh) opens the next lead after the reset while autopilot is on, or '
+          'another account continues')
 
 
 if __name__ == '__main__':

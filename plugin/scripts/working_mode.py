@@ -411,7 +411,7 @@ def switch_presence(project, section, choice):
         print(GOAL_CLEAR + (OLD_BACK if (kit_version(project) or (0, 13)) < (0, 13) else BACK))
         return
     print(rules.strip() + '\n\nThe owner types this line before leaving (a slash command; the lead cannot run '
-          'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, and '
+          'it):\n/goal every item in the autopilot list of docs/STATE.md is done or parked with a reason, or .myagentkit/limit-stop exists, and '
           'the report .myagentkit/autopilot/%s.md is written' % since[:10])
 
 

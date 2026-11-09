@@ -43,6 +43,10 @@ exec "$@"
 '''
 
 
+PROMPT = ('Read %s and follow it. The limit watchdog opened this session after a limit stop (docs/WORKFLOW.md, '
+          '"The watchdog"); the master writer was released: run claim.')
+
+
 @unittest.skipUnless(FLOCK, 'the watchdog needs flock(1) and a POSIX sh')
 class LimitWatchdogTests(unittest.TestCase):
     def setUp(self):
@@ -161,7 +165,7 @@ class LimitWatchdogTests(unittest.TestCase):
         result = self.run_watchdog(CLAUDE_CODE_SESSION_ID='the-callers-session')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.launched(), [[
-            'Read %s and follow it' % self.handoff, '--bg', '--model', 'claude-opus-5-5', '--effort', 'high',
+            PROMPT % self.handoff, '--bg', '--model', 'claude-opus-5-5', '--effort', 'high',
             '--settings', '{"permissions":{"defaultMode":"auto"}}']])
         self.assertEqual(Path(self.tmp / 'launches.cwd').read_text(encoding='utf-8').strip(), str(self.project))
         self.assertFalse((self.store / 'limit-stop').exists())
@@ -264,7 +268,7 @@ class LimitWatchdogTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.scope.read_text(encoding='utf-8').split(), ['--user', '--scope', '--collect', '--quiet'])
         self.assertEqual(len(self.launched()), 1, self.log())
-        self.assertEqual(self.launched()[0][0], 'Read %s and follow it' % self.handoff)
+        self.assertEqual(self.launched()[0][0], PROMPT % self.handoff)
 
     def test_no_systemd_run_is_a_plain_launch(self):
         # A PATH of only what the script needs: this host's real systemd-run is not on it.
