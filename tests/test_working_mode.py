@@ -206,7 +206,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Current mode: cross', result.stdout)
         self.assertIn('the family that did not write a change reviews it, at every tier', result.stdout)
-        self.assertIn("Codex reviews what Claude\n  wrote, a low-tier change's light pass included, one pass, report only, at medium effort", result.stdout)
+        self.assertIn("Codex reviews what Claude\n  wrote, one pass, report only, at medium effort", result.stdout)
         self.assertIn('agents.max_concurrent_threads_per_session=2', result.stdout)
         self.assertNotIn('#### saver', result.stdout)
         saver = self.run_mode('saver')
