@@ -2594,17 +2594,17 @@ class BackgroundHostTests(unittest.TestCase):
                 ''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
         return dict(CLAUDE_CONFIG_DIR=str(config))
 
-    def test_a_resume_over_100k_of_context_is_refused_for_a_fresh_worker(self):
+    def test_a_resume_over_150k_of_context_is_refused_for_a_fresh_worker(self):
         # pipeline report 2026-11-09: a resume past 100k rewrote its whole context, up to 371k per resume.
         refused = "start a fresh worker from the RESULT (%s), or set MYAGENTKIT_RESUME_FORCE=REASON" % (self.cwd / 'RESULT-w1.md')
         for case, records, extra, words in (
-                ('refused at 100,001', dict(state=100001), {},
-                 'refused the resume: context 100001 tokens (the state line), over 100000, and a resume rewrites all of it; '),
-                ('the transcript when no state line', dict(transcript=100001), {},
-                 'refused the resume: context 100001 tokens (the transcript), over 100000'),
-                ('passes at 100,000', dict(state=100000), {}, 'resume: context 100000 tokens (the state line), within 100000'),
-                ('passes with the variable', dict(state=100001), dict(MYAGENTKIT_RESUME_FORCE='owner: one more fix'),
-                 'resume: context 100001 tokens (the state line), over 100000, forced: owner: one more fix'),
+                ('refused at 150,001', dict(state=150001), {},
+                 'refused the resume: context 150001 tokens (the state line), over 150000, and a resume rewrites all of it; '),
+                ('the transcript when no state line', dict(transcript=150001), {},
+                 'refused the resume: context 150001 tokens (the transcript), over 150000'),
+                ('passes at 150,000', dict(state=150000), {}, 'resume: context 150000 tokens (the state line), within 150000'),
+                ('passes with the variable', dict(state=150001), dict(MYAGENTKIT_RESUME_FORCE='owner: one more fix'),
+                 'resume: context 150001 tokens (the state line), over 150000, forced: owner: one more fix'),
                 ('passes when unknown', {}, {},
                  'resume: context unknown (no context_tokens in w1.state, no transcript of 1a2b3c4d): it passes')):
             with self.subTest(case):

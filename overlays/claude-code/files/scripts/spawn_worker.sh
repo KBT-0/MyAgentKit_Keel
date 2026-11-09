@@ -38,7 +38,7 @@
 #
 # Three refusals come before anything is made (docs/WORKFLOW.md, "Worker cost — the rules in brief"),
 # each with its variable: a brief over 12000 bytes, its size printed on every launch
-# (MYAGENTKIT_BRIEF_MAX=N sets the cap); a --resume of a worker whose last context is over 100,000
+# (MYAGENTKIT_BRIEF_MAX=N sets the cap); a --resume of a worker whose last context is over 150,000
 # tokens, which a fresh worker from the RESULT replaces (MYAGENTKIT_RESUME_FORCE=REASON passes it);
 # an account at 95% of its five-hour or 98% of its seven-day limit, where another account spawns and
 # nobody waits for the reset (MYAGENTKIT_LIMIT_FORCE=1 passes it).
@@ -444,7 +444,7 @@ printf '%s\n' "spawn_worker: brief: $brief_size bytes (cap $brief_max)"
 [ "$brief_size" -le "$brief_max" ] ||
   die "refused the brief: $brief_size bytes, over the cap of $brief_max (MYAGENTKIT_BRIEF_MAX): a brief that does not fit one session ends in hand-offs; split it into briefs of one session each (docs/HANDOFF.md, \"The brief\")"
 # A resume rewrites the worker's whole context as a cache write (up to 371k per resume, pipeline
-# report 2026-11-09): above 100,000 tokens it is refused for a fresh worker that starts from the
+# report 2026-11-09): above 150,000 tokens it is refused for a fresh worker that starts from the
 # RESULT (owner, 2026-11-09). The last known context is NAME.state's context_tokens=N (the
 # state hook), else the last request of the session's transcript, read by agent_cost.py.
 # MYAGENTKIT_RESUME_FORCE=REASON passes; an unknown context passes, said.
@@ -475,12 +475,12 @@ if files and len(sys.argv) > 4:
     ${cost_dir:+"$cost_dir"} 2>/dev/null) || ctx=""
   case ${ctx%% *} in
     ''|*[!0-9]*) printf '%s\n' "spawn_worker: resume: context unknown (no context_tokens in $name.state, no transcript of $resume): it passes" ;;
-    *) if [ "${ctx%% *}" -le 100000 ]; then
-         printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), within 100000"
+    *) if [ "${ctx%% *}" -le 150000 ]; then
+         printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), within 150000"
        elif [ -n "${MYAGENTKIT_RESUME_FORCE:-}" ]; then
-         printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), over 100000, forced: $MYAGENTKIT_RESUME_FORCE" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
+         printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), over 150000, forced: $MYAGENTKIT_RESUME_FORCE" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
        else
-         die "refused the resume: context ${ctx%% *} tokens (${ctx#* }), over 100000, and a resume rewrites all of it; start a fresh worker from the RESULT ($told_result), or set MYAGENTKIT_RESUME_FORCE=REASON"
+         die "refused the resume: context ${ctx%% *} tokens (${ctx#* }), over 150000, and a resume rewrites all of it; start a fresh worker from the RESULT ($told_result), or set MYAGENTKIT_RESUME_FORCE=REASON"
        fi ;;
   esac
 fi

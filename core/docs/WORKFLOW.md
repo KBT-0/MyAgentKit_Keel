@@ -1090,13 +1090,13 @@ for parallel independent work, a sub-agent only for wide reading or a review.
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
 7. Worker reports: about 350 words; long output goes to a file.
 8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k
-   (`band_guard.py`). No `--resume` above 100k: a fresh worker from the RESULT.
+   (`band_guard.py`). No `--resume` above 150k: a fresh worker from the RESULT.
 9. Cheapest proving check, a `NAME.checks` list in one `run_checks.sh`; expensive steps once.
 10. Limits are per account; nobody waits for a reset: the spawn refuses an account at its limit,
     and a session at its limit hands off to another account or the owner.
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
-worker is answered in its own session, a cut-off one resumed in place under 100k; the lead commits a
+worker is answered in its own session, a cut-off one resumed in place under 150k; the lead commits a
 Codex worker's work. Reviews (inner too): one round, a second to check a fix;
 round 2 confirms every finding the dispositions claim fixed, a Medium included, and reports
 new Critical or High only; one final review per release (`docs/REVIEW_GATE.md`).
