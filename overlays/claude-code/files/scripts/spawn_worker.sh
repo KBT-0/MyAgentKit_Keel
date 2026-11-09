@@ -47,7 +47,8 @@
 # CLAUDE_CONFIG_DIR=DIR spawn_worker.sh ... runs the worker on another account's login folder, the
 # owner's call per spawn and off otherwise (docs/WORKFLOW.md, "Worker cost" rule 10). DIR stays in
 # .myagentkit/workers/NAME.config for close_worker.sh, watch_workers.sh and a later --resume; close,
-# watch, list and show read that folder whatever the caller's own CLAUDE_CONFIG_DIR says.
+# watch, list, show and the name check read that folder, or with no record the default one, whatever
+# the caller's own CLAUDE_CONFIG_DIR says (the rule: list_workers.sh).
 #
 # --resume SESSION_ID continues that worker's own conversation under the same NAME, with
 # BRIEF_FILE holding the answer or the next step: with --worktree in its existing
@@ -735,6 +736,7 @@ supervisor() {
 # NAME.host names the host it runs on (bg, tab or tmux) for close_worker.sh and the watcher;
 # NAME.config the login folder it runs on, only when one is set (the header): a fresh spawn here, a
 # resume once its launch succeeded (record_config), so a failed resume leaves the record as it was.
+# No NAME.config MEANS the default folder ~/.claude, never a caller's (the rule: list_workers.sh).
 record_config() {
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s\n' "$CLAUDE_CONFIG_DIR" > "$wdir/$name.config" || die "cannot record the login folder in $wdir"
   else rm -f -- "$wdir/$name.config"; fi
@@ -1120,16 +1122,23 @@ if [ -n "$bg" ]; then
   # variables travel in the merged settings' env only, and a spawning worker's own never leave here.
   unset MYAGENTKIT_ROLE CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL MYAGENTKIT_SESSION_ID
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
-  # An earlier session recorded on another login folder is listed there alone: that folder's list
-  # says whether it runs, or this spawn would replace the record of a running worker.
-  recorded=""; [ -z "$old" ] || [ ! -s "$wdir/$name.config" ] || recorded=$(cat -- "$wdir/$name.config") || recorded=""
-  if [ -n "$recorded" ] && [ "$recorded" != "${CLAUDE_CONFIG_DIR:-}" ]; then
-    row=$(export CLAUDE_CONFIG_DIR="$recorded"; bg_row "$old") || die "cannot read claude agents of the login folder $recorded to check the earlier session $old of '$name'"
+  # An earlier session on another login folder than this spawn's is listed there alone: the list of
+  # the folder it lives on (the rule: list_workers.sh) says whether it runs, or this spawn would
+  # replace the record of a running worker.
+  recorded=""
+  if [ -n "$old" ]; then
+    recorded=$(CDPATH= cd -- "${wdir%/.myagentkit/workers}" && sh "${cworker%/*}/list_workers.sh" --config "$name") ||
+      die "cannot read the login folder of the earlier session $old of '$name'"
+  fi
+  old_row() { if [ -n "$recorded" ]; then export CLAUDE_CONFIG_DIR="$recorded"; else unset CLAUDE_CONFIG_DIR; fi; bg_row "$old"; }
+  if [ -n "$old" ] && [ "${recorded:-$HOME/.claude}" != "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]; then
+    row=$(old_row) || die "cannot read claude agents of the login folder ${recorded:-$HOME/.claude} to check the earlier session $old of '$name'"
     while case $row in [!-]*) in_grace ;; *) false ;; esac; do
-      row=$(export CLAUDE_CONFIG_DIR="$recorded"; bg_row "$old") || die "cannot read claude agents of the login folder $recorded to check the earlier session $old of '$name'"
+      row=$(old_row) || die "cannot read claude agents of the login folder ${recorded:-$HOME/.claude} to check the earlier session $old of '$name'"
     done
+    attach_cmd="env -u CLAUDE_CONFIG_DIR "; [ -z "$recorded" ] || attach_cmd="CLAUDE_CONFIG_DIR=$(q "$recorded") "
     case $row in
-      [!-]*) die "the background session $old of '$name' still runs on the login folder $recorded: close it first (scripts/close_worker.sh $name), or look at it (CLAUDE_CONFIG_DIR=$(q "$recorded") claude attach $old)" ;;
+      [!-]*) die "the background session $old of '$name' still runs on the login folder ${recorded:-$HOME/.claude}: close it first (scripts/close_worker.sh $name), or look at it (${attach_cmd}claude attach $old)" ;;
     esac
   fi
   if [ -n "$old" ]; then

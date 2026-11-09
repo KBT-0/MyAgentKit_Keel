@@ -463,15 +463,12 @@ busy() {
   done
   return 1
 }
-# use_config NAME: a worker on another login folder (spawn_worker.sh's NAME.config) is closed through
-# that folder, its `claude agents`, `claude stop` and `claude rm`, whatever the caller's
-# CLAUDE_CONFIG_DIR says: in another folder's list a running worker is `absent`, and the close would
-# remove the worktree and the records of a live session. With no record: the caller's folder, else
-# ~/.claude as ever. One close may name several workers.
-caller_config=${CLAUDE_CONFIG_DIR:-}
+# use_config NAME: a worker is closed through the login folder it lives on, its `claude agents`,
+# `claude stop` and `claude rm`: its NAME.config, else the default folder, NEVER the caller's
+# CLAUDE_CONFIG_DIR (the rule: list_workers.sh): in another folder's list a running worker is `absent`,
+# and the close would remove the worktree and the records of a live session. One close may name several workers.
 use_config() {
-  worker_config=$(cat -- "$top/.myagentkit/workers/$1.config" 2>/dev/null) || worker_config=""
-  worker_config=${worker_config:-$caller_config}
+  worker_config=$(sh "$kit/list_workers.sh" --config "$1" 2>/dev/null) || worker_config=""
   if [ -n "$worker_config" ]; then export CLAUDE_CONFIG_DIR="$worker_config"; else unset CLAUDE_CONFIG_DIR; fi
 }
 # background NAME: whether NAME is a Claude Code background session (NAME.host bg).

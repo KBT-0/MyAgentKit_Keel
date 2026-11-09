@@ -2847,6 +2847,34 @@ class BackgroundHostTests(unittest.TestCase):
                     self.assertEqual((self.workers / 'w1.id').read_text(), 'aaaa0001\n')
                     self.assertEqual((self.workers / 'w1.config').read_text(), login + '\n')
 
+    def test_a_running_worker_with_no_record_refuses_the_name_on_a_callers_login_folder(self):
+        # Review of sesscap, round 2: no NAME.config MEANS the default folder; a spawn from login-a read
+        # login-a's list, replaced NAME.id and started a second session in the same checkout.
+        home = self.tmp / 'home'
+        home.mkdir()
+        self.workers.mkdir(parents=True, exist_ok=True)
+        for record, text in (('id', 'aaaa0001'), ('host', 'bg')):
+            (self.workers / ('w1.' + record)).write_text(text + '\n')
+        rows = self.state / 'rows.home.json'
+        rows.write_text(json.dumps([dict(id='aaaa0001', sessionId='aaaa0001-5137-4293-88d5-c4339d1ce56c', pid=4242,
+                                         state='working', cwd=str(self.cwd))]))
+        (self.state / 'rows.login-a.json').write_text('[]')
+        env = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), HOME=str(home))
+        result = self.spawn(**env)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("the background session aaaa0001 of 'w1' still runs on the login folder %s/.claude: close it first "
+                      '(scripts/close_worker.sh w1), or look at it (env -u CLAUDE_CONFIG_DIR claude attach aaaa0001)' % home,
+                      result.stderr)
+        self.assertFalse((self.state / 'launch.json').exists(), 'a second session started')
+        self.assertEqual((self.workers / 'w1.id').read_text(), 'aaaa0001\n')
+        self.assertFalse((self.workers / 'w1.config').exists())
+        # Ended there, the name is free: this spawn's folder is the new record.
+        rows.write_text(json.dumps([dict(id='aaaa0001', pid=None, state='done', cwd=str(self.cwd))]))
+        result = self.spawn(SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'), **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.workers / 'w1.config').read_text(), env['CLAUDE_CONFIG_DIR'] + '\n')
+        self.ended()
+
     def test_a_fresh_spawn_replaces_the_record_of_a_worker_that_ended_on_another_login_folder(self):
         home = self.tmp / 'home'
         home.mkdir()
@@ -3085,6 +3113,8 @@ class BackgroundHostTests(unittest.TestCase):
     def resumable(self, session=True, row=None):
         self.workers.mkdir(parents=True)
         (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        # On the folder this harness spawns from (spawn()), as that spawn records it: no record means ~/.claude.
+        (self.workers / 'w1.config').write_text(str(self.tmp / 'no-config') + '\n')
         if session:
             (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
         (self.state / 'rows.json').write_text(json.dumps([dict({'id': '1a2b3c4d', 'pid': None, 'state': 'done'}, **(row or {}))]))
@@ -3219,6 +3249,7 @@ class BackgroundHostTests(unittest.TestCase):
         (folder / '1a2b3c4d-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
             json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
         (self.workers / 'w1.host').write_text('bg\n')
+        (self.workers / 'w1.config').write_text(str(config) + '\n')
         return config
 
     def live_holder(self):

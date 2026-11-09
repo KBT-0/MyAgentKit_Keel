@@ -158,5 +158,3 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   counts as live, and closing a session cannot clear it until `MYAGENTKIT_LIMIT_FORCE=1`.
 - Low: spawn_worker.sh session cap: no lock, and a session registers only once its process exists, so parallel or quick
   spawns can pass the cap together.
-- Low: a worker with no `NAME.config` runs on ~/.claude; a close or watch from a caller with its own `CLAUDE_CONFIG_DIR` reads
-  the caller's list, finds it `absent` and takes the same path the record now prevents; fix = the spawn always records its folder.

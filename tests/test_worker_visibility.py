@@ -196,9 +196,10 @@ class Base(unittest.TestCase):
         if exclude.exists() and '.myagentkit/' not in exclude.read_text():
             exclude.write_text(exclude.read_text() + '\n.myagentkit/\n')
 
-    def transcript(self, *entries):
-        """Session aaaa0001's transcript, as Claude Code writes it: one compact JSON entry a line."""
-        folder = self.tmp / 'config/projects/D---p--claude-worktrees-w1'
+    def transcript(self, *entries, config='home/.claude'):
+        """Session aaaa0001's transcript, as Claude Code writes it: one compact JSON entry a line.
+        On the default folder, as a worker with no NAME.config has it (run_bg's and the tab case's HOME)."""
+        folder = self.tmp / config / 'projects/D---p--claude-worktrees-w1'
         folder.mkdir(parents=True, exist_ok=True)
         (folder / 'aaaa0001-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
             ''.join(json.dumps(e, ensure_ascii=False, separators=(',', ':')) + '\n' for e in entries), encoding='utf-8')
@@ -485,7 +486,7 @@ class WatchTests(Base):
         (workers / 'w1.host').write_text('tab\n')
         (workers / 'w1.id').write_text('aaaa0001-5137-4293-88d5-c4339d1ce56c\n')
         self.transcript(said('Running the next suite.'), LIMITED, TURN)
-        tab = dict(VIS_UNAME='MINGW64_NT-10.0', CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
+        tab = dict(VIS_UNAME='MINGW64_NT-10.0', CLAUDE_CONFIG_DIR='', HOME=str(self.tmp / 'home'))
         result = self.watch('--once', 'w1', **tab)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, LIMIT % 'w1', ''))
         self.assertEqual(self.watch('--once', 'w1', **tab).stdout, '')
@@ -1461,7 +1462,9 @@ class BackgroundTests(Base):
 
     def run_bg(self, script, *args, **extra):
         extra.setdefault('VIS_SESSIONS', '')
-        extra.setdefault('CLAUDE_CONFIG_DIR', str(self.tmp / 'config'))
+        # '' is what the scripts take for unset: a worker with no record lives on this HOME's .claude.
+        extra.setdefault('CLAUDE_CONFIG_DIR', '')
+        extra.setdefault('HOME', str(self.tmp / 'home'))
         return self.run_script(script, *args, AGENTS_FILE=str(self.state / 'agents.json'), **extra)
 
     def watch(self, *args, **extra):
@@ -1474,13 +1477,13 @@ class BackgroundTests(Base):
         unset = dict(CLAUDE_CONFIG_DIR='', HOME=str(home))
         self.spawned('w1')
         self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
-        self.transcript(said('Running the next suite.'), LIMITED, TURN)
+        self.transcript(said('Running the next suite.'), LIMITED, TURN, config='config')
         limit = lambda **env: self.run_bg(WATCH, '--limit', 'w1', **env).returncode
         self.assertEqual(limit(**unset), 1, 'no record, no variable: only $HOME/.claude is read')
         record = self.workers / 'w1.config'
         record.write_text(str(self.tmp / 'config') + '\n')
         self.assertEqual(limit(**unset), 0, 'the recorded folder was not read')
-        # The record wins over the caller's own variable, which applies to a worker with none.
+        # The record wins over the caller's own variable, which never applies to a worker with none.
         self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty')), 0, 'the caller beat the record')
         record.unlink()
         self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty')), 1)
@@ -1488,6 +1491,8 @@ class BackgroundTests(Base):
         transcripts.parent.mkdir()
         shutil.copytree(self.tmp / 'config/projects', transcripts)
         self.assertEqual(limit(**unset), 0, 'no record, no variable: $HOME/.claude, as ever')
+        self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty'), HOME=str(home)), 0,
+                         "no record: $HOME/.claude, never the caller's folder")
 
     def test_a_printed_claude_command_names_the_recorded_login_folder(self):
         self.spawned('w1')
@@ -1509,7 +1514,15 @@ class BackgroundTests(Base):
         (self.state / 'agents.json.login-b').write_text(json.dumps([agent('aaaa0001', 'w1', self.cwd, 'working', pid=5)]))
         folders = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_PER_FOLDER='1')
         self.assertEqual(self.watch(**folders).stdout, '')
-        (self.workers / 'w1.config').unlink()
+
+    def test_a_live_worker_with_no_record_is_not_gone_from_a_callers_watch(self):
+        # Review of sesscap, round 2: no NAME.config MEANS the default folder, and login-a's list said GONE.
+        self.spawned('w1')
+        home = self.state / 'agents.json.home'
+        home.write_text(json.dumps([agent('aaaa0001', 'w1', self.cwd, 'working', pid=5)]))
+        folders = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_PER_FOLDER='1')
+        self.assertEqual(self.watch(**folders).stdout, '')
+        home.unlink()
         self.assertIn('GONE: w1', self.watch(**folders).stdout, 'the case above no longer tells the folders apart')
 
     def test_the_list_and_the_show_read_a_recorded_login_folder(self):
@@ -1520,7 +1533,9 @@ class BackgroundTests(Base):
         self.spawned('w2', id='bbbb0002')
         (self.workers / 'w1.config').write_text(login + '\n')
         (self.state / 'agents.json.login-b').write_text(json.dumps([agent('aaaa0001', 'w1', self.cwd, 'working', pid=5)]))
-        (self.state / 'agents.json.login-a').write_text(json.dumps([agent('bbbb0002', 'w2', self.cwd, 'done')]))
+        # Round 2: w2 has no record, so it lives on the default folder; the caller's list holds another row.
+        (self.state / 'agents.json.home').write_text(json.dumps([agent('bbbb0002', 'w2', self.cwd, 'done')]))
+        (self.state / 'agents.json.login-a').write_text(json.dumps([agent('bbbb0002', 'w2', self.cwd, 'working', pid=9)]))
         folders = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_PER_FOLDER='1')
         listed = self.run_bg(LIST, **folders).stdout
         self.assertIn('w1\tbg\taaaa0001\tworking\t-\tn\n', listed)
@@ -1529,8 +1544,12 @@ class BackgroundTests(Base):
         prefix = "CLAUDE_CONFIG_DIR='%s' " % login
         self.assertIn('show_workers: w1 runs in the background: %sclaude attach aaaa0001   (%sclaude agents lists every '
                       'session; nothing opened)\n' % (prefix, prefix), self.run_bg(SHOW, 'w1', **folders).stdout)
-        self.assertIn('show_workers: w2 runs in the background: claude attach bbbb0002   (claude agents lists every '
-                      'session; nothing opened)\n', self.run_bg(SHOW, 'w2', **folders).stdout)
+        self.assertEqual(self.run_bg(LIST, '--row', 'w2', **folders).stdout.split('\t')[0], 'done')
+        prefix = 'env -u CLAUDE_CONFIG_DIR '
+        self.assertIn('show_workers: w2 runs in the background: %sclaude attach bbbb0002   (%sclaude agents lists every '
+                      'session; nothing opened)\n' % (prefix, prefix), self.run_bg(SHOW, 'w2', **folders).stdout)
+        self.assertEqual(self.run_bg(LIST, '--config', 'w1', **folders).stdout, login + '\n')
+        self.assertEqual(self.run_bg(LIST, '--config', 'w2', **folders).stdout, '')
 
     def test_a_limit_stopped_session_that_ends_is_gone(self):
         # Round 1: once LIMIT was said, an ended session is still GONE; one ended at the first poll is
@@ -1628,7 +1647,7 @@ class BackgroundTests(Base):
                 if entries:
                     self.transcript(*entries)
                 else:
-                    shutil.rmtree(self.tmp / 'config')
+                    shutil.rmtree(self.tmp / 'home/.claude')
                 self.assertEqual(self.watch().stdout, '')
                 result = self.run_bg(WATCH, '--limit', 'w1')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
@@ -1657,7 +1676,7 @@ class BackgroundTests(Base):
         self.spawned('w1')
         sid = 'aaaa0001-5137-4293-88d5-c4339d1ce56c'
         (self.workers / 'w1.session').write_text(sid + '\n')
-        folder = self.tmp / 'config/projects/-w1'
+        folder = self.tmp / 'home/.claude/projects/-w1'
         folder.mkdir(parents=True)
         call = {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {
             'command': 'python3 tools/generate.py --map datca2', 'run_in_background': True}}]}}

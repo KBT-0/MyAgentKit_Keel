@@ -552,8 +552,27 @@ class CloseWorkerTests(unittest.TestCase):
         out = self.close('w1', 'w2', CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), **env)
         seen = (self.tmp / 'agents.json.config').read_text().splitlines()
         self.assertIn(repr(('stop', ['aaaa0001'], str(self.tmp / 'login-b'))), seen, out)
-        # The next name has no record: the caller's own folder is back.
-        self.assertIn(repr(('stop', ['bbbb0002'], str(self.tmp / 'login-a'))), seen, out)
+        # The next name has no record: the default folder, never the caller's.
+        self.assertIn(repr(('stop', ['bbbb0002'], None)), seen, out)
+        self.assertNotIn(repr(('stop', ['bbbb0002'], str(self.tmp / 'login-a'))), seen, out)
+
+    def test_a_live_worker_with_no_record_is_stopped_on_the_default_folder_and_never_taken_for_absent(self):
+        # Review of sesscap, round 2: a spawn with no variable writes no NAME.config, so no record MEANS
+        # the default folder; a lead on login-a (the watchdog timer's) read login-a's list, said "nothing to
+        # end", removed the worktree and every record, and the session ran on.
+        path = self.worker('w1', session=False)
+        env = dict(self.background('w1'), AGENTS_PER_FOLDER='1')
+        records = self.main / '.myagentkit/workers'
+        (self.tmp / 'agents.json.home').write_text(json.dumps([agent('aaaa0001', 'w1', path, 'working', pid=5)]))
+        out = self.close('w1', code=1, CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_STOP_IGNORED='1', **env)
+        seen = (self.tmp / 'agents.json.config').read_text().splitlines()
+        self.assertIn(repr(('stop', ['aaaa0001'], None)), seen, out)
+        self.assertFalse([line for line in seen if 'login-a' in line], seen)
+        self.assertNotIn('nothing to end', out)
+        self.assertIn('background session aaaa0001 still runs after claude stop', out)
+        self.assertTrue(path.exists(), out)
+        for record in ('w1.id', 'w1.host'):
+            self.assertTrue((records / record).exists(), record)
 
     def test_a_live_worker_on_another_login_folder_is_stopped_there_and_never_taken_for_absent(self):
         # Review of sesscap: login-a's list does not hold it, and "nothing to end" removed the worktree

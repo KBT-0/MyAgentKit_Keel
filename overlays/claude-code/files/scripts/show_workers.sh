@@ -17,7 +17,7 @@
 #   - A Claude Code background session (.myagentkit/workers/NAME.host bg) opens nothing: it
 #     prints `claude attach ID` (NAME.id) for the owner to run, because attach needs a terminal
 #     (docs/research/worker-orchestration-spike-posix.md, 7), with the login folder of its
-#     NAME.config when it has one; `claude agents` lists them all. One
+#     the folder it lives on (list_workers.sh); `claude agents` lists them all. One
 #     spawned on the other host (native Windows or WSL, as list_workers.sh --row tells) is attached
 #     there: this host's list cannot see it. The steps below are for the rest; with none left it
 #     exits 0 there.
@@ -72,8 +72,11 @@ for n in "$@"; do
   if [ "$(cat -- "$wdir/$n.host" 2>/dev/null)" = bg ]; then
     id=$(cat -- "$wdir/$n.id" 2>/dev/null) || id=""
     row=$(sh "$(dirname -- "$0")/list_workers.sh" --row "$n" 2>/dev/null) || row=""
-    worker_config=$(cat -- "$wdir/$n.config" 2>/dev/null) || worker_config=""
-    config_cmd=""; [ -z "$worker_config" ] || config_cmd="CLAUDE_CONFIG_DIR=$(q "$worker_config") "
+    # The folder it lives on (the rule: list_workers.sh), so the owner's command hits it from a shell with the variable set too.
+    worker_config=$(sh "$(dirname -- "$0")/list_workers.sh" --config "$n" 2>/dev/null) || worker_config=""
+    config_cmd=""
+    if [ -n "$worker_config" ]; then config_cmd="CLAUDE_CONFIG_DIR=$(q "$worker_config") "
+    elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then config_cmd="env -u CLAUDE_CONFIG_DIR "; fi
     case $row in
       "elsewhere	"*) say "$n runs in the background on ${row#*	}, whose sessions this host cannot see: claude attach ${id:-ID} there   (nothing opened)" ;;
       *) say "$n runs in the background: ${config_cmd}claude attach ${id:-ID}   (${config_cmd}claude agents lists every session; nothing opened)" ;;

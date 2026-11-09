@@ -4,13 +4,14 @@
 #
 # Usage: list_workers.sh              NAME HOST ID STATE WAITING-FOR RESULT, a tab between them
 #        list_workers.sh --row NAME   one worker's `claude agents` row, for the other worker scripts
+#        list_workers.sh --config NAME   the login folder NAME lives on, for the other worker scripts
 #
 # A worker is a name with a record in .myagentkit/workers at the top of this checkout: NAME.host
 # (spawn_worker.sh: bg, tab or tmux), NAME.id, NAME.result-path, or NAME.session (spawn_codex.sh).
 # A record older than NAME.host shows HOST -. A bg worker's STATE and WAITING-FOR are those of its
 # row in `claude agents --json --all` (--all keeps the done and stopped rows; absent: no row, as
 # after `claude rm`; ? when the list cannot be read, its words on stderr), the list of the login
-# folder its NAME.config names when it has one, whatever the caller's CLAUDE_CONFIG_DIR says; a tmux worker is running
+# folder it lives on (the rule below); a tmux worker is running
 # or gone (`tmux has-session`); a tab worker shows -. RESULT is y when its result file exists: the
 # path NAME.result-path names, else RESULT-NAME.md in its folder. Any empty field shows -.
 #
@@ -26,17 +27,25 @@
 # NAME.result-path has the other host's form (D:/x on native Windows, /x on POSIX) is never
 # looked up here (the list shows STATE elsewhere:HOST).
 # Exit 2 on a usage error, and with --row when `claude agents` cannot answer (its words on stderr).
+#
+# The one rule of a worker's login folder, which close, watch, show and the spawn's name check read
+# through --config: its NAME.config when it has one, else the default folder (~/.claude,
+# %USERPROFILE%\.claude on Windows), never the caller's CLAUDE_CONFIG_DIR. A spawn removes NAME.config
+# when no variable is set, so no record MEANS the default folder; in any other list a running worker
+# is `absent`. --config prints the record, or nothing for the default folder: a caller then
+# unsets the variable, because the default folder is claude with none set. The caller's folder only
+# ever starts a NEW worker, which records it.
 set -u
 
 say() { printf 'list_workers: %s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
 mode=list name=""
 case ${1-} in
-  --row)
-    [ $# -eq 2 ] || { sed -n '5,6p' "$0"; exit 2; }
-    mode=row name=$2
+  --row|--config)
+    [ $# -eq 2 ] || { sed -n '5,7p' "$0"; exit 2; }
+    mode=${1#--} name=$2
     case $name in ''|-*|*[!A-Za-z0-9_-]*) say "refused the worker name: letters, digits, - and _, not starting with -" >&2; exit 2 ;; esac ;;
   '') ;;
-  *) sed -n '5,6p' "$0"; exit 2 ;;
+  *) sed -n '5,7p' "$0"; exit 2 ;;
 esac
 if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
@@ -45,8 +54,11 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
 # Git for Windows: the Windows Python reads D:/x, never /d/x.
 ! command -v cygpath >/dev/null 2>&1 || top=$(cygpath -m "$top")
 wdir=$top/.myagentkit/workers
+if [ "$mode" = config ]; then cat -- "$wdir/$name.config" 2>/dev/null; exit 0; fi
 main=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); [ -n "$main" ] || main=$top
 json="" listed=y
+# The first read: the default folder's list, or with --row the worker's own.
+unset CLAUDE_CONFIG_DIR
 if [ "$mode" = row ] && [ -s "$wdir/$name.config" ]; then
   worker_config=$(cat -- "$wdir/$name.config") && export CLAUDE_CONFIG_DIR="$worker_config"
 fi
@@ -104,7 +116,8 @@ def host_of(path):
         return "windows"
     return "posix" if path.startswith("/") else ""
 
-# The list a worker is in: its NAME.config folder has its own, read once; --row read it above.
+# The list a worker is in: its NAME.config folder has its own, read once; with none, the list of the
+# default folder, read above; --row read the list of the worker above.
 lists = {}
 def rows_of(n):
     config = read(n, "config")

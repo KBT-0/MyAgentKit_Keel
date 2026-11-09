@@ -1109,7 +1109,7 @@ Code sessions run in this project at once, the main checkout and its `.claude/wo
 folder's registry alone, and the account-switch mechanism is off by default): an account switch rewrites every running session's context, so the switch happens at a clean point
 and a session over 150k hands off first (owner, 2026-11-09). A worker on another account's login
 folder (`CLAUDE_CONFIG_DIR=DIR scripts/spawn_worker.sh ...`, one `claude /login` per folder, recorded
-in NAME.config, which close and watch read over the caller's own folder) is built but OFF: the owner's call per spawn, never the lead's.
+in NAME.config, which close and watch read over the caller's own folder; no record means the default folder) is built but OFF: the owner's call per spawn, never the lead's.
 
 **The worker's lean start (v0.16).** `scripts/spawn_worker.sh` starts a worker with no plugin (each
 one a settings file enables or the CLI installed is `false` under `enabledPlugins` in its

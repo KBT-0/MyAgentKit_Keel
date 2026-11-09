@@ -29,7 +29,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **`spawn_worker.sh` refuses the fourth running Claude Code session in this project**, its main checkout and
   `.claude/worktrees/` (`MYAGENTKIT_MAX_SESSIONS`, default 3; `MYAGENTKIT_LIMIT_FORCE=1` passes); a worker spawned with
   `CLAUDE_CONFIG_DIR` set keeps it in `NAME.config`, which close, watch, list and show read over the caller's own folder and
-  a later `--resume` goes on in, off otherwise.
+  a later `--resume` goes on in, off otherwise; a worker with no `NAME.config` lives on the default folder, never the caller's.
+  The stated limit: the cap reads the spawning login folder's registry alone (the account-switch mechanism is off by default).
 - **The limit watchdog: `scripts/limit_stop.py`, `scripts/limit_watchdog.sh`, `scripts/limit_watchdog_install.sh`.** Under
   autopilot a lead at a spawn refusal cap hands off, writes `.myagentkit/limit-stop`, releases the master writer and stops;
   a systemd user timer opens the next lead once the reset has passed. **ACTION** (Linux
