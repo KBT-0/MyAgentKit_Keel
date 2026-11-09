@@ -1065,6 +1065,8 @@ for independent work that runs in parallel, a sub-agent only for wide reading or
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
 7. Worker reports are short (about 350 words); long output goes to a file.
 8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k.
+   Past a worker's 150k or a lead's 200k, `.claude/hooks/band_guard.py` denies every tool call but
+   commit and hand-off (autopilot too); `MYAGENTKIT_BAND=yellow,red,ceiling` in thousands (e.g. `80,100,150`) moves the lines.
 9. A worker runs the cheapest check that proves its change; the expensive step runs once.
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
