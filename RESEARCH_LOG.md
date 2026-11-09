@@ -30,6 +30,9 @@ sessions run on the machine, the lead and two paid things; (b) workers on anothe
 group on native Windows (CTRL_C_EVENT is 0), so the cap opens the process there; that path did not run on this Linux host.
 A new tmux session or Windows Terminal tab does not inherit the spawner's shell, so the folder goes on the session's own line;
 `CLAUDE_CONFIG_DIR=EMPTY claude agents --json --all` listed `[]` on 2.1.319: each folder has its own session list.
+Owner, the same evening, on 9 live sessions on the machine (4 leeway, 1 labricore, 4 kit): the cap counts per project, by the
+registry's `cwd`. Review 20261109T132318Z-a17cc3314296 (two Highs, reproduced with a stub `claude`): the caller's folder
+winning over `NAME.config` made a running worker `absent`, so the record now wins.
 
 ### 2026-11-09 — v0.16 watchdog: the launch's own scope, and the stop before the limit
 

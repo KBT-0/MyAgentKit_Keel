@@ -436,15 +436,23 @@ class SpawnWorkerTests(unittest.TestCase):
                     # The full start, whose launch line these cases pin; the lean one has its own case.
                     MYAGENTKIT_WORKER_FULL='1', **LEAD_ENV)
 
-    def registry(self, live=(), stale=()):
+    def session_cwd(self, name):
+        # Where registry() puts a session: the lead in the main checkout, a worker in its worktree.
+        return str(self.cwd) if name == 'lead' else str(self.cwd / '.claude/worktrees' / name)
+
+    def registry(self, live=(), stale=(), cwds=None):
         # The session registry as Claude Code writes it: this test's own pid is alive, 2**22-1 is
         # past Linux's pid_max and no process on the other hosts. The folder, for CLAUDE_CONFIG_DIR.
+        # cwds: a name's other cwd; None for a row without the field.
+        cwds = cwds or {}
         config = self.tmp / 'login'
         (config / 'sessions').mkdir(parents=True, exist_ok=True)
         for pid, names in ((os.getpid(), live), (2**22 - 1, stale)):
             for name in names:
-                (config / 'sessions' / (name + '.json')).write_text(json.dumps(dict(
-                    pid=pid, name=name, cwd='/work/' + name, sessionId=name + '-5137-4293')))
+                row = dict(pid=pid, name=name, cwd=cwds.get(name, self.session_cwd(name)), sessionId=name + '-5137-4293')
+                if row['cwd'] is None:
+                    del row['cwd']
+                (config / 'sessions' / (name + '.json')).write_text(json.dumps(row))
         return str(config)
 
     def test_the_fourth_running_session_is_refused_and_the_running_ones_named(self):
@@ -452,13 +460,46 @@ class SpawnWorkerTests(unittest.TestCase):
         result = self.spawn('w1', str(self.brief), CLAUDE_CONFIG_DIR=config, MYAGENTKIT_LIMIT_FORCE=None,
                             MYAGENTKIT_MAX_SESSIONS=None)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('refused the spawn: 3 Claude Code sessions run on this machine (cap 3, MYAGENTKIT_MAX_SESSIONS): '
-                      'lead (/work/lead), w8 (/work/w8), w9 (/work/w9); every running session rewrites its context '
+        self.assertIn('refused the spawn: 3 Claude Code sessions run in this project (cap 3, MYAGENTKIT_MAX_SESSIONS): '
+                      'lead (%s), w8 (%s), w9 (%s); every running session rewrites its context '
                       'at an account switch; close one (scripts/close_worker.sh NAME) or wait for it; the cap: '
-                      'docs/WORKFLOW.md rule 10 (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes)',
-                      result.stderr)
+                      'docs/WORKFLOW.md rule 10 (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes)'
+                      % tuple(map(self.session_cwd, ('lead', 'w8', 'w9'))), result.stderr)
         self.assertFalse((self.state / 'tmux-script').exists(), 'a refused spawn started a session')
         self.assertFalse((self.cwd / '.myagentkit/workers/w1.host').exists(), 'a refused spawn left records')
+
+    def test_the_cap_counts_this_projects_sessions_alone(self):
+        # Owner, 2026-11-09: count per project. Beside this checkout, a folder inside it and a row
+        # with no cwd count for nothing.
+        limits = dict(MYAGENTKIT_LIMIT_FORCE=None, MYAGENTKIT_MAX_SESSIONS=None)
+        for number, cwd in (('1', str(self.tmp / 'other')), ('2', str(self.cwd) + '-sibling/.claude/worktrees/w9'),
+                            ('3', str(self.cwd / 'sub')), ('4', str(self.cwd / '.claude/worktreesx/w9')), ('5', None)):
+            with self.subTest(cwd):
+                config = self.registry(live=('lead', 'w8', 'w9'), cwds=dict(w9=cwd))
+                result = self.spawn('w' + number, str(self.brief), CLAUDE_CONFIG_DIR=config, **limits)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn('refused', result.stderr)
+        config = self.registry(live=('lead', 'w8', 'w9'))
+        result = self.spawn('w6', str(self.brief), CLAUDE_CONFIG_DIR=config, **limits)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('3 Claude Code sessions run in this project', result.stderr)
+
+    def test_the_cap_of_a_spawn_from_a_linked_worktree_counts_the_main_checkout(self):
+        git = lambda *a, cwd=self.cwd: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a],
+                                                      cwd=cwd, check=True, capture_output=True)
+        git('init', '-q')
+        git('commit', '-q', '--allow-empty', '-m', 'a')
+        main = self.cwd
+        linked = main / '.claude/worktrees/w7'
+        git('worktree', 'add', '-q', str(linked), '-b', 'worktree-w7')
+        config = self.registry(live=('lead', 'w8'), cwds=dict(lead=str(main), w8=str(main / '.claude/worktrees/w8')))
+        (Path(config) / 'sessions/w7.json').write_text(json.dumps(dict(
+            pid=os.getpid(), name='w7', cwd=str(linked), sessionId='w7-5137-4293')))
+        self.cwd = linked
+        result = self.spawn('w1', str(self.brief), CLAUDE_CONFIG_DIR=config, MYAGENTKIT_LIMIT_FORCE=None,
+                            MYAGENTKIT_MAX_SESSIONS=None)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('3 Claude Code sessions run in this project', result.stderr)
 
     def test_the_cap_skips_a_stale_file_and_gives_way_to_its_two_variables(self):
         config = self.registry(live=('lead', 'w8'), stale=('gone',))
@@ -545,11 +586,26 @@ class SpawnWorkerTests(unittest.TestCase):
         # Its checks read the recorded folder: that registry refuses it, $HOME's holds nothing.
         result = self.spawn('w1', str(self.brief), '--resume', 'sid-1', **env)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('lead (/work/lead)', result.stderr)
+        self.assertIn('lead (%s)' % self.session_cwd('lead'), result.stderr)
         result = self.spawn('w1', str(self.brief), '--resume', 'sid-1', **dict(env, MYAGENTKIT_MAX_SESSIONS='9'))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(record.read_text(), config + '\n')
         self.assertIn('CLAUDE_CONFIG_DIR=' + shq(config) + ' ', (self.state / 'tmux-script').read_text())
+
+    def test_a_resume_whose_tmux_launch_fails_leaves_the_record_as_it_was(self):
+        record = self.cwd / '.myagentkit/workers/w1.config'
+        record.parent.mkdir(parents=True)
+        login_a, login_b = str(self.tmp / 'login-a'), str(self.tmp / 'login-b')
+        record.write_text(login_b + '\n')
+        real = (self.bin / 'tmux').read_text(encoding='utf-8')
+        (self.bin / 'tmux').write_text('#!/bin/sh\nexit 1\n', newline='\n')
+        result = self.spawn('w1', str(self.brief), '--resume', 'sid-1', CLAUDE_CONFIG_DIR=login_a)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(record.read_text(), login_b + '\n', 'a failed resume moved the record')
+        (self.bin / 'tmux').write_text(real, encoding='utf-8')
+        result = self.spawn('w1', str(self.brief), '--resume', 'sid-1', CLAUDE_CONFIG_DIR=login_a)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(record.read_text(), login_a + '\n')
 
     def spelled(self, path, tab=False):
         # A path as the spawn hands it on: physical, and on the Windows tab path cygpath -m's
@@ -2503,7 +2559,9 @@ with open(os.path.join(state, 'claude.log'), 'a') as log:
     log.write(json.dumps(args) + '\n')
 with open(os.path.join(state, 'cwd.log'), 'a') as log:
     log.write(json.dumps([args[:1], os.getcwd()]) + '\n')
-path = os.path.join(state, 'rows.json')
+# One login folder's own list, rows.BASENAME.json of CLAUDE_CONFIG_DIR, when the test wrote one.
+path = os.path.join(state, 'rows.%s.json' % os.path.basename(os.environ.get('CLAUDE_CONFIG_DIR') or 'home'))
+path = path if os.path.exists(path) else os.path.join(state, 'rows.json')
 rows = json.load(open(path)) if os.path.exists(path) else []
 def save():
     with open(path, 'w') as f:
@@ -2758,6 +2816,61 @@ class BackgroundHostTests(unittest.TestCase):
                             SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.launch()['config'], config, 'the resume left the recorded login folder')
+        self.ended()
+
+    def on_login_b(self, state='working', pid=4242):
+        # w1 recorded on login-b, its row in that folder's list alone.
+        self.workers.mkdir(parents=True, exist_ok=True)
+        login = str(self.tmp / 'login-b')
+        for record, text in (('id', 'aaaa0001'), ('host', 'bg'), ('config', login)):
+            (self.workers / ('w1.' + record)).write_text(text + '\n')
+        (self.state / 'rows.login-b.json').write_text(json.dumps([dict(
+            id='aaaa0001', sessionId='aaaa0001-5137-4293-88d5-c4339d1ce56c', pid=pid, state=state, cwd=str(self.cwd))]))
+        return login
+
+    def test_a_running_worker_on_its_recorded_login_folder_refuses_the_name_and_keeps_its_record(self):
+        # Review of sesscap: ~/.claude's list holds no row of it, and a fresh spawn replaced its records.
+        home = self.tmp / 'home'
+        home.mkdir()
+        login = self.on_login_b()
+        for case, env in (('no variable', dict(CLAUDE_CONFIG_DIR='', HOME=str(home))),
+                          ('another folder', dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a')))):
+            for args in ((), ('--resume', 'aaaa0001-5137-4293-88d5-c4339d1ce56c')):
+                if args and not env['CLAUDE_CONFIG_DIR']:
+                    continue  # a resume with no variable goes on in the recorded folder
+                with self.subTest(case, args=args):
+                    result = self.spawn(*args, **env)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("the background session aaaa0001 of 'w1' still runs on the login folder %s: close it "
+                                  'first (scripts/close_worker.sh w1)' % login, result.stderr)
+                    self.assertFalse((self.state / 'launch.json').exists(), 'a second session started')
+                    self.assertEqual((self.workers / 'w1.id').read_text(), 'aaaa0001\n')
+                    self.assertEqual((self.workers / 'w1.config').read_text(), login + '\n')
+
+    def test_a_fresh_spawn_replaces_the_record_of_a_worker_that_ended_on_another_login_folder(self):
+        home = self.tmp / 'home'
+        home.mkdir()
+        self.on_login_b(state='done', pid=None)
+        result = self.spawn(CLAUDE_CONFIG_DIR='', HOME=str(home), SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.workers / 'w1.id').read_text(), '1a2b3c4d\n')
+        self.assertFalse((self.workers / 'w1.config').exists())
+        self.ended()
+
+    def test_a_resume_records_its_login_folder_only_once_its_launch_succeeded(self):
+        # Review of sesscap: a failed resume moved the record while the session stayed on login-b.
+        login = self.on_login_b(state='done', pid=None)
+        login_a = str(self.tmp / 'login-a')
+        sid = 'aaaa0001-5137-4293-88d5-c4339d1ce56c'
+        for failure in ('SPAWN_COPY', 'SPAWN_NO_ID', 'SPAWN_UNTRUSTED'):
+            with self.subTest(failure):
+                result = self.spawn('--resume', sid, CLAUDE_CONFIG_DIR=login_a, **{failure: '1'})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual((self.workers / 'w1.config').read_text(), login + '\n', 'a failed resume moved the record')
+        result = self.spawn('--resume', sid, CLAUDE_CONFIG_DIR=login_a, SPAWN_PUBLISH=DONE,
+                            SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.workers / 'w1.config').read_text(), login_a + '\n')
         self.ended()
 
     def test_a_brief_over_the_cap_is_refused_and_its_size_always_printed(self):

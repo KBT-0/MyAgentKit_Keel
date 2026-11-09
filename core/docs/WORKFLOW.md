@@ -1092,7 +1092,7 @@ for parallel independent work, a sub-agent only for wide reading or a review.
    (`band_guard.py`). No `--resume` above 150k: a fresh worker from the RESULT.
 9. Cheapest proving check, a `NAME.checks` list in one `run_checks.sh`; expensive steps once.
 10. Limits are per account; nobody waits for a reset: the spawn refuses an account at its limit
-    and a 4th session; a session at its limit hands off (in full: below).
+    and a project's 4th session; a session at its limit hands off (below).
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
 worker is answered in its own session, a cut-off one resumed in place under 150k; the lead commits a
@@ -1104,11 +1104,12 @@ new Critical or High only; one final review per release (`docs/REVIEW_GATE.md`).
 
 **Rule 10 in full.** Limits are per account; nobody waits for a reset: the spawn refuses an account
 at its limit, and a session at its limit hands off to another account or the owner. At most 3 Claude
-Code sessions run on the machine at once (`MYAGENTKIT_MAX_SESSIONS`; the spawn refuses the fourth):
-an account switch rewrites every running session's context, so the switch happens at a clean point
+Code sessions run in this project at once, the main checkout and its `.claude/worktrees/`
+(`MYAGENTKIT_MAX_SESSIONS`; the spawn refuses the fourth; the count reads the spawning login
+folder's registry alone, and the account-switch mechanism is off by default): an account switch rewrites every running session's context, so the switch happens at a clean point
 and a session over 150k hands off first (owner, 2026-11-09). A worker on another account's login
 folder (`CLAUDE_CONFIG_DIR=DIR scripts/spawn_worker.sh ...`, one `claude /login` per folder, recorded
-in NAME.config for close and watch) is built but OFF: the owner's call per spawn, never the lead's.
+in NAME.config, which close and watch read over the caller's own folder) is built but OFF: the owner's call per spawn, never the lead's.
 
 **The worker's lean start (v0.16).** `scripts/spawn_worker.sh` starts a worker with no plugin (each
 one a settings file enables or the CLI installed is `false` under `enabledPlugins` in its

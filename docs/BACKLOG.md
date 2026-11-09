@@ -145,3 +145,12 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Low: run_checks.sh native-Windows lock path (`msvcrt.locking` holder) is unrun; with an absolute `--out` MSYS path the
   re-run compares a converted path and exits 75 forever; check.sh fixes the same with `cygpath -m` (check.sh ~109-116).
 - Low: `limit_watchdog_install.sh` should check `loginctl show-user "$USER" -p Linger` and warn when it is no (the user manager stops with the last login; the timer and scope go with it).
+
+## Filed from the v0.16 sesscap review (20261109T132318Z-a17cc3314296)
+
+- Low: spawn_worker.sh session cap `alive()`: a registry file left by a crash whose pid now belongs to an unrelated process
+  counts as live, and closing a session cannot clear it until `MYAGENTKIT_LIMIT_FORCE=1`.
+- Low: spawn_worker.sh session cap: no lock, and a session registers only once its process exists, so parallel or quick
+  spawns can pass the cap together.
+- Low: a worker with no `NAME.config` runs on ~/.claude; a close or watch from a caller with its own `CLAUDE_CONFIG_DIR` reads
+  the caller's list, finds it `absent` and takes the same path the record now prevents; fix = the spawn always records its folder.

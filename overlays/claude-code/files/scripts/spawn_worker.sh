@@ -41,12 +41,13 @@
 # (MYAGENTKIT_BRIEF_MAX=N sets the cap); a --resume of a worker whose last context is over 150,000
 # tokens, which a fresh worker from the RESULT replaces (MYAGENTKIT_RESUME_FORCE=REASON passes it);
 # an account at 95% of its five-hour or 98% of its seven-day limit, where another account spawns and
-# nobody waits for the reset (MYAGENTKIT_LIMIT_FORCE=1 passes it); a machine where 3 Claude Code
+# nobody waits for the reset (MYAGENTKIT_LIMIT_FORCE=1 passes it); a project where 3 Claude Code
 # sessions run already (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes it).
 #
 # CLAUDE_CONFIG_DIR=DIR spawn_worker.sh ... runs the worker on another account's login folder, the
 # owner's call per spawn and off otherwise (docs/WORKFLOW.md, "Worker cost" rule 10). DIR stays in
-# .myagentkit/workers/NAME.config for close_worker.sh, watch_workers.sh and a later --resume.
+# .myagentkit/workers/NAME.config for close_worker.sh, watch_workers.sh and a later --resume; close,
+# watch, list and show read that folder whatever the caller's own CLAUDE_CONFIG_DIR says.
 #
 # --resume SESSION_ID continues that worker's own conversation under the same NAME, with
 # BRIEF_FILE holding the answer or the next step: with --worktree in its existing
@@ -522,9 +523,11 @@ for key, cap, window in (("five_hour", 95, "five-hour"), ("seven_day", 98, "seve
     break' "$quota_dir" 2>/dev/null) || limit=""
   [ -z "$limit" ] || die "refused the spawn: the account $limit; another account may spawn now; no waiting (MYAGENTKIT_LIMIT_FORCE=1 passes)"
 fi
-# The cap on sessions running at once (owner, 2026-11-09; docs/WORKFLOW.md, "Worker cost" rule 10). Every
-# project's sessions count, the lead's too: the five-hour window is shared. Live: the pid of a
-# registry file exists; a stale file is skipped, not deleted. A resume does not count the session
+# The cap on sessions running at once (owner, 2026-11-09: count per project; docs/WORKFLOW.md, "Worker
+# cost" rule 10). This project's sessions count, the lead's too: a registry file whose cwd is the main
+# checkout (`git worktree list`, first line; out of a repository this folder) or under its
+# .claude/worktrees; another project's or a missing cwd does not. Only the spawning login folder's
+# registry is read. Live: the pid of a registry file exists; a stale file is skipped, not deleted. A resume does not count the session
 # it continues, which it replaces (it may still be in its closing grace). No registry or an
 # unreadable file: it passes, silent. On native Windows os.kill(pid, 0) is no probe but a Ctrl-C
 # to that process group (CTRL_C_EVENT is 0), so there the process is opened instead; unmeasured.
@@ -535,6 +538,8 @@ if [ "${MYAGENTKIT_LIMIT_FORCE:-}" != 1 ]; then
     printf '%s\n' "spawn_worker: MYAGENTKIT_MAX_SESSIONS is no whole number of 1 or more: the default 3 applies" >&2
     max_sessions=3
   }
+  project=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+  [ -n "$project" ] || project=${wdir%/.myagentkit/workers}
   live_sessions=$($kit_python -I -c 'import glob, json, os, sys
 def alive(pid):
     if os.name == "nt":
@@ -558,6 +563,9 @@ def alive(pid):
         return False
     return True
 folder, resume, cap = sys.argv[1], sys.argv[2], int(sys.argv[3])
+key = lambda path: os.path.normcase(os.path.realpath(path))
+main = key(sys.argv[4])
+trees = os.path.join(main, ".claude", "worktrees", "")
 live = []
 for path in sorted(glob.glob(os.path.join(glob.escape(folder), "*.json"))):
     try:
@@ -566,16 +574,19 @@ for path in sorted(glob.glob(os.path.join(glob.escape(folder), "*.json"))):
         pid = row["pid"]
     except (OSError, ValueError, KeyError, TypeError):
         continue
+    cwd = row.get("cwd")
+    if not cwd or not isinstance(cwd, str) or (key(cwd) != main and not key(cwd).startswith(trees)):
+        continue
     if type(pid) is not int or pid < 1 or not alive(pid):
         continue
     session = str(row.get("sessionId") or "")
     if resume and (session == resume or session.startswith(resume + "-")):
         continue
-    live.append("%s (%s)" % (row.get("name") or "process %d" % pid, row.get("cwd") or "folder unknown"))
+    live.append("%s (%s)" % (row.get("name") or "process %d" % pid, cwd))
 if len(live) >= cap:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    print(len(live), ", ".join(live))' "$(native "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")" "$resume" "$max_sessions" 2>/dev/null) || live_sessions=""
-  [ -z "$live_sessions" ] || die "refused the spawn: ${live_sessions%% *} Claude Code sessions run on this machine (cap $max_sessions, MYAGENTKIT_MAX_SESSIONS): ${live_sessions#* }; every running session rewrites its context at an account switch; close one (scripts/close_worker.sh NAME) or wait for it; the cap: docs/WORKFLOW.md rule 10 (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes)"
+    print(len(live), ", ".join(live))' "$(native "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")" "$resume" "$max_sessions" "$(native "$project")" 2>/dev/null) || live_sessions=""
+  [ -z "$live_sessions" ] || die "refused the spawn: ${live_sessions%% *} Claude Code sessions run in this project (cap $max_sessions, MYAGENTKIT_MAX_SESSIONS): ${live_sessions#* }; every running session rewrites its context at an account switch; close one (scripts/close_worker.sh NAME) or wait for it; the cap: docs/WORKFLOW.md rule 10 (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes)"
 fi
 # The spend line, as review.sh prints its own before a review: the owner sees what each worker
 # costs before it runs (issue #68; docs/WORKFLOW.md, "Model routing").
@@ -722,7 +733,12 @@ supervisor() {
 }
 # Written once the name is known to be free: a running worker's record is never replaced.
 # NAME.host names the host it runs on (bg, tab or tmux) for close_worker.sh and the watcher;
-# NAME.config the login folder it runs on, only when one is set (the header).
+# NAME.config the login folder it runs on, only when one is set (the header): a fresh spawn here, a
+# resume once its launch succeeded (record_config), so a failed resume leaves the record as it was.
+record_config() {
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s\n' "$CLAUDE_CONFIG_DIR" > "$wdir/$name.config" || die "cannot record the login folder in $wdir"
+  else rm -f -- "$wdir/$name.config"; fi
+}
 record_result() {
   # A resume's earlier result belongs to the closed run: moved into the lead's records as
   # NAME.result-prev.md, so neither the watch nor the worker takes it for this run's (leeway
@@ -736,8 +752,7 @@ record_result() {
   fi
   mkdir -p -- "$wdir" && printf '%s\n' "$cresult" > "$wdir/$name.result-path" &&
     printf '%s\n' "$host" > "$wdir/$name.host" || die "cannot record the result path and host in $wdir"
-  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s\n' "$CLAUDE_CONFIG_DIR" > "$wdir/$name.config" || die "cannot record the login folder in $wdir"
-  else rm -f -- "$wdir/$name.config"; fi
+  [ -n "$resume" ] || record_config
   if [ -n "$fable" ]; then printf '%s\n' "$fable" > "$wdir/$name.fable-approved" || die "cannot record the Fable approval in $wdir"
   else rm -f -- "$wdir/$name.fable-approved"; fi
 }
@@ -1105,6 +1120,18 @@ if [ -n "$bg" ]; then
   # variables travel in the merged settings' env only, and a spawning worker's own never leave here.
   unset MYAGENTKIT_ROLE CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL MYAGENTKIT_SESSION_ID
   old=""; [ ! -f "$wdir/$name.id" ] || old=$(cat -- "$wdir/$name.id")
+  # An earlier session recorded on another login folder is listed there alone: that folder's list
+  # says whether it runs, or this spawn would replace the record of a running worker.
+  recorded=""; [ -z "$old" ] || [ ! -s "$wdir/$name.config" ] || recorded=$(cat -- "$wdir/$name.config") || recorded=""
+  if [ -n "$recorded" ] && [ "$recorded" != "${CLAUDE_CONFIG_DIR:-}" ]; then
+    row=$(export CLAUDE_CONFIG_DIR="$recorded"; bg_row "$old") || die "cannot read claude agents of the login folder $recorded to check the earlier session $old of '$name'"
+    while case $row in [!-]*) in_grace ;; *) false ;; esac; do
+      row=$(export CLAUDE_CONFIG_DIR="$recorded"; bg_row "$old") || die "cannot read claude agents of the login folder $recorded to check the earlier session $old of '$name'"
+    done
+    case $row in
+      [!-]*) die "the background session $old of '$name' still runs on the login folder $recorded: close it first (scripts/close_worker.sh $name), or look at it (CLAUDE_CONFIG_DIR=$(q "$recorded") claude attach $old)" ;;
+    esac
+  fi
   if [ -n "$old" ]; then
     row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
     # L17: a usage limit leaves the session blocked after its reset, and a session whose daemon
@@ -1185,6 +1212,7 @@ sys.exit(live.exists() and not m.gone(live, 0))' "$cworker" "$wdir/$name.live" |
     claude rm "$id" </dev/null >/dev/null 2>&1 || :
     die "claude --resume started a copy ($id, now stopped and removed) instead of continuing ${sid%%-*}; answer it by hand: ${config_cmd}claude attach ${sid%%-*}"
   fi
+  [ -z "$resume" ] || record_config
   printf '%s\n' "$id" > "$wdir/$name.id" || die "cannot record the session id $id in $wdir"
   # The full sessionId, the only one a resume takes: from the row, which may lag the launch.
   [ -z "$resume" ] || full=$sid
@@ -1250,6 +1278,7 @@ if [ -n "$windows" ]; then
     i=$((i + 1)); sleep 1
   done
   [ -n "$pids" ] || die "no Claude Code session named '$name' started within 30 s; its tab shows why"
+  [ -z "$resume" ] || record_config
   # The name was free machine-wide before the launch (above), so a session found now started
   # since: close_worker.sh ends only the recorded id, never another project's session of the
   # name (#171). Two of them mean another one started in the same moment, and which is this
@@ -1306,6 +1335,7 @@ launched=1
 tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { launch_pending=""; die "tmux could not start '$name'"; }
 tmux has-session -t "=$name" 2>/dev/null || { launch_pending=""; die "tmux could not start '$name'"; }
 run=""; launch_pending=""; launched=1
+[ -z "$resume" ] || record_config
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

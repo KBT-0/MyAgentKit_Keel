@@ -120,7 +120,7 @@
 # row says why (2026-10-22: two sat ~1 h, their rows blocked). The `limit` rule in
 # waiting_patterns.txt finds it: on tmux in the pane's last line above the input box but for
 # turn-summary lines (`✻ ... for ...`); on a background or a Windows Terminal tab worker in its
-# transcript, ${CLAUDE_CONFIG_DIR:-NAME.config's folder, else ~/.claude}/projects/*/ID*.jsonl (ID its NAME.id, the sessionId
+# transcript, (NAME.config's folder, else ${CLAUDE_CONFIG_DIR:-~/.claude})/projects/*/ID*.jsonl (ID its NAME.id, the sessionId
 # a tab spawn recorded), whose last user or assistant entry is the API-error entry Claude Code
 # writes then. It is said once per stop while the session lives (a background row working,
 # blocked, or done with its process; an ended one is GONE as before), and then the row's state
@@ -211,17 +211,21 @@ wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
 # isbg NAME: whether NAME runs as a Claude Code background session (NAME.host bg); no tmux then.
 isbg() { [ "$(cat -- "$wdir/$1.host" 2>/dev/null)" = bg ]; }
 # use_config NAME: a worker on another login folder (spawn_worker.sh's NAME.config) is read through
-# that folder, its transcripts and `claude agents`; the caller's own CLAUDE_CONFIG_DIR wins, and no
-# record leaves ~/.claude as ever. One watch may name several workers. config_cmd: the prefix of a
-# printed claude command, so the owner's next command hits the same folder.
+# that folder, its transcripts and `claude agents`, whatever the caller's CLAUDE_CONFIG_DIR says: in
+# another folder's list a running worker is `absent`, and GONE would end the lead's watch of a live
+# session. With no record: the caller's folder, else ~/.claude as ever. One watch may name several
+# workers. config_cmd: the prefix of a printed claude command, so the owner's next command hits the
+# same folder.
 caller_config=${CLAUDE_CONFIG_DIR:-}; config_cmd=""
 use_config() {
-  [ -z "$caller_config" ] || return 0
   worker_config=$(cat -- "$wdir/$1.config" 2>/dev/null) || worker_config=""
   if [ -n "$worker_config" ]; then
     export CLAUDE_CONFIG_DIR="$worker_config"
     config_cmd="CLAUDE_CONFIG_DIR='$(printf '%s' "$worker_config" | sed "s/'/'\\\\''/g")' "
-  else unset CLAUDE_CONFIG_DIR; config_cmd=""; fi
+  else
+    config_cmd=""
+    if [ -n "$caller_config" ]; then export CLAUDE_CONFIG_DIR="$caller_config"; else unset CLAUDE_CONFIG_DIR; fi
+  fi
 }
 # norec NAME: this checkout holds no record of NAME (spawn_worker.sh writes NAME.result-path and
 # NAME.host at every spawn, in the checkout it ran from).

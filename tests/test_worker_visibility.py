@@ -1480,9 +1480,10 @@ class BackgroundTests(Base):
         record = self.workers / 'w1.config'
         record.write_text(str(self.tmp / 'config') + '\n')
         self.assertEqual(limit(**unset), 0, 'the recorded folder was not read')
-        # The caller's own variable wins over the record.
-        self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty')), 1)
+        # The record wins over the caller's own variable, which applies to a worker with none.
+        self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty')), 0, 'the caller beat the record')
         record.unlink()
+        self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty')), 1)
         transcripts = home / '.claude/projects'
         transcripts.parent.mkdir()
         shutil.copytree(self.tmp / 'config/projects', transcripts)
@@ -1500,6 +1501,36 @@ class BackgroundTests(Base):
         prefix = "CLAUDE_CONFIG_DIR='%s' " % login
         self.assertIn('  look at it: %sclaude attach aaaa0001   (%sclaude agents lists every session)\n' % (prefix, prefix),
                       self.watch(CLAUDE_CONFIG_DIR='').stdout)
+
+    def test_a_live_worker_on_another_login_folder_is_not_gone_from_a_callers_watch(self):
+        # Review of sesscap: GONE from login-a's list ended the lead's watch of a live, paid worker.
+        self.spawned('w1')
+        (self.workers / 'w1.config').write_text(str(self.tmp / 'login-b') + '\n')
+        (self.state / 'agents.json.login-b').write_text(json.dumps([agent('aaaa0001', 'w1', self.cwd, 'working', pid=5)]))
+        folders = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_PER_FOLDER='1')
+        self.assertEqual(self.watch(**folders).stdout, '')
+        (self.workers / 'w1.config').unlink()
+        self.assertIn('GONE: w1', self.watch(**folders).stdout, 'the case above no longer tells the folders apart')
+
+    def test_the_list_and_the_show_read_a_recorded_login_folder(self):
+        # Review of sesscap: the list said `absent` for a running worker, which invites a respawn, and
+        # the attach line named ~/.claude.
+        login = str(self.tmp / 'login-b')
+        self.spawned('w1')
+        self.spawned('w2', id='bbbb0002')
+        (self.workers / 'w1.config').write_text(login + '\n')
+        (self.state / 'agents.json.login-b').write_text(json.dumps([agent('aaaa0001', 'w1', self.cwd, 'working', pid=5)]))
+        (self.state / 'agents.json.login-a').write_text(json.dumps([agent('bbbb0002', 'w2', self.cwd, 'done')]))
+        folders = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_PER_FOLDER='1')
+        listed = self.run_bg(LIST, **folders).stdout
+        self.assertIn('w1\tbg\taaaa0001\tworking\t-\tn\n', listed)
+        self.assertIn('w2\tbg\tbbbb0002\tdone\t-\tn\n', listed)
+        self.assertEqual(self.run_bg(LIST, '--row', 'w1', **folders).stdout.split('\t')[0], 'working')
+        prefix = "CLAUDE_CONFIG_DIR='%s' " % login
+        self.assertIn('show_workers: w1 runs in the background: %sclaude attach aaaa0001   (%sclaude agents lists every '
+                      'session; nothing opened)\n' % (prefix, prefix), self.run_bg(SHOW, 'w1', **folders).stdout)
+        self.assertIn('show_workers: w2 runs in the background: claude attach bbbb0002   (claude agents lists every '
+                      'session; nothing opened)\n', self.run_bg(SHOW, 'w2', **folders).stdout)
 
     def test_a_limit_stopped_session_that_ends_is_gone(self):
         # Round 1: once LIMIT was said, an ended session is still GONE; one ended at the first poll is
