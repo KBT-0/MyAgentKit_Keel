@@ -438,7 +438,9 @@ class SpawnWorkerTests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')
                and not k.startswith(('ANTHROPIC_', 'KIT_WORKER_'))}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'), **LEAD_ENV)
+                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'),
+                    # The full start, whose launch line these cases pin; the lean one has its own case.
+                    MYAGENTKIT_WORKER_FULL='1', **LEAD_ENV)
 
     def spelled(self, path, tab=False):
         # A path as the spawn hands it on: physical, and on the Windows tab path cygpath -m's
@@ -1521,6 +1523,44 @@ exit 0
                 argv = self.launched()['argv'][1:]
                 self.assertEqual(argv[6], '--settings')
                 self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended, *DENIED])
+
+    def test_the_lean_start_drops_plugins_skills_memory_and_the_root_instructions(self):
+        # v0.16 (PLAN item 3): by default a worker starts with every known plugin off, no skill
+        # listing, no auto-memory, no CLAUDE.md of its folder or above, and AGENTS.worker.md
+        # ahead of BEHAVIOUR.md as its one appendix; MYAGENTKIT_WORKER_FULL=1 keeps the full start.
+        config = self.tmp / 'config'
+        (config / 'plugins').mkdir(parents=True)
+        (config / 'settings.json').write_text(json.dumps({'enabledPlugins': {'user@m': True}}))
+        (config / 'plugins/installed_plugins.json').write_text(json.dumps({'plugins': {'installed@m': []}}))
+        (self.cwd / '.claude').mkdir()
+        (self.cwd / '.claude/settings.json').write_text(json.dumps({'enabledPlugins': {'project@m': True}}))
+        (self.cwd / 'core').mkdir()
+        (self.cwd / 'core/AGENTS.worker.md').write_text('Hard rules.\n')
+        (self.cwd / 'core/BEHAVIOUR.md').write_text('Lead with the answer.\n')
+        workers = Path(os.path.realpath(self.cwd)) / '.myagentkit/workers'
+        for full in (None, '1'):
+            with self.subTest(full=full):
+                (self.state / 'claude.json').unlink(missing_ok=True)
+                result = self.spawn('wf' if full else 'wl', str(self.brief), '--batch', MYAGENTKIT_WORKER_FULL=full,
+                                    MYAGENTKIT_NO_BEHAVIOUR=None, CLAUDE_CONFIG_DIR=str(config))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                argv = self.launched()['argv']
+                appendix = argv[argv.index('--append-system-prompt-file') + 1]
+                if full:
+                    self.assertNotIn('--disable-slash-commands', argv)
+                    self.assertNotIn('--settings', argv)
+                    self.assertEqual(appendix, self.physical(self.cwd / 'core/BEHAVIOUR.md'))
+                    self.assertIn('start: full', result.stdout)
+                    continue
+                self.assertIn('--disable-slash-commands', argv)
+                self.assertIn('start: lean', result.stdout)
+                self.assertEqual(Path(appendix).read_text(), 'Hard rules.\nLead with the answer.\n')
+                merged = json.loads(Path(argv[argv.index('--settings') + 1]).read_text())
+                self.assertEqual(merged['enabledPlugins'], {'installed@m': False, 'project@m': False, 'user@m': False})
+                self.assertIs(merged['autoMemoryEnabled'], False)
+                top = Path(os.path.realpath(self.cwd))
+                for excluded in (top / 'CLAUDE.md', top.parent / 'CLAUDE.md', config / 'CLAUDE.md'):
+                    self.assertIn(excluded.as_posix(), merged['claudeMdExcludes'])
 
     def test_the_displayed_behaviour_path_has_no_terminal_control_bytes(self):
         self.cwd = self.tmp / 'lead\x1b[2J\tdir'
