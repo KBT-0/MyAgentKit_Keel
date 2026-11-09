@@ -49,20 +49,30 @@ family counts as the second model; its record says the model was requested, unat
 necessary, not sufficient. The reviewer works in a throwaway copy without network or paid
 model calls and marks each finding REPRODUCED or REASONED; its runs are evidence for
 findings, not for acceptance, which is the gate run (`./scripts/check.sh`) on the reviewed head.
-A kit-verified file of a kit upgrade commit counts as reviewed by the kit's own gate
-(`docs/REVIEW_RUNNING.md`, "Kit upgrade commits").
+A kit sync takes one review, and a kit-verified file of its upgrade commit counts as reviewed by
+the kit's own gate (`docs/REVIEW_RUNNING.md`, "Kit upgrade commits").
+
+### Look work
+
+A commit on a look or trial branch (a visual, tuning or spike result
+{{OWNER_NAME}} judges by eye) takes no review until {{OWNER_NAME}} accepts a capture; one review
+then covers the whole diff before the merge to the main branch. The gate, the money rule and the
+data-loss and persistence rules stay as they are (Datça report, section 4: reviews of an
+unaccepted look took 20 % of its workers' spend; owner decision, 2026-11-09).
 
 ## Risk tiers
 
-The brief's `Risk:` line (`docs/HANDOFF.md`) names the tier: the higher of the row the changed
-files fall into (table below) and the lead's proposal. {{OWNER_NAME}} may raise or lower it,
+A review is required where a miss costs money, loses data, opens a security boundary or
+silently opens a gate; the rows below define those classes (owner, 2026-11-09). The brief's
+`Risk:` line (`docs/HANDOFF.md`) names the tier: the higher of the row the changed files fall
+into and the lead's proposal. {{OWNER_NAME}} may raise or lower it,
 with the reason in the brief; a working mode never lowers it.
 
 | Tier | What | Review |
 |---|---|---|
-| low | documentation (a behaviour-rule document such as `AGENTS.md`, `docs/WORKFLOW.md` or this file included), tests only, one file outside the rows below | one light reviewer, medium effort |
+| low | documentation (a behaviour-rule document such as `AGENTS.md`, `docs/WORKFLOW.md` or this file included), tests only, one file outside the rows below | no required review: the gate (`scripts/check.sh`) and the author's own checks are its acceptance; the lead may ask one light reviewer when in doubt |
 | medium | code in {{RISKY_AREAS}} outside the high row | one reviewer, medium effort |
-| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, each at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge; a small diff: the "Invariant" exception |
+| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | ONE fresh reviewer, no `REVIEW_FOCUS` (one combined lens), high effort; only a diff over about 400 changed lines that touches shell scripts, hooks or path handling adds a `portability` reviewer, the first then taking `logic` ("Rounds"), one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge; a small diff: the "Invariant" exception |
 
 Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and the diff. When
 the diff is too long to read, a longer summary lists every changed file with its line counts,
@@ -80,10 +90,10 @@ v0.14 ACTION); without them nothing refuses the commit and the review is the lea
 
 The review its tier requires starts without asking; an extra review beyond it is
 {{OWNER_NAME}}'s call (`/myagentkit:cross-review`). Findings go to the author's side
-(`docs/WORKFLOW.md`, "Worker cost", rule 2), and round 2 reviews the fix; after two rounds the
-next step is {{OWNER_NAME}}'s or an issue ("Rounds").
+(`docs/WORKFLOW.md`, "Worker cost", rule 2), and round 2 only verifies a Critical or High fix;
+after it the next step is {{OWNER_NAME}}'s or an issue ("Rounds").
 
-Every tier's review is a gate: the change does not pass without its result
+Every required review is a gate: the change does not pass without its result
 (`docs/REVIEW_RUNNING.md`, "Unavailable reviewer"). Every review's Lows are capped as
 `REVIEW_PROMPT` caps them (`scripts/claude_bridge.py`), the only place the number is written.
 
@@ -98,10 +108,11 @@ Every tier's review is a gate: the change does not pass without its result
 
 ## Rounds
 
-At most two rounds under one label (`MYAGENTKIT_TASK_ID`); both adapters refuse a third
-(`claude_bridge.prior_rounds`). A high-tier change keeps one label and rounds count per
-`REVIEW_FOCUS`, so its logic and portability reviewers each get round 1 and round 2, run in
-parallel or one after the other alike (each focus its own). A review without a focus counts
+A change takes ONE review round by default; a second exists only to verify a Critical or High
+fix. At most two rounds under one label (`MYAGENTKIT_TASK_ID`); both adapters refuse a third
+(`claude_bridge.prior_rounds`). When a change uses `REVIEW_FOCUS` (a large high-tier diff's
+`logic` and `portability` reviewers, "Risk tiers"), it keeps one label and rounds count per
+focus, run in parallel or one after the other alike (each focus its own). A review without a focus counts
 toward every focus. The rounds used are the current focus's count plus the reviews without a
 focus; a named focus not seen under the label yet starts at 0, so logic round 1 and round 2
 and then portability round 1 run without an exception. An unset focus takes the highest count
@@ -122,8 +133,8 @@ The final review is due once per release, never per branch, and is written only 
 fresh NEW-label review of the release's merged diff, high effort, by a session that did not
 write its larger part; its Critical or High fix gets one re-read at medium effort, not a new
 loop (`docs/WORKFLOW.md`, "The lead's steps when a branch is ready"). A high-tier branch thus
-costs one round of its two focus reviewers, a verify-only round 2 when needed, and its share
-of the one release review. Time target: about 20 minutes per reviewer, the sector's figure
+costs one round of its reviewer, a verify-only round 2 when needed, and its share of the one
+release review. Time target: about 20 minutes per reviewer, the sector's figure
 (Anthropic Code Review averages 20, Cloudflare's P99 is 10; the kit's
 `docs/research/ai-review-workflows.md`, finding 4 and S5); a round far past it is split.
 
@@ -134,8 +145,10 @@ An Accept whose own findings or manual checks a plain Accept cannot carry is rea
 stricter verdict: Reject when such a finding names Critical or High, else Accept with Manual
 Checks; its first manual check names the correction (`scripts/claude_bridge.py`,
 `stricter_verdict`).
-A Medium is fixed in the round when the lead can verify the fix with a test; otherwise it is
-an issue {{OWNER_NAME}} sees at the merge. A Low a reviewer reports goes to `docs/BACKLOG.md`
+A Medium at round 2 always goes to `docs/BACKLOG.md` or an issue. In round 1 a Medium is fixed
+only when the fix has a test and the author writes a one-line cost estimate beside the
+finding's measured effect, which {{OWNER_NAME}} sees at the merge (pipeline report, proposal 1:
+a 4 cm Medium fix cost 25 % of a task); otherwise it goes to `docs/BACKLOG.md` or an issue. A Low a reviewer reports goes to `docs/BACKLOG.md`
 or an issue, never fixed in the round, because a fix adds code no reviewer has seen; a defect
 the author finds while working is fixed in the task (`AGENTS.md`, "Task discipline"). Manual checks go into `docs/STATE.md` before the commit, so an
 unverifiable claim becomes a standing obligation (owner decision; this is the one place the

@@ -13,8 +13,12 @@ project file wins over this one.
 
 ## Kit upgrade commits
 
-A sync's upgrade commit is usually too big for one review (#114). After committing it, run the
-line `sync-kit.sh` prints: `./scripts/review.sh --reviewer claude --commit <upgrade commit>
+A kit sync takes ONE review on the session's tier (the `diff-reviewer`'s, `model: inherit`),
+whatever tier its files would take; a sync that changes a project's risky logic (`risky_paths`)
+takes the medium row's review instead (`docs/REVIEW_GATE.md`, "Risk tiers"; owner, 2026-11-09:
+a sync's high-tier reviews cost one project $28). An upgrade commit is usually too big for one
+review (#114), so that review is the round below, which leaves out what the hash verifies.
+After committing it, run the line `sync-kit.sh` prints: `./scripts/review.sh --reviewer claude --commit <upgrade commit>
 --kit-verified --kit '<kit>' --kit-commit <sha>` (`--kit` defaults to `~/.myagentkit/kit`;
 Claude reviewer only). An upgrade of several commits takes `--base <ref>` in place of
 `--commit`. **Verified by hash, not reviewed:** a changed file with the `KIT-OWNED` header, with

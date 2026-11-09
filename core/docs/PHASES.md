@@ -9,6 +9,8 @@ reasons are in `docs/WORKFLOW.md`, "The state, backlog and phase files".
 
 ## Current phase: {{CURRENT_PHASE}}
 
+<!-- A phase names no review rule: docs/REVIEW_GATE.md is the only place a reviewer, a tier or a round is written, and a phase line that names one is superseded by it. -->
+
 **What it must find out:** {{PHASE_QUESTION}}
 
 <!-- State what the phase must find out or which risk it retires, in one sentence (a

@@ -72,10 +72,8 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    `CHECK: PASS` line (none: the hook is unwired, run the script by hand and say so); a task that
    ends without a commit runs it by hand. Agents never bypass it with `--no-verify`.
 5. **Review by tier:** the brief's `Risk:` line names the tier, and the tier names the
-   review (`docs/REVIEW_GATE.md`, "Risk tiers"): one light reviewer for low, one for medium,
-   two for high (gates, hooks, check scripts, review tooling); code in {{RISKY_AREAS}} is
-   medium. A small diff takes the exception in `docs/REVIEW_GATE.md`, "Invariant".
-   It runs in a FRESH session before the change reaches the main branch (when exactly:
+   review (`docs/REVIEW_GATE.md`, "Risk tiers", the one place it is written; low takes none).
+   A required review runs in a FRESH session before the change reaches the main branch (when exactly:
    `docs/REVIEW_GATE.md`, its opening lines). The author never approves their own patch.
 6. **Document:** a changed public API updates its README in the same task (`AGENTS.md`,
    "Task discipline").
@@ -371,7 +369,8 @@ real race is never seen again until it bites in CI or production.
 
 Uncertain or risky topics are tried as throwaway code on a `spike/` branch first. Spike code
 NEVER moves into the main code — the learning is rewritten cleanly. Record the outcome as a
-five-to-ten line note in `docs/spikes/`.
+five-to-ten line note in `docs/spikes/`. A spike or look branch takes no review before
+{{OWNER_NAME}} accepts it (`docs/REVIEW_GATE.md`, "Look work").
 
 ## Decay early-warning system
 
@@ -872,11 +871,10 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   the lead checks each Codex finding before it enters a fix round. When Codex's allowance is
   exhausted, a Claude tier at least the author's takes the review (`docs/REVIEW_GATE.md`,
   "Invariant"), and the lead records the
-  switch in the task's STATE line and reports it. A high-tier change has two focus reviewers
-  under one label (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the
-  strongest Claude tier takes one focus and Codex the other. Findings go to the author's side
-  ("Worker cost", rule 2), and each focus gets the label's two rounds
-  (`docs/REVIEW_GATE.md`, "Rounds").
+  switch in the task's STATE line and reports it. When a high-tier change has two focus
+  reviewers under one label (`docs/REVIEW_GATE.md`, "Risk tiers"), for critical work Claude
+  wrote the strongest Claude tier takes one focus and Codex the other. Findings go to the
+  author's side ("Worker cost", rule 2); rounds: `docs/REVIEW_GATE.md`, "Rounds".
 - **Quota:** before the switch to cross and before a large Codex errand, the lead reads
   Codex's allowance (`python3 scripts/codex_quota.py`, `python` on native Windows). A Codex worker stopped by its quota
   leaves its session id in the task's STATE line, and `spawn_codex.sh ... --resume`
@@ -1072,9 +1070,9 @@ for independent work that runs in parallel, a sub-agent only for wide reading or
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
 worker is answered in its own session, a cut-off one resumed in place; the lead commits a
-Codex worker's work. Reviews: two rounds at most, inner rounds too; round 2 confirms every
-finding the dispositions claim fixed, a Medium included, and reports new Critical or High
-only; one final review per release (`docs/REVIEW_GATE.md`, "Rounds").
+Codex worker's work. Reviews (inner too): one round, a second to check a fix;
+round 2 confirms every finding the dispositions claim fixed, a Medium included, and reports
+new Critical or High only; one final review per release (`docs/REVIEW_GATE.md`).
 
 ### The measurements and the full rules
 
@@ -1614,9 +1612,9 @@ Why: docs/WORKFLOW_RATIONALE.md, "The measurements and the full rules".
 starts with a design of five to ten lines, in the brief or at the top of the worker's result
 (what changes, where, the one test that proves it, what is left out); the worker makes the
 smallest change that works, reuses what the project already has, and reads its own diff as a
-reviewer would before it reports ("Before you report"). The review loop is unchanged and
-reviews are never reduced (`docs/REVIEW_GATE.md`, "Risk tiers"); prevention
-is what lets its first round find nothing. A project or a kit that spends its budget
+reviewer would before it reports ("Before you report"). Which change takes which review is
+`docs/REVIEW_GATE.md`'s alone ("Risk tiers"), and below that scope reviews are never reduced;
+prevention is what lets its one round find nothing. A project or a kit that spends its budget
 reviewing itself fails at its purpose, which is the product.
 
 "In parallel" means the review inside the worker and the acceptance gate run beside a review; the gate's
@@ -1658,9 +1656,9 @@ Why: docs/WORKFLOW_RATIONALE.md, "Design before code".
   own change.
 - Inner rounds keep the gate's cap (`docs/REVIEW_GATE.md`, "Rounds"): at most two; round 2 runs
   only when round 1 left a Critical or High fix, confirms every finding the dispositions claim
-  fixed, a Medium included, and reports new Critical or High only. A Medium is fixed when a test
-  verifies it, else named in the report; a Low goes to the report; what remains after round 2
-  goes to the lead. A fresh reviewer nearly always finds another Medium, so "until clean"
+  fixed, a Medium included, and reports new Critical or High only. A Medium follows
+  `docs/REVIEW_GATE.md`, "Verdicts and who decides"; a Low goes to the report; what remains
+  after round 2 goes to the lead. A fresh reviewer nearly always finds another Medium, so "until clean"
   never ends (the kit's `docs/research/ai-review-workflows.md`, findings 2 and 8).
 - The report lists the inner rounds: their count, the findings fixed and each disposition.
 - Where `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` is 1, the worker cannot start a sub-agent and
@@ -1702,9 +1700,9 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    The acceptance run is once per batch, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait. CI runs on the same commit.
-3. Keep one review label per change for its rounds (a high-tier change's two focus reviewers
-   get two rounds each under it), so that each round carries the matching earlier reports
-   (`docs/REVIEW_GATE.md`, "Rounds"). A release's merged diff
+3. Keep one review label per change for its rounds, so that each round carries the matching
+   earlier reports; who reviews and how many rounds: `docs/REVIEW_GATE.md`, "Risk tiers" and
+   "Rounds". A release's merged diff
    then gets ONE final review under a label never used before, as that section states.
 4. Fix a Critical or High finding of the final review; a Medium goes to {{OWNER_NAME}} and a
    Low to `docs/BACKLOG.md` (`docs/REVIEW_GATE.md`, "Verdicts and who decides").

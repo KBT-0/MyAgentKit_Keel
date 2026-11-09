@@ -83,8 +83,8 @@ traps) when something behaves unexpectedly, `docs/BACKLOG.md` for the next task.
 ### Review gate and validation honesty
 
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling) pass the review
-  gate before they reach the main branch; others get their tier's review (`docs/REVIEW_GATE.md`,
-  "Risk tiers"). It starts unasked, when `docs/REVIEW_GATE.md` (its opening) says; in Claude Code a
+  gate before they reach the main branch; others get what their tier names, which for low is
+  none (`docs/REVIEW_GATE.md`, "Risk tiers", the one place a reviewer or a round is written). It starts unasked, when `docs/REVIEW_GATE.md` (its opening) says; in Claude Code a
   commit or merge changing a `risky_paths` file whose content no review accepted is refused. A
   FRESH session reviews, never the author
   (`docs/REVIEW_GATE.md`, "Invariant", "Rounds"). A verdict's manual checks go to `docs/STATE.md`.

@@ -30,7 +30,7 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `REVIEW_DISPOSITIONS` | the PATH of a file holding the answers to every earlier round (round 1 by default), one line per finding: `fixed:` / `disproved:` / `deferred:`; e.g. `REVIEW_DISPOSITIONS=.myagentkit/x-dispositions.md`, never the text itself |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
-| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier (a small diff under the "Invariant" exception: one round, no focus); each focus gets the label's two rounds; a review without a focus counts toward every focus |
+| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a large high-tier diff (`docs/REVIEW_GATE.md`, "Risk tiers"; any other review: no focus); each focus gets the label's two rounds; a review without a focus counts toward every focus |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused. The brief may live in any checkout: the diff is the reviewed one's, the checkout `review.sh` runs in when that is a worktree of the script's repository (#302) |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700 (3600 for a high-effort Codex review), at most 3600 |
@@ -78,9 +78,9 @@ Automation never authorizes a commit or push.
 ## Rounds, labels and designs
 
 - A design is reviewed under its own label before code exists; dispositions cite its exclusions.
-- A high-tier change's two focus reviewers share its one label and get two rounds each; each
-  `REVIEW_FOCUS` carries its own reports plus legacy reports without a focus
-  (`docs/REVIEW_GATE.md`, "Rounds").
+- Focus reviewers (a large high-tier diff's, `docs/REVIEW_GATE.md`, "Risk tiers") share its one
+  label and count rounds per focus; each `REVIEW_FOCUS` carries its own reports plus legacy
+  reports without a focus (`docs/REVIEW_GATE.md`, "Rounds").
 - The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the
   acceptance gate run beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
   cost", rule 6), each as its own background job. Source: KARARLAR D06 inv2#38; LLVM CMake

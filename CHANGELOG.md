@@ -15,6 +15,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **Review scope (owner 2026-11-09, PLAN.md item 4).** A review is required only for the risk classes (money, data
+  loss, security, gate): the low row takes none, the gate and the author's checks are its acceptance; the high row takes
+  ONE fresh reviewer with one combined lens, a `logic` and `portability` pair only on a diff over about 400 lines that
+  touches shell scripts, hooks or path handling. One round by default, round 2 only verifies a Critical or High fix; a
+  Medium at round 2 always goes to the backlog, in round 1 it is fixed only with a test and a one-line cost estimate. A
+  look or trial branch takes no review until the owner accepts a capture, then one review of the whole diff; a kit sync
+  takes one review on the session's tier (the medium row's when it changes `risky_paths`). `docs/PHASES.md` names no
+  review rule. The reviewer's tier never drops. **ACTION** (project-owned `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`,
+  `docs/WORKFLOW.md`, `AGENTS.md`, `docs/PHASES.md`): `sync-kit.sh . --merge`; delete a phase line that names a reviewer.
 - **The context band is enforced (owner 2026-11-09, PLAN.md item 2).** The new `band_guard.py` hook (PreToolUse,
   every tool) denies every call past a worker's 150k or a lead's 200k but the closing set: git add, commit, status,
   diff and log, read-only commands, the result publish, the hand-off steps (`master_writer.py release`,
