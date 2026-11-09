@@ -26,6 +26,14 @@ class OverlayPermissionsTests(unittest.TestCase):
     def setUp(self):
         self.permissions = json.loads(SETTINGS.read_text(encoding='utf-8'))['permissions']
 
+    def test_synced_plugin_and_skills_start_off(self):
+        # v0.16 leadstart: the claude.ai-synced plugin and skills cost the lead ~2.6k tokens per request.
+        for path in (SETTINGS, SETTINGS.parents[4] / '.claude/settings.json'):
+            s = json.loads(path.read_text(encoding='utf-8'))
+            self.assertIs(s['enabledPlugins']['cowork-plugin-management@synced'], False)
+            self.assertEqual(s['skillOverrides']['docs'], 'off')
+            self.assertEqual(set(s['skillOverrides'].values()), {'off'})
+
     def test_only_the_lead_keeps_the_one_hour_cache(self):
         # #116: sub-agents rarely wait five minutes, so a one-hour write (2x) buys them nothing;
         # spawn_worker.sh sets the one-hour value on the long-job worker's own launch line.
