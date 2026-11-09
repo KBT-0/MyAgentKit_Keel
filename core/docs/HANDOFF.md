@@ -22,6 +22,11 @@ state, open work, and details that are hard to reproduce.
 Every brief includes `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`
 (`docs/WORKFLOW.md`, "Model routing", defines the values; critical work adds a
 mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside that line.
+The `Checks:` commands may be given as a file next to the brief, `NAME.checks`, one command per
+line: the worker runs `sh scripts/run_checks.sh NAME.checks` once and reads its result file once
+(`.myagentkit/checks/NAME.checks.result.md`: a `PASS n/m` or `FAIL k/m` line, one line per
+command, a failure's last 20 output lines), instead of running each check in its own request
+(pipeline field report 2026-11-09: a model request per check and per re-read of its output).
 
 1. **Task:** one paragraph, exact scope, explicit non-goals ("do not touch X").
 2. **Files:** full paths and member names — verified to exist RIGHT NOW with grep or a

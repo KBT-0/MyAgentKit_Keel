@@ -140,7 +140,7 @@ REQUIRED_SUITES = {
               'test_kit_output': 3, 'test_kit_runner': 53, 'test_clean_worktrees': 146, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 56 if os.name == 'nt' else 55, 'test_python_fallback': 3, 'test_master_writer': 13 if os.name == 'nt' else 14,
-              'test_install': 12 if os.name == 'nt' else 8, 'test_gate_config': 3, 'test_calm': 4},
+              'test_install': 12 if os.name == 'nt' else 8, 'test_gate_config': 3, 'test_calm': 4, 'test_run_checks': 6},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
@@ -148,7 +148,8 @@ REQUIRED_SUITES = {
 NOT_ON_WINDOWS = {
     'core/scripts': {},
     'tests': {'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
-              'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows'},
+              'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows',
+              'test_run_checks': 'the flock check lock; its msvcrt path is a shortcut not yet run on Windows'},
 } if os.name == 'nt' else {}
 # Modules too long for one unit, each run as that many units (#146). A module name is unique
 # across the folders. ponytail: hand-set from measured seconds; a slow module added later only
