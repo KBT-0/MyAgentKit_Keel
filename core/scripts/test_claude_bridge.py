@@ -934,6 +934,19 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5')['verdict'],
                                  'Accept with Manual Checks')
 
+    def test_a_fable_review_answered_by_another_model_is_refused(self):
+        # #342: a Fable pin ran on Opus with no error on an account without Fable credits.
+        value = dict(verdict='Accept', findings=[], manual_checks=[])
+        fallback = {'claude-fable-5-1': {'outputTokens': 3}, 'claude-opus-5-5': {'outputTokens': 900}}
+        envelope = dict(type='result', subtype='success', is_error=False, modelUsage=fallback, structured_output=value)
+        with self.assertRaisesRegex(bridge.BridgeError, 'answered by claude-opus-5-5, not by the requested claude-fable-5-1'):
+            bridge.validate(envelope, 'review', 'claude-fable-5-1')
+        self.assertEqual(agent_usage.answered_model(fallback), 'claude-opus-5-5')
+        envelope['modelUsage'] = {'claude-fable-5-1': {'outputTokens': 900}, 'claude-haiku-5-5': {'outputTokens': 3}}
+        self.assertEqual(bridge.validate(envelope, 'review', 'claude-fable-5-1')['verdict'], 'Accept')
+        envelope['modelUsage'] = fallback  # only a Fable tier is checked: an Opus pin with an Opus answer passes
+        self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5-5')['verdict'], 'Accept')
+
     def test_secret_refusal_only_checks_changed_paths_and_lists_every_hit(self):
         for name in ('.env', 'site.key'):
             (self.repo / name).write_text('private\n')
@@ -3926,6 +3939,9 @@ class BridgeTests(unittest.TestCase):
                     usage = json.loads(Path(result['usage_record']).read_text())
                     self.assertEqual((usage['status'], usage['failure_kind']),
                                      (result['status'], result['failure_kind']))
+                    if case == 'accept':  # the answering model is recorded beside the requested one (#342)
+                        self.assertEqual(usage['model_answered'],
+                                         usage['model_requested'] if adapter == 'claude' else None)
 
     def test_a_plain_accept_may_carry_lows_and_pre_existing_items_only(self):
         # Owner decision 2026-10-13 (E): a Low or an item outside the diff does not block Accept;

@@ -37,6 +37,7 @@ installed is listed in `docs/GOTCHAS_KIT.md`, "Contents".
 - Claude Code's worktree points every tree at the main checkout's hooks
 - A research worker's web fetch cannot read reddit.com
 - A session idle for an hour is compacted on its own
+- A call that asks for Fable runs on another model with no error
 
 ---
 
@@ -128,3 +129,7 @@ Kit rules: docs/GOTCHAS_KIT.md, "A research worker's web fetch cannot read reddi
 ## A session idle for an hour is compacted on its own
 
 Kit rules: docs/GOTCHAS_KIT.md, "A session idle for an hour is compacted on its own".
+
+## A call that asks for Fable runs on another model with no error
+
+Kit rules: docs/GOTCHAS_KIT.md, "A call that asks for Fable runs on another model with no error".

@@ -28,7 +28,9 @@ of a higher tier's work is an extra opinion only, never the required review alon
 lines, not a release) takes the `diff-reviewer` agent on the session's tier, in its own fresh
 context, as its required review, unless it touches a hook, a gate, a CI configuration, a check
 script, review tooling or tool settings: that diff takes one `scripts/review.sh` round, a fresh session whose evidence lands in
-`docs/reviews/`: one reviewer without `REVIEW_FOCUS`, one combined focus (owner, 2026-10-25). When round 1 left a Critical or High, round 2 is a fresh
+`docs/reviews/`: one reviewer without `REVIEW_FOCUS`, one combined focus (owner, 2026-10-25). The
+answering model is recorded beside the requested one (`model_answered` in the usage record, the
+CLI's modelUsage), and `scripts/review.sh` refuses a Fable-tier review answered by another model: it is no Fable review (#342). When round 1 left a Critical or High, round 2 is a fresh
 `diff-reviewer` on the fix, never a new label. A larger diff or a release keeps the rule above. Sources:
 Anthropic separates the writer's session from the reviewer's, and the zero gain measured for
 self-review was in the same session, not a fresh one (`docs/research/ai-review-workflows.md`,

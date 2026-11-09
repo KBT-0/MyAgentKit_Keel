@@ -39,6 +39,7 @@ entries it was installed with; one the kit added later is listed here.
 - Claude Code's worktree points every tree at the main checkout's hooks
 - A research worker's web fetch cannot read reddit.com
 - A session idle for an hour is compacted on its own
+- A call that asks for Fable runs on another model with no error
 
 ---
 
@@ -387,3 +388,13 @@ about an hour once its context reached 200k (the default threshold), a lead wait
 before the prompt cache expires, and counts it like any compaction, so the second one is
 a hand-off signal as before (`docs/WORKFLOW.md`, "Worker cost", rule 8; the kit's
 `docs/research/context-hygiene.md`, Öneri 5).
+
+## A call that asks for Fable runs on another model with no error
+
+On an account without Fable credits, an Agent call with `model: fable`, a Fable-pinned review or a
+Fable worker runs on Opus and finishes normally; the launch's `resolvedModel` still names Fable
+(#342: ten leeway sub-agents, every answer `claude-opus-5-5`). Only the `model` field of the
+transcript's answers is the truth: read it before calling a result Fable's
+(`grep -o '"model":"[^"]*"' <session>/subagents/agent-<id>.jsonl | sort | uniq -c`).
+`.claude/hooks/model_check.py` tells the lead `MODEL_FALLBACK: asked <requested>, answered by <model>`
+when a sub-agent stops, and `scripts/review.sh` refuses a Fable review answered by another model.
