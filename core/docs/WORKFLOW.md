@@ -1041,35 +1041,35 @@ Why: docs/WORKFLOW_RATIONALE.md, "autopilot, the owner-away switch".
 
 ### The rules in brief
 
-The lead reads this block once per session and again after a compaction, not before each brief,
-spawn, merge or close; the full rule below, with its sources, when one is in doubt (the measurements:
-`docs/WORKFLOW_RATIONALE.md`).
+The lead reads this block once per session and again after a compaction; the full rule below
+when in doubt (measurements: `docs/WORKFLOW_RATIONALE.md`).
 
 **One task, one session:** the session that owns a task makes its edits itself; a worker only
-for independent work that runs in parallel, a sub-agent only for wide reading or a review.
+for parallel independent work, a sub-agent only for wide reading or a review.
 
-1. A worker's cache outlives its waits (one-hour cache); long jobs, `git commit` and `git merge` included, run in the background; nobody polls.
-2. A gate finding goes back to the author's side while its context is under the band and the
-   fix is no redesign; otherwise a fresh worker takes it.
-3. One small task per worker, sized to end under the context band; a sub-agent's brief to the
-   about 120k it has before its first compaction (rule 3).
-4. The lead does not poll either; it waits for notifications. After every spawn it starts the
-   printed `sh scripts/watch_workers.sh` line as ONE background command: the disk is the done
-   signal, and an idle notice is optional, never relied on alone.
-5. Effort is medium by default, high only for hard debugging or a design step. A worker or
-   sub-agent gets its model and effort on the call, never inherited unawares; a definition that
-   writes `model: inherit` (the diff-reviewer: the session's tier) is that choice. Which tier a
-   required review needs: `docs/REVIEW_GATE.md`, "Invariant". A Fable call without credits
-   runs on Opus silently (`MODEL_FALLBACK`, `docs/GOTCHAS.md`).
+1. A worker's cache outlives its waits (one-hour cache); long jobs (commits and merges too) run in the background; nobody polls.
+2. A gate finding goes back to the author's side while under the band and the fix is no redesign;
+   otherwise a fresh worker takes it.
+3. One small task per worker, sized to end under the band: its brief fits one session (spawn
+   cap 12000 bytes); a sub-agent's to its about 120k (rule 3).
+4. After every spawn the lead starts the printed `sh scripts/watch_workers.sh` line as ONE
+   background command and waits, never polls: the disk is the one done signal (the worker
+   sends no message); an idle notice is never relied on alone.
+5. Effort: medium by default, high only for hard debugging or a design step. A worker or
+   sub-agent gets its model and effort on the call, never inherited unawares (`model: inherit`
+   is that choice). A required review's tier: `docs/REVIEW_GATE.md`, "Invariant". Fable without
+   credits runs on Opus silently (`MODEL_FALLBACK`, `docs/GOTCHAS.md`).
 6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
-7. Worker reports are short (about 350 words); long output goes to a file.
-8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k;
-   `band_guard.py` enforces it (rule 8 below).
+7. Worker reports: about 350 words; long output goes to a file.
+8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k
+   (`band_guard.py`). No `--resume` above 100k: a fresh worker from the RESULT.
 9. A worker runs the cheapest check that proves its change; the expensive step runs once.
+10. Limits are per account; nobody waits for a reset: the spawn refuses an account at its limit,
+    and a session at its limit hands off to another account or the owner.
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
-worker is answered in its own session, a cut-off one resumed in place; the lead commits a
+worker is answered in its own session, a cut-off one resumed in place under 100k; the lead commits a
 Codex worker's work. Reviews (inner too): one round, a second to check a fix;
 round 2 confirms every finding the dispositions claim fixed, a Medium included, and reports
 new Critical or High only; one final review per release (`docs/REVIEW_GATE.md`).
@@ -1363,9 +1363,9 @@ also subscribe with SendMessage `notify_when_idle` when the spawn prints "is a p
 (a tmux worker always registers), but never relies on it alone: a supervised close often
 sends no notice. The subscription costs no tokens. It lapses after 12 hours without a
 notice (the lead is told). A worker with `crossSessionInbound` set to `refuse` sends no notice.
-The worker also messages the lead's session itself right after it publishes (the spawn prints
-`lead session: NAME`; 4 of 4 arrived in the 2026-10-22 spike), but a cross-session message is
-best-effort too, so the watch stays.
+The worker sends the lead no message: the watch is the one done signal (owner, 2026-11-09: a
+worker's message after its publish, 4 of 4 delivered in the 2026-10-22 spike, woke the lead a second
+time for every result).
 The docs define idle as "finished a turn with nothing queued"
 (code.claude.com/docs/en/cross-session-messaging). In the lead's 2026-10-17 observation, one
 subscription on a `spawn_worker` worker that published its result and was then closed

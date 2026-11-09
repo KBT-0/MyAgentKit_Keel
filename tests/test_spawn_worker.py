@@ -45,14 +45,6 @@ INSTRUCTION = ("Read {brief} and follow it. Your result file is {result}: its fi
                "same way and with the same last line, to {question}, which ends this session for the lead's "
                "answer; until then go on with "
                "what does not depend on it.")
-# donemsg: the worker messages the lead session the spawn found, else is told the file is the signal.
-NO_LEAD = " No lead session was found to message, so send no message: the published file is the signal."
-LEAD_MESSAGE = (" Once a publish of a result or a question has succeeded (never in the same response as the "
-                "publish), tell the lead session {lead} with SendMessage "
-                "(load it with ToolSearch before that publish, as the session may end 60 seconds after it): one "
-                "message naming the published file's path, its Kind and one line on it; none after a Kind: "
-                "progress result, and if SendMessage is unavailable or fails, go on without it: the published "
-                "file is the signal.")
 
 TMUX = r'''#!/usr/bin/env python3
 import os, subprocess, sys
@@ -439,6 +431,8 @@ class SpawnWorkerTests(unittest.TestCase):
                and not k.startswith(('ANTHROPIC_', 'KIT_WORKER_'))}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                     WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'),
+                    # Never the host's config: its rate-limits.json at 95% refused every spawn.
+                    CLAUDE_CONFIG_DIR=str(self.tmp / 'no-config'),
                     # The full start, whose launch line these cases pin; the lean one has its own case.
                     MYAGENTKIT_WORKER_FULL='1', **LEAD_ENV)
 
@@ -456,7 +450,7 @@ class SpawnWorkerTests(unittest.TestCase):
         spelled = lambda path: shq(self.spelled(path, tab))
         return INSTRUCTION.format(brief=spelled(brief), result=spelled(self.cwd / ('RESULT-%s.md' % name)),
                                   python='python3', worker=spelled(SCRIPT.with_name('codex_worker.py')),
-                                  question=spelled(self.cwd / ('QUESTION-%s.md' % name))) + NO_LEAD
+                                  question=spelled(self.cwd / ('QUESTION-%s.md' % name)))
 
     def launched(self):
         path = self.state / 'claude.json'
@@ -1109,8 +1103,9 @@ exit 0
                 report = shq(self.spelled(self.cwd / 'RESULT-w1.md', bool(tab)))
                 top = self.spelled(self.cwd, bool(tab))
                 self.assertEqual(lines[started + 1],
-                                 'spawn_worker: watch it now, as ONE background command whose exit is the done '
-                                 'signal (start it again after every report but DONE and GONE): '
+                                 'spawn_worker: watch it now, as ONE background command whose exit is the only done '
+                                 'signal (the worker sends no message; start it again after every report but DONE '
+                                 'and GONE): '
                                  'cd %s && sh %s --result w1=%s w1'
                                  % (shq(top), shq(self.spelled(SCRIPT.parent / 'watch_workers.sh', bool(tab))),
                                     report))
@@ -2488,7 +2483,10 @@ class BackgroundHostTests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('KIT_WORKER_', 'MYAGENTKIT_WORKER_'))
                and k not in ('MYAGENTKIT_ROLE', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL')}
         env.update(PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                   KIT_WORKER_GRACE='0.2', KIT_PS=str(self.bin / 'ps-empty'), **LEAD_ENV)
+                   KIT_WORKER_GRACE='0.2', KIT_PS=str(self.bin / 'ps-empty'), **LEAD_ENV,
+                   # Never the host's config: its rate-limits.json at 95% refused every spawn.
+                   CLAUDE_CONFIG_DIR=str(self.tmp / 'no-config'))
+        env = {k: v for k, v in env.items() if not k.startswith(('MYAGENTKIT_BRIEF_', 'MYAGENTKIT_RESUME_', 'MYAGENTKIT_LIMIT_'))}
         env.update(extra)
         return subprocess.run(['sh', str(SCRIPT), 'w1', str(self.brief), '--model', 'm', '--effort', 'high', *args],
                               cwd=cwd or self.cwd, env=env, capture_output=True, text=True, timeout=timeout * SCALE)
@@ -2554,35 +2552,136 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertFalse([cwd for cwd in stops if cwd == worktree.resolve() or worktree.resolve() in cwd.parents])
         self.assertNotIn('an earlier run', (self.workers / 'w1.supervisor.log').read_text())
 
-    def test_the_worker_is_told_to_message_the_lead_session_its_spawner_runs_in(self):
-        # donemsg: 5 of 5 finished --bg workers told the lead nothing (2026-10-21/22). The lead's
-        # shell names its session by CLAUDE_PID and CLAUDE_CODE_SESSION_ID; Claude Code's peer
-        # record sessions/PID.json gives the name SendMessage takes, derived when the lead has no -n.
+    def test_the_worker_messages_no_one_and_the_watch_is_the_only_done_signal(self):
+        # One done signal (owner, 2026-11-09): every result woke the lead twice, once by the worker's
+        # SendMessage and once by the watch. A lead whose peer record names it gets no message either.
         config = self.tmp / 'config'
         (config / 'sessions').mkdir(parents=True)
         record = {'pid': 4242, 'sessionId': 'lead-sid', 'name': 'keel-lead-d9', 'nameSource': 'derived'}
         (config / 'sessions/4242.json').write_text(json.dumps(record), encoding='utf-8')
-        lead = dict(CLAUDE_CONFIG_DIR=str(config), CLAUDE_PID='4242')
-        for case, extra, told in (('found', dict(CLAUDE_CODE_SESSION_ID='lead-sid'), "'keel-lead-d9'"),
-                                  # a reused pid: the record is another session's
-                                  ('another session', dict(CLAUDE_CODE_SESSION_ID='other'), None),
-                                  ('no lead shell', dict(CLAUDE_CODE_SESSION_ID='', CLAUDE_PID=''), None)):
+        result = self.spawn(CLAUDE_CONFIG_DIR=str(config), CLAUDE_PID='4242', CLAUDE_CODE_SESSION_ID='lead-sid',
+                            SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        prompt = self.launch()['argv'][0]
+        self.assertTrue(prompt.endswith('until then go on with what does not depend on it.'), prompt)
+        for stale in ('SendMessage', 'lead session', 'keel-lead-d9'):
+            self.assertNotIn(stale, prompt)
+        self.assertNotIn('lead session', result.stdout)
+        self.assertIn('watch it now, as ONE background command whose exit is the only done signal (the worker '
+                      'sends no message;', result.stdout)
+        self.ended()
+
+    def resume_records(self, state=None, transcript=None):
+        """A finished bg worker w1 to resume: its ids, its row, its state line and transcript as given."""
+        self.workers.mkdir(parents=True, exist_ok=True)
+        (self.workers / 'w1.id').write_text('1a2b3c4d\n')
+        (self.workers / 'w1.session').write_text('1a2b3c4d-5137-4293-88d5-c4339d1ce56c\n')
+        (self.workers / 'w1.result-path').write_text(str(self.cwd / 'RESULT-w1.md'))
+        (self.state / 'rows.json').write_text(json.dumps([{'id': '1a2b3c4d', 'pid': None, 'state': 'done'}]))
+        if state is not None:
+            (self.workers / 'w1.state').write_text('idle 2026-11-09T12:00:00 1 context_tokens=%d\n' % state)
+        config = self.tmp / 'config'
+        if transcript is not None:
+            folder = config / 'projects/-lead-worktree'
+            folder.mkdir(parents=True, exist_ok=True)
+            usage = {'input_tokens': 1, 'cache_read_input_tokens': transcript - 1, 'cache_creation_input_tokens': 0,
+                     'output_tokens': 5}
+            rows = [{'type': 'assistant', 'requestId': 'r%d' % n, 'timestamp': '2026-11-09T12:0%d:00Z' % n,
+                     'message': {'id': 'm%d' % n, 'model': 'm', 'usage': dict(usage, cache_read_input_tokens=n),
+                                 'content': []}} for n in (1, 2)]
+            rows[-1]['message']['usage'] = usage
+            (folder / '1a2b3c4d-5137-4293-88d5-c4339d1ce56c.jsonl').write_text(
+                ''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
+        return dict(CLAUDE_CONFIG_DIR=str(config))
+
+    def test_a_resume_over_100k_of_context_is_refused_for_a_fresh_worker(self):
+        # pipeline report 2026-11-09: a resume past 100k rewrote its whole context, up to 371k per resume.
+        refused = "start a fresh worker from the RESULT (%s), or set MYAGENTKIT_RESUME_FORCE=REASON" % (self.cwd / 'RESULT-w1.md')
+        for case, records, extra, words in (
+                ('refused at 100,001', dict(state=100001), {},
+                 'refused the resume: context 100001 tokens (the state line), over 100000, and a resume rewrites all of it; '),
+                ('the transcript when no state line', dict(transcript=100001), {},
+                 'refused the resume: context 100001 tokens (the transcript), over 100000'),
+                ('passes at 100,000', dict(state=100000), {}, 'resume: context 100000 tokens (the state line), within 100000'),
+                ('passes with the variable', dict(state=100001), dict(MYAGENTKIT_RESUME_FORCE='owner: one more fix'),
+                 'resume: context 100001 tokens (the state line), over 100000, forced: owner: one more fix'),
+                ('passes when unknown', {}, {},
+                 'resume: context unknown (no context_tokens in w1.state, no transcript of 1a2b3c4d): it passes')):
             with self.subTest(case):
-                result = self.spawn(**dict(lead, SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'),
-                                           **extra))
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                prompt = self.launch()['argv'][0]
-                if told:
-                    self.assertTrue(prompt.endswith(LEAD_MESSAGE.format(lead=told)), prompt)
-                    self.assertIn('spawn_worker: lead session: keel-lead-d9 (the worker messages it once it '
-                                  'has published; best-effort: the watch below is the done signal)', result.stdout)
+                (self.state / 'launch.json').unlink(missing_ok=True)
+                env = dict(self.resume_records(**records), **extra)
+                result = self.spawn('--resume', '1a2b3c4d', SPAWN_PUBLISH=DONE,
+                                    SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'), **env)
+                if words.startswith('refused'):
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(words, result.stderr)
+                    self.assertIn(refused, result.stderr)
+                    self.assertFalse((self.state / 'launch.json').exists(), 'a refused resume launched')
                 else:
-                    self.assertTrue(prompt.endswith(NO_LEAD), prompt)
-                    self.assertIn('spawn_worker: lead session: none found (CLAUDE_PID and CLAUDE_CODE_SESSION_ID '
-                                  'name no Claude Code session record): the watch below is the only done signal',
-                                  result.stdout)
-                self.ended()
-                (self.workers / 'w1.exit').unlink()
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('spawn_worker: ' + words, result.stdout)
+                    self.ended()
+                    (self.workers / 'w1.exit').unlink()
+                shutil.rmtree(self.tmp / 'config', ignore_errors=True)
+                (self.workers / 'w1.state').unlink(missing_ok=True)
+
+    def test_a_brief_over_the_cap_is_refused_and_its_size_always_printed(self):
+        # pipeline report 2026-11-09, proposal 7: a brief that does not fit one session ends in hand-offs.
+        for case, size, extra, refused in (('over the cap', 12001, {}, True), ('at the cap', 12000, {}, False),
+                                           ('the variable sets the cap', 50, dict(MYAGENTKIT_BRIEF_MAX='49'), True)):
+            with self.subTest(case):
+                (self.state / 'launch.json').unlink(missing_ok=True)
+                self.brief.write_text('x' * (size - 1) + '\n', encoding='utf-8')
+                cap = extra.get('MYAGENTKIT_BRIEF_MAX', '12000')
+                result = self.spawn(SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'), **extra)
+                self.assertIn('spawn_worker: brief: %d bytes (cap %s)' % (size, cap), result.stdout)
+                if refused:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('refused the brief: %d bytes, over the cap of %s (MYAGENTKIT_BRIEF_MAX): a brief '
+                                  'that does not fit one session ends in hand-offs; split it into briefs of one '
+                                  'session each (docs/HANDOFF.md, "The brief")' % (size, cap), result.stderr)
+                    self.assertFalse((self.state / 'launch.json').exists(), 'a refused brief launched')
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.ended()
+                    (self.workers / 'w1.exit').unlink()
+
+    def test_an_account_at_its_limit_is_refused_and_another_may_spawn(self):
+        # A lead waited ~3.5 h on one account's five-hour limit while four others were free (2026-11-09).
+        config = self.tmp / 'config'
+        config.mkdir()
+        (config / '.claude.json').write_text(json.dumps({'oauthAccount': {'organizationName': 'Team Two'}}))
+        reset = 1794231600
+        when = time.strftime('%Y-%m-%d %H:%M', time.gmtime(reset)) + ' UTC'  # the child runs with TZ=UTC
+        for case, limits, extra, words in (
+                ('94% passes', {'five_hour': {'used_percentage': 94, 'resets_at': reset}}, {}, None),
+                ('95% is refused', {'five_hour': {'used_percentage': 95, 'resets_at': reset},
+                                    'seven_day': {'used_percentage': 10, 'resets_at': reset}}, {},
+                 'refused the spawn: the account Team Two: five-hour window at 95%% (refused at 95%%), resets %s; '
+                 'another account may spawn now; no waiting (MYAGENTKIT_LIMIT_FORCE=1 passes)' % when),
+                ('seven days at 98% is refused', {'seven_day': {'used_percentage': 98.5, 'resets_at': reset}}, {},
+                 'refused the spawn: the account Team Two: seven-day window at 98.5%% (refused at 98%%), resets %s; '
+                 'another account may spawn now; no waiting' % when),
+                ('the variable passes', {'five_hour': {'used_percentage': 100, 'resets_at': reset}},
+                 dict(MYAGENTKIT_LIMIT_FORCE='1'), None),
+                ('absent passes', None, {}, None)):
+            with self.subTest(case):
+                (self.state / 'launch.json').unlink(missing_ok=True)
+                (config / 'rate-limits.json').unlink(missing_ok=True)
+                if limits is not None:
+                    (config / 'rate-limits.json').write_text(json.dumps(limits))
+                result = self.spawn(CLAUDE_CONFIG_DIR=str(config), TZ='UTC', SPAWN_PUBLISH=DONE,
+                                    SPAWN_PUBLISH_TO=str(self.cwd / 'RESULT-w1.md'), **extra)
+                if words:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(words, result.stderr)
+                    self.assertFalse((self.state / 'launch.json').exists(), 'a refused spawn launched')
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertNotIn('rate-limits', result.stdout + result.stderr)
+                    self.assertNotIn('refused', result.stdout + result.stderr)
+                    self.ended()
+                    (self.workers / 'w1.exit').unlink()
 
     def briefed(self):
         """The path the worker is told to read: its first prompt is "Read 'PATH' and follow it." """
