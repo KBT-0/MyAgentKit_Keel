@@ -1075,6 +1075,20 @@ only; one final review per release (`docs/REVIEW_GATE.md`, "Rounds").
 
 ### The measurements and the full rules
 
+**The worker's lean start (v0.16).** `scripts/spawn_worker.sh` starts a worker with no plugin (each
+one a settings file enables or the CLI installed is `false` under `enabledPlugins` in its
+`--settings`), no skill listing (`--disable-slash-commands`), no auto-memory
+(`autoMemoryEnabled: false`) and no `CLAUDE.md` of its folder, the folders above it or the user's
+(`claudeMdExcludes`; one in a subtree still loads). Its one appendix is `AGENTS.worker.md`, the hard
+rules of `AGENTS.md` under 5000 characters with a pointer for each rule left out, followed by
+`BEHAVIOUR.md`. The kit's hooks stay, since they come from the project's settings; `--bare` is no
+way there, since it skips those hooks and OAuth. `MYAGENTKIT_WORKER_FULL=1` keeps the full start,
+the A/B's other side. Measured on Claude Code 2.1.319 in the kit's checkout (Haiku 5.5, one "reply ok"
+prompt): the first request went from 30,114 tokens to 13,898. The lead's plugins are set per project:
+`.claude/settings.json` lists under `enabledPlugins` each plugin the project does not need as `false`
+(the overlay ships `ponytail@ponytail` on and `frontend-design@claude-plugins-official` off), which
+reaches the lead, its workers and sub-agents (`setup/INTERVIEW.md`, question 11).
+
 Rules, binding for whoever routes workers:
 
 1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that

@@ -1,6 +1,9 @@
 {
   "autoCompactWindow": 450000,
   "outputStyle": "Concise",
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": false
+  },
   "worktree": {
     "bgIsolation": "none"
   },
