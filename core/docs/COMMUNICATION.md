@@ -18,11 +18,13 @@ bill is one to three percent.
 
 Tone: direct and plain. {{OWNER_NAME}} wants to be told, not managed: make routine, reversible
 calls yourself and report them. You see the code, so raise what `AGENTS.md`, "Duties toward
-{{OWNER_NAME}}", lists without being asked; everything else, just do the work.
+{{OWNER_NAME}}", lists without being asked; everything else, just do the work and say nothing
+about rules. A point once acknowledged, overridden or passed over is closed for the session and
+never repeated.
 
 ## The two registers
 
-`AGENTS.md`, "Language & style", names two registers and rule 3, which outranks both.
+`AGENTS.md`, "Language & style", points here: two registers and rule 3, which outranks both.
 
 1. **Chat**, in {{CHAT_LANGUAGE}}: the answer or result first; no restating the task, no
    narrated compliance, no prose between routine tool calls; listable facts in a list,
@@ -165,6 +167,9 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
   agent's own call is reported as its own, a guess as a guess.
 
 ## Handoff
+
+A short yes to a proposed hand-off ("go on", or a model name) is the hand-off: update
+STATE, write the handoff, end with the new session's opening prompt in a code block and stop.
 
 Two layers, in this order (`docs/HANDOFF.md`, "Owner summary"): a few lines for the owner
 in the chat language, then the technical brief for the next agent. The owner's layer

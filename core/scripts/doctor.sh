@@ -2,7 +2,7 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Machine readiness, read-only. Run it at session start, on every machine and every clone:
 #
-#   ./scripts/doctor.sh
+#   ./scripts/doctor.sh            (--quiet: a ready machine prints nothing)
 #
 # It checks the MACHINE, not the code, so it is not part of the gate and CI does not run it.
 # Each trap it finds prints one line, "MISSING: <what> — fix: <command>", and the run exits
@@ -19,6 +19,15 @@
 # missing reviewer CLI, a commit with no author, a cache npm could not write to, a checkout
 # on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
+# --quiet: a ready machine prints nothing, so the lead's first call or a project's SessionStart
+# hook adds no text to every later request (v0.16 ctl16 ANATOMY: the session-start text was paid
+# again on each one); a setup with a MISSING line prints the whole report, as without the flag.
+if [ "${1-}" = --quiet ]; then
+  report=$(sh "$0" 2>&1); status=$?
+  [ "$status" = 0 ] || printf '%s\n' "$report"
+  exit "$status"
+fi
+# --- end of --quiet
 # CDPATH cleared: exported, it sent this cd into another tree with a scripts/ in it.
 CDPATH= cd -- "$(dirname "$0")/.." || exit 1
 missing=0

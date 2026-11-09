@@ -1411,6 +1411,25 @@ def stale_section(**env):
                               env=dict(os.environ, DOCTOR_AGENTS=str(Path(tmp) / 'agents.json'), **env))
 
 
+class QuietTests(unittest.TestCase):
+    def test_quiet_prints_nothing_when_ready_and_the_whole_report_when_not(self):
+        # v0.16 loadcut (ctl16 ANATOMY section 1): the session-start report rode along in every
+        # later request; a ready machine's NOTE lines and "DOCTOR: ready" are now not printed.
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+        self.assertTrue('# --- end of --quiet' in doctor, 'doctor.sh has no --quiet block')
+        head = doctor.split('# --- end of --quiet', 1)[0]
+        for body, status in (('echo "NOTE: a note"; echo "DOCTOR: ready"; exit 0', 0),
+                             ('echo "MISSING: x — fix: y"; echo "NOTE: a note"; exit 1', 1)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                script = Path(tmp) / 'doctor.sh'
+                script.write_text(head + body + '\n', encoding='utf-8')
+                quiet = subprocess.run(['sh', script.as_posix(), '--quiet'], capture_output=True, text=True)
+                loud = subprocess.run(['sh', script.as_posix()], capture_output=True, text=True)
+                self.assertEqual(quiet.returncode, status, quiet.stderr)
+                self.assertEqual(loud.returncode, status, loud.stderr)
+                self.assertEqual(quiet.stdout, '' if status == 0 else loud.stdout)
+
+
 class StaleSessionTests(unittest.TestCase):
     def test_an_old_working_bg_session_under_the_project_is_listed_with_its_stop_command_and_nothing_else(self):
         result = stale_section()

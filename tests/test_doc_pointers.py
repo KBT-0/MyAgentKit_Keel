@@ -503,6 +503,13 @@ class SectionPointerTests(unittest.TestCase):
             with self.subTest(chain=str(nested.relative_to(ROOT))):
                 self.assertLess(root + nested.stat().st_size, 24 * 1024)
 
+    def test_the_constitution_stays_under_its_character_cap(self):
+        # v0.16 loadcut (ctl16 ANATOMY section 1): AGENTS.md is in every request of every agent;
+        # 10 437 characters became 7 594 with each explanation moved to the section a pointer names.
+        # shortcut: a characters cap, raised only by the owner's word.
+        text = (ROOT / 'core/AGENTS.md').read_text(encoding='utf-8')
+        self.assertLessEqual(len(text), 7600)
+
     def test_a_style_plugin_never_replaces_the_test_and_report_rules(self):
         # #140: ponytail injects a "one self-check" test rule and a three-line report cap.
         interview = ' '.join((ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8').split())

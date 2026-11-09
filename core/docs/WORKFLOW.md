@@ -95,8 +95,14 @@ how. It is read when the topic comes up, not every session.
 
 - **Session start.** `./scripts/doctor.sh` changes nothing; a `MISSING:` line is offered as a
   fix before any code is touched, since a red gate on an unready machine is not a code bug.
+  With `--quiet` a ready machine prints nothing (its NOTE lines included) and a setup with a
+  `MISSING:` line prints the whole report: the form for the lead's first call and for a
+  project's own `SessionStart` hook, whose output is paid again in every later request.
 - **Refactors.** A refactor you think is worth doing goes to `docs/BACKLOG.md` as one line, or
-  into its own task and commit; it never rides along in this task's diff.
+  into its own task and commit; it never rides along in this task's diff. A tidy inside a line
+  you had to change is part of the task.
+- **Same cause.** A second bug of the same cause in a file the task changes is part of the
+  task too: fix it with its test and say so; one elsewhere is reported.
 - **Tests.** Writing the test first is advice, not a rule. An ordinary test needs no mandatory
   red proof; a gate check does ("Writing a gate"). A generated-content pipeline validates its
   output (data validation, captures); unit tests of the generator are not mandatory. A
@@ -108,9 +114,16 @@ how. It is read when the topic comes up, not every session.
   in the round adds code no reviewer has seen (`docs/REVIEW_GATE.md`, "Verdicts and who decides").
 - **Existing systems.** Search `docs/ARCHITECTURE.md` first, then the code. Never rewrite what
   you could not find; ask if unsure. A second system doing the same job is a decay signal.
-- **Style.** A split is proposed, never done inside an unrelated task. Hidden global state
-  (singletons, static mutable state) makes tests order-dependent and hides an API's real
-  inputs; the clock and randomness come through the constructor for determinism.
+- **Style.** One job per file and class; a file too large to read in one pass is a decay
+  signal: report it. A split is proposed, never done inside an unrelated task. Hidden global
+  state (singletons, static mutable state) makes tests order-dependent and hides an API's real
+  inputs, so core logic has none: dependencies, the clock and randomness come through the
+  constructor for determinism. Public APIs carry short doc comments; name things well instead
+  of compensating with comments.
+- **Small fix** (one commit, one module; owner 2026-10-25). It skips `doctor.sh` and the
+  STATE.md trace, leaves `./scripts/check.sh` to the commit hook and reads its `CHECK: PASS`;
+  a risky diff still takes its review, and its manual checks still go to STATE.md with their
+  tool+model trace.
 
 ### Destructive commands
 
@@ -147,6 +160,11 @@ abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate")
 PreToolUse hook (`.claude/hooks/guard_destructive_git.py`) refuses `--no-verify`, `commit -n`,
 `-c core.hooksPath=` and `--no-gpg-sign` in an agent's git command; the owner's own terminal is
 not affected. If the gate fails, fix the cause or stop and report; never route around it.
+
+A git command line holding `--out`, `--ext`, `--textc` or `--sub`, a commit message included,
+is denied (`.claude/settings.json`). The denial reads the whole command line, so the message is
+written in a step of its own to a `mktemp` file (PowerShell: `New-TemporaryFile`; a fixed name
+like `/tmp/msg.txt` is shared with parallel sessions) and committed with `git commit -F FILE`.
 
 No `Co-Authored-By` line names an AI tool, and no tool or model is credited as author,
 co-author or reviewer in a commit message or pull request description. `.githooks/commit-msg`
@@ -1808,6 +1826,13 @@ of every session started after it, so the sessions of one batch read different r
   (code.claude.com/docs/en/memory: what loads at start is paid every session; topic files
   load on demand). A trap stays in GOTCHAS only, with no path-scoped copy in
   `.claude/rules/`: one canonical place.
+- `AGENTS.md` keeps each rule as one sentence with a pointer to the section holding its how,
+  under a size cap a test enforces in the kit; an explanation, example or history goes to that
+  section, never back into `AGENTS.md`.
+- Claude Code's docs name a `# Compact instructions` section of `CLAUDE.md` as the way to steer
+  compaction (code.claude.com/docs/en/costs); `AGENTS.md` carries one and reaches it through
+  `CLAUDE.md`'s `@AGENTS.md` import. Its "Drop" line covers test runs, file reads and logs of
+  finished work, which their commits already record.
 
 ## Web requests carry no personal data
 
