@@ -1,9 +1,10 @@
 # STATE.md — Cross-Session Work State ({{PROJECT_NAME}})
 
-**If it is not written here, it did not happen.** This file holds current state only: what
-is in flight and what waits on someone. Its rules, and the permanent home for anything still
-true next month, are in `docs/AGENTS.md`, "STATE.md discipline" (the reasons: `docs/WORKFLOW.md`,
-"The state, backlog and phase files"). Every entry has a tool+model trace.
+This file lists OPEN items only: active work, what waits on {{OWNER_NAME}}, and manual checks
+not yet done. A closed item is deleted in the edit that closes it, never ticked or narrated:
+the history is git's. Its rules, and the permanent home for anything still true next month,
+are in `docs/AGENTS.md`, "STATE.md discipline" (the reasons: `docs/WORKFLOW.md`, "The state,
+backlog and phase files"). Every entry has a tool+model trace.
 
 ---
 

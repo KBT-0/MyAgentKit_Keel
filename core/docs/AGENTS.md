@@ -33,9 +33,9 @@ of each file. Keep it near 100 lines; it is read when a task crosses a module bo
   Windows) prints `SHA256 PATH`; edit that PATH, then run
   `python3 scripts/working_mode.py --replace-state "PATH" --expect SHA256`. On refusal, run
   `--read-state` again, redo the edit there, and retry; a changed "Working mode:" line is refused.
-- `docs/STATE.md` is TRANSIENT: current state only (what is in flight, what is blocked or waits on
-  someone, what comes next). A closed entry worth a record moves to
-  `docs/state/ARCHIVE-YYYY-MM.md` (the month it closed); the rest is deleted.
+- `docs/STATE.md` lists OPEN items only: active work, what waits on {{OWNER_NAME}}, and manual
+  checks not yet done. A closed item is deleted in the same edit that closes it, never ticked,
+  marked done or narrated; the history is git's (owner, 2026-11-09).
 - A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.
 - **Completed work is DELETED, not marked DONE.** The history lives in git. The commit that
   finishes a task with an id carries a `Done: <id>` trailer, and the commit-msg hook and

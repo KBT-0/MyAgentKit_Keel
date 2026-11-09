@@ -83,8 +83,8 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    `docs/BACKLOG.md`, which is read when the next task is chosen, not every session.
    Edit it as `docs/AGENTS.md`, "STATE.md discipline", says, never touching the "Working mode:" line:
    a ranged Read of the section is all the Edit needs, never the whole file (#338). STATE.md
-   holds only live entries (in flight, blocked, next); a closed entry moves to
-   `docs/state/ARCHIVE-YYYY-MM.md` or is deleted, and the gate enforces it ("state" in `scripts/check.sh`).
+   holds open items only; a closed item is deleted in the edit that closes it, and the gate
+   enforces it ("state" in `scripts/check.sh`).
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it, and go on with work that does not depend on it.
 
@@ -226,6 +226,9 @@ beside a new one (findings 2 and 9).
 
 The rules for `docs/STATE.md` are in `docs/AGENTS.md`, "STATE.md discipline"; their reasons are
 in `docs/WORKFLOW_RATIONALE.md`, so that the always-loaded files carry only the rules.
+STATE.md lists open items only (active work, what waits on {{OWNER_NAME}}, manual checks not yet
+done): a closed item is deleted in the edit that closes it, never ticked or narrated, because
+the history is git's.
 
 The branch and worktree policy below decides which session may edit STATE.md.
 
@@ -562,8 +565,8 @@ conflict in the one file nobody may resolve carelessly.
   found goes in the note too.
 - `docs/STATE.md` and `docs/BACKLOG.md` are updated on the main branch at merge time by the
   integrating session, which folds the note in and deletes it.
-- "If it is not in STATE.md it did not happen" still holds; it simply applies at merge. A
-  branch note is a draft, not memory.
+- At the merge the note's open items enter STATE.md and what the branch closed is deleted,
+  never narrated there. A branch note is a draft, not memory.
 
 ## Parallel work — contracts are frozen while it is in flight
 

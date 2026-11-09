@@ -133,3 +133,12 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   (a test that loads `scripts/check_kit.py` or `core/scripts/*.py` writes them): the audit refuses every
   disposable entry below `scripts/` by design. Options: tests set `sys.dont_write_bytecode`, or the audit
   treats `__pycache__/*.pyc` as disposable anywhere (a change to the removal rules: owner's call).
+
+## Filed from the v0.16 workform review (20261109T112950Z-f896135b0497)
+
+- Medium (owner's call): spawn_worker.sh limit check (~line 493) has no `[ -z "$backend" ]` guard, so a `--backend`
+  worker is refused when the lead's own Anthropic account is at 95 %/98 %; fix = one guard + one test.
+- Low: core/docs/HANDOFF_KIT.md ~49-54 still says the worker messages the lead after publishing; WORKFLOW.md says it
+  sends none.
+- Low: watch_workers.sh ~382 LIMIT line tells the lead to `--resume` with "limit reset, continue"; over 100k the
+  spawn now refuses it and names a RESULT a limit-stopped worker never wrote.
