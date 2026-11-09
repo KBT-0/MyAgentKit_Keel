@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-09 — v0.16 hardband: band_guard.py enforces the context band
+
+Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 2: "worker at 150k: only commit + hand-off; lead at
+200k: hands off; the hook enforces") on the 2026-11-09 field reports (`.myagentkit/field-2026-11-09/KIT-LEAD-FINDINGS.md`
+section 3: the band is prose and nothing stops a session; half the workers pass 150k; labricore's 14 % of sessions
+above 200k are 54 % of its spend). A PreToolUse hook denies all but the closing set past the line; the round-1 review
+widened that set to the steps the kit's own docs prescribe for closing (hand-off, autopilot report, the review a
+commit needs, `git commit -F` from a temp file). Verdict: shipped with tests.
+
 ### 2026-11-03 — v0.15 context batch: band 150/200/300, one-key /clear hand-off, STATE gate, plugins note
 
 Backflow (the leeway lead 46 and labricore field token reports, 2026-11-03) and `docs/research/context-hygiene.md`

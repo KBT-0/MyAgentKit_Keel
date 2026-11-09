@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The context band is enforced (owner 2026-11-09, PLAN.md item 2).** The new `band_guard.py` hook (PreToolUse,
+  every tool) denies every call past a worker's 150k or a lead's 200k but the closing set: git add, commit, status,
+  diff and log, read-only commands, the result publish, the hand-off steps (`master_writer.py release`,
+  `list_workers.sh`, `watch_workers.sh --once`), the autopilot report, the diff-reviewer and `review.sh`, and writes of
+  the result, hand-off, STATE, worktree note and autopilot report. `MYAGENTKIT_BAND=yellow,red,ceiling` (thousands)
+  moves the lines. Past the band an autopilot lead stops. test_band_guard red without it. **ACTION** (project-owned
+  `.claude/hooks/band_guard.py`, `.claude/settings.json`, the overlay's `README.md`, `docs/WORKFLOW.md`):
+  `sync-kit.sh . --merge`.
 - **The answering model is checked (#342, owner 2026-11-09).** A Fable call on an account without Fable credits
   runs on Opus with no error. The new `model_check.py` hook (SubagentStop, then the lead's next PostToolUse or Stop)
   compares the model a sub-agent's call asked for (its `.meta.json`, or a "Fable consult:" line) with the `model` of

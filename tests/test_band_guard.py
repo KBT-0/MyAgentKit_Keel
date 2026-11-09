@@ -20,6 +20,8 @@ class BandGuardTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         self.transcript = self.root / 'sess.jsonl'
+        self.tmpdir = self.root / 'tmp'  # the hook's temporary directory; the rest of root is not one
+        self.tmpdir.mkdir()
         self.context(160_000)
 
     def context(self, tokens):
@@ -29,7 +31,7 @@ class BandGuardTests(unittest.TestCase):
 
     def hook(self, tool, tool_input, role='worker', band=None, **extra):
         env = {k: v for k, v in os.environ.items() if k not in ('MYAGENTKIT_ROLE', 'MYAGENTKIT_BAND', 'MYAGENTKIT_SESSION_ID')}
-        env.update(CLAUDE_PROJECT_DIR=str(self.root), **({'MYAGENTKIT_ROLE': role} if role else {}),
+        env.update(CLAUDE_PROJECT_DIR=str(self.root), TMPDIR=str(self.tmpdir), **({'MYAGENTKIT_ROLE': role} if role else {}),
                    **({'MYAGENTKIT_BAND': band} if band else {}))
         payload = dict({'hook_event_name': 'PreToolUse', 'transcript_path': str(self.transcript),
                         'tool_name': tool, 'tool_input': tool_input}, **extra)
@@ -59,6 +61,31 @@ class BandGuardTests(unittest.TestCase):
                 self.assertIsNone(self.hook('Write', {'file_path': str(self.root / path), 'content': 'x'}))
         self.assertIsNone(self.hook('Read', {'file_path': str(self.root / 'src/a.py')}))
         self.assertIsNone(self.hook('Edit', {'file_path': 'src/a.py'}, agent_id='a1'))  # a sub-agent's own call
+
+    def test_the_hand_off_autopilot_review_and_commit_message_steps_run_past_the_band(self):
+        # Round-1 review of the hardband change: steps the kit's docs prescribe for closing a session.
+        for command in ("py -3 'C:/k/scripts/codex_worker.py' --publish RESULT-a.md.tmp RESULT-a.md",
+                        'python3 scripts/master_writer.py release', 'scripts/list_workers.sh',
+                        'sh scripts/list_workers.sh', 'scripts/watch_workers.sh --once',
+                        'python3 scripts/autopilot_report.py', 'python3 scripts/working_mode.py present',
+                        'scripts/review.sh', 'sh scripts/review.sh --tier session', 'mktemp', 'msg=$(mktemp)'):
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook('Bash', {'command': command}))
+        for path in ('.myagentkit/autopilot/2026-11-09.md', 'docs/worktree-notes/feat.md', 'tmp/msg.txt'):
+            with self.subTest(path=path):
+                self.assertIsNone(self.hook('Write', {'file_path': str(self.root / path), 'content': 'x'}))
+        self.assertIsNone(self.hook('Agent', {'subagent_type': 'diff-reviewer', 'prompt': 'review'}))
+
+    def test_claim_a_plain_agent_and_a_wakeup_stay_denied_past_the_band(self):
+        for command in ('python3 scripts/master_writer.py claim', 'scripts/watch_workers.sh',
+                        'python3 scripts/working_mode.py autopilot', 'python3 -c 1 scripts/review.sh'):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.hook('Bash', {'command': command}))
+        self.assertIsNotNone(self.hook('Agent', {'subagent_type': 'general-purpose', 'prompt': 'x'}))
+        self.assertIsNotNone(self.hook('Agent', {'prompt': 'x'}))
+        self.assertIsNotNone(self.hook('ScheduleWakeup', {'delaySeconds': 600}))
+        self.assertIsNotNone(self.hook('Monitor', {'command': 'true'}))
+        self.assertIsNotNone(self.hook('Write', {'file_path': str(self.root / 'docs/worktree-notes/a.py'), 'content': 'x'}))
 
     def test_below_the_band_nothing_is_denied(self):
         self.context(149_000)

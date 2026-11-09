@@ -981,7 +981,9 @@ a commit made while away) follows the away line until a switch records it there.
   lead cannot fix. A usage-limit note, the context band, a compaction (the second too), a
   worker's hand-off, a parked question, one stuck item (three tries, then a WIP commit and the
   next item) is no stop. No turn ends with nothing to wake it: every wait is a disk watch or
-  a `ScheduleWakeup`. No question to {{OWNER_NAME}} while autopilot is on, neither with
+  a `ScheduleWakeup`. Past the enforcing line (rule 8) the band IS a stop: the hand-off and the
+  report are written, no wakeup is armed (`band_guard.py` denies `ScheduleWakeup` and `Monitor`),
+  and until the watchdog of PLAN item 5 exists {{OWNER_NAME}} reopens the lead. No question to {{OWNER_NAME}} while autopilot is on, neither with
   AskUserQuestion nor in chat text (two options and a default for no answer is a question
   too), even when {{OWNER_NAME}} writes in between: the lead takes the rule's default, records
   it under My decisions and puts the question in the report (#312).
@@ -1059,14 +1061,13 @@ for independent work that runs in parallel, a sub-agent only for wide reading or
 5. Effort is medium by default, high only for hard debugging or a design step. A worker or
    sub-agent gets its model and effort on the call, never inherited unawares; a definition that
    writes `model: inherit` (the diff-reviewer: the session's tier) is that choice. Which tier a
-   required review needs: `docs/REVIEW_GATE.md`, "Invariant". Without Fable credits a Fable call
-   runs on Opus silently: its transcript's `model` field tells (`MODEL_FALLBACK`, `docs/GOTCHAS.md`).
+   required review needs: `docs/REVIEW_GATE.md`, "Invariant". A Fable call without credits
+   runs on Opus silently (`MODEL_FALLBACK`, `docs/GOTCHAS.md`).
 6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
    reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
 7. Worker reports are short (about 350 words); long output goes to a file.
-8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k.
-   Past a worker's 150k or a lead's 200k, `.claude/hooks/band_guard.py` denies every tool call but
-   commit and hand-off (autopilot too); `MYAGENTKIT_BAND=yellow,red,ceiling` in thousands (e.g. `80,100,150`) moves the lines.
+8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k;
+   `band_guard.py` enforces it (rule 8 below).
 9. A worker runs the cheapest check that proves its change; the expensive step runs once.
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
@@ -1238,7 +1239,10 @@ Rules, binding for whoever routes workers:
    `context_size.py` hook names the band once per 50k step past 150k (the step is the owner's
    choice, like the band), at a prompt and after a tool call, so a long turn meets it too;
    the lead then
-   recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
+   recommends one of two, with the number and the reason. Past a worker's 150k or a lead's 200k
+   the overlay's `band_guard.py` denies every tool call but commit and hand-off (autopilot too):
+   the hand-off steps, the autopilot report, the diff-reviewer and `scripts/review.sh` still run;
+   `MYAGENTKIT_BAND=yellow,red,ceiling` in thousands (e.g. `80,100,150`) moves the lines. The overlay's `autoCompactWindow`
    of 450k is only a safety valve for a session nobody stops, never the cut; after any
    compaction its `after_compact.txt` hook names what to re-read. **Compact** when
    `docs/STATE.md` and the open operation files already hold what matters and the work in

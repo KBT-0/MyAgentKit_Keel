@@ -12,17 +12,22 @@ band check writes it).
 
 Past the line every call is denied (permissionDecision deny, one line naming the band, the size
 and what still runs) except the closing set: Read, Grep, Glob, ToolSearch and SendMessage (reading
-and telling the lead close nothing); a Bash or PowerShell command whose every part is git add,
-commit, status, diff or log, a read-only command (guard_destructive_git.py's INERT list, with no
-file redirection) or codex_worker.py --publish; and Write, Edit or NotebookEdit of the result
+and telling the lead close nothing); the diff-reviewer sub-agent (the review a commit needs); a
+Bash or PowerShell command whose every part is git add, commit, status, diff or log, a read-only
+command (guard_destructive_git.py's INERT list, with no file redirection), mktemp, or one of the
+closing scripts in SCRIPTS (the publish, the marker release, the worker listing, the autopilot
+report, the switch back to present, review.sh); and Write, Edit or NotebookEdit of the result
 file (RESULT-* or QUESTION-*, or the path spawn_worker.sh recorded in .myagentkit/workers/
 NAME.result-path, a temporary file beside it included), the hand-off (.myagentkit/handoff-pending,
-.myagentkit/**/handoff-*.md, docs/HANDOFF.md), docs/STATE.md and PLAN.md. A sub-agent's own call
+.myagentkit/**/handoff-*.md, docs/HANDOFF.md), docs/STATE.md, PLAN.md, docs/worktree-notes/*.md,
+.myagentkit/autopilot/*.md and a file under the temporary directory (a commit message for
+`git commit -F`). ScheduleWakeup and Monitor stay denied: a wakeup goes on in the oversized
+context. A sub-agent's own call
 (agent_id) is not judged: its context is its own, and a running review is never cut off. A
 compaction boundary resets the size, which lifts the band.
 
-While the owner is away (autopilot) the lead's band still denies: the hand-off is written and
-the session idles; reopening a lead is the watchdog's job (PLAN.md item 5), not this hook's.
+While the owner is away (autopilot) the lead's band still denies: the hand-off and the autopilot
+report are written and the session idles; reopening a lead is the watchdog's job (PLAN.md item 5), not this hook's.
 Silent on any error: a broken transcript must never block work, as in context_size.py.
 """
 import itertools
@@ -31,12 +36,18 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import sys
+import tempfile
 
 HERE = Path(__file__).resolve().parent
 READS = {'Read', 'Grep', 'Glob', 'ToolSearch', 'SendMessage'}
 WRITES = {'Write', 'Edit', 'NotebookEdit'}
 SHELLS = {'Bash', 'PowerShell'}
 CLOSING_GIT = {'add', 'commit', 'status', 'diff', 'log'}
+# A closing script and the first argument it must have ('' = any): core/docs/HANDOFF.md's steps,
+# the autopilot report and the switch back (WORKFLOW.md, autopilot), the review a commit needs.
+SCRIPTS = {'codex_worker.py': '--publish', 'master_writer.py': 'release', 'list_workers.sh': '',
+           'watch_workers.sh': '--once', 'autopilot_report.py': '', 'working_mode.py': 'present',
+           'review.sh': ''}
 # A redirection that writes a file; `2>&1` and `>/dev/null` write none.
 WRITES_FILE = re.compile(r'>(?!&\d|\s*/dev/null)')
 
@@ -71,9 +82,30 @@ def closing_file(path: str) -> bool:
         return True
     if '.myagentkit' in parts[:-1] and re.fullmatch(r'handoff-.*\.md', name):
         return True
+    if name.endswith('.md') and parts[-3:-1] in (('docs', 'worktree-notes'), ('.myagentkit', 'autopilot')):
+        return True
+    try:
+        if Path(path).resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()):
+            return True  # gettempdir() reads $TMPDIR first
+    except (OSError, ValueError):
+        pass
     result = recorded_result() if os.environ.get('MYAGENTKIT_ROLE') == 'worker' else ''
     # The publish step's temporary file stands beside the result, its name starting with the result's.
     return bool(result) and PurePosixPath(path.replace('\\', '/')).as_posix().startswith(result.replace('\\', '/'))
+
+
+def closing_script(words: list) -> bool:
+    """`[python3 | py -3 | sh] PATH/SCRIPT ARG ...` where SCRIPT's first argument is the one SCRIPTS names."""
+    import guard_destructive_git as g
+    name = g.base(words[0])
+    if name == 'py' and len(words) > 1 and words[1].startswith('-'):
+        words = words[2:]  # the Windows launcher's version flag, spawn_worker.sh's kit_python
+    elif g.interpreter(name) or name in ('py', 'sh', 'bash'):
+        words = words[1:]
+    if not words or g.base(words[0]) not in SCRIPTS:
+        return False
+    want = SCRIPTS[g.base(words[0])]
+    return not want or words[1:2] == [want]
 
 
 def closing_command(command: str, depth: int = 0) -> bool:
@@ -101,10 +133,9 @@ def closing_command(command: str, depth: int = 0) -> bool:
             # -c may name a program git runs (a pager, a diff driver); --output writes a file.
             if git.configs or git.sub not in CLOSING_GIT or any(a.startswith('--out') for a in git.args):
                 return False
-        elif g.interpreter(name) and len(words) > 2 and words[1].replace('\\', '/').endswith(
-                '/codex_worker.py') and words[2] == '--publish':
+        elif closing_script(words):
             continue
-        elif name not in g.INERT:
+        elif name not in g.INERT | {'mktemp'}:
             return False
     return True
 
@@ -112,6 +143,8 @@ def closing_command(command: str, depth: int = 0) -> bool:
 def closing(tool: str, inp: dict) -> bool:
     if tool in READS:
         return True
+    if tool in ('Agent', 'Task'):
+        return inp.get('subagent_type') == 'diff-reviewer'
     if tool in WRITES:
         path = inp.get('file_path') or inp.get('notebook_path')
         return isinstance(path, str) and closing_file(path)
@@ -148,7 +181,9 @@ def main() -> None:
               f"{'worker' if worker else 'lead'} {'yellow' if worker else 'red'} line ({line // 1000}k). "
               'Only commit and hand-off run now: git add, commit, status, diff and log; writing the result '
               'file (RESULT-*, QUESTION-*), the hand-off (.myagentkit/handoff-pending, .myagentkit/**/handoff-*.md, '
-              'docs/HANDOFF.md), docs/STATE.md or PLAN.md; Read, Grep, Glob. '
+              'docs/HANDOFF.md), docs/STATE.md, PLAN.md, docs/worktree-notes/*.md, .myagentkit/autopilot/*.md; '
+              'the diff-reviewer and scripts/review.sh; master_writer.py release, list_workers.sh, '
+              'autopilot_report.py, working_mode.py present; Read, Grep, Glob. '
               + ('Commit green work and publish a Kind: handoff result' if worker else
                  'Commit, update docs/STATE.md, write the hand-off and its marker, then stop for /clear')
               + ' (docs/WORKFLOW.md, "Worker cost", rule 8).')
