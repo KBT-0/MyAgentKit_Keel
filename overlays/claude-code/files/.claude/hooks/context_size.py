@@ -48,7 +48,7 @@ transcripts of Claude Code 2.1.x on 2026-10-26 (.myagentkit/v014/nohandoff-dispo
 
 An account switch (a later `credential_org` record with another uuid: the owner's /login in the shared
 ~/.claude, which makes the next request rewrite the whole context at the new account's cache) is named
-once per switch, with the context size and, past LINE, the hand-off (docs/WORKFLOW.md, rule 10).
+once per switch, with the context size and, past LINE, the hand-off (docs/WORKFLOW.md, "Worker cost", rule 8).
 """
 from datetime import datetime
 import json
@@ -311,6 +311,8 @@ def scan(path: Path, saved: dict | None = None, acct: dict | None = None) -> tup
             last = sum(usage.get(k) or 0 for k in
                        ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
             known = True
+            if acct is not None:
+                acct.pop('switched', None)  # a request after the switch: the rewrite is paid, the switch is old
     for job in [j for j, (_, began) in running.items() if began and latest - began > JOB_LIFE]:
         del running[job]  # dead with an ended session, or a watch the kit itself gives up on
     return last, compactions, known, offset, running, described
@@ -337,12 +339,26 @@ def notice(transcript: Path) -> str:
         named = saved.get('named') if isinstance(saved, dict) else None
         ctx, compactions, known, offset, running, pending = scan(transcript, resumable(saved), acct)
         extra = ''
+        # The job-naming text, once: the switch line and the hand-off block both use it.
+        names = ', '.join(sorted(f'{label} ({job})' for job, (label, _) in running.items()))
         if acct.get('switched') and acct['switched'] != named:
             named = acct['switched']
-            extra = (f'Account switched (org {named[:8]}): the next request rewrites this whole context '
-                     f'({ctx // 1000}k) on the new account. '
-                     + (f'Over {LINE // 1000}k: hand off now (fresh start ~35k, docs/WORKFLOW.md rule 10).' if ctx >= LINE else
-                        f'Under {LINE // 1000}k: continue, and say the switch in the report.'))
+            size = f' ({ctx // 1000}k)' if ctx else ''  # 0 after a compaction boundary: no request since
+            extra = f'Account switched (org {named[:8]}): '
+            if ctx < LINE:
+                extra += (f'the next request rewrites this whole context{size} on the new account. '
+                          f'Under {LINE // 1000}k: continue, and say the switch in the report.')
+            elif away():
+                extra += (f'the next request rewrites this whole context{size} on the new account; under autopilot: '
+                          'keep going, update the hand-off file, and cut at the next clean point '
+                          '(no band below the enforcing line is a stop).' if ctx < enforced_at() else
+                          f'the next request rewrites this whole context{size} on the new account.')
+            elif running:
+                extra += (f'this context{size} is rewritten on the new account; over {LINE // 1000}k it hands off '
+                          f'at the next clean point, once the running job(s) end: {names}')
+            else:
+                extra += (f'the next request rewrites this whole context{size} on the new account. '
+                          f'Over {LINE // 1000}k: hand off now (fresh start ~35k, docs/WORKFLOW.md, "Worker cost", rule 8).')
         # Before the step became a record the state held only an integer step.
         legacy = type(saved) is int
         try:
@@ -377,7 +393,6 @@ def notice(transcript: Path) -> str:
                    ', then keep going; no band and no compaction, '
                    f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).'))
     if running:
-        names = ', '.join(sorted(f'{label} ({job})' for job, (label, _) in running.items()))
         advice = (f'Hand-off blocked: {len(running)} job(s) started in this session still run ({names}). '
                   "In this turn's closing summary say so to the owner and offer two ways: finish the jobs, or wait "
                   'and tell the owner when the hand-off is ready; the hand-off itself waits for them'

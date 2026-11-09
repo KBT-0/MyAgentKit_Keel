@@ -82,9 +82,62 @@ class ContextHookTests(unittest.TestCase):
         turns += [request(170_000), org('cccccccc-3333')]
         said = self.run_hook(turns + [prompt()])
         self.assertIn('Account switched (org cccccccc)', said)
-        self.assertIn('Over 150k: hand off now (fresh start ~35k, docs/WORKFLOW.md rule 10)', said)
+        self.assertIn('Over 150k: hand off now (fresh start ~35k, docs/WORKFLOW.md, "Worker cost", rule 8)', said)
         self.assertIn('Context is 170k tokens', said)  # the band line follows, a second line
         self.assertEqual(self.run_hook(turns + [prompt()]), '')
+
+    def test_an_account_switch_over_the_line_waits_for_the_running_jobs(self):
+        # review 700bd60c9105, High A/B: HANDOFF.md, a lead hands off only when no work started in its session runs.
+        def use(uid, **inp):
+            return {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': uid, 'name': 'Bash', 'input': inp}]}}
+
+        def result(uid, **tur):
+            return {'type': 'user', 'toolUseResult': tur, 'timestamp': '2026-10-26T10:00:00.000Z',
+                    'message': {'content': [{'type': 'tool_result', 'tool_use_id': uid, 'content': 'started'}]}}
+
+        turns = [prompt(), org('aaaaaaaa-1111'), use('t1', command='sh x', run_in_background=True, description='Run the gate'),
+                 result('t1', backgroundTaskId='b1'), request(170_000), org('bbbbbbbb-2222')]
+        said = self.run_hook(turns + [prompt()])
+        self.assertIn('Account switched (org bbbbbbbb): this context (170k) is rewritten on the new account; '
+                      'over 150k it hands off at the next clean point, once the running job(s) end: Run the gate (b1)',
+                      said.split('\n')[0])
+        self.assertNotIn('hand off now', said)
+        turns += [prompt('<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>'),
+                  request(171_000), org('cccccccc-3333')]
+        said = self.run_hook(turns + [prompt()])  # the job ended: the hand-off is open
+        self.assertIn('Account switched (org cccccccc)', said)
+        self.assertIn('hand off now', said)
+        self.assertNotIn('Run the gate', said.split('\n')[0])
+
+    def test_an_account_switch_under_autopilot_is_no_stop(self):
+        # review 700bd60c9105, High C: below the enforcing line the band is no stop; only a limit stop hands off.
+        turns = [prompt(), org('aaaaaaaa-1111'), request(170_000), org('bbbbbbbb-2222')]
+        self.away()
+        said = self.run_hook(turns + [prompt()])
+        self.assertIn('Account switched (org bbbbbbbb)', said)
+        self.assertIn('under autopilot: keep going, update the hand-off file, and cut at the next clean point '
+                      '(no band below the enforcing line is a stop)', said)
+        self.assertNotIn('hand off now', said)
+        # Past the enforcing line the band's own stop text applies, nothing extra on the switch line.
+        turns += [request(210_000), org('cccccccc-3333')]
+        said = self.run_hook(turns + [prompt()])
+        self.assertNotIn('hand off now', said)
+        self.assertNotIn('under autopilot', said.split('\n')[0])
+        (self.tmp / '.myagentkit/presence').write_text('present 2026-10-22T23:00:00+03:00 x\n', encoding='utf-8')
+        turns += [request(170_000), org('dddddddd-4444')]  # present: unchanged
+        said = self.run_hook(turns + [prompt()])
+        self.assertIn('Over 150k: hand off now', said)
+        self.assertNotIn('autopilot', said.split('\n')[0])
+
+    def test_an_old_switch_or_a_compaction_changes_the_switch_line(self):
+        # review 700bd60c9105, Low D and F.
+        said = self.run_hook([prompt(), org('aaaaaaaa-1111'), request(260_000), {'type': 'system', 'subtype': 'compact_boundary'},
+                              org('bbbbbbbb-2222'), prompt()])
+        self.assertIn('Account switched (org bbbbbbbb): the next request rewrites this whole context on the new account', said)
+        self.assertNotIn('(0k)', said)
+        # A switch with a request after it is old: a full rescan names nothing.
+        self.assertNotIn('Account switched', self.run_hook(
+            [prompt(), org('aaaaaaaa-1111'), request(60_000), org('bbbbbbbb-2222'), request(61_000), request(62_000), prompt()]))
 
     def test_an_account_switch_is_remembered_across_a_resumed_scan(self):
         spec = importlib.util.spec_from_file_location('context_size_under_test', HOOK)

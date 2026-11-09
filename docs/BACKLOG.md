@@ -145,3 +145,5 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Low: run_checks.sh native-Windows lock path (`msvcrt.locking` holder) is unrun; with an absolute `--out` MSYS path the
   re-run compares a converted path and exits 75 forever; check.sh fixes the same with `cygpath -m` (check.sh ~109-116).
 - Low: `limit_watchdog_install.sh` should check `loginctl show-user "$USER" -p Linger` and warn when it is no (the user manager stops with the last login; the timer and scope go with it).
+- Low (acctlog review G): `context_size.py` resuming a transcript over RECOUNT from a step file written by the previous kit (no `org`) takes the next real `credential_org` switch as the baseline, so that one switch is never named; one-time, after the sync.
+- Low (acctlog review H): `token_audit.py` skips copied records (~153-155) before the `org` tracking (~175-179), so a continued session's copied `credential_org` is dropped and `switches`/`switch_tokens` depend on whether the parent was audited in the same run; unverified whether Claude Code writes a fresh record at a continued session's start.

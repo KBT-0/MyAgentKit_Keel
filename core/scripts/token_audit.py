@@ -397,7 +397,7 @@ def summary(sessions: list[dict], top: int) -> str:
         lines += ['', f"Account switches: {sum(s['switches'] for s in switches)} in {len(switches)} sessions, "
                       f"{sum(s['switch_tokens'] for s in switches)} tokens rewritten, ${sum(s['switch_usd'] for s in switches):.2f} "
                       "(each switch rewrites every running session's context; a session over 150k hands off first: "
-                      "docs/WORKFLOW.md rule 10)."]
+                      'docs/WORKFLOW.md, "Worker cost", rule 8).']
     # #338: every enabled plugin's skills are listed in every session, worker and sub-agent.
     listed = collections.defaultdict(lambda: [0, 0, 0])
     for s in sessions:

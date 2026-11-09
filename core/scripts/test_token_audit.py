@@ -72,7 +72,7 @@ class TokenAuditTests(unittest.TestCase):
         self.assertAlmostEqual(s['switch_usd'], 12000 * 4 * 2 / 1e6)  # opus, 1h write
         text = token_audit.summary([s], 5)
         self.assertIn('Account switches: 1 in 1 sessions, 12000 tokens rewritten, $0.10', text)
-        self.assertIn('rule 10', text)
+        self.assertIn('"Worker cost", rule 8', text)
         s = self.audit(first + [org('bbbb', 2)])  # no request after it: counted, nothing rewritten yet
         self.assertEqual((s['switches'], s['switch_tokens']), (1, 0))
 
