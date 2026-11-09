@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-09 — v0.16 stopcut: the stop rules and the reviewer's load
+
+Sources: controlled measurement ctl16 and its anatomy, owner decision 2026-11-09 (cuts 2, 8, 4, 5, 6). A `[state]` red the
+committed `docs/STATE.md` already had cost four measured runs $0.12-0.46 and stopped one commit, so `check.sh` reports it
+as a NOTE; two runs were denied `scripts/check.sh` past the yellow line and never committed their green work, so
+`band_guard.py` lets the gate run there; each diff-reviewer Read the whole 24k `REVIEW_GATE.md` and handed back 9-22k
+characters, so `diff-reviewer.md` carries the verdict rule itself and hands back about 2,000. Review
+20261109T184825Z-b68fbdf90613 (round 1, Reject): a NOTE for any red at HEAD let a red file grow without end and could never
+fail in CI, where a clean checkout's file is HEAD's; the NOTE now holds only while the change adds no line and no finished
+"Active work" line, and is off with `CI` set. The reviewer's excerpt had dropped REVIEW_PROMPT's platform clause of
+Critical; it quotes it whole now.
+
 ### 2026-11-09 — v0.16 acctlog: an account switch rewrites every running session's cache
 
 Sources: `.myagentkit/field-2026-11-09/KIT-LEAD-FINDINGS.md` section 2 (cold2.py beside it), `.myagentkit/v016-reset/PLAN.md`

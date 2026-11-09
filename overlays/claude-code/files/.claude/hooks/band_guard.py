@@ -18,7 +18,7 @@ command (guard_destructive_git.py's INERT list, with no file redirection), mktem
 closing scripts in SCRIPTS (the publish, the marker release, the worker listing, the autopilot
 report, the switch back to present, review.sh) or the project's gate, scripts/check.sh with any
 flags (a green gate is the condition of the commit the band already allows: two measured runs were
-denied it at yellow and never committed their green work, ctl16 ANATOMY section 5); and Write,
+denied it at yellow and never committed their green work, RESEARCH_LOG 2026-11-09 stopcut); and Write,
 Edit or NotebookEdit of the result file (RESULT-* or QUESTION-*, or the path spawn_worker.sh recorded in .myagentkit/workers/
 NAME.result-path, a temporary file beside it included), the hand-off (.myagentkit/handoff-pending,
 .myagentkit/**/handoff-*.md, docs/HANDOFF.md), docs/STATE.md, PLAN.md, docs/worktree-notes/*.md,

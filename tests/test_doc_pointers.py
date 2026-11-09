@@ -213,7 +213,7 @@ class SectionPointerTests(unittest.TestCase):
         reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
                             .read_text(encoding='utf-8').split())
         # Lean kit Y4 (owner 2026-10-25): the reviewer runs on the session's model without CLAUDE.md. stopcut
-        # (ctl16 ANATOMY section 6): it carries the gate doc's verdict rule and reads the 24k file only for the rest.
+        # (RESEARCH_LOG 2026-11-09 stopcut): it carries the gate doc's verdict rule and reads the 24k file only for the rest.
         self.assertIn('Read `docs/REVIEW_GATE.md` only for a question these lines do not answer', reviewer)
         self.assertNotIn('Read `docs/REVIEW_GATE.md` and follow it', reviewer)
         self.assertIn('read `docs/ARCHITECTURE.md` only when the diff crosses a module boundary', reviewer)
@@ -228,7 +228,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
 
     def test_the_diff_reviewer_carries_the_gate_verdicts_and_hands_back_a_capped_report(self):
-        # stopcut (ctl16 ANATOMY section 6): each reviewer Read the whole REVIEW_GATE.md and handed back 9-22k chars.
+        # stopcut (RESEARCH_LOG 2026-11-09 stopcut): each reviewer Read the whole REVIEW_GATE.md and handed back 9-22k chars.
         reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
                             .read_text(encoding='utf-8').split())
         gate = ' '.join((ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
@@ -238,6 +238,17 @@ class SectionPointerTests(unittest.TestCase):
                       reviewer)
         for word in ('Critical =', 'High =', 'Medium =', 'Low ='):
             self.assertIn(word, reviewer)
+        # stopcut review r1: the excerpt dropped the platform clause, so a platform-only defect read as Low.
+        critical = ('Critical = data loss, a gate that passes silently, a crossed security boundary, or wrong '
+                    'behaviour on a supported platform that no automated check covers;')
+        sys.path.insert(0, str(ROOT / 'core/scripts'))
+        try:
+            import claude_bridge
+        finally:
+            sys.path.pop(0)
+        self.assertIn(critical, ' '.join(claude_bridge.REVIEW_PROMPT.split()))
+        self.assertIn(critical, reviewer)
+        self.assertIn('"long report not saved (write refused)"', reviewer)
         self.assertIn('report at most as many as `REVIEW_PROMPT` allows', reviewer)
         self.assertNotRegex(reviewer, r'at most (five|\d+) Low')  # the number lives in REVIEW_PROMPT only
         self.assertIn('Round 2 (the brief says so) confirms every finding the dispositions claim fixed and reports new '

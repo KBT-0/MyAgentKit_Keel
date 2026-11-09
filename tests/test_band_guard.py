@@ -77,7 +77,7 @@ class BandGuardTests(unittest.TestCase):
         self.assertIsNone(self.hook('Agent', {'subagent_type': 'diff-reviewer', 'prompt': 'review'}))
 
     def test_the_gate_runs_past_the_band_and_a_test_command_does_not(self):
-        # ctl16 ANATOMY section 5: two runs were denied scripts/check.sh at yellow and never committed.
+        # RESEARCH_LOG 2026-11-09 stopcut: two runs were denied scripts/check.sh at yellow and never committed.
         for command in ('sh scripts/check.sh', './scripts/check.sh', 'bash scripts/check.sh --fast',
                         'cd /w/proj && sh scripts/check.sh', 'GATE_LOCK_WAIT=5 sh ./scripts/check.sh 2>&1 | tail -20'):
             with self.subTest(command=command):

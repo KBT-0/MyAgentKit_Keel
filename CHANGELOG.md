@@ -16,10 +16,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## Unreleased — v0.15
 
 - **The stop rules and the reviewer's load (PLAN item 8).** A `[state]` red the committed `docs/STATE.md` already had
-  is a NOTE ("already so at HEAD"), only a red the working tree adds fails; past a worker's yellow line `band_guard.py`
+  is a NOTE ("already so at HEAD") while the change adds no line and no finished "Active work" line; a red file that
+  grows fails ("red at HEAD too; this change grows it"), and with `CI` set the NOTE is off; past a worker's yellow line `band_guard.py`
   lets the gate (`scripts/check.sh`, any flags) run; `diff-reviewer.md` carries the verdicts, severity words, Lows cap
   and round-2 rule itself, hands back the verdict and about 2,000 characters (longer reasoning in
-  `.myagentkit/reviews/`), and runs in the foreground. test_gate_checks, test_band_guard and test_doc_pointers red
+  `.myagentkit/reviews/`, or "long report not saved (write refused)"), quotes REVIEW_PROMPT's whole Critical clause,
+  and runs in the foreground. test_gate_checks, test_band_guard and test_doc_pointers red
   without it. **ACTION** (project-owned `.claude/agents/diff-reviewer.md`, `.claude/agents/worker.md`,
   `.claude/hooks/band_guard.py`, `docs/REVIEW_GATE.md`, `scripts/check.sh`): `sync-kit.sh . --merge`.
 - **The side check runs once before a moment, never on a timer** (owner, 2026-11-09): before AskUserQuestion, Agent/Task or

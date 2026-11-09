@@ -128,7 +128,7 @@ REQUIRED_SUITES = {
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 3, 'test_bootstrap': 42 if case_folds() else 41, 'test_acceptance': 20,
               'test_review_upgrade': (8 if symlinks_work() else 7) if os.name == 'nt' else 9,
-              'test_scan_gate': 1, 'test_gate_checks': 20 if symlinks_work() else 19, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
+              'test_scan_gate': 1, 'test_gate_checks': 21 if symlinks_work() else 20, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 24, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
               'test_sync_kit': 71 if case_folds() else 70, 'test_doctor': 16, 'test_git_hooks': 39, 'test_stop_hook': 13, 'test_context_hook': 26, 'test_band_guard': 9, 'test_model_check': 3, 'test_handoff_pending': 6, 'test_communication_hooks': 44, 'test_suggestions': 27, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 13, 'test_guard_worker_route': 12, 'test_guard_risky_review': 27 if os.name == 'nt' else 29, 'test_guard_destructive_git': 93 if os.name == 'nt' else 93, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,

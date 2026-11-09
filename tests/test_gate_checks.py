@@ -139,7 +139,7 @@ class GateCheckTests(unittest.TestCase):
         self.assertIn('NOTE [state]: "Active work" lines that look finished', self.assert_green())
 
     def test_a_state_red_already_at_head_is_a_note_and_only_a_new_red_fails(self):
-        # ctl16 ANATOMY section 4: a red the committed STATE.md already had cost four runs and one commit.
+        # RESEARCH_LOG 2026-11-09 stopcut: a red the committed STATE.md already had cost four runs and one commit.
         state = self.project / 'docs/STATE.md'
         head = '(already so at HEAD: not from this change; fix it in its own commit)'
         finished = ''.join('- w%d: MERGED\n' % i for i in range(3))
@@ -174,6 +174,42 @@ class GateCheckTests(unittest.TestCase):
         write(state, red)
         out = self.assert_red('FAIL [state]: "Active work" lines that look finished; delete them (the history is in git):')
         self.assertNotIn(head, out)
+
+    def test_a_state_red_at_head_fails_once_the_change_grows_it_or_in_ci(self):
+        # stopcut review r1: a NOTE for any red at HEAD let a red file grow without end, and CI never failed it.
+        state = self.project / 'docs/STATE.md'
+        note = '(already so at HEAD: not from this change; fix it in its own commit)'
+        grows = '(red at HEAD too; this change grows it)'
+
+        def text(finished, notes):
+            return ('# STATE\n\n## Active work\n\n' + ''.join('- w%d: MERGED\n' % i for i in range(finished))
+                    + '\n## Notes\n' + ''.join('line %d\n' % i for i in range(notes)))
+        write(state, text(3, 391))  # 400 lines, 3 finished
+        subprocess.run(GIT + ['add', '-A'], cwd=self.project, check=True)
+        subprocess.run(GIT + ['commit', '-qm', 'state'], cwd=self.project, check=True)
+        # Unchanged: a NOTE.
+        self.assertIn('NOTE [state]: docs/STATE.md has 400 lines, over STATE_MAX_LINES (300, scripts/gate_config.sh) '
+                      + note, self.assert_green())
+        # CI: the committed file is judged as it is.
+        out = self.assert_red('FAIL [state]: docs/STATE.md has 400 lines, over STATE_MAX_LINES (300', CI='true')
+        self.assertNotIn(note, out)
+        # One more line: a FAIL that says so.
+        write(state, text(3, 392))
+        out = self.assert_red('FAIL [state]: docs/STATE.md has 401 lines, over STATE_MAX_LINES (300, '
+                              'scripts/gate_config.sh) ' + grows)
+        self.assertIn('FAIL [state]: "Active work" lines that look finished; delete them (the history is in git) '
+                      + grows + ':', out)
+        self.assertNotIn(note, out)
+        # One more finished entry at the same length: a FAIL.
+        write(state, text(4, 390))
+        self.assert_red('FAIL [state]: docs/STATE.md has 400 lines, over STATE_MAX_LINES (300, '
+                        'scripts/gate_config.sh) ' + grows)
+        # Shrunk but still over: progress, a NOTE.
+        write(state, text(2, 350))
+        out = self.assert_green()
+        self.assertIn('NOTE [state]: docs/STATE.md has 358 lines, over STATE_MAX_LINES (300, scripts/gate_config.sh) '
+                      + note, out)
+        self.assertNotIn('FAIL [state]', out)
 
     def test_the_project_file_contents_must_list_every_numbered_section(self):
         project = self.project / 'docs/PROJECT.md'

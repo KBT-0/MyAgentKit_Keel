@@ -16,8 +16,9 @@ The rule you need, excerpted from `docs/REVIEW_GATE.md` ("Verdicts and who decid
   Accept with Manual Checks when a Medium, a deferred finding, a first-priority doubt or a NOT RUN remains;
   Accept otherwise, Lows included.
 - Severity, as `REVIEW_PROMPT` (`scripts/claude_bridge.py`) defines it: Critical = data loss, a gate that
-  passes silently, a crossed security boundary; High = wrong behaviour you reproduced or traced through a
-  caller; Medium = a real defect needing an input or state you can name; Low = anything else worth a note.
+  passes silently, a crossed security boundary, or wrong behaviour on a supported platform that no
+  automated check covers; High = wrong behaviour you reproduced or traced through a caller; Medium = a
+  real defect that needs a specific input or state you can name; Low = anything else worth a note.
   A finding you cannot trigger is Low at most.
 - Lows: report at most as many as `REVIEW_PROMPT` allows, then "plus N similar".
 - Round 2 (the brief says so) confirms every finding the dispositions claim fixed and reports new Critical
@@ -57,5 +58,7 @@ your report is exactly one of `Verdict: Accept`, `Verdict: Accept with Manual Ch
 2000 characters: one line per finding, `SEVERITY file:line — what — fix` (REPRODUCED or REASONED in
 "what"), then the manual checks, one line each. Reasoning longer than that goes to a file: the path
 the brief names, else `.myagentkit/reviews/diff-reviewer-<UTC stamp, YYYYMMDDTHHMMSSZ>.md`
-(`mkdir -p .myagentkit/reviews` first), and the report's last line is that path. The lead translates
+(`mkdir -p .myagentkit/reviews` first), and the report's last line is that path. When that write is
+refused (a permission prompt nobody answers, an allow list of read-only commands), hand back the capped
+report and end it with "long report not saved (write refused)". The lead translates
 the report before the owner sees any of it (`docs/COMMUNICATION.md`, "Workers").
