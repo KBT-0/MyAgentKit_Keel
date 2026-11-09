@@ -153,8 +153,11 @@ One topic per turn. Suggested order, because each answer informs the next:
    server, a database, a mobile client? What does "run the tests" mean here, as a command?
 3. **The risky areas — where does a silent bug cost the most?** This is the single most
    project-specific decision in the whole setup: it becomes the trigger list for the review
-   gate. Push for specifics. "The payment flow" is useful; "the backend" is not. Ask what
-   would be hardest to notice, hardest to attribute, and hardest to undo.
+   gate (`docs/REVIEW_GATE.md`, "Risk tiers"). Ask for two classes by name: the money,
+   data-loss and security files, and a short critical-logic list (the files whose silent bug
+   is hardest to notice, attribute and undo). Gates and tooling are the third class, listed
+   already. Push for file names, never directory globs: `src/data/*` is not a risky area; the
+   ledger write and the webhook handler are. Everything else ships on the gate alone.
 4. **Hard boundaries.** What must never depend on what? Which of those can be enforced by a
    compiler, a project reference, or a grep — rather than by prose in a document? Every
    boundary you can enforce becomes a check in `scripts/check.sh`; every one you cannot,
@@ -419,8 +422,8 @@ when they become current, never now.
 
 | Placeholder | What goes in |
 |---|---|
-| `{{RISKY_AREAS}}` | The Phase 2 list, as specific nouns. Gates and CI are already listed permanently — do not repeat them |
-| `{{RISKY_PATHS}}` (scripts/gate_config.sh) | The same areas as path globs, plus the gate files: `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*`. A commit touching one waits for the diff review |
+| `{{RISKY_AREAS}}` | The Phase 2 list, as specific nouns: the money, data-loss and security files and the named critical-logic list. Gates and CI are already listed permanently — do not repeat them. Example: `the ledger write, the webhook signature check, the save-file migration` |
+| `{{RISKY_PATHS}}` (scripts/gate_config.sh) | The same files as file names or the narrowest glob, never a whole source directory, plus the gate files: `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*`. Example: `src/billing/ledger_write.py src/api/webhook.py`. A commit touching one waits for the diff review |
 | `{{TOP_RISK_PRIORITY}}` | The single worst failure mode, as the first review priority, with what makes it expensive |
 
 ### Architecture

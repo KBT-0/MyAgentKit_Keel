@@ -623,6 +623,19 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn("Every required review runs at an effort equal to or above the author's, high at most",
                       ' '.join((ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8').split()))
 
+    def test_a_required_review_has_three_classes_and_no_source_directory(self):
+        # revclass (owner decision C, 2026-11-09): the medium row is the money, data-loss and security
+        # files plus the project's named critical-logic list; a later edit cannot widen it silently.
+        gate = (ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8')
+        tiers = gate.split('## Risk tiers')[1].split('\n## ')[0]
+        medium = [line for line in tiers.splitlines() if line.startswith('| medium |')]
+        self.assertEqual(len(medium), 1, tiers)
+        for word in ('money', 'data-loss', 'security', 'critical-logic'):
+            self.assertIn(word, medium[0])
+        self.assertIn('never a whole source directory', ' '.join(tiers.split()))
+        interview = ' '.join((ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8').split())
+        self.assertIn('`src/data/*` is not a risky area', interview)
+
     def test_setup_docs_match_solo_mode_and_the_shipped_files(self):
         read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
         # #227: one Claude CLI is enough; a second CLI serves cross mode only.
