@@ -15,6 +15,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The constitution is trimmed to its rules** (owner 2026-11-09, loadcut): `AGENTS.md` keeps each rule and points to the
+  section that explains it, under a 7 600-character cap; `doctor.sh --quiet` prints nothing on a clean report and the whole
+  report on any MISSING or NOTE line; `.claude/rules/state.md` loads only for `docs/STATE.md` and `docs/PROJECT.md`; each
+  agent's description is one line. **ACTION:** merge the kit's `AGENTS.md`, `docs/AGENTS.md`, `docs/COMMUNICATION.md`,
+  `docs/WORKFLOW.md`, `.claude/rules/state.md`, `.claude/agents/diff-reviewer.md` and `.claude/agents/worker.md` into yours.
 - **The side check runs once before a moment, never on a timer** (owner, 2026-11-09): before AskUserQuestion, Agent/Task or
   a `spawn_worker.sh`/`spawn_codex.sh` command. A kept note answers the held call, and the agent makes it again. The periodic,
   end-of-turn and repeat-count triggers are gone; both model calls share one cached prefix; `report` says "every second moment".

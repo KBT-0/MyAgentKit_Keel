@@ -19,12 +19,15 @@
 # missing reviewer CLI, a commit with no author, a cache npm could not write to, a checkout
 # on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
-# --quiet: a ready machine prints nothing, so the lead's first call or a project's SessionStart
-# hook adds no text to every later request (v0.16 ctl16 ANATOMY: the session-start text was paid
-# again on each one); a setup with a MISSING line prints the whole report, as without the flag.
+# --quiet: a clean report prints nothing, so the lead's first call or a project's SessionStart
+# hook adds no text to every later request (CHANGELOG v0.16, loadcut (owner 2026-11-09): the
+# session-start text was paid again on each one). A report with a MISSING or a NOTE line (a stray
+# process, a stale background session, an unread claude version) prints whole, as without the flag.
 if [ "${1-}" = --quiet ]; then
   report=$(sh "$0" 2>&1); status=$?
-  [ "$status" = 0 ] || printf '%s\n' "$report"
+  if [ "$status" != 0 ] || printf '%s\n' "$report" | grep -q '^\(MISSING\|NOTE\):'; then
+    printf '%s\n' "$report"
+  fi
   exit "$status"
 fi
 # --- end of --quiet

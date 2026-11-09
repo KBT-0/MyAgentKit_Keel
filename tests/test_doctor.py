@@ -1412,22 +1412,24 @@ def stale_section(**env):
 
 
 class QuietTests(unittest.TestCase):
-    def test_quiet_prints_nothing_when_ready_and_the_whole_report_when_not(self):
-        # v0.16 loadcut (ctl16 ANATOMY section 1): the session-start report rode along in every
-        # later request; a ready machine's NOTE lines and "DOCTOR: ready" are now not printed.
+    def test_quiet_prints_nothing_on_a_clean_report_and_the_whole_report_otherwise(self):
+        # CHANGELOG v0.16, loadcut (owner 2026-11-09): the session-start report rode along in every
+        # later request, so a clean report is not printed; a NOTE line (a stray process, a stale
+        # background session) still is, or its fix never reaches the owner (loadcut review r1).
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
         self.assertTrue('# --- end of --quiet' in doctor, 'doctor.sh has no --quiet block')
         head = doctor.split('# --- end of --quiet', 1)[0]
-        for body, status in (('echo "NOTE: a note"; echo "DOCTOR: ready"; exit 0', 0),
-                             ('echo "MISSING: x — fix: y"; echo "NOTE: a note"; exit 1', 1)):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+        for body, status, printed in (('echo "DOCTOR: ready"; exit 0', 0, False),
+                                      ('echo "NOTE: stray process 9"; echo "DOCTOR: ready"; exit 0', 0, True),
+                                      ('echo "MISSING: x — fix: y"; echo "NOTE: a note"; exit 1', 1, True)):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmp:
                 script = Path(tmp) / 'doctor.sh'
                 script.write_text(head + body + '\n', encoding='utf-8')
                 quiet = subprocess.run(['sh', script.as_posix(), '--quiet'], capture_output=True, text=True)
                 loud = subprocess.run(['sh', script.as_posix()], capture_output=True, text=True)
                 self.assertEqual(quiet.returncode, status, quiet.stderr)
                 self.assertEqual(loud.returncode, status, loud.stderr)
-                self.assertEqual(quiet.stdout, '' if status == 0 else loud.stdout)
+                self.assertEqual(quiet.stdout, loud.stdout if printed else '')
 
 
 class StaleSessionTests(unittest.TestCase):

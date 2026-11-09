@@ -2,8 +2,8 @@
 
 Binding for every agent that edits a file under `docs/`. The constitution is the root
 `AGENTS.md`; this file holds only what applies when a document here is written. No tool
-loads it whole on its own: in Claude Code, `.claude/rules/state.md` points to it when a file
-under `docs/` is read.
+loads it whole on its own: in Claude Code, `.claude/rules/state.md` points to it only for an
+edit of `docs/STATE.md` or `docs/PROJECT.md`; for any other file here, read it yourself.
 
 ## Writing docs/ARCHITECTURE.md
 
