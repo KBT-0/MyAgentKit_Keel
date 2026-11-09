@@ -296,15 +296,18 @@ class ContextHookTests(unittest.TestCase):
         (self.tmp / '.myagentkit/presence').write_text('away 2026-10-22T23:00:00+03:00\n', encoding='utf-8')
 
     def test_while_away_the_band_and_a_second_compaction_say_keep_going(self):
-        # v0.13 autopilot: the lead stopped at a band line overnight and the night was lost.
+        # v0.13 autopilot: the lead stopped at a band line overnight and the night was lost. Past the
+        # enforcing line (a lead's red) band_guard.py denies all but the hand-off (PLAN.md item 2), so
+        # the line says to end with it; below it the session keeps going.
         self.away()
-        for turns in ([request(360_000)], [request(360_000), {'type': 'system', 'subtype': 'compact_boundary'},
-                                          request(160_000)]):
+        for turns, going in (([request(360_000)], False), ([request(360_000), {'type': 'system', 'subtype': 'compact_boundary'},
+                                                          request(160_000)], True)):
             said = self.run_progress(turns)
             with self.subTest(said=said):
                 self.assertIn('Context is', said)
                 self.assertIn('autopilot', said)
-                self.assertIn('keep going', said)
+                self.assertEqual('keep going' in said, going)
+                self.assertEqual('Enforced: only commit and hand-off' in said, not going)
                 self.assertNotIn('stop now', said)
                 self.assertNotIn('recommend', said)
                 self.assertNotIn('owner is back', said)  # a tool call is never the owner's message
@@ -312,8 +315,8 @@ class ContextHookTests(unittest.TestCase):
         # leeway L14: a worker leaves STATE.md to the lead (docs/HANDOFF.md).
         self.env['MYAGENTKIT_ROLE'] = 'worker'
         said = self.run_progress([request(360_000)])
-        self.assertIn('keep going', said)
-        self.assertNotIn('STATE.md', said)
+        self.assertIn('end the turn with the hand-off', said)
+        self.assertNotIn('STATE.md', said.split('Enforced')[0])
 
     def test_a_committed_away_line_without_a_presence_record_reads_as_away(self):
         # leeway L12: a clone or worktree of a night's commit carries the away line but not the

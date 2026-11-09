@@ -25,7 +25,7 @@ class PythonFallbackTests(unittest.TestCase):
         hooks = json.loads((OVERLAY / '.claude/settings.json').read_text(encoding='utf-8'))['hooks']
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
-        self.assertEqual(sorted(python_hooks), ['before_compact.py', 'context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
+        self.assertEqual(sorted(python_hooks), ['band_guard.py', 'before_compact.py', 'context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
                                                 'guard_private_email.py', 'guard_risky_review.py', 'guard_root_scan.py', 'guard_secret_files.py', 'guard_worker_route.py', 'handoff_pending.py', 'model_check.py', 'plain_report.py',
                                                 'progress_reminder.py', 'quota_snapshot.py', 'record_review.py', 'suggestions.py'], commands)
         for command in python_hooks.values():

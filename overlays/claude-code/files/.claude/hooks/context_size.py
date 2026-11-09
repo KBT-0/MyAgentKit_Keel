@@ -7,7 +7,10 @@ step file, so each step is named once. A large transcript is read from the byte 
 last check saved (progress_reminder.py's method): a full read of 33 MB took 0.9 s.
 
 Every request re-sends the whole context, and accuracy falls as it grows (`docs/WORKFLOW.md`,
-"Worker cost", rule 8: a band, yellow at 150k, red at 200k, ceiling at 300k; owner 2026-11-03). The context is
+"Worker cost", rule 8: a band, yellow at 150k, red at 200k, ceiling at 300k; owner 2026-11-03;
+`MYAGENTKIT_BAND=yellow,red,ceiling` in thousands, e.g. `80,100,150`, moves all three, here and in
+band_guard.py, which past a worker's yellow or a lead's red line denies every tool call but
+the closing ones, and this line then says so). The context is
 the last API request's input plus cache read plus cache write, read from the transcript; a
 compaction boundary resets it until the next request.
 
@@ -52,16 +55,27 @@ import subprocess
 import sys
 import tempfile
 
-LINE = 150_000  # yellow: plan the cut
-RED = 200_000  # cut at the next clean stop
-CEILING = 300_000  # stop now
+
+
+def thresholds() -> tuple[int, int, int]:
+    """MYAGENTKIT_BAND=yellow,red,ceiling in thousands (e.g. 80,100,150), else 150,200,300."""
+    try:
+        yellow, red, ceiling = (int(word) * 1000 for word in os.environ.get('MYAGENTKIT_BAND', '').split(','))
+        if 0 < yellow < red < ceiling:
+            return yellow, red, ceiling
+    except ValueError:
+        pass
+    return 150_000, 200_000, 300_000
+
+
+LINE, RED, CEILING = thresholds()  # yellow: plan the cut; red: cut at the next clean stop; ceiling: stop now
 STEP = 50_000
 RECOUNT = 512 * 1024  # re-read small transcripts; larger ones resume at the saved offset
-BANDS = ((CEILING, 'ceiling (300k): stop now and secure the work (commit, STATE, handoff) '
+BANDS = ((CEILING, f'ceiling ({CEILING // 1000}k): stop now and secure the work (commit, STATE, handoff) '
                    'without waiting for a clean stop'),
-         (RED, 'red (200k): cut at the next clean stop (write the hand-off, then the owner types /clear); '
+         (RED, f'red ({RED // 1000}k): cut at the next clean stop (write the hand-off, then the owner types /clear); '
                 'start no new round'),
-         (LINE, 'yellow (150k): plan the cut; start no new round, let the running batch finish, '
+         (LINE, f'yellow ({LINE // 1000}k): plan the cut; start no new round, let the running batch finish, '
                 'commit, and keep docs/STATE.md and the handoff current'))
 COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
            "and the owner's words verbatim")
@@ -162,6 +176,22 @@ def away() -> bool:
         return AWAY_LINE.search((root / 'docs/STATE.md').read_text(encoding='utf-8')) is not None
     except (OSError, ValueError):  # no file is present
         return False
+
+
+def enforced_at() -> int:
+    """Where band_guard.py starts denying: a worker's yellow line, a lead's red one."""
+    return LINE if os.environ.get('MYAGENTKIT_ROLE') == 'worker' else RED
+
+
+ENFORCED = ('Enforced: only commit and hand-off; band_guard.py denies every other tool call (git add, commit, '
+            'status, diff and log, the result file, the hand-off, docs/STATE.md, PLAN.md and reads still run)')
+
+
+def resumable(saved):
+    """The step file's record when whole (scan() may resume from it), else None."""
+    return saved if (isinstance(saved, dict) and type(saved.get('known')) is bool and isinstance(
+        saved.get('running'), dict) and isinstance(saved.get('pending'), dict) and all(
+        type(saved.get(key)) is int and saved[key] >= 0 for key in ('offset', 'last', 'compactions'))) else None
 
 
 def band(ctx: int) -> int:
@@ -289,10 +319,7 @@ def notice(transcript: Path) -> str:
             saved = json.loads(state.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             saved = None
-        resume = saved if (isinstance(saved, dict) and type(saved.get('known')) is bool and isinstance(
-            saved.get('running'), dict) and isinstance(saved.get('pending'), dict) and all(
-            type(saved.get(key)) is int and saved[key] >= 0 for key in ('offset', 'last', 'compactions'))) else None
-        ctx, compactions, known, offset, running, pending = scan(transcript, resume)
+        ctx, compactions, known, offset, running, pending = scan(transcript, resumable(saved))
         # Before the step became a record the state held only an integer step.
         legacy = type(saved) is int
         try:
@@ -315,13 +342,15 @@ def notice(transcript: Path) -> str:
             temporary.unlink(missing_ok=True)
     if now <= said:
         return ''
+    enforced = ctx >= enforced_at()
     if away():
         return (f'Context is {ctx // 1000}k tokens ({band_word(ctx)} band). The owner is away (autopilot): '
                 # A worker leaves STATE.md to the lead (docs/HANDOFF.md, leeway L14).
                 + ('keep your result file current' if os.environ.get('MYAGENTKIT_ROLE') == 'worker' else
                    'update docs/STATE.md and the hand-off file now')
-                + ', then keep going; no band and no compaction, '
-                f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).')
+                + (f', then end the turn with the hand-off. {ENFORCED} ({AUTOPILOT}; rule 8).' if enforced else
+                   ', then keep going; no band and no compaction, '
+                   f'the second included, is a stop, and nothing waits for an answer ({AUTOPILOT}; rule 8).'))
     if running:
         names = ', '.join(sorted(f'{label} ({job})' for job, (label, _) in running.items()))
         advice = (f'Hand-off blocked: {len(running)} job(s) started in this session still run ({names}). '
@@ -347,7 +376,7 @@ def notice(transcript: Path) -> str:
                   'of finished work. Neither is the default')
     return (f'Context is {ctx // 1000}k tokens, ' + next(text for floor, text in BANDS if ctx >= floor)
             + '. Every turn re-sends it, and accuracy falls as it grows. ' + advice
-            + ' (docs/WORKFLOW.md, "Worker cost", rule 8).')
+            + ('. ' + ENFORCED if enforced else '') + ' (docs/WORKFLOW.md, "Worker cost", rule 8).')
 
 
 def main() -> None:
