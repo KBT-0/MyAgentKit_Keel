@@ -349,10 +349,12 @@ def notice(transcript: Path) -> str:
                 extra += (f'the next request rewrites this whole context{size} on the new account. '
                           f'Under {LINE // 1000}k: continue, and say the switch in the report.')
             elif away():
-                extra += (f'the next request rewrites this whole context{size} on the new account; under autopilot: '
-                          'keep going, update the hand-off file, and cut at the next clean point '
-                          '(no band below the enforcing line is a stop).' if ctx < enforced_at() else
-                          f'the next request rewrites this whole context{size} on the new account.')
+                extra += f'the next request rewrites this whole context{size} on the new account'
+                if ctx < enforced_at():
+                    extra += '; under autopilot: update the hand-off file, then keep going (no band below the enforcing line is a stop)'
+                if running:
+                    extra += f'; running: {names}'
+                extra += '.'
             elif running:
                 extra += (f'this context{size} is rewritten on the new account; over {LINE // 1000}k it hands off '
                           f'at the next clean point, once the running job(s) end: {names}')

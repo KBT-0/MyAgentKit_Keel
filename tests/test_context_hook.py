@@ -115,9 +115,10 @@ class ContextHookTests(unittest.TestCase):
         self.away()
         said = self.run_hook(turns + [prompt()])
         self.assertIn('Account switched (org bbbbbbbb)', said)
-        self.assertIn('under autopilot: keep going, update the hand-off file, and cut at the next clean point '
+        self.assertIn('under autopilot: update the hand-off file, then keep going '
                       '(no band below the enforcing line is a stop)', said)
         self.assertNotIn('hand off now', said)
+        self.assertNotIn('cut', said.split('\n')[0])
         # Past the enforcing line the band's own stop text applies, nothing extra on the switch line.
         turns += [request(210_000), org('cccccccc-3333')]
         said = self.run_hook(turns + [prompt()])
@@ -128,6 +129,21 @@ class ContextHookTests(unittest.TestCase):
         said = self.run_hook(turns + [prompt()])
         self.assertIn('Over 150k: hand off now', said)
         self.assertNotIn('autopilot', said.split('\n')[0])
+
+    def test_an_account_switch_under_autopilot_names_the_running_job(self):
+        # review 20261109T132529Z, High: the away line names the running job and orders no cut.
+        turns = [prompt(), org('aaaaaaaa-1111'),
+                 {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {
+                     'command': 'sh x', 'run_in_background': True, 'description': 'Run the gate'}}]}},
+                 {'type': 'user', 'toolUseResult': {'backgroundTaskId': 'b1'}, 'timestamp': '2026-10-26T10:00:00.000Z',
+                  'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'started'}]}},
+                 request(170_000), org('bbbbbbbb-2222')]
+        self.away()
+        line = self.run_hook(turns + [prompt()]).split('\n')[0]
+        self.assertIn('Run the gate (b1)', line)
+        self.assertIn('keep going', line)
+        self.assertNotIn('cut', line)
+        self.assertNotIn('hand off now', line)
 
     def test_an_old_switch_or_a_compaction_changes_the_switch_line(self):
         # review 700bd60c9105, Low D and F.
