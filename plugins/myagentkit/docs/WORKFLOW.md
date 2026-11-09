@@ -983,7 +983,7 @@ a commit made while away) follows the away line until a switch records it there.
   next item) is no stop. No turn ends with nothing to wake it: every wait is a disk watch or
   a `ScheduleWakeup`. Past the enforcing line (rule 8) the band IS a stop: the hand-off and the
   report are written, no wakeup is armed (`band_guard.py` denies `ScheduleWakeup` and `Monitor`),
-  and until the watchdog of PLAN item 5 exists {{OWNER_NAME}} reopens the lead. No question to {{OWNER_NAME}} while autopilot is on, neither with
+  and until a watchdog reopens the lead, {{OWNER_NAME}} does. No question to {{OWNER_NAME}} while autopilot is on, neither with
   AskUserQuestion nor in chat text (two options and a default for no answer is a question
   too), even when {{OWNER_NAME}} writes in between: the lead takes the rule's default, records
   it under My decisions and puts the question in the report (#312).

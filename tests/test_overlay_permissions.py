@@ -167,14 +167,16 @@ class OverlaySettingsTests(unittest.TestCase):
         # says `onFailure: block` (Claude Code v2.1.295+, https://code.claude.com/docs/en/hooks).
         guards = [h for e in self.settings['hooks']['PreToolUse'] for h in e['hooks']]
         self.assertEqual(sorted(h['command'].split('/')[-1].rstrip('"') for h in guards),
-                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_risky_review.py',
+                         ['band_guard.py', 'guard_destructive_git.py', 'guard_private_email.py', 'guard_risky_review.py',
                           'guard_root_scan.py', 'guard_secret_files.py', 'guard_worker_route.py'])
         for hook in guards:
             with self.subTest(hook=hook['command']):
                 # guard_root_scan fails open (#298, lead decision D1): it only saves a CPU core, and
                 # a stalled guard must not refuse every shell call; guard_secret_files likewise
                 # must not refuse every edit (#297).
-                fails_open = any(g in hook['command'] for g in ('guard_root_scan', 'guard_secret_files'))
+                # band_guard fails open (lead decision 2026-11-09): past the band it denies every call but
+                # the closing set; a crashed guard that blocks would block the hand-off itself.
+                fails_open = any(g in hook['command'] for g in ('guard_root_scan', 'guard_secret_files', 'band_guard'))
                 self.assertEqual(hook.get('onFailure'), None if fails_open else 'block')
         # A blocking guard that times out refuses an ordinary command: a loaded Windows host took
         # over 10 s for sh, the Python launcher and the interpreter (leeway, 2026-10-18; measured
@@ -183,7 +185,7 @@ class OverlaySettingsTests(unittest.TestCase):
             for entry in json.loads(path.read_text(encoding='utf-8'))['hooks']['PreToolUse']:
                 with self.subTest(path=path.parts[-3], hook=entry['hooks'][0]['command']):
                     self.assertGreaterEqual(entry['hooks'][0].get('timeout', 600), 30)
-        matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
+        matchers = {e.get('matcher', '') for e in self.settings['hooks']['PreToolUse']}
         self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
         # #298: a walk from a root; Glob and Grep run inside the tool and never outlive the session.
         root_scan = [e['matcher'] for e in self.settings['hooks']['PreToolUse']
