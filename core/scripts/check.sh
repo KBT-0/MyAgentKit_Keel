@@ -598,6 +598,16 @@ fi
 # session (#338; owner, 2026-11-03). Over the limit with nothing finished, or finished lines
 # under it, is a NOTE.
 #
+# A FAIL the committed file already had (HEAD:docs/STATE.md, counted by the same awk) is a
+# NOTE when this change does not worsen it: no more lines and no more finished "Active work"
+# lines than HEAD's file (shrinking it while still over is progress). Chasing such a red cost
+# four measured runs $0.12-0.46 and stopped one commit (RESEARCH_LOG 2026-11-09 stopcut). Any
+# growth of a red file fails and says so, or a file committed red could grow without end
+# (stopcut review r1). With CI set non-empty the NOTE is off: a clean checkout's file IS HEAD's,
+# and a red that landed past the hook (--no-verify, an unwired clone, a rebase) fails where the
+# gate holds. No repository, no commit, or no STATE.md at HEAD: there is no earlier file, and
+# the check is as before.
+#
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole check could be disabled by deleting one file or editing one line.
 if [ ! -f docs/STATE.md ]; then
@@ -609,21 +619,45 @@ elif ! grep -q "^## Active work" docs/STATE.md; then
   echo "              rather than removing the check."
   fail=1
 else
-  awk -v max="$STATE_MAX_LINES" '
-    /^## / { active = ($0 ~ /^## Active work/) }
+  # One awk text. With counts=1 it prints only "LINES FINISHED RED" (for the committed file and the
+  # working one, so the shell compares numbers); else it reports and exits 1 for a FAIL.
+  # head=1: red at HEAD and not worsened, a NOTE; head=2: red at HEAD and grown, a FAIL that says so.
+  state_awk='    /^## / { active = ($0 ~ /^## Active work/) }
     # "NOT DONE", "until #12 is MERGED" are live work (r338): a word before the marker leaves the line out.
     active && /(^|[^A-Za-z])(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)([^A-Za-z]|$)/ &&
       !/([Nn][Oo][Tt]|until|once|after|when|before|is|be) +(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)/ { done[++n] = FNR ": " $0 }
     END {
       over = (max ~ /^[0-9]+$/ && max > 0 && NR > max)
-      tag = (over && n) ? "FAIL" : "NOTE"
+      red = (over && n)
+      if (counts) { print NR " " (n + 0) " " red; exit 0 }
+      tag = (red && head != 1) ? "FAIL" : "NOTE"
+      also = ""
+      if (red && head == 1) also = " (already so at HEAD: not from this change; fix it in its own commit)"
+      if (red && head == 2) also = " (red at HEAD too; this change grows it)"
       if (over)
-        printf "%s [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh);\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", tag, NR, max
-      if (n) print tag " [state]: \"Active work\" lines that look finished; delete them (the history is in git):"
+        printf "%s [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh)%s;\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", tag, NR, max, also
+      if (n) print tag " [state]: \"Active work\" lines that look finished; delete them (the history is in git)" also ":"
       for (i = 1; i <= n && i <= 10; i++) print "              docs/STATE.md:" substr(done[i], 1, 100)
       if (n > 10) print "              and " n - 10 " more"
       exit (tag == "FAIL")
-    }' docs/STATE.md || fail=1
+    }'
+  # cat-file, not show: the blob as committed, never a textconv view of it. Counts that are not
+  # numbers (an awk error) leave the check as it was: a red fails.
+  state_head=0
+  if [ -z "${CI:-}" ] && git cat-file blob HEAD:./docs/STATE.md > "$work/state_head" 2>/dev/null; then
+    head_counts=$(awk -v max="$STATE_MAX_LINES" -v counts=1 "$state_awk" "$work/state_head" 2>/dev/null) || head_counts=
+    work_counts=$(awk -v max="$STATE_MAX_LINES" -v counts=1 "$state_awk" docs/STATE.md 2>/dev/null) || work_counts=
+    # shellcheck disable=SC2086 # word splitting of the three counts is the point
+    set -- $head_counts $work_counts
+    [ "$#" -eq 6 ] || set -- x x x x x x
+    case "$1:$2:$4:$5" in
+      *[!0-9:]*) ;;
+      *) if [ "$3" = 1 ]; then
+             if [ "$4" -le "$1" ] && [ "$5" -le "$2" ]; then state_head=1; else state_head=2; fi
+           fi ;;
+    esac
+  fi
+  awk -v max="$STATE_MAX_LINES" -v head="$state_head" "$state_awk" docs/STATE.md || fail=1
 fi
 
 # Finished work. The commit that finishes a task says so with a "Done: <id>" trailer

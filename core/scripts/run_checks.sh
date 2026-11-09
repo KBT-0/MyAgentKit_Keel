@@ -39,7 +39,7 @@ if [ $# -eq 3 ]; then
   [ "$2" = --out ] && [ -n "$3" ] || usage
   result=$3
 fi
-[ -f "$checks" ] && [ -r "$checks" ] || { echo "run_checks: cannot read the check list: $checks" >&2; exit 2; }
+[ -f "$checks" ] && [ -r "$checks" ] || { printf '%s\n' "run_checks: cannot read the check list: $checks" >&2; exit 2; }
 [ -n "$result" ] || result=.myagentkit/checks/$(basename "$checks").result.md
 lock=$result.lock
 
@@ -49,10 +49,10 @@ if [ "${RUN_CHECKS_LOCK_HELD:-}" = "$lock" ]; then
   unset RUN_CHECKS_LOCK_HELD RUN_CHECKS_LOCK_FD
   case $lock_fd in [0-9]|[0-9][0-9]|[0-9][0-9][0-9]) ;; *) lock_fd="" ;; esac
 else
-  mkdir -p "$(dirname "$result")" || { echo "run_checks: cannot create the folder of $result" >&2; exit 2; }
+  mkdir -p "$(dirname "$result")" || { printf '%s\n' "run_checks: cannot create the folder of $result" >&2; exit 2; }
   if command -v flock >/dev/null 2>&1; then
-    exec 9>>"$lock" || { echo "run_checks: cannot open the lock $lock" >&2; exit 2; }
-    flock -n 9 || { echo "running: $result"; exit 75; }
+    exec 9>>"$lock" || { printf '%s\n' "run_checks: cannot open the lock $lock" >&2; exit 2; }
+    flock -n 9 || { printf '%s\n' "running: $result"; exit 75; }
     lock_fd=9
   else
     native() {
@@ -102,7 +102,7 @@ trap 'exit 143' TERM
 log=$result.log
 # A result left by an earlier run would read as this run's: none exists until this one ends.
 rm -f "$result"
-: > "$log" || { echo "run_checks: cannot write $log" >&2; exit 2; }
+: > "$log" || { printf '%s\n' "run_checks: cannot write $log" >&2; exit 2; }
 
 cr=$(printf '\r')
 total=0 failed=0
@@ -132,11 +132,11 @@ while IFS= read -r line || [ -n "$line" ]; do
   fi
 done < "$checks"
 
-[ "$total" -gt 0 ] || { echo "run_checks: no command in $checks" >&2; exit 2; }
+[ "$total" -gt 0 ] || { printf '%s\n' "run_checks: no command in $checks" >&2; exit 2; }
 if [ "$failed" -eq 0 ]; then header="PASS $total/$total"; else header="FAIL $failed/$total"; fi
 if ! { printf '%s\n' "$header"; cat "$work/lines"; } > "$result.tmp.$$" ||
    ! mv -f "$result.tmp.$$" "$result"; then
-  echo "run_checks: cannot write $result" >&2; exit 2
+  printf '%s\n' "run_checks: cannot write $result" >&2; exit 2
 fi
 printf '%s: %s\n' "$header" "$result"
 [ "$failed" -eq 0 ]

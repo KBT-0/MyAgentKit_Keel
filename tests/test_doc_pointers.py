@@ -212,8 +212,10 @@ class SectionPointerTests(unittest.TestCase):
         # #103: the author's side's early check; a small risky diff's required review since lean-kit Y4.
         reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
                             .read_text(encoding='utf-8').split())
-        # Lean kit Y4 (owner 2026-10-25): the reviewer runs on the session's model without CLAUDE.md, reads the gate doc.
-        self.assertIn('Read `docs/REVIEW_GATE.md` and follow it', reviewer)
+        # Lean kit Y4 (owner 2026-10-25): the reviewer runs on the session's model without CLAUDE.md. stopcut
+        # (RESEARCH_LOG 2026-11-09 stopcut): it carries the gate doc's verdict rule and reads the 24k file only for the rest.
+        self.assertIn('Read `docs/REVIEW_GATE.md` only for a question these lines do not answer', reviewer)
+        self.assertNotIn('Read `docs/REVIEW_GATE.md` and follow it', reviewer)
         self.assertIn('read `docs/ARCHITECTURE.md` only when the diff crosses a module boundary', reviewer)
         self.assertIn("the author's side's early check, and the required review of a small risky diff", reviewer)
         self.assertIn('Never edit a file of the checkout, even for a moment', reviewer)
@@ -224,6 +226,43 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('must not lie inside the checkout', reviewer)
         self.assertNotIn('its reading list', reviewer)
         self.assertIn('### Review inside the worker', (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8'))
+
+    def test_the_diff_reviewer_carries_the_gate_verdicts_and_hands_back_a_capped_report(self):
+        # stopcut (RESEARCH_LOG 2026-11-09 stopcut): each reviewer Read the whole REVIEW_GATE.md and handed back 9-22k chars.
+        reviewer = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/diff-reviewer.md')
+                            .read_text(encoding='utf-8').split())
+        gate = ' '.join((ROOT / 'core/docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
+        verdicts = '`Accept` / `Accept with Manual Checks` / `Reject`. Reject only on an open Critical or High.'
+        self.assertIn(verdicts, gate)
+        self.assertIn('Verdicts: `Accept`, `Accept with Manual Checks`, `Reject`. Reject only on an open Critical or High',
+                      reviewer)
+        for word in ('Critical =', 'High =', 'Medium =', 'Low ='):
+            self.assertIn(word, reviewer)
+        # stopcut review r1: the excerpt dropped the platform clause, so a platform-only defect read as Low.
+        critical = ('Critical = data loss, a gate that passes silently, a crossed security boundary, or wrong '
+                    'behaviour on a supported platform that no automated check covers;')
+        sys.path.insert(0, str(ROOT / 'core/scripts'))
+        try:
+            import claude_bridge
+        finally:
+            sys.path.pop(0)
+        self.assertIn(critical, ' '.join(claude_bridge.REVIEW_PROMPT.split()))
+        self.assertIn(critical, reviewer)
+        self.assertIn('"long report not saved (write refused)"', reviewer)
+        self.assertIn('report at most as many as `REVIEW_PROMPT` allows', reviewer)
+        self.assertNotRegex(reviewer, r'at most (five|\d+) Low')  # the number lives in REVIEW_PROMPT only
+        self.assertIn('Round 2 (the brief says so) confirms every finding the dispositions claim fixed and reports new '
+                      'Critical or High only', reviewer)
+        self.assertIn('`diff-reviewer.md` carries an excerpt of "Verdicts and who decides" and "Rounds"', gate)
+        self.assertIn('at most about 2000 characters: one line per finding, `SEVERITY file:line — what — fix`', reviewer)
+        self.assertIn('`.myagentkit/reviews/diff-reviewer-<UTC stamp, YYYYMMDDTHHMMSSZ>.md`', reviewer)
+        self.assertIn("the report's last line is that path", reviewer)
+        # One launch in the foreground: a background reviewer cost an extra empty wait request.
+        for name in ('core/docs/WORKFLOW.md', 'core/docs/REVIEW_GATE.md', 'overlays/claude-code/files/.claude/agents/worker.md'):
+            with self.subTest(name=name):
+                text = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+                self.assertIn('foreground (no `run_in_background`', text.replace('foreground, no', 'foreground (no'))
+                self.assertIn('a background launch costs an extra empty wait request', text)
 
     def test_a_brief_names_what_the_workers_environment_lacks(self):
         # #107: six briefs of one project re-taught sandbox workarounds by hand.
