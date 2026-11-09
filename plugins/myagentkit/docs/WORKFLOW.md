@@ -1209,10 +1209,17 @@ Rules, binding for whoever routes workers:
    working day it reads `/usage`'s Session block (the main conversation only, not
    sub-agents) and runs `scripts/agent_cost.py --latest`, and writes both into the handoff
    next to the number of tasks done, so the next routing decision is made from a number
-   (code.claude.com/docs/en/costs). The table's `hit` column (cache reads over all input) is
-   the figure to watch. An initial hit below 80% is an alarm, not a target (the owner's
-   choice, KARARLAR B03 inv1#173). Record the median of the kit's first ten workers as the
-   baseline; investigate lower hits with `cWrite>TTL` and `poll`. The analyzer compares each
+   (code.claude.com/docs/en/costs). Spend is the figure to watch: each row shows the answering
+   `model` and its list-price `$`, and TOTAL adds `$ per request`, the largest context and an
+   `ALARM` once an agent's context passed 150k or the session's `$` passed
+   `MYAGENTKIT_SPEND_ALARM_USD` (default 5). A high `hit` hid the spend of every field report
+   (v0.16 reset), so it carries no alarm; investigate a low one with `cWrite>TTL` and `poll`.
+   `--by-task` gives one row per task (a worker's `-2`, `-fix` and `-r2` sessions joined) and
+   `scripts/token_audit.py --by-day` one per day. The subscription itself:
+   `scripts/quota_snapshot.py` writes the plan's five-hour and seven-day percent and the
+   account to `.myagentkit/usage/quota.jsonl` at spawn, at close and at each lead session's
+   start and stop, and `scripts/agent_cost.py --quota` prints each label's change (or the
+   account switch between them). The analyzer compares each
    write bucket with its recorded TTL (B03 inv2/(h)); a gap is diagnostic, not proof of the
    cause of a miss. The line
    is a band of context, the same for every model: **yellow at 150k** (plan the cut: no new
