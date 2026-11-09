@@ -42,10 +42,10 @@ quote evidence that the agent missed something. Then its one short note holds th
 must check the claim with its own read-only means and write a visible verdict (correct, wrong,
 or partly) before it acts on it and makes the call again.
 
-- Anthropic's built-in "You should know" tells the *user*; this note goes to the *agent*, beside its next tool result.
+- Anthropic's built-in "You should know" tells the *user*; this note goes to the *agent*, as the answer to the call it holds (a question to the owner, a sub-agent, a spawn command).
 - Other side-agent watchdogs fire without a verdict, a ledger or a brake. This one keeps a precision ledger of its own
   notes, runs half as often below 50% precision, and stops delivering below 25%, saying so in the chat.
-- A check costs a bounded window, not the conversation: 1,335 input tokens at a 34k main context and 1,763 at 79k.
+- A check costs a bounded window, not the conversation: the first call carries up to 80,000 characters of session lines plus the window; the cost is not yet measured.
   Each note also costs the agent its verification; a missing verdict is asked for once beside the next tool result,
   never with an extra turn (in two projects the old end-of-turn reminder ran an extra turn for 12 of 13 notes).
 - `/myagentkit:suggestions on|off|status`: `status` shows the notes, the verdicts, the precision and the tokens spent.
