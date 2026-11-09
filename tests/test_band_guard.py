@@ -76,6 +76,18 @@ class BandGuardTests(unittest.TestCase):
                 self.assertIsNone(self.hook('Write', {'file_path': str(self.root / path), 'content': 'x'}))
         self.assertIsNone(self.hook('Agent', {'subagent_type': 'diff-reviewer', 'prompt': 'review'}))
 
+    def test_the_gate_runs_past_the_band_and_a_test_command_does_not(self):
+        # ctl16 ANATOMY section 5: two runs were denied scripts/check.sh at yellow and never committed.
+        for command in ('sh scripts/check.sh', './scripts/check.sh', 'bash scripts/check.sh --fast',
+                        'cd /w/proj && sh scripts/check.sh', 'GATE_LOCK_WAIT=5 sh ./scripts/check.sh 2>&1 | tail -20'):
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook('Bash', {'command': command}))
+        for command in ('sh scripts/check.sh && python3 x.py', 'npm test', 'sh check.sh', 'sh tools/check.sh',
+                        'sh scripts/check.sh > gate.log'):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.hook('Bash', {'command': command}))
+        self.assertIn('the gate (scripts/check.sh)', self.hook('Bash', {'command': 'npm test'}))
+
     def test_claim_a_plain_agent_and_a_wakeup_stay_denied_past_the_band(self):
         for command in ('python3 scripts/master_writer.py claim', 'scripts/watch_workers.sh',
                         'python3 scripts/working_mode.py autopilot', 'python3 -c 1 scripts/review.sh'):

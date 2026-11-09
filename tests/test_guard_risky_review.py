@@ -356,6 +356,21 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertFalse(record_review.accepted('Verdict: Accept\n- src/x.ts:3 \u2014 High: off by one'))
         self.assertTrue(record_review.accepted('Verdict: Accept\nHigh-risk paths: none touched.'))
 
+    def test_the_capped_hand_back_format_is_read(self):
+        # stopcut: diff-reviewer.md's hand-back, the verdict, one line per finding, the checks, the report's path last.
+        sys.path.insert(0, str(HOOKS))
+        import record_review
+        tail = ('\nManual checks: run the Windows gate once by hand.'
+                '\n.myagentkit/reviews/diff-reviewer-20261109T231500Z.md')
+        self.assertTrue(record_review.accepted(
+            'Verdict: Accept with Manual Checks\nMedium src/x.py:12 \u2014 off by one on an empty list \u2014 '
+            'guard len 0' + tail))
+        self.assertTrue(record_review.accepted('Verdict: Accept\nLow src/x.py:3 \u2014 a typo \u2014 fix it' + tail))
+        self.assertFalse(record_review.accepted(
+            'Verdict: Accept\nHigh src/x.py:12 \u2014 REPRODUCED: data lost \u2014 write then rename' + tail))
+        self.assertFalse(record_review.accepted(
+            'Verdict: Reject\nCritical src/x.py:1 \u2014 the gate passes silently \u2014 read the exit code' + tail))
+
     def test_a_rename_out_of_the_risky_folder_is_refused(self):
         self.git('mv', 'src/money/round.py', 'legacy.py')
         refused = self.commit()

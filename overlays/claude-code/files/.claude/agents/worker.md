@@ -78,7 +78,8 @@ the rules below exist).
   Report "not run" for any check you did not run.
 - Review your own diff before you report, whether you run as a session or as a sub-agent
   (sub-agents nest three layers deep by default): a fresh `diff-reviewer` in every inner
-  round, then fix what it finds. At most two inner rounds; round 2 runs only when round 1
+  round, launched in the foreground (no `run_in_background`: the review is the next step's
+  condition, and a background launch costs an extra empty wait request), then fix what it finds. At most two inner rounds; round 2 runs only when round 1
   left a Critical or High fix, confirms every finding the dispositions claim fixed, a Medium
   included, and reports new Critical or High only. A Medium follows
   `docs/REVIEW_GATE.md`, "Verdicts and who decides" (round 1: fixed only with a test and a one-line cost estimate,
