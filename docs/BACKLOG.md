@@ -142,3 +142,5 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   sends none.
 - Low: watch_workers.sh ~382 LIMIT line tells the lead to `--resume` with "limit reset, continue"; over 100k the
   spawn now refuses it and names a RESULT a limit-stopped worker never wrote.
+- Low: run_checks.sh native-Windows lock path (`msvcrt.locking` holder) is unrun; with an absolute `--out` MSYS path the
+  re-run compares a converted path and exits 75 forever; check.sh fixes the same with `cygpath -m` (check.sh ~109-116).

@@ -15,6 +15,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **`scripts/run_checks.sh`.** A brief's check list (`NAME.checks`, named by absolute path on the `Checks:` line) runs
+  under one lock into one result file.
+- **STATE.md holds open work only;** a closed item is deleted.
 - **Review scope (owner 2026-11-09, PLAN.md item 4).** A review is required only for the risk classes (money, data
   loss, security, gate): the low row takes none, the gate and the author's checks are its acceptance; the high row takes
   ONE fresh reviewer with one combined lens, a `logic` and `portability` pair only on a diff over about 400 lines that
@@ -62,8 +65,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `{"matcher": "clear|startup", "hooks": [{"type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/handoff_pending.py\"", "timeout": 30}]}`.
 - **STATE.md gate.** Over `STATE_MAX_LINES` with "Active work" lines still marked finished (MERGED, DONE, ...)
   is now a FAIL that lists them (10 and "N more") and says delete them; either alone stays a NOTE (#338,
-  labricore's STATE.md reached 1,150 lines). STATE.md keeps only live entries, a closed one moves to
-  `docs/state/ARCHIVE-YYYY-MM.md` or is deleted, and it is read by section after the first read
+  labricore's STATE.md reached 1,150 lines). STATE.md keeps only live entries, a closed one is deleted,
+  and it is read by section after the first read
   (`docs/AGENTS.md`, `docs/WORKFLOW.md` steps 1 and 7). test_gate_checks red without it. **ACTION** (project-owned
   `scripts/gate_config.sh`): delete the finished lines a red gate lists; `sync-kit.sh . --merge`.
 - **doctor names user-level plugins a project leaves on.** Each enabled plugin of `~/.claude/settings.json` (or

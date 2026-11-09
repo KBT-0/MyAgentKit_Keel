@@ -28,7 +28,7 @@ only when the brief or a rule below points there.
 - The brief's `Checks:` line is what you run on top of the commit hook, never instead of it:
   the cheapest check that proves the change (`docs/WORKFLOW.md`, "Model routing — by cost per
   task and by scarcity").
-- A brief with a `NAME.checks` file: run `sh scripts/run_checks.sh NAME.checks` once and read its
+- A brief with a `NAME.checks` file: run `sh scripts/run_checks.sh /abs/path/NAME.checks` (the `Checks:` line names it by absolute path) once and read its
   result file once (`docs/HANDOFF.md`, "The brief").
 - **Never report a verification you did not run**; say "not run". A required check that cannot
   run is a STOP.

@@ -31,6 +31,14 @@ for low, one round, a Medium rule, no review on look work. The review of 2289f3f
 (`docs/reviews/20261109T112654Z-346cba4a6a9e-claude-review.md`) found five other texts still stating the old rules;
 revfix corrects them. Verdict: shipped, docs and comments only.
 
+### 2026-11-09 — v0.16 runchecks: run_checks.sh runs a brief's check list in one request
+
+Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 5) on the pipeline field report, proposal 5
+(`.myagentkit/field-2026-11-09/pipeline-lead-2026-11-09.field-report.md`: a model request per check and per re-read of its
+output). One script runs the list under a lock and writes one result file; STATE.md holds open work only. The review
+found a worktree worker cannot see `NAME.checks` beside the brief, so the brief names it by absolute path. Verdict:
+shipped with tests.
+
 ### 2026-11-09 — v0.16 hardband: band_guard.py enforces the context band
 
 Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 2: "worker at 150k: only commit + hand-off; lead at
