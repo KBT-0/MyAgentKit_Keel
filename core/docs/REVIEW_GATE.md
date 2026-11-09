@@ -58,7 +58,8 @@ A commit on a look or trial branch (a visual, tuning or spike result
 {{OWNER_NAME}} judges by eye) takes no review until {{OWNER_NAME}} accepts a capture; one review
 then covers the whole diff before the merge to the main branch. The gate, the money rule and the
 data-loss and persistence rules stay as they are (Datça report, section 4: reviews of an
-unaccepted look took 20 % of its workers' spend; owner decision, 2026-11-09).
+unaccepted look took 20 % of its workers' spend; owner decision, 2026-11-09). The risky-paths commit guard
+(`guard_risky_review.py`) is not exempt: a look commit that touches a risky path takes its review first.
 
 ## Risk tiers
 

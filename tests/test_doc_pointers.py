@@ -94,12 +94,12 @@ class SectionPointerTests(unittest.TestCase):
             self.assertIn(rule, flat)
         budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('7. **Worker reports are short**')[0].split())
         # Paid reviews run one after the other unless the owner allows parallel (v0.11 close-out
-        # decision 9, BACKLOG B14); a tier's floor is its own reviewer count (KARARLAR B01 (3), B15).
+        # decision 9, BACKLOG B14); a tier's floor is `docs/REVIEW_GATE.md`'s (KARARLAR B01 (3), B15).
         for rule in ('Paid reviews run one after the other (rule 1)',
                      'run together only when {{OWNER_NAME}} allows it for that round and two slots are free',
                      "heavy jobs already running take slots",
                      'The acceptance gate run starts beside a review when the budget has a slot for it',
-                     "Never reduce a tier's reviews: a high-tier round's floor is its two reviewers, a low or medium round's its one",
+                     "Never fewer reviewers than the tier's floor in `docs/REVIEW_GATE.md`",
                      'the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.'):
             self.assertIn(rule, budget_rule)
         for old in ("A review round's floor is the two reviewers", 'Start the two reviewers together',

@@ -80,7 +80,7 @@
 #   REVIEW_CLAUDE_MODEL  override the pinned Claude model for one run
 #   REVIEW_RISK      the brief's tier, low|medium|high; sets the default effort
 #   REVIEW_EFFORT    reasoning effort low|medium|high (default: high when REVIEW_RISK=high, else medium)
-#   REVIEW_FOCUS     portability | logic: one reviewer each on a high-tier change
+#   REVIEW_FOCUS     portability | logic: one focus per reviewer when a high-tier change has two
 #   REVIEW_TASK_FILE the brief the prompt quotes; its Owns: line bounds the diff (owns_check.py)
 #   REVIEW_ROUND_EXCEPTION  the recorded reason for a third round under one label
 #   MYAGENTKIT_AUTHOR_EFFORT  the author's effort (default: high); with MYAGENTKIT_AUTHOR the

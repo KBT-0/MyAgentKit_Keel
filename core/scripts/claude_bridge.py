@@ -100,7 +100,7 @@ REVIEW_PROMPT = (
 # docs/PHASES.md join it in REVIEW_PROMPT only for a change to design or phases. codex_bridge's
 # REVIEW_DOCS default imports this list; test_both_reviewers_read_one_list holds them equal.
 REVIEW_DOCS = ("AGENTS.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md")
-# REVIEW_FOCUS narrows one of the two reviewers of a high-tier change (docs/REVIEW_GATE.md).
+# REVIEW_FOCUS narrows one reviewer of a high-tier change (docs/REVIEW_GATE.md).
 REVIEW_FOCUS = {
     "portability": "Focus on portability and edge cases: Windows, locale and UTF-8, mktemp and "
                    "TMPDIR, trap order, symlinks, long paths, shell quoting.",

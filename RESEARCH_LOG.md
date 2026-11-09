@@ -21,6 +21,16 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-09 — v0.16 revscope: review scope in one place
+
+Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 4) on two field reports:
+`.myagentkit/field-2026-11-09/datca-lead-2026-11-09.field-report.md` section 4 (reviews of unaccepted look work were
+20 % of spend) and `.myagentkit/field-2026-11-09/pipeline-lead-2026-11-09.field-report.md` proposal 1 (the Medium fix
+was 25 % of a task). `docs/REVIEW_GATE.md` is now the one place for review scope: one reviewer for high, none required
+for low, one round, a Medium rule, no review on look work. The review of 2289f3f..a3bebb1
+(`docs/reviews/20261109T112654Z-346cba4a6a9e-claude-review.md`) found five other texts still stating the old rules;
+revfix corrects them. Verdict: shipped, docs and comments only.
+
 ### 2026-11-09 — v0.16 hardband: band_guard.py enforces the context band
 
 Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 2: "worker at 150k: only commit + hand-off; lead at

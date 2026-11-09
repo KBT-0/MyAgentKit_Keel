@@ -650,7 +650,7 @@ and review. Running everything high spends the scarce budget on work that did no
 |---|---|
 | Mechanical work and re-review of a small fix round | medium |
 | A new mechanism's first round, a gate/hook/review-tooling change, or a risky diff | high |
-| A review | medium; on a high-tier change each of the two reviewers at high (`REVIEW_RISK=high` sets the default); never xhigh or max |
+| A review | medium; on a high-tier change its reviewer(s) at high (`REVIEW_RISK=high` sets the default); never xhigh or max |
 | Work requiring xhigh/max | Only by the lead's decision, with the reason in the brief; never a review |
 
 Effort is chosen anew for every round from this table: effort is never carried up from the
@@ -867,7 +867,7 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   other rebases.
 - **Direction rule:** the family that did not write a change reviews it, at every tier
   (owner decision, 2026-10-15). Claude reviews what Codex wrote. Codex reviews what Claude
-  wrote, a low-tier change's light pass included, one pass, report only, at medium effort, and
+  wrote, one pass, report only, at medium effort, and
   the lead checks each Codex finding before it enters a fix round. When Codex's allowance is
   exhausted, a Claude tier at least the author's takes the review (`docs/REVIEW_GATE.md`,
   "Invariant"), and the lead records the
@@ -1191,9 +1191,8 @@ Rules, binding for whoever routes workers:
    already running take slots. Paid reviews run one after the other (rule 1); the two
    reviewers of a high-tier round run together only when {{OWNER_NAME}} allows it for that
    round and two slots are free. The acceptance gate run starts beside a review when the budget
-   has a slot for it, otherwise when the review ends. Never reduce a tier's reviews: a high-tier
-   round's floor is its two reviewers, a low or medium round's its one (`docs/REVIEW_GATE.md`,
-   "Risk tiers"). When not even one job fits, the lead first frees memory it owns (waits for or
+   has a slot for it, otherwise when the review ends. Never fewer reviewers than the tier's
+   floor in `docs/REVIEW_GATE.md`, "Risk tiers". When not even one job fits, the lead first frees memory it owns (waits for or
    closes its own finished jobs, never ending running work without a reason); if one still does
    not fit, the review round stays blocked and the lead reports the capacity figure to the
    owner; nothing heavy starts. Read free
