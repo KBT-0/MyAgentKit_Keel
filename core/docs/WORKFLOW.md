@@ -1260,7 +1260,9 @@ Rules, binding for whoever routes workers:
    `scripts/quota_snapshot.py` writes the plan's five-hour and seven-day percent and the
    account to `.myagentkit/usage/quota.jsonl` at spawn, at close and at each lead session's
    start and stop, and `scripts/agent_cost.py --quota` prints each label's change (or the
-   account switch between them). The analyzer compares each
+   account switch between them). `scripts/token_audit.py` counts the account switches a session
+   lived through and the tokens each rewrote; `context_size.py` names a switch once and, over 150k,
+   the hand-off. The analyzer compares each
    write bucket with its recorded TTL (B03 inv2/(h)); a gap is diagnostic, not proof of the
    cause of a miss. The line
    is a band of context, the same for every model: **yellow at 150k** (plan the cut: no new

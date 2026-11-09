@@ -45,6 +45,10 @@ across one. A job that died with an ended session gets no notification (a resume
 appends to the same transcript): the line says a TaskStop clears it, and a job older than a day
 is dropped, as the kit's own watch gives up after 24 h. The field shapes were read from real
 transcripts of Claude Code 2.1.x on 2026-10-26 (.myagentkit/v014/nohandoff-dispositions.md).
+
+An account switch (a later `credential_org` record with another uuid: the owner's /login in the shared
+~/.claude, which makes the next request rewrite the whole context at the new account's cache) is named
+once per switch, with the context size and, past LINE, the hand-off (docs/WORKFLOW.md, rule 10).
 """
 from datetime import datetime
 import json
@@ -226,11 +230,13 @@ def when(stamp) -> float:
         return 0.0
 
 
-def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, dict, dict]:
+def scan(path: Path, saved: dict | None = None, acct: dict | None = None) -> tuple[int, int, bool, int, dict, dict]:
     """(last, compactions, known, offset, running, pending): from the start, or from a saved
     record boundary. RUNNING maps each job started in this session and not yet ended to
     [label, start seconds]; PENDING maps a Bash or Agent call still without its result to its
-    label (None: a watch, no job), so the label survives a scan that saw only the call."""
+    label (None: a watch, no job), so the label survives a scan that saw only the call.
+    ACCT, when given, is read and written: 'org' is the last credential_org uuid seen (carried across
+    a resumed scan), 'switched' the uuid of the last switch this scan met."""
     with open(path, 'rb') as stream:
         size = stream.seek(0, 2)
         start = (saved or {}).get('offset', 0)
@@ -239,6 +245,8 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
         last, compactions, known = (saved['last'], saved['compactions'], saved['known']) if start else (0, 0, False)
         running, described = (dict(saved['running']), dict(saved['pending'])) if start else ({}, {})
         latest = 0.0
+        if acct is not None and not start:
+            acct['org'] = None
         offset = stream.seek(start)
         for raw in stream:
             if not raw.endswith(b'\n'):
@@ -257,6 +265,12 @@ def scan(path: Path, saved: dict | None = None) -> tuple[int, int, bool, int, di
                 known = True
                 continue
             attached = rec.get('attachment')
+            if acct is not None and rec.get('type') == 'attachment' and isinstance(attached, dict) \
+                    and attached.get('type') == 'credential_org' and isinstance(attached.get('organizationUuid'), str):
+                if acct.get('org') not in (None, attached['organizationUuid']):
+                    acct['switched'] = attached['organizationUuid']
+                acct['org'] = attached['organizationUuid']
+                continue
             if rec.get('type') == 'attachment' and isinstance(attached, dict) and isinstance(attached.get('prompt'), str):
                 # A notification that arrives mid-turn is a queued_command attachment, not a user record
                 # (Claude Code 2.1.x, 2026-11-02: two ended reviews were still listed as running).
@@ -319,7 +333,16 @@ def notice(transcript: Path) -> str:
             saved = json.loads(state.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             saved = None
-        ctx, compactions, known, offset, running, pending = scan(transcript, resumable(saved))
+        acct = {'org': saved.get('org') if isinstance(saved, dict) and isinstance(saved.get('org'), str) else None}
+        named = saved.get('named') if isinstance(saved, dict) else None
+        ctx, compactions, known, offset, running, pending = scan(transcript, resumable(saved), acct)
+        extra = ''
+        if acct.get('switched') and acct['switched'] != named:
+            named = acct['switched']
+            extra = (f'Account switched (org {named[:8]}): the next request rewrites this whole context '
+                     f'({ctx // 1000}k) on the new account. '
+                     + (f'Over {LINE // 1000}k: hand off now (fresh start ~35k, docs/WORKFLOW.md rule 10).' if ctx >= LINE else
+                        f'Under {LINE // 1000}k: continue, and say the switch in the report.'))
         # Before the step became a record the state held only an integer step.
         legacy = type(saved) is int
         try:
@@ -335,16 +358,18 @@ def notice(transcript: Path) -> str:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({'step': max(now, said), 'compactions': compactions, 'offset': offset, 'last': ctx,
-                       'known': known, 'running': running, 'pending': pending}, stream)
+                       'known': known, 'running': running, 'pending': pending, 'org': acct['org'],
+                       'named': named}, stream)
         try:
             os.replace(temporary, state)
         finally:
             temporary.unlink(missing_ok=True)
     if now <= said:
-        return ''
+        return extra
     enforced = ctx >= enforced_at()
+    extra += '\n' if extra else ''
     if away():
-        return (f'Context is {ctx // 1000}k tokens ({band_word(ctx)} band). The owner is away (autopilot): '
+        return extra + (f'Context is {ctx // 1000}k tokens ({band_word(ctx)} band). The owner is away (autopilot): '
                 # A worker leaves STATE.md to the lead (docs/HANDOFF.md, leeway L14).
                 + ('keep your result file current' if os.environ.get('MYAGENTKIT_ROLE') == 'worker' else
                    'update docs/STATE.md and the hand-off file now')
@@ -374,7 +399,7 @@ def notice(transcript: Path) -> str:
                   'types /clear) when the '
                   'work changes direction, a batch has just closed, or most of the context is detail '
                   'of finished work. Neither is the default')
-    return (f'Context is {ctx // 1000}k tokens, ' + next(text for floor, text in BANDS if ctx >= floor)
+    return extra + (f'Context is {ctx // 1000}k tokens, ' + next(text for floor, text in BANDS if ctx >= floor)
             + '. Every turn re-sends it, and accuracy falls as it grows. ' + advice
             + ('. ' + ENFORCED if enforced else '') + ' (docs/WORKFLOW.md, "Worker cost", rule 8).')
 

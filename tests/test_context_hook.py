@@ -24,6 +24,10 @@ def request(ctx, read=None):
         'cache_creation_input_tokens': 1000}}}
 
 
+def org(uuid):
+    return {'type': 'attachment', 'attachment': {'type': 'credential_org', 'organizationUuid': uuid}}
+
+
 class ContextHookTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -62,6 +66,38 @@ class ContextHookTests(unittest.TestCase):
         self.assertEqual(self.run_hook(turns + [prompt()]), '')
         turns += [request(60_000), prompt(), request(155_000)]
         self.assertIn('Context is 155k tokens', self.run_hook(turns + [prompt()]))  # armed again
+
+    def test_an_account_switch_is_named_once_with_the_hand_off_over_the_line(self):
+        # The owner's /login writes a credential_org record into every running session; the next request
+        # rewrites the whole context on the new account (field 2026-11-09: 380 of 390 unexplained rewrites).
+        start = [prompt(), org('aaaaaaaa-1111'), request(60_000)]
+        self.assertEqual(self.run_hook(start + [prompt()]), '')  # the session's first record is no switch
+        turns = start + [org('bbbbbbbb-2222')]
+        said = self.run_hook(turns + [prompt()])
+        self.assertIn('Account switched (org bbbbbbbb): the next request rewrites this whole context (60k)', said)
+        self.assertIn('continue, and say the switch in the report', said)
+        self.assertNotIn('hand off now', said)
+        self.assertEqual(said.count('\n'), 1)  # one line
+        self.assertEqual(self.run_hook(turns + [prompt(), prompt()]), '')  # the same prompt again
+        turns += [request(170_000), org('cccccccc-3333')]
+        said = self.run_hook(turns + [prompt()])
+        self.assertIn('Account switched (org cccccccc)', said)
+        self.assertIn('Over 150k: hand off now (fresh start ~35k, docs/WORKFLOW.md rule 10)', said)
+        self.assertIn('Context is 170k tokens', said)  # the band line follows, a second line
+        self.assertEqual(self.run_hook(turns + [prompt()]), '')
+
+    def test_an_account_switch_is_remembered_across_a_resumed_scan(self):
+        spec = importlib.util.spec_from_file_location('context_size_under_test', HOOK)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.RECOUNT = 0
+        first = [prompt(), org('aaaaaaaa-1111'), request(60_000)]
+        self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in first), encoding='utf-8')
+        self.assertEqual(module.notice(self.transcript), '')
+        with self.transcript.open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps(org('bbbbbbbb-2222')) + '\n')
+        self.assertIn('Account switched (org bbbbbbbb)', module.notice(self.transcript))
+        self.assertEqual(module.notice(self.transcript), '')
 
     def test_running_work_of_the_session_blocks_the_hand_off(self):
         # Owner 2026-10-26 (leeway, no-handoff-while-work-runs): a bg Bash task or async sub-agent
@@ -166,7 +202,7 @@ class ContextHookTests(unittest.TestCase):
         wrapper = self.tmp / 'held_hook.py'
         wrapper.write_text('import runpy, time\n'
                            'hook = runpy.run_path(%r)\n'
-                           'def held(path, saved=None):\n'
+                           'def held(path, saved=None, acct=None):\n'
                            '    print("held", flush=True)\n'
                            '    time.sleep(60)\n'
                            'hook["main"].__globals__["scan"] = held\n'

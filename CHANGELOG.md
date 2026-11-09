@@ -17,6 +17,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **`scripts/run_checks.sh`.** A brief's check list (`NAME.checks`, named by absolute path on the `Checks:` line) runs
   under one lock into one result file.
+- **Account switches are counted and priced.** `token_audit.py` adds `org`, `switches`, `switch_tokens` and `switch_usd` per
+  session and an "Account switches" line to its summary; the band hook (`context_size.py`) names a `/login` switch once and,
+  over 150k, the hand-off.
 - **STATE.md holds open work only;** a closed item is deleted.
 - **`spawn_worker.sh --resume` is refused above 150,000 tokens of context** (owner, 2026-11-09; was 100,000): start a fresh
   worker from the RESULT; `MYAGENTKIT_RESUME_FORCE=REASON` still passes.

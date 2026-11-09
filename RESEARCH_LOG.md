@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-09 — v0.16 acctlog: an account switch rewrites every running session's cache
+
+Sources: `.myagentkit/field-2026-11-09/KIT-LEAD-FINDINGS.md` section 2 (cold2.py beside it), `.myagentkit/v016-reset/PLAN.md`
+item 6. 380 of 390 unexplained full cache rewrites (47.8M tokens, 21 % of leeway's 5-day spend) follow a `credential_org`
+record, which Claude Code writes into every running session's transcript when the owner switches the active account
+(`/login`, one shared ~/.claude). Caches are per organisation, so each session's next request rewrites its whole context at
+the 1h-write rate. `token_audit.py` now counts and prices each switch from that record; the band hook names it once and, over
+150k, says to hand off (a fresh start is about 35k) instead of carrying the context to the new account.
+
 ### 2026-11-09 — v0.16 watchdog: the launch's own scope, and the stop before the limit
 
 Sources: `docs/reviews/20261109T115415Z-c23a16f73aa5-claude-review.md`, man systemd.kill, man systemd-run, the owner's

@@ -60,6 +60,22 @@ class TokenAuditTests(unittest.TestCase):
         self.assertEqual(s['narration_chars'], len('Reading.'))
         self.assertEqual(s['kind'], 'lead')
 
+    def test_account_switch_is_counted_with_the_cache_write_it_forced(self):
+        def org(uuid, n):
+            return {'type': 'attachment', 'uuid': 'o%d' % n, 'attachment': {'type': 'credential_org', 'organizationUuid': uuid}}
+        first = [{'type': 'user', 'uuid': 'u0', 'message': {'content': 'go'}}, org('aaaa', 1), assistant('r1', usage(0, 10000, 10))]
+        s = self.audit(first + [assistant('r2', usage(10000, 500, 10))])
+        self.assertEqual((s['org'], s['switches'], s['switch_tokens'], s['switch_usd']), ('aaaa', 0, 0, 0))
+        self.assertNotIn('Account switches', token_audit.summary([s], 5))
+        s = self.audit(first + [org('bbbb', 2), assistant('r2', usage(0, 12000, 10)), assistant('r3', usage(12000, 300, 10))])
+        self.assertEqual((s['org'], s['switches'], s['switch_tokens']), ('aaaa', 1, 12000))
+        self.assertAlmostEqual(s['switch_usd'], 12000 * 4 * 2 / 1e6)  # opus, 1h write
+        text = token_audit.summary([s], 5)
+        self.assertIn('Account switches: 1 in 1 sessions, 12000 tokens rewritten, $0.10', text)
+        self.assertIn('rule 10', text)
+        s = self.audit(first + [org('bbbb', 2)])  # no request after it: counted, nothing rewritten yet
+        self.assertEqual((s['switches'], s['switch_tokens']), (1, 0))
+
     def test_worker_is_told_by_the_spawn_instruction_not_the_brief_suffix(self):
         def kind(prompt):
             return self.audit([{'type': 'user', 'uuid': 'u0', 'message': {'content': prompt}}]

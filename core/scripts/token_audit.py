@@ -27,6 +27,9 @@ output, context peak, compactions) and adds where the context came from:
   flags       a cache hit rate under HIT_FLOOR, a path read 3+ times, an edit of an always-loaded
               file (CLAUDE.md, AGENTS.md, MEMORY.md, .claude/settings or rules) inside the session.
 
+A later `credential_org` record with another uuid is an account switch (a /login in the shared ~/.claude): per session `org`,
+`switches`, `switch_tokens` and `switch_usd` (the next request's cache write, which the new account's cache must redo).
+
 Tokens of a text are its characters / CHARS_PER_TOKEN (calibrated in
 .myagentkit/v014/tokaudit/BASELINE.md); request usage is the API's own count.
 Prices: list price per MTok, Anthropic pricing page via docs/research/token-optimization.md
@@ -134,10 +137,11 @@ def audit(path: Path, seen: set) -> dict:
     read_paths = collections.Counter()
     hot = collections.Counter()  # whole reads only: a ranged Read before an Edit is the cheap rule (#325)
     calls = collections.Counter()
+    org, switch_at = None, collections.Counter()  # org: the last account uuid seen; switch_at: next request index -> switches
     out = {'file': str(path), 'kind': kind_of(path), 'system_chars': 0, 'tools_chars': 0,
            'narration_chars': 0, 'text_blocks': 0, 'agent_calls': 0, 'agent_result_chars': 0,
            'skill_calls': collections.Counter(), 'retries': 0, 'retry_chars': 0, 'errors': 0,
-           'copied': 0, 'entrypoint': None, 'prompt': None,
+           'copied': 0, 'entrypoint': None, 'prompt': None, 'org': None,
            'instruction_files': {}, 'skill_listing': {}, 'always_edits': []}
     with open(path, errors='replace') as stream:
         for line in stream:
@@ -168,6 +172,11 @@ def audit(path: Path, seen: set) -> dict:
                 compactions.append(len(reqs))
             elif kind == 'attachment':
                 att = rec.get('attachment') or {}
+                if att.get('type') == 'credential_org' and att.get('organizationUuid'):
+                    out['org'] = out['org'] or att['organizationUuid']
+                    if org not in (None, att['organizationUuid']):
+                        switch_at[len(reqs)] += 1
+                    org = att['organizationUuid']
                 rendered = sum(len(text_of(r.get('content'))) for r in rec.get('rendered') or [])
                 if rendered:
                     source = att.get('hookName') or att.get('type', '?')
@@ -272,6 +281,9 @@ def audit(path: Path, seen: set) -> dict:
     p_in, p_out, p_read = price(model)
     parts = cost_parts((p_in, p_out, p_read), *(sum(r[k] for r in rows) for k in ('inp', 'out', 'cr', 'cw', 'w1h')))
     cost = sum(parts.values())
+    # A switch's rewrite is the cache write of the next request (once, whatever the switches before it).
+    switched = [r for i, r in enumerate(rows) if i in switch_at]
+    switch_usd = sum(cost_parts(price(r['model']), 0, 0, 0, r['cw'], r['w1h'])['write'] for r in switched)
     ctx = [r['inp'] + r['cr'] + r['cw'] for r in rows]
     write = 2.0 if sum(r['w1h'] for r in rows) * 2 > sum(r['cw'] for r in rows) else 1.25
     ends = sorted(compactions) + [len(rows)]
@@ -313,6 +325,8 @@ def audit(path: Path, seen: set) -> dict:
     elif out['kind'] == 'lead' and len(rows) <= 3:
         out['kind'] = 'probe'
     out.update({'model': model, 'requests': len(rows), 'cost_usd': cost,
+                'switches': sum(switch_at.values()), 'switch_tokens': sum(r['cw'] for r in switched),
+                'switch_usd': switch_usd,
                 'cost_parts': parts, 'w1h': sum(r['w1h'] for r in rows),
                 'inp': sum(r['inp'] for r in rows), 'out': sum(r['out'] for r in rows),
                 'cr': sum(r['cr'] for r in rows), 'cw': sum(r['cw'] for r in rows),
@@ -378,6 +392,12 @@ def summary(sessions: list[dict], top: int) -> str:
     lines += ['', '| carried source | items | tokens | carried $ |', '|---|---|---|---|']
     for key, (n, t, usd) in sorted(sources.items(), key=lambda kv: -kv[1][2])[:top * 2]:
         lines.append(f'| {key} | {n} | {t} | {usd:.2f} |')
+    switches = [s for s in sessions if s['switches']]
+    if switches:
+        lines += ['', f"Account switches: {sum(s['switches'] for s in switches)} in {len(switches)} sessions, "
+                      f"{sum(s['switch_tokens'] for s in switches)} tokens rewritten, ${sum(s['switch_usd'] for s in switches):.2f} "
+                      "(each switch rewrites every running session's context; a session over 150k hands off first: "
+                      "docs/WORKFLOW.md rule 10)."]
     # #338: every enabled plugin's skills are listed in every session, worker and sub-agent.
     listed = collections.defaultdict(lambda: [0, 0, 0])
     for s in sessions:
