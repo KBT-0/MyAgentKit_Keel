@@ -8,8 +8,9 @@
 # It writes, under ${XDG_CONFIG_HOME:-~/.config}/systemd/user:
 #   myagentkit-watchdog@.service and .timer   the templates (OnBootSec=2min, OnUnitActiveSec=10min);
 #   myagentkit-watchdog@NAME.service.d/project.conf   the instance's project path, the watchdog
-#     script, and the PATH (where `claude` and Python are now) and CLAUDE_CONFIG_DIR (the account,
-#     when set) the timer runs with: a user service gets neither from a login shell.
+#     script, and this shell's whole PATH and CLAUDE_CONFIG_DIR (the account, when set) the timer
+#     runs with: a user service gets neither from a login shell, and the launched lead and its
+#     workers inherit that PATH.
 # NAME is the project folder's name, systemd-escaped. A folder of that name already installed for
 # another path is refused. Then it enables and starts the timer and prints `systemctl --user
 # list-timers`. --uninstall disables that timer and removes its drop-in, and the templates once
@@ -65,9 +66,8 @@ for value in "$project" "$watchdog" "$PATH" "${CLAUDE_CONFIG_DIR:-}"; do
   case $value in *[\"\\%]*|*'
 '*) die "a path holds a quote, a backslash, a % or a newline, which a unit file cannot carry as is: $value" ;; esac
 done
-claude=$(command -v claude) || die "claude is not on PATH: install Claude Code first, the timer runs it"
-python=$(command -v python3) || python=$(command -v python) || die "no Python on PATH"
-path=${claude%/*}:${python%/*}:/usr/local/bin:/usr/bin:/bin
+command -v claude >/dev/null 2>&1 || die "claude is not on PATH: install Claude Code first, the timer runs it"
+command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || die "no Python on PATH"
 mkdir -p -- "$dropin" || die "cannot create $dropin"
 cat >"$units/myagentkit-watchdog@.service" <<'EOF' || die "cannot write $units/myagentkit-watchdog@.service"
 # Written by MyAgentKit's scripts/limit_watchdog_install.sh; remove it with its --uninstall.
@@ -94,7 +94,7 @@ WantedBy=timers.target
 EOF
 {
   printf '%s\n' "# Written by MyAgentKit's scripts/limit_watchdog_install.sh for $project." '[Service]'
-  printf 'Environment="%s"\n' "MYAGENTKIT_PROJECT=$project" "MYAGENTKIT_WATCHDOG=$watchdog" "PATH=$path"
+  printf 'Environment="%s"\n' "MYAGENTKIT_PROJECT=$project" "MYAGENTKIT_WATCHDOG=$watchdog" "PATH=$PATH"
   [ -z "${CLAUDE_CONFIG_DIR:-}" ] || printf 'Environment="%s"\n' "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"
 } >"$dropin/project.conf" || die "cannot write $dropin/project.conf"
 systemctl --user daemon-reload || die "systemctl --user daemon-reload failed"

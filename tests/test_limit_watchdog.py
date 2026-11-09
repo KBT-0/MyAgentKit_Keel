@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,17 @@ for a in "$@"; do printf '%s\n' "$a"; done >>"$FAKE_LAUNCHES"
 printf '%s\n' '----' >>"$FAKE_LAUNCHES"
 pwd >>"$FAKE_LAUNCHES.cwd"
 if [ "${FAKE_RC:-0}" != 0 ]; then echo "Error: could not start"; exit "$FAKE_RC"; fi
+# What a started bg daemon is: a process that outlives the launch, its output not on our pipe.
+if [ -n "${FAKE_LINGER:-}" ]; then sleep 20 >/dev/null 2>&1 & echo "$!" >>"$FAKE_LINGER"; fi
 echo "backgrounded · 1234abcd · lead"
+'''
+# The fake systemd-run: records its options and execs the command, as --scope does. First on PATH:
+# the real user manager is never touched.
+FAKE_SYSTEMD_RUN = r'''#!/bin/sh
+for a in "$@"; do [ "$a" = -- ] && break; printf '%s\n' "$a"; done >>"$FAKE_SCOPE"
+while [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
 '''
 
 
@@ -54,14 +65,16 @@ class LimitWatchdogTests(unittest.TestCase):
         self.limits(five=(100, time.time() + 3600))
         self.bin = self.tmp / 'bin'
         self.bin.mkdir()
-        (self.bin / 'claude').write_text(FAKE_CLAUDE, encoding='utf-8')
-        (self.bin / 'claude').chmod(0o755)
+        for name, body in (('claude', FAKE_CLAUDE), ('systemd-run', FAKE_SYSTEMD_RUN)):
+            (self.bin / name).write_text(body, encoding='utf-8')
+            (self.bin / name).chmod(0o755)
+        self.scope = self.tmp / 'scope'
         self.agents = self.tmp / 'agents.json'
         self.agents.write_text('[]', encoding='utf-8')
         self.launches = self.tmp / 'launches'
         self.env = dict(os.environ, PATH=os.pathsep.join([str(self.bin), os.environ['PATH']]),
                         CLAUDE_CONFIG_DIR=str(self.config), HOME=str(self.tmp / 'home'),
-                        FAKE_AGENTS=str(self.agents), FAKE_LAUNCHES=str(self.launches))
+                        FAKE_AGENTS=str(self.agents), FAKE_LAUNCHES=str(self.launches), FAKE_SCOPE=str(self.scope))
         for key in ('CLAUDE_CODE_SESSION_ID', 'MYAGENTKIT_SESSION_ID', 'FAKE_RC'):
             self.env.pop(key, None)
 
@@ -202,6 +215,70 @@ class LimitWatchdogTests(unittest.TestCase):
         self.assertEqual(self.launched(), [])
         self.assertIn('names no model and effort', self.log())
 
+    def test_a_window_at_its_cap_again_does_nothing(self):
+        # The marker's reset has passed, but the same org's five-hour window is full again.
+        self.marker(time.time() - 60)
+        self.limits(five=(96, time.time() + 3600))
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.launched(), [])
+        self.assertIn('five_hour window is at 96% again', self.log())
+        self.assertTrue((self.store / 'limit-stop').exists())
+
+    def test_a_marker_naming_another_handoff_does_nothing(self):
+        self.marker(time.time() - 60)
+        other = self.project / 'docs/HANDOFF-other.md'
+        other.write_text(self.handoff.read_text(encoding='utf-8'), encoding='utf-8')
+        (self.store / 'limit-stop').write_text('%d %s %s\n' % (time.time() - 60, ORG, other), encoding='utf-8')
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.launched(), [])
+        self.assertIn('skip: limit-stop names %s and handoff-pending %s: not the same hand-off'
+                      % (other, self.handoff), self.log())
+
+    def test_a_process_the_launch_leaves_does_not_hold_the_lock(self):
+        pids = self.tmp / 'linger.pids'
+        self.addCleanup(self.end_lingering, pids)
+        self.marker(time.time() - 60)
+        self.run_watchdog(FAKE_LINGER=str(pids))
+        self.assertEqual(len(self.launched()), 1, self.log())
+        self.assertTrue(pids.exists(), 'the fake claude left no process')
+        self.marker(time.time() - 60)
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('holds', self.log())
+        self.assertEqual(len(self.launched()), 2, self.log())
+
+    def end_lingering(self, pids):
+        """Ends only the `sleep` this test's fake claude left, by the pid it recorded."""
+        for pid in pids.read_text(encoding='utf-8').split() if pids.exists() else []:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    def test_the_launch_runs_in_its_own_scope(self):
+        # Under a oneshot service a daemon the launch starts dies with the unit's cgroup otherwise.
+        self.marker(time.time() - 60)
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.scope.read_text(encoding='utf-8').split(), ['--user', '--scope', '--collect', '--quiet'])
+        self.assertEqual(len(self.launched()), 1, self.log())
+        self.assertEqual(self.launched()[0][0], 'Read %s and follow it' % self.handoff)
+
+    def test_no_systemd_run_is_a_plain_launch(self):
+        # A PATH of only what the script needs: this host's real systemd-run is not on it.
+        tools = self.tmp / 'tools'
+        tools.mkdir()
+        for name in ('sh', 'flock', 'python3', 'date', 'tr', 'tail', 'sed', 'cut', 'rm', 'cat', 'dirname', 'env'):
+            (tools / name).symlink_to(shutil.which(name))
+        (tools / 'claude').symlink_to(self.bin / 'claude')
+        self.marker(time.time() - 60)
+        result = self.run_watchdog(PATH=str(tools))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.launched()), 1, self.log())
+        self.assertFalse(self.scope.exists())
+
 
 class LimitStopTests(unittest.TestCase):
     def setUp(self):
@@ -236,6 +313,17 @@ class LimitStopTests(unittest.TestCase):
         self.assertIn('the hand-off comes first', result.stderr)
         self.assertFalse((self.project / '.myagentkit/limit-stop').exists())
 
+    def test_a_seven_day_window_at_its_cap_gives_its_later_reset(self):
+        (self.project / 'HANDOFF.md').write_text('claude --model claude-opus-5-5 (effort: high)\n', encoding='utf-8')
+        (self.project / '.myagentkit/handoff-pending').write_text('HANDOFF.md abc1234\n', encoding='utf-8')
+        (self.config / 'rate-limits.json').write_text(json.dumps({
+            'five_hour': {'used_percentage': 60, 'resets_at': 1793000000},
+            'seven_day': {'used_percentage': 98, 'resets_at': 1793500000}}), encoding='utf-8')
+        result = self.run_stop()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.project / '.myagentkit/limit-stop').read_text(encoding='utf-8'),
+                         '1793500000 %s %s\n' % (ORG, self.project / 'HANDOFF.md'))
+
 
 @unittest.skipUnless(LINUX, 'the installer writes a systemd user timer: Linux only')
 class InstallTests(unittest.TestCase):
@@ -265,6 +353,8 @@ class InstallTests(unittest.TestCase):
         self.assertIn('Environment="MYAGENTKIT_PROJECT=%s"' % project, conf)
         self.assertIn('Environment="MYAGENTKIT_WATCHDOG=%s"' % WATCHDOG, conf)
         self.assertIn('Environment="CLAUDE_CONFIG_DIR=%s"' % (tmp / 'acct'), conf)
+        # The launched lead and its workers inherit this PATH: the installer's own, whole.
+        self.assertIn('Environment="PATH=%s"\n' % env['PATH'], conf)
         instance = dropins[0].parent.name[:-len('.service.d')]
         self.assertIn('--user enable --now %s.timer' % instance, calls.read_text(encoding='utf-8'))
         other = tmp / 'elsewhere/my proj'

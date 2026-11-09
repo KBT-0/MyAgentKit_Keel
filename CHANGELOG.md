@@ -18,6 +18,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **`scripts/run_checks.sh`.** A brief's check list (`NAME.checks`, named by absolute path on the `Checks:` line) runs
   under one lock into one result file.
 - **STATE.md holds open work only;** a closed item is deleted.
+- **The limit watchdog: `scripts/limit_stop.py`, `scripts/limit_watchdog.sh`, `scripts/limit_watchdog_install.sh`.** Under
+  autopilot a lead at a spawn refusal cap hands off, writes `.myagentkit/limit-stop`, keeps the master writer and stops;
+  a systemd user timer opens the next lead once the reset has passed and that session is closed. **ACTION** (Linux
+  owners who want it): run `scripts/limit_watchdog_install.sh PROJECT_DIR` once per project; nothing enables it for you.
 - **Review scope (owner 2026-11-09, PLAN.md item 4).** A review is required only for the risk classes (money, data
   loss, security, gate): the low row takes none, the gate and the author's checks are its acceptance; the high row takes
   ONE fresh reviewer with one combined lens, a `logic` and `portability` pair only on a diff over about 400 lines that

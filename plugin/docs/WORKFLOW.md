@@ -979,14 +979,18 @@ a commit made while away) follows the away line until a switch records it there.
      below), or {{OWNER_NAME}} knows that a usage limit ends the night's work.
 - **Stops** only when: the list is done and the report written; the end time {{OWNER_NAME}}
   gave has come (the lead reads `date` at each checkpoint); every remaining item needs
-  {{OWNER_NAME}} (the list below); an error the lead cannot fix; a usage limit that stops the
-  lead. A limit is per account and nobody waits
-  for its reset: the lead brings STATE and the hand-off file up to date (a limit is no wrap-up
-  of the work: the hand-off is complete and current), commits, writes `handoff-pending` and
-  releases the master writer (`docs/HANDOFF.md`), runs `python3 scripts/limit_stop.py`
-  (`.myagentkit/limit-stop`), records the stop in the report and stops; the watchdog or another
-  account continues. A usage-limit note, the context band, a compaction (the second too), a
-  worker's hand-off, a parked question, one stuck item (three tries, then a WIP commit and the
+  {{OWNER_NAME}} (the list below); an error the lead cannot fix; the account at a spawn refusal
+  cap (five_hour 95 %, seven_day 98 %: `spawn_worker.sh`'s refusal prints the window, the percent
+  and the reset; the last line of `.myagentkit/usage/quota.jsonl` holds the percents at the last
+  spawn or close). A limit is per account and nobody waits for its reset, and a model the API
+  refused can run nothing, so the lead does not wait for the hard limit: at a clean point, before
+  the API stops it, it brings STATE and the hand-off file up to date (a limit is no wrap-up
+  of the work: the hand-off is complete and current), commits, writes `handoff-pending`, runs
+  `python3 scripts/limit_stop.py` (`.myagentkit/limit-stop`), records the stop in the report and
+  stops. It does not release the master writer (`docs/HANDOFF.md`): the marker keeps the watchdog
+  from opening a second lead while this session lives. The watchdog, once this session is closed,
+  or another account continues. A usage-limit note under those caps, the context band, a
+  compaction (the second too), a worker's hand-off, a parked question, one stuck item (three tries, then a WIP commit and the
   next item) is no stop. No turn ends with nothing to wake it: every wait is a disk watch or
   a `ScheduleWakeup`. Past the enforcing line (rule 8) the band IS a stop: the hand-off and the
   report are written, no wakeup is armed (`band_guard.py` denies `ScheduleWakeup` and `Monitor`),
@@ -999,11 +1003,13 @@ a commit made while away) follows the away line until a switch records it there.
   of `scripts/limit_watchdog_install.sh PROJECT_DIR` (Linux; {{OWNER_NAME}} runs it once per
   project, `--uninstall` removes it; neither the install nor `sync-kit.sh` enables it; macOS's
   launchd is not built) runs `scripts/limit_watchdog.sh` every 10 minutes. It opens ONE lead,
-  `claude "Read HANDOFF_PATH and follow it" --bg` with the model and effort of the hand-off's
-  first line and auto mode, only when every condition holds: `limit-stop` exists; its reset has
-  passed, or this account's five-hour window is gone or under 50 %; autopilot is on; the
-  `handoff-pending` hand-off is the one `limit-stop` names; no live master writer; its lock is
-  free. Then it deletes `limit-stop` and logs one line to `.myagentkit/limit-watchdog.log`; a
+  `claude "Read HANDOFF_PATH and follow it" --bg` in its own systemd scope (it outlives the timer's
+  service) with the model and effort of the hand-off's first line and auto mode, only when every
+  condition holds: `limit-stop` exists; its reset has passed, or this account's five-hour window
+  is gone or under 50 %; no window of that account is at a spawn refusal cap again; autopilot is
+  on; the `handoff-pending` hand-off is the one `limit-stop` names; no live master writer (a
+  stopped lead keeps the marker, so a session left open in its terminal holds the launch back
+  until it is closed); its lock is free. Then it deletes `limit-stop` and logs one line to `.myagentkit/limit-watchdog.log`; a
   failed launch is logged and never retried. A band stop, autopilot off, or any doubt: it does
   nothing, and {{OWNER_NAME}} opens the session.
 - **Decides:**
@@ -1281,10 +1287,12 @@ Rules, binding for whoever routes workers:
    flight continues: one summary turn is cheaper than a handoff note plus a cold start, but
    only while the cache is warm; a session resumed after more than an hour writes a summary into the
    handoff first, since its context is re-written at full price on the next request anyway.
-   So when a usage limit stops the lead, nobody waits in the same session for the reset (a
-   limit is per account): the lead brings STATE and the hand-off file up to date (a limit is no
+   So at a spawn refusal cap (five_hour 95 %, seven_day 98 %), nobody waits in the same session
+   for the reset (a limit is per account): at a clean point, before the API stops it, the lead
+   brings STATE and the hand-off file up to date (a limit is no
    wrap-up of the work: the hand-off is complete and current), writes its marker
-   (`handoff-pending`; under autopilot also `python3 scripts/limit_stop.py`) and stops; the
+   (`handoff-pending`; under autopilot also `python3 scripts/limit_stop.py`, keeping the master
+   writer) and stops; the
    watchdog (autopilot only, "autopilot, the owner-away switch") or another account continues
    from that hand-off instead of re-writing the old context (labricore #329: one such wait
    re-wrote ~250k tokens, 46% of the day's cache writes).

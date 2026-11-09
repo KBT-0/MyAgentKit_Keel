@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-"""Write .myagentkit/limit-stop: the lead stopped on a usage limit under autopilot.
+"""Write .myagentkit/limit-stop: the lead stops for a usage limit under autopilot.
+
+The lead runs it at the spawn refusal caps, before the API stops it (a refused model can run
+nothing), then stops and keeps the master writer (docs/WORKFLOW.md, "Stops").
 
 Usage: limit_stop.py [--project DIR]   DIR: the lead's checkout, default the current folder
 
 One line, `RESETS_AT_EPOCH ORG_UUID HANDOFF_PATH`, in the main checkout's .myagentkit (a
 linked worktree's lead writes it there too, as it writes handoff-pending). RESETS_AT is the
-reset of the window that stopped the lead, from Claude Code's rate-limits.json as
+reset of the window the lead stops for, from Claude Code's rate-limits.json as
 quota_snapshot.py reads it: the latest reset among the windows at the spawn refusal caps
 (five_hour 95 %, seven_day 98 %), else five_hour's; ORG_UUID is `.claude.json`'s account
 (`-` when unreadable). HANDOFF_PATH is the absolute path .myagentkit/handoff-pending names.
@@ -23,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from quota_snapshot import snapshot  # noqa: E402
 from working_mode import presence_record  # noqa: E402
 
-# The caps spawn_worker.sh refuses a spawn at: a window there is the one that stopped the lead.
+# The caps spawn_worker.sh refuses a spawn at: a window there is the one the lead stops for.
 CAPS = (('five_hour', 95), ('seven_day', 98))
 
 

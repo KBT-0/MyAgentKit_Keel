@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-09 — v0.16 watchdog: the launch's own scope, and the stop before the limit
+
+Sources: `docs/reviews/20261109T115415Z-c23a16f73aa5-claude-review.md`, man systemd.kill, man systemd-run, the owner's
+decision of 2026-11-09 (at 95 %, before the limit), `.myagentkit/v016-reset/PLAN.md` item 5. The review rejected the first
+watchdog: a `claude --bg` that starts the bg daemon leaves it in the oneshot service's cgroup, which the default
+`KillMode=control-group` kills when ExecStart exits. The launch now runs through `systemd-run --user --scope`, because
+man systemd.kill recommends against `KillMode=process`: what it spares stays in a stopped unit's cgroup. A probe on
+systemd 262 showed the scope's own cgroup and the command's exit code passing through. The drop-in's PATH is now the
+installer's whole PATH, so the lead and its workers keep their tools. The review's manual checks led the owner to move
+the stop: a model the API refused cannot run `limit_stop.py`, so the lead stops at the spawn refusal caps and keeps the
+master writer. The real timer and a real launch were not run: the review's manual check 1 stays with the owner.
+
 ### 2026-11-09 — v0.16 revscope: review scope in one place
 
 Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 4) on two field reports:

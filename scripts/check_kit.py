@@ -142,7 +142,7 @@ REQUIRED_SUITES = {
               'test_close_worker': 56 if os.name == 'nt' else 55, 'test_python_fallback': 3, 'test_master_writer': 13 if os.name == 'nt' else 14,
               'test_install': 12 if os.name == 'nt' else 8, 'test_gate_config': 3, 'test_calm': 4, 'test_run_checks': 6,
               # limit_stop.py everywhere; the watchdog where flock(1) is, the timer on Linux.
-              'test_limit_watchdog': 2 + (9 if shutil.which('flock') and os.name != 'nt' else 0)
+              'test_limit_watchdog': 3 + (14 if shutil.which('flock') and os.name != 'nt' else 0)
               + (1 if sys.platform.startswith('linux') else 0)},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one

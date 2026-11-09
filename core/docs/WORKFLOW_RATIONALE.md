@@ -128,6 +128,11 @@ writes `.myagentkit/limit-stop` and stops, and under autopilot only a systemd us
 (`scripts/limit_watchdog.sh`) opens the next lead, in `--bg`, from that hand-off once the reset
 has passed: the one session the owner does not open, behind every condition and a lock, since a
 wrong trigger spends money or opens two leads.
+Changed again on 2026-11-09 (owner: at 95 %, before the limit): a model the API refused cannot
+run `limit_stop.py`, so a lead waiting for the hard limit would never write the marker and the
+watchdog would never fire; the lead now acts at the spawn refusal caps. A lead that stops before
+the limit also never auto-continues after the reset beside the watchdog's new lead. It keeps the
+master writer, so the watchdog's "no live lead" condition still sees it while it lives.
 
 ## Worker cost — waits and long lives are what you pay for
 

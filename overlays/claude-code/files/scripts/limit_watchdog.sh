@@ -18,9 +18,10 @@
 #      no limit stop); the file's first line names the model and the effort (docs/HANDOFF.md);
 #   7. no live lead: .myagentkit/master-writer names nobody, or `claude agents --json --all`
 #      lists that session with no process and neither working nor blocked (a blocked session
-#      can be woken, so it counts as running; an unreadable list is a doubt).
-# Then ONE `claude PROMPT --bg --model M --effort E --settings AUTO` in PROJECT_DIR, the bg
-# host's form (spawn_worker.sh, "The bg host": the prompt first), one log line (time, session
+#      can be woken, so it counts as running; an unreadable list is a doubt). A lead keeps the
+#      marker at a limit stop, so this waits until that session is closed.
+# Then ONE `claude PROMPT --bg --model M --effort E --settings AUTO` in PROJECT_DIR, in its own
+# systemd scope, the bg host's form (spawn_worker.sh, "The bg host": the prompt first), one log line (time, session
 # id, hand-off) in .myagentkit/limit-watchdog.log, and limit-stop deleted. A failed launch keeps
 # limit-stop, logs the error and records the line in limit-watchdog.failed, so no later run
 # launches for it again: nothing retries, nothing is sent. A doubt is no launch and one log
@@ -177,12 +178,20 @@ handoff=$(printf '%s\n' "$verdict" | sed -n 2p)
 stop_line=$(cat -- "$marker") || skip "limit-stop vanished before the launch"
 settings='{"permissions":{"defaultMode":"auto"}}'
 # The session's own variables are dropped, as spawn_worker.sh's $bare does: run by hand from a
-# Claude Code shell, the new lead must not inherit that session's id.
+# Claude Code shell, the new lead must not inherit that session's id. The launch gets its own
+# transient scope rather than KillMode=process on the service: a `claude --bg` that starts the bg
+# daemon would leave it in this oneshot's cgroup, which systemd kills when ExecStart exits (man
+# systemd.kill: KillMode= defaults to control-group, and process is "not recommended": what it
+# spares stays in a stopped unit's cgroup). --scope execs the command itself, so its output and
+# exit code stay this script's (man systemd-run). No systemd-run (no systemd, a test): a plain
+# launch. Fd 9 is closed for the launch: a daemon that inherited it would hold the flock for life.
+set --
+if command -v systemd-run >/dev/null 2>&1; then set -- systemd-run --user --scope --collect --quiet --; fi
 rc=0
 out=$(CDPATH='' cd -- "$project" && exec env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID \
   -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED \
-  -u CLAUDE_CODE_ENTRYPOINT claude "Read $handoff and follow it" --bg --model "$model" --effort "$effort" \
-  --settings "$settings" </dev/null 2>&1) || rc=$?
+  -u CLAUDE_CODE_ENTRYPOINT "$@" claude "Read $handoff and follow it" --bg --model "$model" --effort "$effort" \
+  --settings "$settings" </dev/null 2>&1 9>&-) || rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$stop_line" >"$store/limit-watchdog.failed" || :
   note "launch failed: claude --bg exited $rc for $handoff: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300); limit-stop kept, no retry"

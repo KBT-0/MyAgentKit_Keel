@@ -123,6 +123,9 @@ every peer lead of the project "I am leaving; the next lead will announce itself
 next session runs `claim`, then sends every peer the line `claim` prints ("new lead is NAME, send
 merge requests there"). After a crash the marker still names the old session: the successor
 runs `claim --force`, tells {{OWNER_NAME}} so in one line and announces itself the same way.
+A limit stop under autopilot is the exception: that lead does not release and keeps the marker
+(the watchdog's only sign that the old session lives, so no second lead opens), and the lead the
+watchdog opens takes it with `claim --force`, as after a crash.
 
 The lead's hand-off steps: update `docs/STATE.md`; write the hand-off file, whose first line
 names the next session's model id AND effort, chosen from `docs/WORKFLOW.md`, "Model routing",
