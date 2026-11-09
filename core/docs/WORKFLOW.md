@@ -1064,7 +1064,7 @@ for parallel independent work, a sub-agent only for wide reading or a review.
 7. Worker reports: about 350 words; long output goes to a file.
 8. The context band: plan the cut at 150k, cut at the next clean stop at 200k, stop at 300k
    (`band_guard.py`). No `--resume` above 100k: a fresh worker from the RESULT.
-9. A worker runs the cheapest check that proves its change; the expensive step runs once.
+9. Cheapest proving check, a `NAME.checks` list in one `run_checks.sh`; expensive steps once.
 10. Limits are per account; nobody waits for a reset: the spawn refuses an account at its limit,
     and a session at its limit hands off to another account or the owner.
 
