@@ -151,3 +151,12 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Medium (sugtrig review): register.js:32/:326: after a kept note, three or more verification calls spend `run.immune`, so the repeated held call starts a SECOND check (up to the five-note cap); decide whether a repeated held call skips its check whatever the count.
 - Medium (sugtrig review): register.js:261-263 + suggestions.py:381: a project whose plugin is updated before sync-kit has no `hold` ledger mode: the check pays its model calls, the note is lost, no row is written, `status` says "no side checks yet"; decide how the mod treats an overlay without `hold` (e.g. a version probe through `gate`).
 - Low (sugtrig review): register.js:230/:330: the check sees the moment's tool name, not the held question or brief, so a note "not asked about X" can hold the very question that asks X.
+
+## Filed from the v0.16 sesscap review (20261109T132318Z-a17cc3314296)
+
+- Low: spawn_worker.sh session cap `alive()`: a registry file left by a crash whose pid now belongs to an unrelated process
+  counts as live, and closing a session cannot clear it until `MYAGENTKIT_LIMIT_FORCE=1`.
+- Low: spawn_worker.sh session cap: no lock, and a session registers only once its process exists, so parallel or quick
+  spawns can pass the cap together.
+- Low: a worker with no `NAME.config` runs on ~/.claude; a close or watch from a caller with its own `CLAUDE_CONFIG_DIR` reads
+  the caller's list, finds it `absent` and takes the same path the record now prevents; fix = the spawn always records its folder.

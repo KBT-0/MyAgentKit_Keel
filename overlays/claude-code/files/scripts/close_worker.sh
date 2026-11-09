@@ -102,7 +102,7 @@
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
 # NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid, NAME.brief.md and
-# NAME.hooks-ignore-spawned and NAME.fable-approved, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
+# NAME.hooks-ignore-spawned, NAME.fable-approved and NAME.config, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
 # NAME.merged-running (also gone once the worktree is unlocked);
 # a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
@@ -463,6 +463,17 @@ busy() {
   done
   return 1
 }
+# use_config NAME: a worker on another login folder (spawn_worker.sh's NAME.config) is closed through
+# that folder, its `claude agents`, `claude stop` and `claude rm`, whatever the caller's
+# CLAUDE_CONFIG_DIR says: in another folder's list a running worker is `absent`, and the close would
+# remove the worktree and the records of a live session. With no record: the caller's folder, else
+# ~/.claude as ever. One close may name several workers.
+caller_config=${CLAUDE_CONFIG_DIR:-}
+use_config() {
+  worker_config=$(cat -- "$top/.myagentkit/workers/$1.config" 2>/dev/null) || worker_config=""
+  worker_config=${worker_config:-$caller_config}
+  if [ -n "$worker_config" ]; then export CLAUDE_CONFIG_DIR="$worker_config"; else unset CLAUDE_CONFIG_DIR; fi
+}
 # background NAME: whether NAME is a Claude Code background session (NAME.host bg).
 background() { [ "$(cat -- "$top/.myagentkit/workers/$1.host" 2>/dev/null)" = bg ]; }
 # agent NAME: reads its row (list_workers.sh --row) into bstate bwait bpid bhere bid bcwd; fails
@@ -558,6 +569,7 @@ done
 [ $# -ge 1 ] || { sed -n '6,8p' "$0"; exit 2; }
 
 for name; do
+  use_config "$name"
   failed=""
   case $name in
     ''|-*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
@@ -920,7 +932,7 @@ for name; do
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
       "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" \
-      "$record.supervisor.log" "$record.brief.md" "$record.fable-approved" || fail "$name: could not remove its Codex session records"
+      "$record.supervisor.log" "$record.brief.md" "$record.fable-approved" "$record.config" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

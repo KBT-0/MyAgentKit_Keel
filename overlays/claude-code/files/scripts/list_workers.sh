@@ -9,7 +9,8 @@
 # (spawn_worker.sh: bg, tab or tmux), NAME.id, NAME.result-path, or NAME.session (spawn_codex.sh).
 # A record older than NAME.host shows HOST -. A bg worker's STATE and WAITING-FOR are those of its
 # row in `claude agents --json --all` (--all keeps the done and stopped rows; absent: no row, as
-# after `claude rm`; ? when the list cannot be read, its words on stderr); a tmux worker is running
+# after `claude rm`; ? when the list cannot be read, its words on stderr), the list of the login
+# folder its NAME.config names when it has one, whatever the caller's CLAUDE_CONFIG_DIR says; a tmux worker is running
 # or gone (`tmux has-session`); a tab worker shows -. RESULT is y when its result file exists: the
 # path NAME.result-path names, else RESULT-NAME.md in its folder. Any empty field shows -.
 #
@@ -46,6 +47,9 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
 wdir=$top/.myagentkit/workers
 main=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); [ -n "$main" ] || main=$top
 json="" listed=y
+if [ "$mode" = row ] && [ -s "$wdir/$name.config" ]; then
+  worker_config=$(cat -- "$wdir/$name.config") && export CLAUDE_CONFIG_DIR="$worker_config"
+fi
 if [ "$mode" = row ] || grep -qsx bg "$wdir"/*.host; then
   # Its stdout alone is the list: a notice on stderr (an update) broke the parse.
   errf=$(mktemp) || { say "cannot make a temporary file" >&2; exit 2; }
@@ -58,14 +62,19 @@ fi
 printf '%s' "$json" | $kit_python -I -c 'import json, os, re, subprocess, sys
 mode, wdir, top, name, listed, main = sys.argv[1:]
 raw = sys.stdin.buffer.read().decode("utf-8", "replace")
-rows = None
-if raw.strip():
+
+def parse(raw):
+    if not raw.strip():
+        return None
     try:
         rows = json.loads(raw)
         assert isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
+        return rows
     except (ValueError, AssertionError):
         sys.stderr.write("list_workers: claude agents --json --all printed no list of sessions: %s\n" % raw[:200])
-        rows = None
+        return None
+
+rows = parse(raw)
 
 def read(n, ext):
     try:
@@ -95,17 +104,33 @@ def host_of(path):
         return "windows"
     return "posix" if path.startswith("/") else ""
 
+# The list a worker is in: its NAME.config folder has its own, read once; --row read it above.
+lists = {}
+def rows_of(n):
+    config = read(n, "config")
+    if mode == "row" or not config:
+        return rows
+    if config not in lists:
+        got = subprocess.run(["sh", "-c", "claude agents --json --all"], env=dict(os.environ, CLAUDE_CONFIG_DIR=config),
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        text = got.stdout.decode("utf-8", "replace")
+        if got.returncode:
+            sys.stderr.write("list_workers: claude agents --json --all failed in %s: %s\n" % (config, text + got.stderr.decode("utf-8", "replace")))
+        lists[config] = parse(text) if got.returncode == 0 else None
+    return lists[config]
+
 def row(n):
     spawned = host_of(read(n, "result-path"))
     if spawned and spawned != ("windows" if sys.platform in ("win32", "cygwin", "msys") else "posix"):
         return ["elsewhere", spawned]
-    if rows is None:
+    listing = rows_of(n)
+    if listing is None:
         return ["?"]
     i, here = read(n, "id"), folder(n)
     if i:
-        found = [r for r in rows if i in (r.get("id"), r.get("sessionId"))]
+        found = [r for r in listing if i in (r.get("id"), r.get("sessionId"))]
     else:
-        found = [r for r in rows if r.get("name") == n and same(r.get("cwd"), here)]
+        found = [r for r in listing if r.get("name") == n and same(r.get("cwd"), here)]
     if not found:
         return ["absent"]
     if len(found) > 1:

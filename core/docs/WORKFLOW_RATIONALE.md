@@ -161,6 +161,12 @@ request, and a controlled experiment ran the same task in six setups). What the 
 - **Tool output was not the problem**: all tool results of all agents together were about one
   million tokens. Trimming output is hygiene, a small lever.
 
+Why at most 3 sessions of a project run at once (owner, 2026-11-09): caches never cross organisations, so 98 % of
+48.7M tokens of unexplained full rewrites in 348 field transcripts followed an account switch.
+A switch costs about sessions x context x 2 x input price: five sessions at 150k on Opus write
+1.5M tokens, about 6 USD, before any work. Another login folder per worker would spare them, so
+it is built, but the owner keeps it off until it is needed (rule 10).
+
 ## Review rounds — early, inside the worker, in parallel
 
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh

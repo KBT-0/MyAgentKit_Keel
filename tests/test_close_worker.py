@@ -130,13 +130,19 @@ open(path, 'w').write(''.join(line + '\n' for line in lines if line.split(' ')[0
 # and `rm` take an id and answer with the CLI's words; every call is logged beside the file.
 # AGENTS_ERROR: a list that cannot be read. AGENTS_STOP_IGNORED: a stop the session survives.
 # AGENTS_NOTICE: a line on stderr before any answer (an update notice).
+# AGENTS_PER_FOLDER: each login folder has its own list, AGENTS_FILE.BASENAME of CLAUDE_CONFIG_DIR.
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 path = os.environ['AGENTS_FILE']
 args = sys.argv[1:]
 with open(path + '.log', 'a') as log:
     log.write(repr(args) + '\n')
-rows = json.load(open(path)) if os.path.exists(path) else []
+with open(path + '.config', 'a') as log:
+    log.write(repr((args[0], args[1:2], os.environ.get('CLAUDE_CONFIG_DIR'))) + '\n')
+listed = path
+if os.environ.get('AGENTS_PER_FOLDER'):
+    listed = '%s.%s' % (path, os.path.basename(os.environ.get('CLAUDE_CONFIG_DIR') or 'home'))
+rows = json.load(open(listed)) if os.path.exists(listed) else []
 if os.environ.get('AGENTS_NOTICE'):
     sys.stderr.write(os.environ['AGENTS_NOTICE'] + '\n')
 if args[:1] == ['agents']:
@@ -157,7 +163,7 @@ if args[:1] in (['stop'], ['rm']) and len(args) == 2:
         if row[0]['state'] != 'done':  # a finished session stays done after its stop (spike, 6)
             row[0]['state'] = 'stopped'
         print('stopped ' + args[1])
-    json.dump(rows, open(path, 'w'))
+    json.dump(rows, open(listed, 'w'))
     sys.exit(0)
 sys.exit('claude stub: unexpected call %r' % args)
 '''
@@ -518,6 +524,53 @@ class CloseWorkerTests(unittest.TestCase):
         for record in ('w1.host', 'w1.id', 'w1.supervisor.log'):
             self.assertFalse((self.main / '.myagentkit/workers' / record).exists(), record)
         self.assertNotIn('daemon', (self.tmp / 'agents.json.log').read_text())
+
+    def test_a_recorded_login_folder_closes_its_worker_alone_and_goes_with_its_records(self):
+        self.env.pop('CLAUDE_CONFIG_DIR', None)
+        rows = [agent('aaaa0001', 'w1', self.worker('w1', session=False), 'done', pid=1, status='idle'),
+                agent('bbbb0002', 'w2', self.worker('w2', session=False), 'done', pid=2, status='idle')]
+        env = self.background('w1', *rows)
+        self.background('w2', *rows, id='bbbb0002')
+        login = str(self.tmp / 'login-b')
+        record = self.main / '.myagentkit/workers/w1.config'
+        record.write_text(login + '\n')
+        out = self.close('w1', 'w2', **env)
+        seen = (self.tmp / 'agents.json.config').read_text().splitlines()
+        self.assertIn(repr(('stop', ['aaaa0001'], login)), seen, out)
+        self.assertIn(repr(('rm', ['aaaa0001'], login)), seen, out)
+        # The next name of the same close is back on ~/.claude: no variable, as today.
+        self.assertIn(repr(('stop', ['bbbb0002'], None)), seen, out)
+        self.assertIn(repr(('rm', ['bbbb0002'], None)), seen, out)
+        self.assertFalse(record.exists(), out)
+
+    def test_the_record_wins_over_the_callers_login_folder(self):
+        rows = [agent('aaaa0001', 'w1', self.worker('w1', session=False), 'done', pid=1, status='idle'),
+                agent('bbbb0002', 'w2', self.worker('w2', session=False), 'done', pid=2, status='idle')]
+        env = self.background('w1', *rows)
+        self.background('w2', *rows, id='bbbb0002')
+        (self.main / '.myagentkit/workers/w1.config').write_text(str(self.tmp / 'login-b') + '\n')
+        out = self.close('w1', 'w2', CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), **env)
+        seen = (self.tmp / 'agents.json.config').read_text().splitlines()
+        self.assertIn(repr(('stop', ['aaaa0001'], str(self.tmp / 'login-b'))), seen, out)
+        # The next name has no record: the caller's own folder is back.
+        self.assertIn(repr(('stop', ['bbbb0002'], str(self.tmp / 'login-a'))), seen, out)
+
+    def test_a_live_worker_on_another_login_folder_is_stopped_there_and_never_taken_for_absent(self):
+        # Review of sesscap: login-a's list does not hold it, and "nothing to end" removed the worktree
+        # and every record of a session still running on login-b.
+        path = self.worker('w1', session=False)
+        env = dict(self.background('w1'), AGENTS_PER_FOLDER='1')
+        records = self.main / '.myagentkit/workers'
+        (records / 'w1.config').write_text(str(self.tmp / 'login-b') + '\n')
+        (self.tmp / 'agents.json.login-b').write_text(json.dumps([agent('aaaa0001', 'w1', path, 'working', pid=5)]))
+        out = self.close('w1', code=1, CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), AGENTS_STOP_IGNORED='1', **env)
+        self.assertIn(repr(('stop', ['aaaa0001'], str(self.tmp / 'login-b'))),
+                      (self.tmp / 'agents.json.config').read_text().splitlines(), out)
+        self.assertNotIn('nothing to end', out)
+        self.assertIn('background session aaaa0001 still runs after claude stop', out)
+        self.assertTrue(path.exists(), out)
+        for record in ('w1.config', 'w1.id', 'w1.host'):
+            self.assertTrue((records / record).exists(), record)
 
     def test_a_background_session_already_ended_is_only_removed_and_a_removed_one_is_nothing_to_end(self):
         path = self.worker('w1', session=False)
