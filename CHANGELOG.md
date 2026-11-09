@@ -23,7 +23,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Account switches are counted and priced.** `token_audit.py` adds `org`, `switches`, `switch_tokens` and `switch_usd` per
   session and an "Account switches" line to its summary; the band hook (`context_size.py`) names a `/login` switch once and,
   over 150k, the hand-off.
-- **STATE.md holds open work only;** a closed item is deleted.
+- **STATE.md holds open work only;** a closed item is deleted. **ACTION** (project-owned `docs/STATE.md`): delete each
+  closed item; `sync-kit.sh . --merge` brings the new header text.
 - **`spawn_worker.sh --resume` is refused above 150,000 tokens of context** (owner, 2026-11-09; was 100,000): start a fresh
   worker from the RESULT; `MYAGENTKIT_RESUME_FORCE=REASON` still passes.
 - **`spawn_worker.sh` refuses the fourth running Claude Code session in this project**, its main checkout and
@@ -43,7 +44,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   look or trial branch takes no review until the owner accepts a capture, then one review of the whole diff; a kit sync
   takes one review on the session's tier (the medium row's when it changes `risky_paths`). `docs/PHASES.md` names no
   review rule. The reviewer's tier never drops. **ACTION** (project-owned `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`,
-  `docs/WORKFLOW.md`, `AGENTS.md`, `docs/PHASES.md`): `sync-kit.sh . --merge`; delete a phase line that names a reviewer.
+  `docs/WORKFLOW.md`, `AGENTS.md`, `docs/PHASES.md`, `.claude/agents/worker.md`): `sync-kit.sh . --merge`; delete a phase line that names a reviewer.
 - **The context band is enforced (owner 2026-11-09, PLAN.md item 2).** The new `band_guard.py` hook (PreToolUse,
   every tool) denies every call past a worker's 150k or a lead's 200k but the closing set: git add, commit, status,
   diff and log, read-only commands, the result publish, the hand-off steps (`master_writer.py release`,
