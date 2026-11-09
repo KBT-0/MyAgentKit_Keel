@@ -2,10 +2,11 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Where a Claude Code session's tokens go: the #307 leakage audit, re-runnable before and after a fix.
 
-Usage: token_audit.py [--since DAYS] [--json OUT] [--top N] PATH [...]
+Usage: token_audit.py [--since DAYS] [--json OUT] [--top N] [--by-day] PATH [...]
        PATH is a transcript folder (~/.claude/projects/<encoded dir>) or one SESSION.jsonl;
        its sub-agent transcripts (`<session>/subagents/`) are read with it.
        token_audit.py --usage DIR [...]   review/bridge records (.myagentkit/usage/*.json)
+       --by-day prints one row per local day of session start (sessions, requests, $) instead of the summary.
 
 Per transcript (lead, worker = a session in a `.claude/worktrees/` folder, sub-agent by its
 agentType) it counts what agent_cost.py counts (deduplicated requests, cache read/write,
@@ -90,6 +91,13 @@ def price(model) -> tuple:
         if key in str(model):
             return value
     return PRICES['opus']
+
+
+def cost_parts(prices: tuple, inp: int, out: int, cr: int, cw: int, w1h: int) -> dict:
+    """$ by part at list price per MTok; a cache write is 2x for one hour, 1.25x for five minutes."""
+    p_in, p_out, p_read = prices
+    return {'uncached': inp * p_in / 1e6, 'output': out * p_out / 1e6, 'read': cr * p_in * p_read / 1e6,
+            'write': (w1h * 2 + (cw - w1h) * 1.25) * p_in / 1e6}
 
 
 def toks(chars: int) -> int:
@@ -262,9 +270,7 @@ def audit(path: Path, seen: set) -> dict:
             for q in reqs.values()]
     model = collections.Counter(r['model'] for r in rows).most_common(1)[0][0] if rows else None
     p_in, p_out, p_read = price(model)
-    parts = {'uncached': sum(r['inp'] for r in rows) * p_in / 1e6, 'output': sum(r['out'] for r in rows) * p_out / 1e6,
-             'read': sum(r['cr'] for r in rows) * p_in * p_read / 1e6,
-             'write': sum(r['w1h'] * 2 + (r['cw'] - r['w1h']) * 1.25 for r in rows) * p_in / 1e6}
+    parts = cost_parts((p_in, p_out, p_read), *(sum(r[k] for r in rows) for k in ('inp', 'out', 'cr', 'cw', 'w1h')))
     cost = sum(parts.values())
     ctx = [r['inp'] + r['cr'] + r['cw'] for r in rows]
     write = 2.0 if sum(r['w1h'] for r in rows) * 2 > sum(r['cw'] for r in rows) else 1.25
@@ -404,6 +410,19 @@ def summary(sessions: list[dict], top: int) -> str:
     return '\n'.join(lines)
 
 
+def by_day(sessions: list[dict]) -> str:
+    """One row per local calendar day of a transcript's first request; sub-agents add requests and $, not sessions."""
+    days = collections.defaultdict(lambda: [0, 0, 0.0])
+    for s in sessions:
+        day = datetime.fromisoformat(s['start'].replace('Z', '+00:00')).astimezone().date().isoformat() if s['start'] else '?'
+        days[day][0] += not s['kind'].startswith('sub:')
+        days[day][1] += s['requests']
+        days[day][2] += s['cost_usd']
+    lines = ['| day | sessions | requests | cost $ |', '|---|---|---|---|']
+    lines += [f'| {d} | {n} | {r} | {usd:.2f} |' for d, (n, r, usd) in sorted(days.items())]
+    return '\n'.join(lines)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('paths', nargs='*', type=Path)
@@ -412,6 +431,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument('--json', type=Path)
     parser.add_argument('--top', type=int, default=10)
     parser.add_argument('--items', type=Path, help='every carried item, one JSON line each')
+    parser.add_argument('--by-day', action='store_true', help='one row per day of session start instead of the summary')
     args = parser.parse_args(argv)
     since = time.time() - args.since * 86400
     seen: set = set()
@@ -428,7 +448,7 @@ def main(argv: list[str]) -> int:
     if args.json:
         args.json.write_text(json.dumps({'sessions': sessions, 'usage': reviews}, indent=1, default=str))
     if sessions:
-        print(summary(sessions, args.top))
+        print(by_day(sessions) if args.by_day else summary(sessions, args.top))
     if reviews:
         by = collections.defaultdict(lambda: [0, 0.0, 0])
         for r in reviews:

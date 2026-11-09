@@ -2,6 +2,7 @@
 """token_audit.py must price requests, carry each item to the next compaction and count the #307 leaks."""
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 import token_audit
@@ -135,6 +136,26 @@ class TokenAuditTests(unittest.TestCase):
             p = token_audit.audit(Path(tmp) / 'p.jsonl', seen)
             c = token_audit.audit(Path(tmp) / 'c.jsonl', seen)
         self.assertEqual((p['requests'], c['requests']), (2, 1))
+
+    def test_by_day_rows_per_local_day_of_session_start(self):
+        import io
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, stamp in (('a', '2026-10-24T10:00:00Z'), ('b', '2026-10-24T11:00:00Z'), ('c', '2026-10-26T10:00:00Z')):
+                records = [assistant(name + str(i), usage(0, 1000, 10)) for i in (1, 2)]
+                for r in records:
+                    r['timestamp'] = stamp
+                (Path(tmp) / (name + '.jsonl')).write_text(''.join(json.dumps(r) + '\n' for r in records))
+            out = io.StringIO()
+            self.addCleanup(time.tzset)  # runs after the patch below restored TZ
+            with mock.patch('sys.stdout', out), mock.patch.dict('os.environ', {'TZ': 'UTC'}):
+                time.tzset()
+                self.assertEqual(token_audit.main(['--by-day', '--since', '100000', tmp]), 0)
+            # each request: 1000 1h-written tokens x $4 x 2 + 10 out x $20 per MTok
+            each = 2 * (1000 * 4 * 2 + 10 * 20) / 1e6
+            self.assertEqual(out.getvalue().splitlines(), [
+                '| day | sessions | requests | cost $ |', '|---|---|---|---|',
+                f'| 2026-10-24 | 2 | 4 | {2 * each:.2f} |', f'| 2026-10-26 | 1 | 2 | {each:.2f} |'])
 
 
 if __name__ == '__main__':
