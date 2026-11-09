@@ -2,7 +2,8 @@
   "autoCompactWindow": 450000,
   "outputStyle": "Concise",
   "enabledPlugins": {
-    "frontend-design@claude-plugins-official": false
+    "frontend-design@claude-plugins-official": false,
+    "cowork-plugin-management@synced": false
   },
   "worktree": {
     "bgIsolation": "none"
@@ -129,5 +130,21 @@
         ]
       }
     ]
+  },
+  "skillOverrides": {
+    "built-in-browser": "off",
+    "chrome-browser": "off",
+    "computer-use": "off",
+    "deep-research": "off",
+    "docs": "off",
+    "docx": "off",
+    "google-workspace": "off",
+    "import-memory": "off",
+    "morning": "off",
+    "pdf": "off",
+    "pptx": "off",
+    "setup-writing-style": "off",
+    "skill-creator": "off",
+    "xlsx": "off"
   }
 }

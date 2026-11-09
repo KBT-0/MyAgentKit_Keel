@@ -6,7 +6,9 @@
   "outputStyle": "Concise",
   "worktree": {
     "bgIsolation": "none",
-    "symlinkDirectories": ["node_modules"]
+    "symlinkDirectories": [
+      "node_modules"
+    ]
   },
   "attribution": {
     "commit": "",
@@ -22,7 +24,8 @@
   },
   "enabledPlugins": {
     "ponytail@ponytail": true,
-    "frontend-design@claude-plugins-official": false
+    "frontend-design@claude-plugins-official": false,
+    "cowork-plugin-management@synced": false
   },
   "permissions": {
     "allow": [
@@ -301,5 +304,21 @@
         ]
       }
     ]
+  },
+  "skillOverrides": {
+    "built-in-browser": "off",
+    "chrome-browser": "off",
+    "computer-use": "off",
+    "deep-research": "off",
+    "docs": "off",
+    "docx": "off",
+    "google-workspace": "off",
+    "import-memory": "off",
+    "morning": "off",
+    "pdf": "off",
+    "pptx": "off",
+    "setup-writing-style": "off",
+    "skill-creator": "off",
+    "xlsx": "off"
   }
 }
