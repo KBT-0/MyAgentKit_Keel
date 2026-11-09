@@ -423,7 +423,7 @@ class SectionPointerTests(unittest.TestCase):
         # instead of the whole file; a renamed heading would send it nowhere.
         pattern = re.compile(r'`((?:docs/)?[A-Z_]+\.md)`,\s+(?:the four\s+)?"([^"]+)"')
         # #159: the kit's own docs cite sections too; a kit doc names a project path (core/) or its own.
-        sources = ([ROOT / 'core/AGENTS.md'] + sorted((ROOT / 'core/docs').glob('*.md'))
+        sources = ([ROOT / 'core/AGENTS.md', ROOT / 'core/AGENTS.worker.md'] + sorted((ROOT / 'core/docs').glob('*.md'))
                    + sorted((ROOT / 'docs').glob('*.md')) + [ROOT / 'docs/research/README.md', ROOT / 'README.md'])
         checked = 0
         for path in sources:
@@ -438,6 +438,15 @@ class SectionPointerTests(unittest.TestCase):
                                     '%s names "%s" in %s, which has no such heading' % (path.name, section, target))
                     checked += 1
         self.assertGreater(checked, 10)
+
+    def test_the_worker_rules_stay_short_and_point_into_the_full_files(self):
+        # v0.16: a worker starts with AGENTS.worker.md in place of the CLAUDE.md tree; under
+        # 5000 characters, with each left-out rule a pointer (checked by the test above).
+        text = (ROOT / 'core/AGENTS.worker.md').read_text(encoding='utf-8')
+        self.assertLess(len(text), 5000)
+        pointers = re.findall(r'`((?:docs/)?[A-Z_]+\.md)`,\s+"([^"]+)"', re.sub(r'\s+', ' ', text))
+        self.assertGreaterEqual(len(pointers), 8, pointers)
+        self.assertNotIn('{{', text)  # no placeholder: sync-kit fills AGENTS.md alone
 
     def test_documented_plugin_counts_match_the_shipped_directories(self):
         # #159: README named three commands after mode.md shipped, CODEX.md two skills of three.
