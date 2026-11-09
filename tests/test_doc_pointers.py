@@ -636,6 +636,21 @@ class SectionPointerTests(unittest.TestCase):
         interview = ' '.join((ROOT / 'setup/INTERVIEW.md').read_text(encoding='utf-8').split())
         self.assertIn('`src/data/*` is not a risky area', interview)
 
+    def test_a_sub_agents_effort_follows_the_verified_precedence(self):
+        # subeffort (Claude Code 2.1.316-2.1.318, verified live on 2.1.321): a sub-agent no longer
+        # inherits the lead's effort when CLAUDE_CODE_SUBAGENT_EFFORT is set; a spawned worker is
+        # a separate session the variable does not reach.
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        interview, workflow = read('setup/INTERVIEW.md'), read('core/docs/WORKFLOW.md')
+        self.assertNotIn('whatever effort its lead session has', interview)
+        self.assertIn('so it is `high` or not set at all', interview)
+        settings = (ROOT / 'overlays/claude-code/files/.claude/settings.json').read_text(encoding='utf-8')
+        self.assertNotIn('CLAUDE_CODE_SUBAGENT_EFFORT', settings)   # lead decision A, 2026-11-10
+        self.assertNotIn("runs at its lead session's effort unless", workflow)
+        self.assertIn("else its definition's `effort:`, else `CLAUDE_CODE_SUBAGENT_EFFORT`", workflow)
+        self.assertIn('`CLAUDE_CODE_SUBAGENT_EFFORT` does not touch', workflow)
+        self.assertIn('Code 2.1.318 a background sub-agent', workflow)
+
     def test_setup_docs_match_solo_mode_and_the_shipped_files(self):
         read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
         # #227: one Claude CLI is enough; a second CLI serves cross mode only.

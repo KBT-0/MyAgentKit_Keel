@@ -679,6 +679,10 @@ round before, and a `REVIEW_ROUND_EXCEPTION` round picks its model and effort he
 Anthropic's guide does the same: a step up to a stronger model starts at that model's
 default effort, and effort levels are compared in separate sessions ("Optimizing for cost and
 intelligence"; code.claude.com/docs/en/model-config, "Adjust effort level").
+A worker spawned by `scripts/spawn_worker.sh --effort` is a separate session, not a sub-agent:
+its `--effort` sets that session's own level, which `CLAUDE_CODE_SUBAGENT_EFFORT` does not touch
+(verified on Claude Code 2.1.321); the variable reaches only a sub-agent whose call and
+definition name no effort ("Worker cost", rule 5).
 
 Every brief carries `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`, plus
 the chosen model and effort. Route describes the task's shape: `quick` is a fully specified
@@ -1151,7 +1155,11 @@ Rules, binding for whoever routes workers:
    the `worker` sub-agent, a fork and a spawned worker's own sub-agents included, runs on five
    minutes (the launch line sets `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`): in one project
    sub-agents wrote 4.56M one-hour cache tokens over 1,582 requests and only 11 gaps passed five
-   minutes (#116); a one-hour write costs 2x base input, a five-minute one 1.25x. The kit's
+   minutes (#116); a one-hour write costs 2x base input, a five-minute one 1.25x. Since Claude
+   Code 2.1.318 a background sub-agent's shell command moves to the background after 3 minutes,
+   which keeps its cache warm through the move but not through a later wait past five minutes
+   for the job's end; a worker is a separate session on the one-hour cache, which the change
+   does not touch, so the rule stands for both. The kit's
    `guard_worker_route.py` refuses a sub-agent whose description or prompt tells it to merge,
    or to run, watch or wait for a gate, CI, a pipeline, `review.sh`, `check.sh` or `gh run`;
    one that will not wait past five minutes says so in a prompt line `No long wait: REASON`
@@ -1222,8 +1230,10 @@ Rules, binding for whoever routes workers:
    documented proof, folding notes. Design-bearing code gets the strongest model at high
    effort; reviews follow the "Model routing" effort table. Model and effort are never left
    to inheritance unawares: an omitted sub-agent model resolves to the main conversation's
-   (code.claude.com/docs/en/sub-agents, "Choose a model"), a sub-agent runs at its
-   lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
+   (code.claude.com/docs/en/sub-agents, "Choose a model"), a sub-agent's effort is the call's
+   `effort`, else its definition's `effort:`, else `CLAUDE_CODE_SUBAGENT_EFFORT` (Claude Code
+   2.1.316), else on another model that model's saved effort or default, else the lead
+   session's (verified live on 2.1.321; `CLAUDE_CODE_EFFORT_LEVEL` outranks all) (the Claude Code overlay's
    `worker.md` does, as a fallback; `diff-reviewer.md` writes `model: inherit` on purpose, the
    session's tier: `docs/REVIEW_GATE.md`, "Invariant"), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call; the Claude Code
