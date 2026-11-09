@@ -64,8 +64,9 @@ unaccepted look took 20 % of its workers' spend; owner decision, 2026-11-09). Th
 
 ## Risk tiers
 
-A review is required where a miss costs money, loses data, opens a security boundary or
-silently opens a gate; the rows below define those classes (owner, 2026-11-09). The brief's
+A review is required for three classes only: (1) the money, data-loss and security files;
+(2) gates, hooks, check and review tooling, CI and the state helper (the high row); (3) a short
+named critical-logic list {{OWNER_NAME}} writes (owner, 2026-11-09). The brief's
 `Risk:` line (`docs/HANDOFF.md`) names the tier: the higher of the row the changed files fall
 into and the lead's proposal. {{OWNER_NAME}} may raise or lower it,
 with the reason in the brief; a working mode never lowers it.
@@ -73,8 +74,14 @@ with the reason in the brief; a working mode never lowers it.
 | Tier | What | Review |
 |---|---|---|
 | low | documentation (a behaviour-rule document such as `AGENTS.md`, `docs/WORKFLOW.md` or this file included), tests only, one file outside the rows below | no required review: the gate (`scripts/check.sh`) and the author's own checks are its acceptance; the lead may ask one light reviewer when in doubt |
-| medium | code in {{RISKY_AREAS}} outside the high row | one reviewer, medium effort |
+| medium | code in {{RISKY_AREAS}}: the money, data-loss and security files and the project's named critical-logic list, outside the high row | one reviewer, medium effort |
 | high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | ONE fresh reviewer, no `REVIEW_FOCUS` (one combined lens), high effort; only a diff over about 400 changed lines that touches shell scripts, hooks or path handling adds a `portability` reviewer, the first then taking `logic` ("Rounds"), one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge; a small diff: the "Invariant" exception |
+
+{{RISKY_AREAS}} names classes (1) and (3); `risky_paths` (`scripts/gate_config.sh`) holds their
+files and the gate files of class (2), as file names or the narrowest glob, never a whole source
+directory. Every other change is the low row. A 45-day audit of 899 reviews found that reviews
+of other code changed code in 2 of 293 cases, none Critical or High (owner, 2026-11-09, review
+audit).
 
 Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and the diff. When
 the diff is too long to read, a longer summary lists every changed file with its line counts,

@@ -218,6 +218,7 @@ Bağlayan: R = inceleyici (LLM), L = lead/çağıran, W = worker/yazar, O = sahi
 | 87 | myagentkit-review SKILL.md | Authorized repair loop | Varsayılan en fazla İKİ inceleme turu / görev; tur başına en fazla iki sağlayıcı; dur: çözülmemiş ürün kararı, kapsam genişlemesi, eksik doğrulama, inceleyici yok, bütçe bitti, tekrarlanan bulgu, tur limiti; host sayar | L | düzyazı |
 | 88 | USAGE.md | satır 18-23, 78-112 | MYAGENTKIT_REQUESTER/TASK_ID ayarla; limitler; başarısız inceleme onay değil; korumalı commit/push gate'e kadar bloklu | L | kod (kayıt), düzyazı |
 | 89 | review.sh / check.sh | --self-test | Köprü negatif testleri check.sh --self-test'e dahil; "REVIEW SELF-TEST: PASS" yoksa gate kırmızı | L | kod |
+| 90 | REVIEW_GATE.md | Risk tiers | 2026-11-09 (owner decision C, PLAN item 8): a required review has three classes only: money/data-loss/security files, gates and tooling (the high row), the project's named critical-logic list; `{{RISKY_AREAS}}`/`risky_paths` hold file names, never a source directory; the rest is the low row. Evidence: 45-day audit, 899 reviews, other-code reviews changed code 2 of 293 times, no Critical/High (rows 33-34 superseded) | L, O | prose (+ `test_a_required_review_has_three_classes_and_no_source_directory`) |
 
 ---
 

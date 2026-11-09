@@ -41,9 +41,11 @@ docs_only_skip_build=1
 docs_always_build=""
 
 # The risky paths of AGENTS.md's review rule: a Claude Code commit that changes one waits until the
-# diff-reviewer agent has seen it (.claude/hooks/guard_risky_review.py). Space-separated globs from
-# the top of the repository, matched like docs_always_build: "src/billing/* scripts/check.sh".
-# Empty: no path is checked.
+# diff-reviewer agent has seen it (.claude/hooks/guard_risky_review.py). Three classes only
+# (docs/REVIEW_GATE.md, "Risk tiers"): the money, data-loss and security files, the gate and tooling
+# files, and the project's named critical-logic list; file names, not source directories.
+# Space-separated paths or the narrowest globs from the top of the repository, matched like
+# docs_always_build: "src/billing/ledger_write.py scripts/check.sh". Empty: no path is checked.
 risky_paths="{{RISKY_PATHS}}"
 
 # BUILD CACHE (check.sh, section 4, says what the key holds). build_cache_inputs is a command
