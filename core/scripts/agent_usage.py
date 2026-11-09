@@ -321,6 +321,16 @@ def normalize(provider: str, values: list[dict], complete: bool) -> dict:
     return usage
 
 
+def answered_model(model_usage) -> str | None:
+    """The model that answered a Claude run: the CLI modelUsage key with the most output tokens.
+    A Fable pin answered by Opus on an account without Fable credits raises no error (#342)."""
+    if not isinstance(model_usage, dict):
+        return None
+    counts = {key: number((value or {}).get("outputTokens")) or 0 for key, value in model_usage.items()
+              if isinstance(key, str) and isinstance(value, dict)}
+    return max(counts, key=counts.get) if counts else None
+
+
 def record(repo: Path, provider: str, model: str, requester: str, task: dict,
            execution: dict, status: str, reason: str | None, evidence: str | None,
            published: bytes | None = None, backend: str | None = None) -> tuple[Path, dict]:
@@ -346,15 +356,17 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
     recovery = {"action": "inspect_result" if status == "completed" else "continue_independent_work",
                 "review_approved": False, "automatic_retry": retry,
                 "instruction": "Keep required review pending; do not approve, commit, or push its protected diff."}
+    usage = normalize(provider, values, status == "completed")
     value = {"schema_version": 1, "invocation_id": stamp,
              "review_chain_id": os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID"),
              "review_attempt": os.environ.get("MYAGENTKIT_REVIEW_ATTEMPT"),
              "review_fallback_from": os.environ.get("MYAGENTKIT_REVIEW_FALLBACK_FROM"),
              "recorded_at": datetime.now(timezone.utc).isoformat(),
              "requester_reported": requester, "callee": provider, "model_requested": model,
+             "model_answered": answered_model(dict(kv for raw in usage["model_usage_raw"] for kv in raw.items())),
              "task": task, "status": status, "failure_kind": reason,
              "duration_ms": execution.get("duration_ms"), "exit_code": execution.get("exit_code"),
-             "usage": normalize(provider, values, status == "completed"), "recovery": recovery,
+             "usage": usage, "recovery": recovery,
              "evidence": evidence,
              # A later round carries this archive only while its bytes still match.
              "evidence_sha256": hashlib.sha256(published).hexdigest() if evidence else None,

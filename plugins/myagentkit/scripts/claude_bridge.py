@@ -1659,6 +1659,12 @@ def validate(envelope: object, mode: str, model: str) -> dict:
         re.fullmatch(re.escape(model) + r"(-[0-9]{8})?", key) for key in used if isinstance(key, str)
     ):
         raise BridgeError("requested model is absent from CLI modelUsage evidence")
+    # A Fable-tier review answered by another model is no Fable review (#342): the pin runs on Opus
+    # with no error on an account without Fable credits, and modelUsage may name both.
+    answered = agent_usage.answered_model(used)
+    if re.match(r"(?:claude-)?fable\b", model, re.I) and not re.match(r"(?:claude-)?fable\b", answered or "", re.I):
+        raise BridgeError("a Fable-tier review was answered by %s, not by the requested %s: not a Fable review"
+                          % (answered, model))
     value = envelope.get("structured_output")
     expected = schema(mode)["properties"]
     if not isinstance(value, dict) or set(value) != set(expected):

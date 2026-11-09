@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The answering model is checked (#342, owner 2026-11-09).** A Fable call on an account without Fable credits
+  runs on Opus with no error. The new `model_check.py` hook (SubagentStop, then the lead's next PostToolUse or Stop)
+  compares the model a sub-agent's call asked for (its `.meta.json`, or a "Fable consult:" line) with the `model` of
+  its answers and tells the lead `MODEL_FALLBACK: asked <requested>, answered by <model>`; the usage record gets
+  `model_answered`, and the Claude bridge refuses a Fable-tier review answered by another model. test_model_check and
+  the bridge's negative fixture red without it. **ACTION** (project-owned `.claude/hooks/model_check.py`,
+  `.claude/settings.json`, the overlay's `README.md`, `docs/GOTCHAS.md`, `docs/WORKFLOW.md`,
+  `docs/REVIEW_GATE.md`): `sync-kit.sh . --merge`.
 - **Peers address a project's master lead by its marker (owner 2026-11-04).** `docs/COMMUNICATION.md`
   "Addressing a lead": a message for the master lead goes to line 2 of `PROJECT/.myagentkit/master-writer`, never
   to a name guessed from the session list (a sync order reached a probe lead). Docs only. **ACTION** (project-owned
