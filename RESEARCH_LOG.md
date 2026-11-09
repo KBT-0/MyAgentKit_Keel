@@ -60,6 +60,16 @@ output). One script runs the list under a lock and writes one result file; STATE
 found a worktree worker cannot see `NAME.checks` beside the brief, so the brief names it by absolute path. Verdict:
 shipped with tests.
 
+### 2026-11-09 — v0.16 sugtrig: the side check runs once before a spawn or an owner question
+
+Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 7) on the field reports
+(`.myagentkit/field-2026-11-09/KIT-LEAD-FINDINGS.md`): the notes rarely changed anything and each check cost a few thousand
+tokens plus the lead's verdict turn. The timer and the rule triggers go; the check holds the moment's call and a kept note
+answers it (`{ deny }`, as a built-in tool's `result` must have the tool's own shape). Mods docs: `prompt` takes
+`{ text, cache: true }` blocks and a different `system` misses the cache, so both jobs share one system text; the first call
+now also carries the session lines (cost not measured). Verdict: shipped with tests; design
+`docs/research/side-agent-suggestions.md`, 7.13.
+
 ### 2026-11-09 — v0.16 hardband: band_guard.py enforces the context band
 
 Owner decision 2026-11-09 (`.myagentkit/v016-reset/PLAN.md` item 2: "worker at 150k: only commit + hand-off; lead at

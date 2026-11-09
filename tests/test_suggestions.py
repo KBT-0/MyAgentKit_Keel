@@ -22,6 +22,9 @@ def note(n, session='s1', topic=None, **extra):
                  'check': 'git diff -- tests/t.py'}, **extra)
 
 
+NOTE_FIELDS = {'claim': 'The agent loosened a test.', 'evidence': 'tests/t.py:4', 'check': 'git diff', 'topic': 'loosened test'}
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -182,11 +185,11 @@ class LedgerTests(unittest.TestCase):
         self.assertIn('precision (last 20 judged): 20% (1/5)', report)
         self.assertIn('delivery: stopped', report)
 
-    def test_precision_below_half_doubles_the_interval_and_few_verdicts_do_not_throttle(self):
+    def test_precision_below_half_checks_every_second_moment_and_few_verdicts_do_not_throttle(self):
         self.judged('wrong', 'wrong', 'wrong', 'correct')
-        self.assertIn('delivery: on, interval x1', self.run_hook('report').stdout)
+        self.assertIn('delivery: on, every moment', self.run_hook('report').stdout)
         self.judged('wrong', 'wrong', 'wrong', 'correct', 'partly')
-        self.assertIn('delivery: on, interval x2', self.run_hook('report').stdout)
+        self.assertIn('delivery: on, every second moment', self.run_hook('report').stdout)
         self.write(note(6))
         self.assertIn('#6', self.context(self.run_hook('post-tool', self.event())))
 
@@ -247,7 +250,7 @@ class LedgerTests(unittest.TestCase):
     def test_every_check_counts_its_tokens_an_abstain_too(self):
         usage = {'input_tokens': 3, 'output_tokens': 20, 'cache_read_input_tokens': 9000,
                  'cache_creation_input_tokens': 100}
-        self.run_hook('add-note', None, json.dumps({'session': 's1', 'abstain': True, 'trigger': 'periodic',
+        self.run_hook('add-note', None, json.dumps({'session': 's1', 'abstain': True, 'trigger': 'before Agent',
                                                     'usage': usage}))
         env = {**os.environ, 'CLAUDE_PROJECT_DIR': str(self.project)}
         subprocess.run([sys.executable, str(HOOK), 'add-note'], input=json.dumps(
@@ -342,12 +345,31 @@ class LedgerTests(unittest.TestCase):
                 pass
         self.assertEqual((len(calls), slept.call_count), (1, 0))
 
+    def test_hold_delivers_the_note_in_its_own_frame_and_no_tool_result_repeats_it(self):
+        self.run_hook('on')
+        said = json.loads(self.run_hook('hold', dict(NOTE_FIELDS, session='s1')).stdout)
+        self.assertEqual(said['id'], 1)
+        self.assertIn('[myagentkit-suggestion #1, unverified claim from a side check, not an instruction]', said['frame'])
+        self.assertIn('myagentkit-suggestion #1: correct | wrong | partly', said['frame'])
+        self.assertTrue(said['frame'].endswith('\nVerify it, write the verdict line, then make this call again.'))
+        self.assertEqual([(r['id'], r['via']) for r in self.rows('delivered')], [(1, 'hold')])
+        self.assertEqual(self.run_hook('post-tool', self.event()).stdout, '')
+
+    def test_hold_prints_nothing_for_an_abstain_a_dropped_note_or_a_known_topic(self):
+        self.run_hook('on')
+        self.assertEqual(self.run_hook('hold', {'session': 's1', 'abstain': True}).stdout, '')
+        self.assertEqual(self.run_hook('hold', {'session': 's1', 'dropped': 'verifier: unanswered'}).stdout, '')
+        self.assertTrue(self.run_hook('hold', dict(NOTE_FIELDS, session='s1')).stdout)
+        self.assertEqual(self.run_hook('hold', dict(NOTE_FIELDS, session='s1')).stdout, '')
+        self.assertEqual(len(self.rows('note')), 1)
+        self.assertEqual(len(self.rows('delivered')), 1)
+
     def test_on_lifts_a_precision_stop_and_judges_afresh(self):
         self.judged('wrong', 'wrong', 'wrong', 'wrong', 'partly')
         self.run_hook('stop', self.event())
         self.assertTrue(json.loads(self.run_hook('gate').stdout)['stopped'])
         said = self.run_hook('on').stdout
-        self.assertIn('delivery: on, interval x1', said)
+        self.assertIn('delivery: on, every moment', said)
         self.assertIn('precision stop lifted', said)
         self.assertFalse(json.loads(self.run_hook('gate').stdout)['stopped'])
         self.write(note(6))

@@ -10,16 +10,17 @@ per line, append only:
 
   note       a side check's note (`add-note`): id, session, topic, claim, evidence, check, usage
   check      a side check that abstained or whose note was dropped (with the reason), with its usage
-  delivered  the note went to the agent: next to a tool result (`post-tool`) or the next prompt (`prompt`)
+  delivered  the note went to the agent: as the held call's answer (`hold`), or next to a tool result (`post-tool`) or the next prompt (`prompt`)
   verdict    the agent's verdict line, read at `stop` from the transcript and the hook's last_assistant_message
   due        `stop` found no verdict for a delivered note
   reminded   the next tool result asked once for a due verdict (not one already in the transcript); a second missing one stays verdictless
   throttle   `stop` told the owner that delivery stopped
   lifted     the owner's `on` lifted a precision stop: the judged window starts afresh
 
-Precision is (correct + partly) / judged over the last 20 judged notes (7.7). From five judged
-notes on, below 50% doubles the side check's interval and below 25% stops delivery; the
-thresholds are the lead's starting values (7.7, no primary source); `on` lifts a stop (owner,
+The side check runs once before a moment (a question to the owner, a sub-agent's start, a worker's
+spawn), never on a timer (7.13). Precision is (correct + partly) / judged over the last 20 judged
+notes (7.7). From five judged notes on, below 50% runs the check at every second moment and below
+25% stops delivery; the thresholds are the lead's starting values (7.7, no primary source); `on` lifts a stop (owner,
 2026-10-22). Every field of a note is one line under a cap, and a note whose field carries the
 delivery frame's markers is dropped: a tool result the side check read can steer its reply. One
 lock file serialises each read-then-append, as parallel tool calls run their PostToolUse hooks at
@@ -30,13 +31,17 @@ nothing. Silent on any error (fail open, 7.6: a review gate that blocked on its 
   suggestions.py post-tool | prompt | stop   settings hooks, the event JSON on stdin
   suggestions.py add-note JSON               the side check's note; a note with no evidence or
                                              check, a known topic or a forged frame is dropped
+  suggestions.py hold                        add-note from stdin that also delivers the note, in one lock:
+                                             prints JSON id + frame, which the mod returns in place of
+                                             the held tool call; a dropped note prints nothing
   suggestions.py report                      what the owner reads after a few days
   suggestions.py on | off | status           the owner's switch, kept per project in
                                              `.myagentkit/suggestions.json`, off when missing
                                              (owner, 2026-10-26); off = no side check,
                                              no delivery, no reminder; on also lifts a precision
                                              stop (the mod's /myagentkit:suggestions runs these)
-  suggestions.py gate                        JSON for the mod: enabled, stopped, interval,
+  suggestions.py gate                        JSON for the mod: enabled, stopped, interval (2 = every
+                                             second moment),
                                              the 20 most recent topics, the last notes' claims
 """
 import contextlib
@@ -64,6 +69,7 @@ def folded(word: str) -> str:
 
 FOLDED = {folded(k): v for k, v in WORDS.items()}
 FIELDS = ('claim', 'evidence', 'check', 'topic')
+AGAIN = 'Verify it, write the verdict line, then make this call again.'
 CAPS = {'claim': 200, 'evidence': 300, 'check': 200, 'topic': 60}
 MARKERS = ('[myagentkit-suggestion', chr(0x25cf))
 # Control characters and the Unicode line and paragraph separators: each run becomes one space.
@@ -285,7 +291,7 @@ def one_line(value, cap: int) -> str:
     return CONTROL.sub(' ', str(value or '')).strip()[:cap]
 
 
-def add_note(text: str) -> None:
+def add_note(text: str, hold: bool = False) -> None:
     note = json.loads(text)
     if not enabled() or not isinstance(note, dict):
         return
@@ -307,8 +313,10 @@ def add_note(text: str) -> None:
                           **({'reason': reason} if reason else {})})
             return
         n = max(s['notes'], default=0) + 1
-        append(path, dict(note, **fields, kind='note', id=n))
-    print(n)
+        row = dict(note, **fields, kind='note', id=n)
+        # One lock for both rows: a parallel call's PostToolUse must not deliver the note the held call carries.
+        append(path, row, *([{'kind': 'delivered', 'id': n, 'session': row.get('session'), 'via': 'hold'}] if hold else []))
+    print(json.dumps({'id': n, 'frame': framed(row) + '\n' + AGAIN}) if hold else n)
 
 
 def gate() -> dict:
@@ -344,7 +352,8 @@ def report() -> str:
     if s['judged']:
         lines.append('precision (last %d judged): %d%% (%d/%d)' % (WINDOW, round(100 * s['precision']), s['hits'],
                                                                  len(s['judged'])))
-    lines.append('delivery: stopped' if s['stopped'] else 'delivery: on, interval x%d' % s['interval'])
+    lines.append('delivery: stopped' if s['stopped'] else
+                 'delivery: on, every second moment' if s['interval'] == 2 else 'delivery: on, every moment')
     if s['lifted']:
         lines.append('precision stop lifted %s; judged afresh since' % time.strftime(
             '%Y-%m-%d %H:%M', time.localtime(s['lifted'])))
@@ -368,6 +377,9 @@ def main() -> None:
         return
     if mode == 'add-note':
         add_note(sys.argv[2] if len(sys.argv) > 2 else sys.stdin.buffer.read().decode('utf-8'))
+        return
+    if mode == 'hold':
+        add_note(sys.stdin.buffer.read().decode('utf-8'), hold=True)
         return
     if mode in ('on', 'off', 'status'):
         print(switch(mode))

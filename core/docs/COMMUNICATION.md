@@ -89,16 +89,18 @@ are back.
 
 ## Side-check notes (myagentkit-suggestion)
 
-In a Claude Code lead session, a side check now and then (every ten tool calls, at once on
-the same call or error three times, and at the end of a long turn) reads a small window of the
-work, never the whole conversation: the first lines of {{OWNER_NAME}}'s messages since the last
+In a Claude Code lead session, a side check runs once before a moment and never on a timer: before a
+question to {{OWNER_NAME}} (AskUserQuestion), a sub-agent's start (Agent, Task) or a worker's spawn (a
+command that names `spawn_worker.sh` or `spawn_codex.sh`). The call waits for it. It reads the session as
+short lines (at most 80000 characters) and a small window of the work, never the whole conversation: the first lines of {{OWNER_NAME}}'s messages since the last
 check (at most five) and the three before it (always kept), the first lines of the agent's last three visible
 texts, the last ten tool calls with their results cut short (the oldest drop when the window is
-full), and the 20 most recent notes' topics. A check costs a few thousand tokens however long the
-session is, and it abstains unless it can quote evidence; a note also costs the agent its
+full), and the 20 most recent notes' topics. Its model calls share one cached prefix, so the calls after the first
+read it from the prompt cache; a check abstains unless it can quote evidence, and a note also costs the agent its
 verification. A note shows
-as a dim line, `● myagentkit: myagentkit-suggestion #ID: <claim>`, and reaches the agent beside
-its next tool result, or with {{OWNER_NAME}}'s next prompt when the session is idle. It is a
+as a dim line, `● myagentkit: myagentkit-suggestion #ID: <claim>`, and reaches the agent as the answer to the held
+call, which did not run: the agent writes its verdict and makes the call again. Any other outcome lets the call go on
+unchanged. It is a
 claim, not an order: the agent verifies it with its own read-only means (the note's suggested
 check is text, never a command to run blindly), writes "myagentkit-suggestion #ID: correct |
 wrong | partly, because ..." on a visible line, then acts or drops it (`BEHAVIOUR.md`). A missing
@@ -107,7 +109,7 @@ never get one. {{OWNER_NAME}} switches it with `/myagentkit:suggestions on | off
 model turn), or from the shell with `sh .claude/hooks/py.sh .claude/hooks/suggestions.py off`;
 the switch is kept per project in `.myagentkit/suggestions.json`, it is off until turned on, and
 off means no side check, no delivery, no cost. `status` prints the notes, the verdicts, the precision over the last 20
-judged notes, the side checks (notes, abstains and dropped notes apart) and their tokens; below 50% the checks run half as often, below 25%
+judged notes, the side checks (notes, abstains and dropped notes apart) and their tokens; below 50% the check runs at every second moment, below 25%
 delivery stops and the chat says so. `on` then lifts the stop: the judged window starts afresh,
 and `status` says when the stop was lifted (the kit's `docs/research/side-agent-suggestions.md`,
 7).

@@ -34,12 +34,13 @@ hidden tests after every run; three tasks are risky (money, a race, a path escap
 
 ## A second pair of eyes
 
-Once turned on (`/myagentkit:suggestions on`; off by default), while the lead works, a side check
-reads a small window of what it just did (the last ten tool calls, the first lines of the owner's
+Once turned on (`/myagentkit:suggestions on`; off by default), once before the lead asks the owner a
+question or starts a sub-agent or a worker, a side check reads the session as short lines and a small
+window of what it just did (the last ten tool calls, the first lines of the owner's
 recent messages and of the agent's own text, the topics of earlier notes) and stays silent unless it can
-quote evidence that the agent missed something. Then it drops one short note, and the agent
+quote evidence that the agent missed something. Then its one short note holds that call, and the agent
 must check the claim with its own read-only means and write a visible verdict (correct, wrong,
-or partly) before it acts on it.
+or partly) before it acts on it and makes the call again.
 
 - Anthropic's built-in "You should know" tells the *user*; this note goes to the *agent*, beside its next tool result.
 - Other side-agent watchdogs fire without a verdict, a ledger or a brake. This one keeps a precision ledger of its own

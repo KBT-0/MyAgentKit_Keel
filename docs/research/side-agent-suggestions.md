@@ -15,6 +15,8 @@ y a da değil çünkü şöyle gibi açıklamalar yapıyor, aynı eleştirellikt
 
 > **2026-10-22:** çatal maliyet yüzünden reddedildi; kontrol pencereli `$.model.complete` (bölüm 7.11).
 >
+> **2026-11-09:** zamanlayıcı kalktı; kontrol yalnız işçi spawn'ı ya da sahibe soru öncesi bir kez koşar (bölüm 7.13).
+>
 > **Önerilen (karar sahibin):** kitin kendi Claude Code mod'u `myagentkit-suggestion`. Ana oturumun konuşmasını
 > önbellekten okuyan bir çatal (`$.model.fork`) ile seyrek ve kurala bağlı aralıklarla tek bir not arar, emin değilse
 > susar. Notu ajana bir sonraki araç sonucundan hemen sonra (`$.session.append`, `claude-code-watchdog`'un çalışan
@@ -378,6 +380,8 @@ eklemez; kitin tek review kapısı ve "Stop" gate'i değişmez.
 
 ### 7.2 Tetik ve sıklık
 
+> **2026-11-09:** bu bölümün tetikleri artık geçerli değil; yürürlükteki kural 7.13.
+
 - **Kural tetikleri (model çağrısız, her araç çağrısında sayılır):** aynı komut/eylem ≥3 kez, aynı hata ≥3 kez, 6
   adımlık ping-pong (OpenHands kuralları [37], eşikler ayarlanabilir); test dosyası, kırmızı bir testten sonra
   düzenlendi (Claude Code ve Codex'te açık ödül hilesi gözlenmiş [71]); son düzenlemeden beri hiçbir kontrol
@@ -549,6 +553,14 @@ Düzeltme: hatırlatma Stop'tan kalktı; Stop eksik hükmü `due` diye yazar, bi
 bir kez sorar (ek tur yok). Pencere sahibin son kontrolden önceki üç mesajını tutar ve `turn.step` sonucundan
 ajanın son üç görünür metnini (her biri 400 karakter) ekler; sınır 8000 karakter. Varsayılan kapalı (sahip):
 `/myagentkit:suggestions on` açar.
+
+### 7.13 Karar 2026-11-09 (sahip)
+
+Karar: "zamanlayıcı kalkar; yalnız işçi spawn'ı ya da sahibe soru öncesi bir kez, cache ile". Kontrol o çağrıdan önce koşar, çağrı onu bekler; tutulan not çağrının cevabı olur (`{ deny }`), ajan hükmü yazıp çağrıyı yeniden yapar.
+Saha gerekçesi (`.myagentkit/field-2026-11-09/KIT-LEAD-FINDINGS.md`): notlar nadiren bir şey değiştirdi; her kontrol birkaç bin token artı liderin hüküm turu tutuyordu ve sahip özelliği ölçülene dek kapatmıştı.
+Kalkanlar: her 10 çağrıda bir kontrol, tur sonu kontrolü, aynı çağrı/hata üç kez kural tetikleri. Precision kısması artık "her ikinci an" demek.
+Önbellek: iki çağrı aynı `system` ve aynı öneki okur (oturum satırları, pencere, sonda bilinen konular ve an; `cache: true`); bedeli ilk çağrının da en çok 80000 karakter oturum satırı taşımasıdır, ölçülmedi.
+Kural tetiği ancak bir saha raporu gerektirirse geri gelir.
 
 ---
 

@@ -15,6 +15,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The side check runs once before a moment, never on a timer** (owner, 2026-11-09): before AskUserQuestion, Agent/Task or
+  a `spawn_worker.sh`/`spawn_codex.sh` command. A kept note answers the held call, and the agent makes it again. The periodic,
+  end-of-turn and repeat-count triggers are gone; both model calls share one cached prefix; `report` says "every second moment".
 - **`scripts/run_checks.sh`.** A brief's check list (`NAME.checks`, named by absolute path on the `Checks:` line) runs
   under one lock into one result file.
 - **Account switches are counted and priced.** `token_audit.py` adds `org`, `switches`, `switch_tokens` and `switch_usd` per
