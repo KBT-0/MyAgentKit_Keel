@@ -964,27 +964,45 @@ a commit made while away) follows the away line until a switch records it there.
 - **Before {{OWNER_NAME}} leaves** (the lead checks each and says what is missing):
   1. `docs/STATE.md` lists the work for the absence, each item with its done criterion, and
      what comes next when the list is done; nothing outside the list starts.
-  2. This lead session stays open, interactive and in the foreground, never `--bg` or `-p`:
-     only there does a usage-limit stop wait and resume (`autoContinueAtUsageLimit`, on by
-     default).
+  2. This lead session stays open, interactive and in the foreground, never `--bg` or `-p`.
+     A usage-limit stop no longer waits in it: the lead hands off and stops (Stops, below).
   3. Auto mode, or allow rules for the actions the list needs, written now: a permission
      prompt nobody answers waits until morning.
   4. The machine stays awake: plugged in, lid open, sleep off (Windows: PowerToys Awake or
      `powercfg /change standby-timeout-ac 0`; macOS: `caffeinate -i`).
   5. Every running worker's disk watch is armed (rule 4).
   6. {{OWNER_NAME}} types the printed `/goal` line; the lead cannot run a slash command.
+  7. The watchdog timer is installed for this project (`scripts/limit_watchdog_install.sh`,
+     below), or {{OWNER_NAME}} knows that a usage limit ends the night's work.
 - **Stops** only when: the list is done and the report written; the end time {{OWNER_NAME}}
-  gave has come (the lead reads `date` at each checkpoint); a usage limit resets more than
-  24 hours away; every remaining item needs {{OWNER_NAME}} (the list below); an error the
-  lead cannot fix. A usage-limit note, the context band, a compaction (the second too), a
+  gave has come (the lead reads `date` at each checkpoint); every remaining item needs
+  {{OWNER_NAME}} (the list below); an error the lead cannot fix; a usage limit that stops the
+  lead. A limit is per account and nobody waits
+  for its reset: the lead brings STATE and the hand-off file up to date (a limit is no wrap-up
+  of the work: the hand-off is complete and current), commits, writes `handoff-pending` and
+  releases the master writer (`docs/HANDOFF.md`), runs `python3 scripts/limit_stop.py`
+  (`.myagentkit/limit-stop`), records the stop in the report and stops; the watchdog or another
+  account continues. A usage-limit note, the context band, a compaction (the second too), a
   worker's hand-off, a parked question, one stuck item (three tries, then a WIP commit and the
   next item) is no stop. No turn ends with nothing to wake it: every wait is a disk watch or
   a `ScheduleWakeup`. Past the enforcing line (rule 8) the band IS a stop: the hand-off and the
   report are written, no wakeup is armed (`band_guard.py` denies `ScheduleWakeup` and `Monitor`),
-  and until a watchdog reopens the lead, {{OWNER_NAME}} does. No question to {{OWNER_NAME}} while autopilot is on, neither with
+  and {{OWNER_NAME}} opens the next session. No question to {{OWNER_NAME}} while autopilot is on, neither with
   AskUserQuestion nor in chat text (two options and a default for no answer is a question
   too), even when {{OWNER_NAME}} writes in between: the lead takes the rule's default, records
   it under My decisions and puts the question in the report (#312).
+- **The watchdog** (owner, 2026-11-09): "{{OWNER_NAME}} opens the session" stands, with one
+  exception: under autopilot, after a limit stop, the watchdog opens it. The systemd user timer
+  of `scripts/limit_watchdog_install.sh PROJECT_DIR` (Linux; {{OWNER_NAME}} runs it once per
+  project, `--uninstall` removes it; neither the install nor `sync-kit.sh` enables it; macOS's
+  launchd is not built) runs `scripts/limit_watchdog.sh` every 10 minutes. It opens ONE lead,
+  `claude "Read HANDOFF_PATH and follow it" --bg` with the model and effort of the hand-off's
+  first line and auto mode, only when every condition holds: `limit-stop` exists; its reset has
+  passed, or this account's five-hour window is gone or under 50 %; autopilot is on; the
+  `handoff-pending` hand-off is the one `limit-stop` names; no live master writer; its lock is
+  free. Then it deletes `limit-stop` and logs one line to `.myagentkit/limit-watchdog.log`; a
+  failed launch is logged and never retried. A band stop, autopilot off, or any doubt: it does
+  nothing, and {{OWNER_NAME}} opens the session.
 - **Decides:**
 
   | What | When | The lead |
@@ -1260,11 +1278,13 @@ Rules, binding for whoever routes workers:
    flight continues: one summary turn is cheaper than a handoff note plus a cold start, but
    only while the cache is warm; a session resumed after more than an hour writes a summary into the
    handoff first, since its context is re-written at full price on the next request anyway.
-   So when a usage-limit note names a reset more than an hour away, the lead brings STATE and
-   the hand-off file up to date before the stop, then resumes in the same session after the
-   reset (the note is no hand-off and no wrap-up): if the owner then chooses a fresh session,
-   it starts from a current hand-off instead of re-writing the old context (labricore #329: one
-   such wait re-wrote ~250k tokens, 46% of the day's cache writes).
+   So when a usage limit stops the lead, nobody waits in the same session for the reset (a
+   limit is per account): the lead brings STATE and the hand-off file up to date (a limit is no
+   wrap-up of the work: the hand-off is complete and current), writes its marker
+   (`handoff-pending`; under autopilot also `python3 scripts/limit_stop.py`) and stops; the
+   watchdog (autopilot only, "autopilot, the owner-away switch") or another account continues
+   from that hand-off instead of re-writing the old context (labricore #329: one such wait
+   re-wrote ~250k tokens, 46% of the day's cache writes).
    Never a bare `/compact`: `/compact keep the open decisions, the binding rules, the changed
    files, the next step and the owner's words verbatim`. A session compacted once hands off
    instead of compacting again, since a summary of a summary drifts.

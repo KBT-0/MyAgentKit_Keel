@@ -136,6 +136,8 @@ review (`docs/REVIEW_GATE.md`, "Risk tiers") and commit, never handed back to {{
   procedure done a third time (a skill), bulk work fit for a cheaper model.
 - Context past 150k → no new round; 200k: `/compact` or a hand-off (then the owner types `/clear`); 300k: stop
   (`docs/WORKFLOW.md`, "Worker cost", rule 8).
+- A usage limit stops a lead → no waiting: hand-off, then under autopilot `scripts/limit_stop.py`, stop; the
+  watchdog timer or another account continues (`docs/WORKFLOW.md`, "autopilot, the owner-away switch").
 - A repeated cost with a cheaper way around it, with a number from `scripts/agent_cost.py`; never hunt for savings.
 {{KIT_FEEDBACK_RULE}}
 

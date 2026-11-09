@@ -119,7 +119,8 @@ runs `claim --force`, tells {{OWNER_NAME}} so in one line and announces itself t
 
 The lead's hand-off steps: update `docs/STATE.md`; write the hand-off file, whose first line
 names the next session's model id AND effort, chosen from `docs/WORKFLOW.md`, "Model routing",
-for the work it opens (the effort is decided per hand-off: owner, 2026-11-03); commit; write
+for the work it opens (the effort is decided per hand-off: owner, 2026-11-03), in the form
+`claude --model MODEL_ID (effort: EFFORT, ...)`, which `scripts/limit_watchdog.sh` parses; commit; write
 `.myagentkit/handoff-pending` in the main checkout (a lead in a linked worktree too), one line
 `HANDOFF_PATH COMMIT`; then tell {{OWNER_NAME}}: type
 `/clear` in this terminal (and `/model` or `/effort` first when the line names others). In the
