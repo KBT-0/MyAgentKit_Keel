@@ -120,7 +120,7 @@
 # row says why (2026-10-22: two sat ~1 h, their rows blocked). The `limit` rule in
 # waiting_patterns.txt finds it: on tmux in the pane's last line above the input box but for
 # turn-summary lines (`✻ ... for ...`); on a background or a Windows Terminal tab worker in its
-# transcript, ${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/ID*.jsonl (ID its NAME.id, the sessionId
+# transcript, ${CLAUDE_CONFIG_DIR:-NAME.config's folder, else ~/.claude}/projects/*/ID*.jsonl (ID its NAME.id, the sessionId
 # a tab spawn recorded), whose last user or assistant entry is the API-error entry Claude Code
 # writes then. It is said once per stop while the session lives (a background row working,
 # blocked, or done with its process; an ended one is GONE as before), and then the row's state
@@ -210,6 +210,19 @@ case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows=""
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
 # isbg NAME: whether NAME runs as a Claude Code background session (NAME.host bg); no tmux then.
 isbg() { [ "$(cat -- "$wdir/$1.host" 2>/dev/null)" = bg ]; }
+# use_config NAME: a worker on another login folder (spawn_worker.sh's NAME.config) is read through
+# that folder, its transcripts and `claude agents`; the caller's own CLAUDE_CONFIG_DIR wins, and no
+# record leaves ~/.claude as ever. One watch may name several workers. config_cmd: the prefix of a
+# printed claude command, so the owner's next command hits the same folder.
+caller_config=${CLAUDE_CONFIG_DIR:-}; config_cmd=""
+use_config() {
+  [ -z "$caller_config" ] || return 0
+  worker_config=$(cat -- "$wdir/$1.config" 2>/dev/null) || worker_config=""
+  if [ -n "$worker_config" ]; then
+    export CLAUDE_CONFIG_DIR="$worker_config"
+    config_cmd="CLAUDE_CONFIG_DIR='$(printf '%s' "$worker_config" | sed "s/'/'\\\\''/g")' "
+  else unset CLAUDE_CONFIG_DIR; config_cmd=""; fi
+}
 # norec NAME: this checkout holds no record of NAME (spawn_worker.sh writes NAME.result-path and
 # NAME.host at every spawn, in the checkout it ran from).
 norec() { for x in state pid result-path host id live exit; do [ ! -e "$wdir/$1.$x" ] || return 1; done; }
@@ -668,7 +681,7 @@ EOF
       [ -n "$once" ] || [ $((now - first)) -ge 60 ] || return 1
       [ "$bwait" != - ] || bwait="no reason given"  # POSIX spike: blocked may name nothing
       say "watch_workers: WAITING: $1, waiting for: $bwait (background session $bid, state blocked)" || return 2
-      say "  look at it: claude attach $bid   (claude agents lists every session)" || return 2
+      say "  look at it: ${config_cmd}claude attach $bid   (${config_cmd}claude agents lists every session)" || return 2
       setmark "$1" bg "$key"; return 0 ;;
     done|stopped|failed|absent) ;;
     *) return 1 ;;  # a state this kit does not know says nothing
@@ -682,7 +695,7 @@ EOF
     say "watch_workers: GONE: $1, its background session ${bid:-named $1} is no longer listed (claude agents --all): read its result file" || return 2
   elif [ "$bstate" = done ] && [ "$bpid" != - ]; then
     # A turn end, as the tab path's IDLE: the session lives on, and the lead re-arms the watch.
-    say "watch_workers: IDLE: $1, its background session $bid is done with no new result report and its process still idles: a question in its view, a usage limit or an error, or a park on its own background job (it goes on by itself when the job ends): claude attach $bid" || return 2
+    say "watch_workers: IDLE: $1, its background session $bid is done with no new result report and its process still idles: a question in its view, a usage limit or an error, or a park on its own background job (it goes on by itself when the job ends): ${config_cmd}claude attach $bid" || return 2
     # leeway 2026-11-02: a park on its own job is told apart by the job it started last.
     job=$(bg_job "$1") && [ -n "$job" ] && { say "  its last background command: $job" || return 2; }
   else
@@ -838,6 +851,7 @@ context() {
 }
 
 if [ -n "$limit_only" ]; then
+  use_config "$1"
   if isbg "$1" || [ -n "$windows" ]; then limited "$(cat -- "$wdir/$1.id" 2>/dev/null)" || exit 1; t=$lim
   elif [ -n "$tmuxok" ] && [ "$(classify "$1")" = LIMIT ]; then t=$(pane_limit)
   else exit 1; fi
@@ -870,6 +884,7 @@ while :; do
   found="" failed="" pending="" listfail=""
   : >"$out"
   for n in "$@"; do
+    use_config "$n"
     tab_read=""; line=""
     st=""; isbg "$n" || { [ -z "$tmuxok" ] && lone "$n"; } || st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1

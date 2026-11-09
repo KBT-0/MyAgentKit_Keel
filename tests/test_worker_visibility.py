@@ -1467,6 +1467,40 @@ class BackgroundTests(Base):
     def watch(self, *args, **extra):
         return self.run_bg(WATCH, '--once', '--result', 'w1=RESULT-w1.md', *args, 'w1', **extra)
 
+    def test_a_recorded_login_folder_is_read_when_the_variable_is_unset(self):
+        # '' is what the scripts take for unset (${CLAUDE_CONFIG_DIR:-...}); HOME holds no transcript yet.
+        home = self.tmp / 'home'
+        home.mkdir()
+        unset = dict(CLAUDE_CONFIG_DIR='', HOME=str(home))
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle'))
+        self.transcript(said('Running the next suite.'), LIMITED, TURN)
+        limit = lambda **env: self.run_bg(WATCH, '--limit', 'w1', **env).returncode
+        self.assertEqual(limit(**unset), 1, 'no record, no variable: only $HOME/.claude is read')
+        record = self.workers / 'w1.config'
+        record.write_text(str(self.tmp / 'config') + '\n')
+        self.assertEqual(limit(**unset), 0, 'the recorded folder was not read')
+        # The caller's own variable wins over the record.
+        self.assertEqual(limit(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-empty')), 1)
+        record.unlink()
+        transcripts = home / '.claude/projects'
+        transcripts.parent.mkdir()
+        shutil.copytree(self.tmp / 'config/projects', transcripts)
+        self.assertEqual(limit(**unset), 0, 'no record, no variable: $HOME/.claude, as ever')
+
+    def test_a_printed_claude_command_names_the_recorded_login_folder(self):
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'blocked', pid=28288, status='idle', waitingFor='a question'))
+        plain = '  look at it: claude attach aaaa0001   (claude agents lists every session)\n'
+        self.assertIn(plain, self.watch(CLAUDE_CONFIG_DIR='').stdout)
+        for marker in self.workers.glob('w1.watch-*'):
+            marker.unlink()
+        login = str(self.tmp / 'login-b')
+        (self.workers / 'w1.config').write_text(login + '\n')
+        prefix = "CLAUDE_CONFIG_DIR='%s' " % login
+        self.assertIn('  look at it: %sclaude attach aaaa0001   (%sclaude agents lists every session)\n' % (prefix, prefix),
+                      self.watch(CLAUDE_CONFIG_DIR='').stdout)
+
     def test_a_limit_stopped_session_that_ends_is_gone(self):
         # Round 1: once LIMIT was said, an ended session is still GONE; one ended at the first poll is
         # GONE, not LIMIT (its transcript still ends on the limit entry).

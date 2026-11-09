@@ -20,6 +20,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **STATE.md holds open work only;** a closed item is deleted.
 - **`spawn_worker.sh --resume` is refused above 150,000 tokens of context** (owner, 2026-11-09; was 100,000): start a fresh
   worker from the RESULT; `MYAGENTKIT_RESUME_FORCE=REASON` still passes.
+- **`spawn_worker.sh` refuses the fourth running Claude Code session on the machine** (`MYAGENTKIT_MAX_SESSIONS`, default 3;
+  `MYAGENTKIT_LIMIT_FORCE=1` passes); a worker spawned with `CLAUDE_CONFIG_DIR` set keeps it in `NAME.config` for close, watch and `--resume`, off otherwise.
 - **The limit watchdog: `scripts/limit_stop.py`, `scripts/limit_watchdog.sh`, `scripts/limit_watchdog_install.sh`.** Under
   autopilot a lead at a spawn refusal cap hands off, writes `.myagentkit/limit-stop`, releases the master writer and stops;
   a systemd user timer opens the next lead once the reset has passed. **ACTION** (Linux

@@ -136,6 +136,8 @@ path = os.environ['AGENTS_FILE']
 args = sys.argv[1:]
 with open(path + '.log', 'a') as log:
     log.write(repr(args) + '\n')
+with open(path + '.config', 'a') as log:
+    log.write(repr((args[0], args[1:2], os.environ.get('CLAUDE_CONFIG_DIR'))) + '\n')
 rows = json.load(open(path)) if os.path.exists(path) else []
 if os.environ.get('AGENTS_NOTICE'):
     sys.stderr.write(os.environ['AGENTS_NOTICE'] + '\n')
@@ -518,6 +520,32 @@ class CloseWorkerTests(unittest.TestCase):
         for record in ('w1.host', 'w1.id', 'w1.supervisor.log'):
             self.assertFalse((self.main / '.myagentkit/workers' / record).exists(), record)
         self.assertNotIn('daemon', (self.tmp / 'agents.json.log').read_text())
+
+    def test_a_recorded_login_folder_closes_its_worker_alone_and_goes_with_its_records(self):
+        self.env.pop('CLAUDE_CONFIG_DIR', None)
+        rows = [agent('aaaa0001', 'w1', self.worker('w1', session=False), 'done', pid=1, status='idle'),
+                agent('bbbb0002', 'w2', self.worker('w2', session=False), 'done', pid=2, status='idle')]
+        env = self.background('w1', *rows)
+        self.background('w2', *rows, id='bbbb0002')
+        login = str(self.tmp / 'login-b')
+        record = self.main / '.myagentkit/workers/w1.config'
+        record.write_text(login + '\n')
+        out = self.close('w1', 'w2', **env)
+        seen = (self.tmp / 'agents.json.config').read_text().splitlines()
+        self.assertIn(repr(('stop', ['aaaa0001'], login)), seen, out)
+        self.assertIn(repr(('rm', ['aaaa0001'], login)), seen, out)
+        # The next name of the same close is back on ~/.claude: no variable, as today.
+        self.assertIn(repr(('stop', ['bbbb0002'], None)), seen, out)
+        self.assertIn(repr(('rm', ['bbbb0002'], None)), seen, out)
+        self.assertFalse(record.exists(), out)
+
+    def test_the_callers_login_folder_wins_over_the_record(self):
+        path = self.worker('w1', session=False)
+        env = self.background('w1', agent('aaaa0001', 'w1', path, 'done', pid=1, status='idle'))
+        (self.main / '.myagentkit/workers/w1.config').write_text(str(self.tmp / 'login-b') + '\n')
+        out = self.close('w1', CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), **env)
+        self.assertIn(repr(('stop', ['aaaa0001'], str(self.tmp / 'login-a'))),
+                      (self.tmp / 'agents.json.config').read_text().splitlines(), out)
 
     def test_a_background_session_already_ended_is_only_removed_and_a_removed_one_is_nothing_to_end(self):
         path = self.worker('w1', session=False)

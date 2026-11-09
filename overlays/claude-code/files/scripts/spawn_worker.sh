@@ -36,12 +36,17 @@
 # "Worker cost" rule 2, owner 2026-11-03: Fable leads, reviews and consults, never works); REASON is the owner's
 # words for this task, printed in the spend line and kept in .myagentkit/workers/NAME.fable-approved.
 #
-# Three refusals come before anything is made (docs/WORKFLOW.md, "Worker cost — the rules in brief"),
+# Four refusals come before anything is made (docs/WORKFLOW.md, "Worker cost — the rules in brief"),
 # each with its variable: a brief over 12000 bytes, its size printed on every launch
 # (MYAGENTKIT_BRIEF_MAX=N sets the cap); a --resume of a worker whose last context is over 150,000
 # tokens, which a fresh worker from the RESULT replaces (MYAGENTKIT_RESUME_FORCE=REASON passes it);
 # an account at 95% of its five-hour or 98% of its seven-day limit, where another account spawns and
-# nobody waits for the reset (MYAGENTKIT_LIMIT_FORCE=1 passes it).
+# nobody waits for the reset (MYAGENTKIT_LIMIT_FORCE=1 passes it); a machine where 3 Claude Code
+# sessions run already (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes it).
+#
+# CLAUDE_CONFIG_DIR=DIR spawn_worker.sh ... runs the worker on another account's login folder, the
+# owner's call per spawn and off otherwise (docs/WORKFLOW.md, "Worker cost" rule 10). DIR stays in
+# .myagentkit/workers/NAME.config for close_worker.sh, watch_workers.sh and a later --resume.
 #
 # --resume SESSION_ID continues that worker's own conversation under the same NAME, with
 # BRIEF_FILE holding the answer or the next step: with --worktree in its existing
@@ -419,6 +424,18 @@ again="--model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree}"
 # Validate the lead checkout's generated paths before creating a worktree or worker files.
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
 project_settings=$dir/.claude/settings.json
+# The login folder (the header): a resume with no CLAUDE_CONFIG_DIR of its own goes on in the one its
+# NAME.config names. Exported, so the checks below and the launch read it. Made absolute against the
+# caller's folder: the session starts in the worker's, and close and watch run from anywhere.
+if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "$resume" ] && [ -s "$wdir/$name.config" ]; then
+  CLAUDE_CONFIG_DIR=$(cat -- "$wdir/$name.config") || die "cannot read the login folder in $wdir/$name.config"
+fi
+config_cmd=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  case $CLAUDE_CONFIG_DIR in /*|[a-zA-Z]:*|\\*) ;; *) CLAUDE_CONFIG_DIR=$dir/$CLAUDE_CONFIG_DIR ;; esac
+  export CLAUDE_CONFIG_DIR
+  config_cmd="CLAUDE_CONFIG_DIR=$(q "$CLAUDE_CONFIG_DIR") "
+fi
 if [ -n "$windows" ]; then
   longest_path=$(cygpath -m "$wdir/$longest") || die "cygpath cannot convert the path: $wdir"
   [ "${#longest_path}" -le 259 ] ||
@@ -504,6 +521,61 @@ for key, cap, window in (("five_hour", 95, "five-hour"), ("seven_day", 98, "seve
     print("%s: %s window at %g%% (refused at %d%%), resets %s" % (s.get("org_name") or "this account", window, used, cap, when))
     break' "$quota_dir" 2>/dev/null) || limit=""
   [ -z "$limit" ] || die "refused the spawn: the account $limit; another account may spawn now; no waiting (MYAGENTKIT_LIMIT_FORCE=1 passes)"
+fi
+# The cap on sessions running at once (owner, 2026-11-09; docs/WORKFLOW.md, "Worker cost" rule 10). Every
+# project's sessions count, the lead's too: the five-hour window is shared. Live: the pid of a
+# registry file exists; a stale file is skipped, not deleted. A resume does not count the session
+# it continues, which it replaces (it may still be in its closing grace). No registry or an
+# unreadable file: it passes, silent. On native Windows os.kill(pid, 0) is no probe but a Ctrl-C
+# to that process group (CTRL_C_EVENT is 0), so there the process is opened instead; unmeasured.
+if [ "${MYAGENTKIT_LIMIT_FORCE:-}" != 1 ]; then
+  max_sessions=${MYAGENTKIT_MAX_SESSIONS:-3}
+  case $max_sessions in *[!0-9]*) max_sessions=0 ;; esac
+  [ "$max_sessions" -ge 1 ] 2>/dev/null || {
+    printf '%s\n' "spawn_worker: MYAGENTKIT_MAX_SESSIONS is no whole number of 1 or more: the default 3 applies" >&2
+    max_sessions=3
+  }
+  live_sessions=$($kit_python -I -c 'import glob, json, os, sys
+def alive(pid):
+    if os.name == "nt":
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED: it exists
+        code = ctypes.c_ulong()
+        known = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return bool(known) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, OverflowError):
+        return False
+    return True
+folder, resume, cap = sys.argv[1], sys.argv[2], int(sys.argv[3])
+live = []
+for path in sorted(glob.glob(os.path.join(glob.escape(folder), "*.json"))):
+    try:
+        with open(path, encoding="utf-8") as f:
+            row = json.load(f)
+        pid = row["pid"]
+    except (OSError, ValueError, KeyError, TypeError):
+        continue
+    if type(pid) is not int or pid < 1 or not alive(pid):
+        continue
+    session = str(row.get("sessionId") or "")
+    if resume and (session == resume or session.startswith(resume + "-")):
+        continue
+    live.append("%s (%s)" % (row.get("name") or "process %d" % pid, row.get("cwd") or "folder unknown"))
+if len(live) >= cap:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    print(len(live), ", ".join(live))' "$(native "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")" "$resume" "$max_sessions" 2>/dev/null) || live_sessions=""
+  [ -z "$live_sessions" ] || die "refused the spawn: ${live_sessions%% *} Claude Code sessions run on this machine (cap $max_sessions, MYAGENTKIT_MAX_SESSIONS): ${live_sessions#* }; every running session rewrites its context at an account switch; close one (scripts/close_worker.sh NAME) or wait for it; the cap: docs/WORKFLOW.md rule 10 (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes)"
 fi
 # The spend line, as review.sh prints its own before a review: the owner sees what each worker
 # costs before it runs (issue #68; docs/WORKFLOW.md, "Model routing").
@@ -649,7 +721,8 @@ supervisor() {
   supervise="KIT_WORKER_GRACE=$(q "${KIT_WORKER_GRACE:-60}") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
 }
 # Written once the name is known to be free: a running worker's record is never replaced.
-# NAME.host names the host it runs on (bg, tab or tmux) for close_worker.sh and the watcher.
+# NAME.host names the host it runs on (bg, tab or tmux) for close_worker.sh and the watcher;
+# NAME.config the login folder it runs on, only when one is set (the header).
 record_result() {
   # A resume's earlier result belongs to the closed run: moved into the lead's records as
   # NAME.result-prev.md, so neither the watch nor the worker takes it for this run's (leeway
@@ -663,6 +736,8 @@ record_result() {
   fi
   mkdir -p -- "$wdir" && printf '%s\n' "$cresult" > "$wdir/$name.result-path" &&
     printf '%s\n' "$host" > "$wdir/$name.host" || die "cannot record the result path and host in $wdir"
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s\n' "$CLAUDE_CONFIG_DIR" > "$wdir/$name.config" || die "cannot record the login folder in $wdir"
+  else rm -f -- "$wdir/$name.config"; fi
   if [ -n "$fable" ]; then printf '%s\n' "$fable" > "$wdir/$name.fable-approved" || die "cannot record the Fable approval in $wdir"
   else rm -f -- "$wdir/$name.fable-approved"; fi
 }
@@ -786,6 +861,9 @@ reset_state() {
 # (#311); the bg host carries it in the settings' env, as its other worker variables (below).
 bare="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
 unmark="$bare CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m MYAGENTKIT_ROLE=worker MYAGENTKIT_SESSION_ID=worker-$name"
+# The login folder on the session's own line: a new tmux session takes the server's environment and
+# a tab Windows Terminal's, not this shell's. The bg launch inherits the export (its daemon is per folder).
+[ -z "$config_cmd" ] || unmark="$unmark ${config_cmd% }"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")${resume:+ --resume $(q "$resume")}"
@@ -1065,7 +1143,7 @@ sys.exit(live.exists() and not m.gone(live, 0))' "$cworker" "$wdir/$name.live" |
       row=$(bg_row "$old") || die "cannot read claude agents to check the earlier session $old of '$name'"
     done
     case $row in
-      blocked*) die "the background session $old of '$name' still runs, blocked on a question or a permission prompt: answer it (claude attach $old); close_worker.sh would stop it and drop its pending call" ;;
+      blocked*) die "the background session $old of '$name' still runs, blocked on a question or a permission prompt: answer it (${config_cmd}claude attach $old); close_worker.sh would stop it and drop its pending call" ;;
       [!-]*) die "the background session $old of '$name' still runs: close it first (scripts/close_worker.sh $name)" ;;
     esac
   fi
@@ -1105,7 +1183,7 @@ sys.exit(live.exists() and not m.gone(live, 0))' "$cworker" "$wdir/$name.live" |
   if [ -n "$resume" ] && [ "$id" != "${sid%%-*}" ]; then
     claude stop "$id" </dev/null >/dev/null 2>&1 || :
     claude rm "$id" </dev/null >/dev/null 2>&1 || :
-    die "claude --resume started a copy ($id, now stopped and removed) instead of continuing ${sid%%-*}; answer it by hand: claude attach ${sid%%-*}"
+    die "claude --resume started a copy ($id, now stopped and removed) instead of continuing ${sid%%-*}; answer it by hand: ${config_cmd}claude attach ${sid%%-*}"
   fi
   printf '%s\n' "$id" > "$wdir/$name.id" || die "cannot record the session id $id in $wdir"
   # The full sessionId, the only one a resume takes: from the row, which may lag the launch.
@@ -1122,8 +1200,8 @@ sys.exit(live.exists() and not m.gone(live, 0))' "$cworker" "$wdir/$name.live" |
     die "the session $id runs without its supervisor, so nothing ends it on its result: close it with scripts/close_worker.sh $name once it is finished"
   printf '%s\n' "spawn_worker: '$name' started with $brief as background session $id"
   watch_line
-  printf '%s\n' "spawn_worker: to see it: claude agents (every session, one list), claude attach $id (opens it in a real terminal; detaching leaves it running), claude logs $id (its last screen)"
-  printf '%s\n' "spawn_worker: to answer it in its own session once it has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${full:-$id} (the session keeps its saved options: a changed model or effort needs a new spawn)"
+  printf '%s\n' "spawn_worker: to see it: ${config_cmd}claude agents (every session, one list), ${config_cmd}claude attach $id (opens it in a real terminal; detaching leaves it running), ${config_cmd}claude logs $id (its last screen)"
+  printf '%s\n' "spawn_worker: to answer it in its own session once it has ended: ${config_cmd}scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${full:-$id} (the session keeps its saved options: a changed model or effort needs a new spawn)"
   printf '%s\n' "spawn_worker: once you decide the session is finished, close it: scripts/close_worker.sh $name"
   exit 0
 fi
@@ -1198,7 +1276,7 @@ print(json.load(open(sys.argv[1], encoding="utf-8")).get("sessionId", ""))' "$re
   ctl "session id" "$sid"
   # Its transcript is how watch_workers.sh sees a usage-limit stop (LIMIT); close_worker.sh removes it.
   [ -z "$sid" ] || printf '%s\n' "$sid" > "$wdir/$name.id" || die "cannot record the session id $sid in $wdir"
-  printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${sid:-SESSION_ID}"
+  printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: ${config_cmd}scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${sid:-SESSION_ID}"
   if [ -n "$peer" ]; then
     printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; you may also subscribe with SendMessage notify_when_idle, but a supervised close often sends no notice: never rely on it alone"
   else
@@ -1292,7 +1370,7 @@ printf '%s\n' "spawn_worker: you may also subscribe with SendMessage notify_when
 # background job. A published `Kind: completed` result file is the end signal: its supervisor
 # ends the session on it (--result in the header); any other close is the lead's job.
 printf '%s\n' "spawn_worker: once you decide the session is finished (no next task fits what it holds, or it is idle past the cache lifetime), close it: scripts/close_worker.sh $name"
-printf '%s\n' "spawn_worker: to answer it in its own session once its tmux session has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume SESSION_ID (the sessionId of the ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json named $name)"
+printf '%s\n' "spawn_worker: to answer it in its own session once its tmux session has ended: ${config_cmd}scripts/spawn_worker.sh $name ANSWER_FILE $again --resume SESSION_ID (the sessionId of the ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json named $name)"
 if [ -n "$batch" ]; then
   printf '%s\n' "spawn_worker: --batch: not shown. Once every worker of this batch is started, show them together in one window: scripts/show_workers.sh NAME1 NAME2 ..."
 else

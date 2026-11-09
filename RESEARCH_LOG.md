@@ -21,6 +21,16 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-09 — v0.16 sesscap: a cap on running sessions; another login folder built but off
+
+Sources: `.myagentkit/field-2026-11-09/KIT-LEAD-FINDINGS.md`, section 2 (380 of 390 cold rewrites, 47.8M of 48.7M tokens,
+follow an account switch), `.myagentkit/v016-reset/PLAN.md` item 6. Owner decisions, 2026-11-09: (a) at most 3 Claude Code
+sessions run on the machine, the lead and two paid things; (b) workers on another account's login folder
+(`CLAUDE_CONFIG_DIR`) are not adopted now: the kit keeps them OFF, ready for later. `os.kill(pid, 0)` is a Ctrl-C to a process
+group on native Windows (CTRL_C_EVENT is 0), so the cap opens the process there; that path did not run on this Linux host.
+A new tmux session or Windows Terminal tab does not inherit the spawner's shell, so the folder goes on the session's own line;
+`CLAUDE_CONFIG_DIR=EMPTY claude agents --json --all` listed `[]` on 2.1.319: each folder has its own session list.
+
 ### 2026-11-09 — v0.16 watchdog: the launch's own scope, and the stop before the limit
 
 Sources: `docs/reviews/20261109T115415Z-c23a16f73aa5-claude-review.md`, man systemd.kill, man systemd-run, the owner's
