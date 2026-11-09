@@ -21,6 +21,8 @@ Type `/goal clear`: the autopilot goal stays active until you do.
 ## Done
 <!-- The autopilot_report.py output: commits and merges since the stamp, worker
      results, the cost line. Then one plain line per finished item of the list. -->
+- Reopened by the watchdog at <time>: <hand-off>. <!-- One line per reopening, only when it
+  happened: the "launched" lines of .myagentkit/limit-watchdog.log since the stamp. -->
 
 ## My decisions
 <!-- One per decision the rules let the lead take alone. -->

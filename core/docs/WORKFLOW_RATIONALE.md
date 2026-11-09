@@ -122,6 +122,12 @@ Stop hook (only if `/goal` shows a gap in use), a `-p` or Ralph loop as the lead
 wait, no hooks with `--bare`, a fresh context loses the orchestration state), the lead in
 `--bg` (no limit wait, no question timeout), `--dangerously-skip-permissions` (no sandbox on
 native Windows), and blanket allow rules (auto mode is no guarantee).
+Changed on 2026-11-09 (owner): a lead waited ~3.5 h on one account's five-hour limit while
+four others were free, so a limit is per account and nobody waits for it: the lead hands off,
+writes `.myagentkit/limit-stop` and stops, and under autopilot only a systemd user timer
+(`scripts/limit_watchdog.sh`) opens the next lead, in `--bg`, from that hand-off once the reset
+has passed: the one session the owner does not open, behind every condition and a lock, since a
+wrong trigger spends money or opens two leads.
 
 ## Worker cost — waits and long lives are what you pay for
 
