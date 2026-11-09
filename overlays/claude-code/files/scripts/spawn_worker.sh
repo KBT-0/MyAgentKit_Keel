@@ -36,6 +36,13 @@
 # "Worker cost" rule 2, owner 2026-11-03: Fable leads, reviews and consults, never works); REASON is the owner's
 # words for this task, printed in the spend line and kept in .myagentkit/workers/NAME.fable-approved.
 #
+# Three refusals come before anything is made (docs/WORKFLOW.md, "Worker cost — the rules in brief"),
+# each with its variable: a brief over 12000 bytes, its size printed on every launch
+# (MYAGENTKIT_BRIEF_MAX=N sets the cap); a --resume of a worker whose last context is over 100,000
+# tokens, which a fresh worker from the RESULT replaces (MYAGENTKIT_RESUME_FORCE=REASON passes it);
+# an account at 95% of its five-hour or 98% of its seven-day limit, where another account spawns and
+# nobody waits for the reset (MYAGENTKIT_LIMIT_FORCE=1 passes it).
+#
 # --resume SESSION_ID continues that worker's own conversation under the same NAME, with
 # BRIEF_FILE holding the answer or the next step: with --worktree in its existing
 # .claude/worktrees/NAME, locked again for the run. The session keeps `-n NAME`, so
@@ -85,12 +92,12 @@
 #
 # The lead then starts the printed `sh scripts/watch_workers.sh --result NAME=PATH NAME` as ONE
 # background command, on every platform: its exit is the done signal (the result file, GONE,
-# WAITING or LIMIT), and the lead starts it again after every report but DONE and GONE. It may also
+# WAITING or LIMIT), and the lead starts it again after every report but DONE and GONE. It is the
+# ONE done signal: the worker sends the lead no message (owner, 2026-11-09: each
+# result woke the lead twice, once by the message and once by the watch). The lead may also
 # subscribe with SendMessage `notify_when_idle` (a peer session; a tmux worker registers), but
 # never relies on it alone: the supervisor's close of a finished worker often sends no idle
-# notice (4 of 5 closes on 2026-10-20). The worker also messages the lead's own session once it
-# has published (SendMessage; the spawn prints "lead session: NAME"), best-effort as well: the
-# watch stays the guarantee. It reads the result FILE the brief asks the worker to
+# notice (4 of 5 closes on 2026-10-20). The watch reads the result FILE the brief asks the worker to
 # write. It does not poll and it does not chat with the worker: every message to an idle
 # session is a full-context turn. After reading the file
 # the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it ends by
@@ -417,6 +424,87 @@ if [ -n "$windows" ]; then
   [ "${#longest_path}" -le 259 ] ||
     die "refused the worker path: generated paths must fit in 259 characters on native Windows (MAX_PATH 260); use a shorter name or a shorter checkout path, or enable LongPathsEnabled for long-path tooling"
 fi
+# kit_script FILE: a kit script that a check below imports, the project's copy first, then the
+# kit's own checkout (core/scripts, four folders above this overlay script). None: it prints nothing.
+kit_script() {
+  for f in "$dir/scripts/$1" "$dir/core/scripts/$1" "$kit/$1" "$kit/../../../../core/scripts/$1"; do
+    [ -f "$f" ] && { native "$(CDPATH='' cd -P -- "${f%/*}" && pwd -P)"; return 0; }
+  done
+  return 1
+}
+# native PATH: the path as the Windows tools spell it on native Windows (cygpath -m), else as is.
+native() { if [ -n "$windows" ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+# The brief fits one session (owner, 2026-11-09): a brief that does not ends in
+# hand-offs. 12000 = 1.5 x 7,677 bytes, the largest brief that ran to Kind: completed (tokfield,
+# 2026-11-04) of the v0.16-reset and worker briefs measured with `wc -c` on 2026-11-09, rounded.
+brief_max=${MYAGENTKIT_BRIEF_MAX:-12000}
+case $brief_max in ''|*[!0-9]*) die "MYAGENTKIT_BRIEF_MAX must be a whole number of bytes" ;; esac
+brief_size=$(wc -c < "$brief_src" | tr -d ' ') || die "cannot measure the brief: $brief_src"
+printf '%s\n' "spawn_worker: brief: $brief_size bytes (cap $brief_max)"
+[ "$brief_size" -le "$brief_max" ] ||
+  die "refused the brief: $brief_size bytes, over the cap of $brief_max (MYAGENTKIT_BRIEF_MAX): a brief that does not fit one session ends in hand-offs; split it into briefs of one session each (docs/HANDOFF.md, \"The brief\")"
+# A resume rewrites the worker's whole context as a cache write (up to 371k per resume, pipeline
+# report 2026-11-09): above 100,000 tokens it is refused for a fresh worker that starts from the
+# RESULT (owner, 2026-11-09). The last known context is NAME.state's context_tokens=N (the
+# state hook), else the last request of the session's transcript, read by agent_cost.py.
+# MYAGENTKIT_RESUME_FORCE=REASON passes; an unknown context passes, said.
+if [ -n "$resume" ]; then
+  told_result=${result:-RESULT-$name.md}
+  [ ! -r "$wdir/$name.result-path" ] || told_result=$(cat -- "$wdir/$name.result-path") || told_result=${result:-RESULT-$name.md}
+  cost_dir=$(kit_script agent_cost.py) || cost_dir=""
+  ctx=$($kit_python -I -c 'import glob, os, re, sys
+from pathlib import Path
+state, sid, config = sys.argv[1:4]
+try:
+    with open(state, encoding="utf-8", errors="replace") as f:
+        found = re.findall(r"context_tokens=(\d+)", f.read())
+except OSError:
+    found = []
+if found:
+    print(found[-1], "the state line")
+    sys.exit(0)
+pattern = glob.escape(sid) + (".jsonl" if "-" in sid else "-*.jsonl")
+files = sorted(glob.glob(os.path.join(glob.escape(config), "projects", "*", pattern)), key=os.path.getmtime)
+if files and len(sys.argv) > 4:
+    sys.path.insert(0, sys.argv[4])
+    from agent_cost import requests
+    rows = requests(Path(files[-1]))
+    if rows:
+        print(rows[-1]["inp"] + rows[-1]["cr"] + rows[-1]["cw"], "the transcript")' \
+    "$(native "$wdir/$name.state")" "$resume" "$(native "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")" \
+    ${cost_dir:+"$cost_dir"} 2>/dev/null) || ctx=""
+  case ${ctx%% *} in
+    ''|*[!0-9]*) printf '%s\n' "spawn_worker: resume: context unknown (no context_tokens in $name.state, no transcript of $resume): it passes" ;;
+    *) if [ "${ctx%% *}" -le 100000 ]; then
+         printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), within 100000"
+       elif [ -n "${MYAGENTKIT_RESUME_FORCE:-}" ]; then
+         printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), over 100000, forced: $MYAGENTKIT_RESUME_FORCE" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
+       else
+         die "refused the resume: context ${ctx%% *} tokens (${ctx#* }), over 100000, and a resume rewrites all of it; start a fresh worker from the RESULT ($told_result), or set MYAGENTKIT_RESUME_FORCE=REASON"
+       fi ;;
+  esac
+fi
+# A limit is per account, and nobody waits for a reset (owner, 2026-11-09: a lead
+# waited ~3.5 h on one account's five-hour limit while four others were free). The account's
+# rate-limits.json, as quota_snapshot.py reads it: five_hour at 95% or over, or seven_day at 98% or
+# over, refuses the spawn. No file or no key (it exists only while a window runs): it passes,
+# silent. MYAGENTKIT_LIMIT_FORCE=1 passes.
+if [ "${MYAGENTKIT_LIMIT_FORCE:-}" != 1 ] && quota_dir=$(kit_script quota_snapshot.py); then
+  limit=$($kit_python -I -c 'import sys, time
+sys.path.insert(0, sys.argv[1])
+from quota_snapshot import snapshot
+s = snapshot("spawn", "check")
+for key, cap, window in (("five_hour", 95, "five-hour"), ("seven_day", 98, "seven-day")):
+    w = s.get(key)
+    used = w.get("used_percentage") if isinstance(w, dict) else None
+    if type(used) not in (int, float) or used < cap:
+        continue
+    reset = w.get("resets_at")
+    when = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(reset)) if type(reset) in (int, float) else "unknown"
+    print("%s: %s window at %g%% (refused at %d%%), resets %s" % (s.get("org_name") or "this account", window, used, cap, when))
+    break' "$quota_dir" 2>/dev/null) || limit=""
+  [ -z "$limit" ] || die "refused the spawn: the account $limit; another account may spawn now; no waiting (MYAGENTKIT_LIMIT_FORCE=1 passes)"
+fi
 # The spend line, as review.sh prints its own before a review: the owner sees what each worker
 # costs before it runs (issue #68; docs/WORKFLOW.md, "Model routing").
 printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort${fable:+, owner-approved Fable: $fable}" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
@@ -553,10 +641,9 @@ if [ -n "$windows" ]; then
 fi
 # The run starts once its worktree exists (#168): a committed result that the checkout wrote is
 # older than the start, so the supervisor takes it for an earlier run's and never as this run's DONE.
-# The supervisor ends a finished worker 60 s after its result, not codex_worker.py's 10: the
-# worker messages the lead after publishing (below), and on a loaded host that message was
-# delivered 21 and 27 s after the publish (donemsg spikes, 2026-10-22); a session ended sooner
-# drops it. 60 is a bound with twice that margin, not a measurement; an idle session costs nothing.
+# The supervisor ends a finished worker 60 s after its result, not codex_worker.py's 10: a bound
+# set for the worker's message to the lead (delivered 21 and 27 s after the publish on a loaded
+# host, donemsg spikes 2026-10-22), which v0.16 removed; kept, since an idle session costs nothing.
 supervisor() {
   start=$($kit_python -I -c 'import time; print(time.time())')
   supervise="KIT_WORKER_GRACE=$(q "${KIT_WORKER_GRACE:-60}") KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
@@ -585,7 +672,6 @@ record_result() {
 # with the checkout; absent settings must travel in --settings, with the owner's overrides
 # and hooks kept. Hook commands retain $CLAUDE_PROJECT_DIR and run in the worker.
 # Both worktree sessions and Windows tabs get state telemetry (owner decision 23, 2026-10-16).
-native() { if [ -n "$windows" ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 own=$settings
 if [ -n "$windows$worktree$bg$lean" ]; then
   settings=$(native "$wdir/$name.settings.json") || die "cannot convert the path: $wdir"
@@ -773,28 +859,6 @@ place_brief() {
     die "cannot copy the brief into the worker's folder: $copy"
 }
 instruction="Read $(q "$told") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 60 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way and with the same last line, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
-# The worker tells the lead itself once it has published (donemsg: 5 of 5 finished workers told
-# the lead nothing, 2026-10-21/22). Best-effort, as every cross-session message is
-# (docs/research/worker-orchestration.md [13]): the watch the spawn prints stays the done signal.
-# The lead's shell names its session by CLAUDE_PID and CLAUDE_CODE_SESSION_ID, read here before
-# the launch clears them; Claude Code's peer record sessions/PID.json gives the name SendMessage
-# takes, `-n NAME` or one derived from the folder (myagentkit-keel-d9). A record of another
-# session (a reused pid) or a name with other characters names no lead.
-peer_lead=""
-if [ -n "${CLAUDE_PID:-}" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-  peer_lead=$($kit_python -I -c 'import json, re, sys
-d = json.load(open(sys.argv[1], encoding="utf-8"))
-n = d.get("name")
-if d.get("sessionId") == sys.argv[2] and type(n) is str and re.fullmatch(r"[A-Za-z0-9._-]+", n):
-    print(n)' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions/$CLAUDE_PID.json" "$CLAUDE_CODE_SESSION_ID" 2>/dev/null) || peer_lead=""
-fi
-if [ -n "$peer_lead" ]; then
-  instruction="$instruction Once a publish of a result or a question has succeeded (never in the same response as the publish), tell the lead session $(q "$peer_lead") with SendMessage (load it with ToolSearch before that publish, as the session may end 60 seconds after it): one message naming the published file's path, its Kind and one line on it; none after a Kind: progress result, and if SendMessage is unavailable or fails, go on without it: the published file is the signal."
-  printf '%s\n' "spawn_worker: lead session: $peer_lead (the worker messages it once it has published; best-effort: the watch below is the done signal)"
-else
-  instruction="$instruction No lead session was found to message, so send no message: the published file is the signal."
-  printf '%s\n' "spawn_worker: lead session: none found (CLAUDE_PID and CLAUDE_CODE_SESSION_ID name no Claude Code session record): the watch below is the only done signal"
-fi
 [ -z "$resume" ] || instruction="$instruction This resumes your session: that file is the lead's new instruction, a new task or an answer to go on with the current one. Your earlier result is closed even if it said the work was done (an uncommitted one was moved out of your folder): publish a new result once the work is done."
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
@@ -887,7 +951,7 @@ watch_line() {
   ctop=${wdir%/.myagentkit/workers}
   [ -z "$windows" ] || ctop=$(cygpath -m "$ctop") || ctop=${wdir%/.myagentkit/workers}
   wsh=$(q "${cworker%/*}/watch_workers.sh") rq=$(q "$cresult") rp=$(q "$ctop/.myagentkit/workers/$name.result-path")
-  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the done signal (start it again after every report but DONE and GONE): cd $(q "$ctop") && sh $wsh --result $name=$rq $name"
+  printf '%s\n' "spawn_worker: watch it now, as ONE background command whose exit is the only done signal (the worker sends no message; start it again after every report but DONE and GONE): cd $(q "$ctop") && sh $wsh --result $name=$rq $name"
   printf '%s\n' "spawn_worker: the plainest done signal, from any folder (any Kind; only Kind: completed is done; a LIMIT line instead: its usage limit stopped it): n=0; until [ $rq -nt $rp ] && grep -qF '<!-- codex-worker: ready -->' $rq || (CDPATH= cd $(q "$ctop") && sh $wsh --limit $name) || [ \$((n+=1)) -gt 2880 ]; do sleep 30; done; [ \$n -le 2880 ] || printf '%s\\n' 'spawn_worker: GAVE UP: no result from $name in 24 h; if it still runs (scripts/watch_workers.sh $name), start this watch again'; [ ! $rq -nt $rp ] || head -n 4 $rq"
 }
 # The bg host: a Claude Code background session, on every platform. It starts in the worker's
@@ -910,10 +974,10 @@ for row in json.loads(sys.stdin.buffer.read()):
         live = "blocked" if state == "blocked" else "live" if row.get("pid") else "starting" if state == "working" else "-"
         print(live, row.get("sessionId") or "-")' "$1"
 }
-# A published result or question ends its session KIT_WORKER_GRACE (60) s later, and the worker's
-# message brings the lead's --resume inside that grace (donemsgfix): a resume waits for that end
-# instead of refusing it. Waiting, not stopping it as close_worker.sh does: the grace exists so the
-# worker's message and any commit finish. Only a file published in THIS run counts: newer than
+# A published result or question ends its session KIT_WORKER_GRACE (60) s later, and a lead that
+# answers at once, on the watch's report, resumes inside that grace (donemsgfix): a resume waits for
+# that end instead of refusing it. Waiting, not stopping it as close_worker.sh does: the grace exists
+# so any commit finishes. Only a file published in THIS run counts: newer than
 # NAME.result-path (a resumed worker's earlier result keeps its marker); no record, no grace
 # (`-nt` against a missing file is true in bash, false in dash). The wait mirrors the supervisor:
 # the grace and 15 s for its stop (close_worker.sh's wait), then on while a commit or gate holds
