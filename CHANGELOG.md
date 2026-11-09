@@ -20,6 +20,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   report on any MISSING or NOTE line; `.claude/rules/state.md` loads only for `docs/STATE.md` and `docs/PROJECT.md`; each
   agent's description is one line. **ACTION:** merge the kit's `AGENTS.md`, `docs/AGENTS.md`, `docs/COMMUNICATION.md`,
   `docs/WORKFLOW.md`, `.claude/rules/state.md`, `.claude/agents/diff-reviewer.md` and `.claude/agents/worker.md` into yours.
+- **The stop rules and the reviewer's load (PLAN item 8).** A `[state]` red the committed `docs/STATE.md` already had
+  is a NOTE ("already so at HEAD"), only a red the working tree adds fails; past a worker's yellow line `band_guard.py`
+  lets the gate (`scripts/check.sh`, any flags) run; `diff-reviewer.md` carries the verdicts, severity words, Lows cap
+  and round-2 rule itself, hands back the verdict and about 2,000 characters (longer reasoning in
+  `.myagentkit/reviews/`), and runs in the foreground. test_gate_checks, test_band_guard and test_doc_pointers red
+  without it. **ACTION** (project-owned `.claude/agents/diff-reviewer.md`, `.claude/agents/worker.md`,
+  `.claude/hooks/band_guard.py`, `docs/REVIEW_GATE.md`, `scripts/check.sh`): `sync-kit.sh . --merge`.
 - **The side check runs once before a moment, never on a timer** (owner, 2026-11-09): before AskUserQuestion, Agent/Task or
   a `spawn_worker.sh`/`spawn_codex.sh` command. A kept note answers the held call, and the agent makes it again. The periodic,
   end-of-turn and repeat-count triggers are gone; both model calls share one cached prefix; `report` says "every second moment".
@@ -28,7 +35,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Account switches are counted and priced.** `token_audit.py` adds `org`, `switches`, `switch_tokens` and `switch_usd` per
   session and an "Account switches" line to its summary; the band hook (`context_size.py`) names a `/login` switch once and,
   over 150k, the hand-off.
-- **STATE.md holds open work only;** a closed item is deleted.
+- **STATE.md holds open work only;** a closed item is deleted. **ACTION** (project-owned `docs/STATE.md`): delete each
+  closed item; `sync-kit.sh . --merge` brings the new header text.
 - **`spawn_worker.sh --resume` is refused above 150,000 tokens of context** (owner, 2026-11-09; was 100,000): start a fresh
   worker from the RESULT; `MYAGENTKIT_RESUME_FORCE=REASON` still passes.
 - **`spawn_worker.sh` refuses the fourth running Claude Code session in this project**, its main checkout and
@@ -48,7 +56,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   look or trial branch takes no review until the owner accepts a capture, then one review of the whole diff; a kit sync
   takes one review on the session's tier (the medium row's when it changes `risky_paths`). `docs/PHASES.md` names no
   review rule. The reviewer's tier never drops. **ACTION** (project-owned `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`,
-  `docs/WORKFLOW.md`, `AGENTS.md`, `docs/PHASES.md`): `sync-kit.sh . --merge`; delete a phase line that names a reviewer.
+  `docs/WORKFLOW.md`, `AGENTS.md`, `docs/PHASES.md`, `.claude/agents/worker.md`): `sync-kit.sh . --merge`; delete a phase line that names a reviewer.
 - **The context band is enforced (owner 2026-11-09, PLAN.md item 2).** The new `band_guard.py` hook (PreToolUse,
   every tool) denies every call past a worker's 150k or a lead's 200k but the closing set: git add, commit, status,
   diff and log, read-only commands, the result publish, the hand-off steps (`master_writer.py release`,

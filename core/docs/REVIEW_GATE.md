@@ -26,7 +26,8 @@ decision 65). A lower tier's review
 of a higher tier's work is an extra opinion only, never the required review alone. One exception
 (owner, lean-kit decision Y4, 2026-10-25): a small risky diff (one task, under about 400 changed
 lines, not a release) takes the `diff-reviewer` agent on the session's tier, in its own fresh
-context, as its required review, unless it touches a hook, a gate, a CI configuration, a check
+context and in the foreground (no `run_in_background`: the review is the next step's condition,
+and a background launch costs an extra empty wait request), as its required review, unless it touches a hook, a gate, a CI configuration, a check
 script, review tooling or tool settings: that diff takes one `scripts/review.sh` round, a fresh session whose evidence lands in
 `docs/reviews/`: one reviewer without `REVIEW_FOCUS`, one combined focus (owner, 2026-10-25). The
 answering model is recorded beside the requested one (`model_answered` in the usage record, the
@@ -102,6 +103,9 @@ Every required review is a gate: the change does not pass without its result
   dispatcher (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
   `scripts/review_dispatch.py`) and a reviewer's agent definition (the Claude Code overlay's
   `diff-reviewer.md`). The review protocol documents are documentation, the low row.
+  `diff-reviewer.md` carries an excerpt of "Verdicts and who decides" and "Rounds" (the verdicts,
+  the severity words, the Lows cap, round 2) so that a reviewer need not read this file whole: a
+  change to those sections changes that excerpt in the same commit.
 - **Critical work** is architecture, a gate's or the review tooling's design, and a security
   boundary. It is a mark beside the tier, not a tier: the brief writes `Risk: <tier>
   (critical)`, `REVIEW_RISK` stays the tier, and the mark changes only who writes and who

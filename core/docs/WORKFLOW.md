@@ -1307,7 +1307,8 @@ Rules, binding for whoever routes workers:
    the lead then
    recommends one of two, with the number and the reason. Past a worker's 150k or a lead's 200k
    the overlay's `band_guard.py` denies every tool call but commit and hand-off (autopilot too):
-   the hand-off steps, the autopilot report, the diff-reviewer and `scripts/review.sh` still run;
+   the hand-off steps, the autopilot report, the gate (`scripts/check.sh`: a green gate is the
+   commit's condition), the diff-reviewer and `scripts/review.sh` still run;
    `MYAGENTKIT_BAND=yellow,red,ceiling` in thousands (e.g. `80,100,150`) moves the lines. The overlay's `autoCompactWindow`
    of 450k is only a safety valve for a session nobody stops, never the cut; after any
    compaction its `after_compact.txt` hook names what to re-read. **Compact** when
@@ -1704,7 +1705,8 @@ Why: docs/WORKFLOW_RATIONALE.md, "Design before code".
   a session or as a sub-agent (Claude Code nests sub-agents three layers deep by default,
   code.claude.com/docs/en/sub-agents, "Let subagents spawn their own subagents"). It starts
   a fresh diff reviewer as a sub-agent (the Claude Code overlay's
-  `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
+  `diff-reviewer`; the Agent call runs in the foreground, no `run_in_background`: the review is
+  the next step's condition, and a background launch costs an extra empty wait request), fixes what the review finds, and starts a new fresh reviewer on the
   result only when round 1 left a Critical or High fix to verify (the cap below). This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
   to the author's side ("Worker cost", rule 2).

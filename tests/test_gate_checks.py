@@ -138,6 +138,43 @@ class GateCheckTests(unittest.TestCase):
         self.set_gate_line('STATE_MAX_LINES=300', 'STATE_MAX_LINES=400')
         self.assertIn('NOTE [state]: "Active work" lines that look finished', self.assert_green())
 
+    def test_a_state_red_already_at_head_is_a_note_and_only_a_new_red_fails(self):
+        # ctl16 ANATOMY section 4: a red the committed STATE.md already had cost four runs and one commit.
+        state = self.project / 'docs/STATE.md'
+        head = '(already so at HEAD: not from this change; fix it in its own commit)'
+        finished = ''.join('- w%d: MERGED\n' % i for i in range(3))
+        notes = '\n## Notes\n' + ''.join('line %d\n' % i for i in range(391))
+        red = '# STATE\n\n## Active work\n\n' + finished + notes
+        write(state, red)
+        out = self.assert_red('FAIL [state]: docs/STATE.md has 400 lines, over STATE_MAX_LINES (300')  # untracked
+        self.assertNotIn(head, out)
+
+        def commit():
+            subprocess.run(GIT + ['add', '-A'], cwd=self.project, check=True)
+            subprocess.run(GIT + ['commit', '-qm', 'state'], cwd=self.project, check=True)
+        commit()
+        out = self.assert_green()
+        self.assertIn('NOTE [state]: docs/STATE.md has 400 lines, over STATE_MAX_LINES (300, scripts/gate_config.sh) '
+                      + head, out)
+        self.assertIn('NOTE [state]: "Active work" lines that look finished; delete them (the history is in git) '
+                      + head + ':', out)
+        self.assertNotIn('FAIL [state]', out)
+        # A committed 200-line file the working tree grows to 400: the red is new.
+        write(state, '# STATE\n\n## Active work\n\n' + finished + '\n## Notes\n'
+              + ''.join('line %d\n' % i for i in range(191)))
+        commit()
+        self.assert_green()
+        write(state, red)
+        out = self.assert_red('FAIL [state]: docs/STATE.md has 400 lines, over STATE_MAX_LINES (300')
+        self.assertNotIn(head, out)
+        # The finished lines likewise: over the limit at HEAD with none, newly added ones fail.
+        write(state, '# STATE\n\n## Active work\n\n- live: in flight\n' + notes)
+        commit()
+        self.assertIn('NOTE [state]: docs/STATE.md has 398 lines', self.assert_green())
+        write(state, red)
+        out = self.assert_red('FAIL [state]: "Active work" lines that look finished; delete them (the history is in git):')
+        self.assertNotIn(head, out)
+
     def test_the_project_file_contents_must_list_every_numbered_section(self):
         project = self.project / 'docs/PROJECT.md'
         listed = '# PROJECT\n\n## Contents\n\n- 1. What this is\n- 2. Money\n\n## 1. What this is\na\n\n## 2. Money\nb\n'

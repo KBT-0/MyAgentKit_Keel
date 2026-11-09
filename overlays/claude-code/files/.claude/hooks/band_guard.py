@@ -16,8 +16,10 @@ and telling the lead close nothing); the diff-reviewer sub-agent (the review a c
 Bash or PowerShell command whose every part is git add, commit, status, diff or log, a read-only
 command (guard_destructive_git.py's INERT list, with no file redirection), mktemp, or one of the
 closing scripts in SCRIPTS (the publish, the marker release, the worker listing, the autopilot
-report, the switch back to present, review.sh); and Write, Edit or NotebookEdit of the result
-file (RESULT-* or QUESTION-*, or the path spawn_worker.sh recorded in .myagentkit/workers/
+report, the switch back to present, review.sh) or the project's gate, scripts/check.sh with any
+flags (a green gate is the condition of the commit the band already allows: two measured runs were
+denied it at yellow and never committed their green work, ctl16 ANATOMY section 5); and Write,
+Edit or NotebookEdit of the result file (RESULT-* or QUESTION-*, or the path spawn_worker.sh recorded in .myagentkit/workers/
 NAME.result-path, a temporary file beside it included), the hand-off (.myagentkit/handoff-pending,
 .myagentkit/**/handoff-*.md, docs/HANDOFF.md), docs/STATE.md, PLAN.md, docs/worktree-notes/*.md,
 .myagentkit/autopilot/*.md and a file under the temporary directory (a commit message for
@@ -48,6 +50,8 @@ CLOSING_GIT = {'add', 'commit', 'status', 'diff', 'log'}
 SCRIPTS = {'codex_worker.py': '--publish', 'master_writer.py': 'release', 'list_workers.sh': '',
            'watch_workers.sh': '--once', 'autopilot_report.py': '', 'working_mode.py': 'present',
            'review.sh': ''}
+# The project's gate, by its folder and name (scripts/check.sh), any flags; a test command is work.
+GATE = ('scripts', 'check.sh')
 # A redirection that writes a file; `2>&1` and `>/dev/null` write none.
 WRITES_FILE = re.compile(r'>(?!&\d|\s*/dev/null)')
 
@@ -95,13 +99,16 @@ def closing_file(path: str) -> bool:
 
 
 def closing_script(words: list) -> bool:
-    """`[python3 | py -3 | sh] PATH/SCRIPT ARG ...` where SCRIPT's first argument is the one SCRIPTS names."""
+    """`[python3 | py -3 | sh] PATH/SCRIPT ARG ...` where SCRIPT's first argument is the one SCRIPTS names,
+    or `[sh | bash] [PATH/]scripts/check.sh ARG ...`, the gate."""
     import guard_destructive_git as g
     name = g.base(words[0])
     if name == 'py' and len(words) > 1 and words[1].startswith('-'):
         words = words[2:]  # the Windows launcher's version flag, spawn_worker.sh's kit_python
     elif g.interpreter(name) or name in ('py', 'sh', 'bash'):
         words = words[1:]
+    if words and PurePosixPath(words[0].replace('\\', '/')).parts[-2:] == GATE:
+        return True
     if not words or g.base(words[0]) not in SCRIPTS:
         return False
     want = SCRIPTS[g.base(words[0])]
@@ -182,7 +189,8 @@ def main() -> None:
               'Only commit and hand-off run now: git add, commit, status, diff and log; writing the result '
               'file (RESULT-*, QUESTION-*), the hand-off (.myagentkit/handoff-pending, .myagentkit/**/handoff-*.md, '
               'docs/HANDOFF.md), docs/STATE.md, PLAN.md, docs/worktree-notes/*.md, .myagentkit/autopilot/*.md; '
-              'the diff-reviewer and scripts/review.sh; master_writer.py release, list_workers.sh, '
+              'the gate (scripts/check.sh), the diff-reviewer and scripts/review.sh; master_writer.py release, '
+              'list_workers.sh, '
               'autopilot_report.py, working_mode.py present; Read, Grep, Glob. '
               + ('Commit green work and publish a Kind: handoff result' if worker else
                  'Commit, update docs/STATE.md, write the hand-off and its marker, then stop for /clear')

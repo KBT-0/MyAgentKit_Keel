@@ -598,6 +598,12 @@ fi
 # session (#338; owner, 2026-11-03). Over the limit with nothing finished, or finished lines
 # under it, is a NOTE.
 #
+# A FAIL the committed file already had (HEAD:docs/STATE.md, checked by the same awk)
+# is a NOTE: it is not from this change, and chasing it cost four measured runs $0.12-0.46 and
+# stopped one commit (ctl16 ANATOMY, section 4). Only a red the working tree introduced fails. No
+# repository, no commit, or no STATE.md at HEAD: there is no earlier file, and the check is as
+# before.
+#
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole check could be disabled by deleting one file or editing one line.
 if [ ! -f docs/STATE.md ]; then
@@ -609,21 +615,32 @@ elif ! grep -q "^## Active work" docs/STATE.md; then
   echo "              rather than removing the check."
   fail=1
 else
-  awk -v max="$STATE_MAX_LINES" '
-    /^## / { active = ($0 ~ /^## Active work/) }
+  # One awk text, run on the committed file (quiet, its exit status only) and on the working one.
+  # It exits 1 for a FAIL; with head_red=1 a red the committed file already had prints as a NOTE.
+  state_awk='    /^## / { active = ($0 ~ /^## Active work/) }
     # "NOT DONE", "until #12 is MERGED" are live work (r338): a word before the marker leaves the line out.
     active && /(^|[^A-Za-z])(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)([^A-Za-z]|$)/ &&
       !/([Nn][Oo][Tt]|until|once|after|when|before|is|be) +(MERGED|COMMITTED|DONE|SHIPPED|CLOSED|FINISHED)/ { done[++n] = FNR ": " $0 }
     END {
       over = (max ~ /^[0-9]+$/ && max > 0 && NR > max)
-      tag = (over && n) ? "FAIL" : "NOTE"
+      red = (over && n)
+      tag = (red && !head_red) ? "FAIL" : "NOTE"
+      also = (red && head_red) ? " (already so at HEAD: not from this change; fix it in its own commit)" : ""
       if (over)
-        printf "%s [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh);\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", tag, NR, max
-      if (n) print tag " [state]: \"Active work\" lines that look finished; delete them (the history is in git):"
+        printf "%s [state]: docs/STATE.md has %d lines, over STATE_MAX_LINES (%d, scripts/gate_config.sh)%s;\n              finished work is deleted, the backlog lives in docs/BACKLOG.md (docs/AGENTS.md).\n", tag, NR, max, also
+      if (n) print tag " [state]: \"Active work\" lines that look finished; delete them (the history is in git)" also ":"
       for (i = 1; i <= n && i <= 10; i++) print "              docs/STATE.md:" substr(done[i], 1, 100)
       if (n > 10) print "              and " n - 10 " more"
       exit (tag == "FAIL")
-    }' docs/STATE.md || fail=1
+    }'
+  # cat-file, not show: the blob as committed, never a textconv view of it. Exit 1 only is a red;
+  # an awk error on the old file leaves the check as it was.
+  head_red=0
+  if git cat-file blob HEAD:./docs/STATE.md > "$work/state_head" 2>/dev/null; then
+    awk -v max="$STATE_MAX_LINES" -v head_red=0 "$state_awk" "$work/state_head" >/dev/null 2>&1 || head_red=$?
+    [ "$head_red" = 1 ] || head_red=0
+  fi
+  awk -v max="$STATE_MAX_LINES" -v head_red="$head_red" "$state_awk" docs/STATE.md || fail=1
 fi
 
 # Finished work. The commit that finishes a task says so with a "Done: <id>" trailer
