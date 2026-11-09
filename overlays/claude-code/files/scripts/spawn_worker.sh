@@ -323,6 +323,17 @@ if [ "${MYAGENTKIT_NO_BEHAVIOUR:-}" != 1 ]; then
     if [ -f "$f" ]; then behaviour=$f; break; fi
   done
 fi
+# The lean start (v0.16): no plugin, skill, auto-memory or CLAUDE.md tree; AGENTS.worker.md, the
+# hard rules, rides with the appendix instead (docs/WORKFLOW.md, "Worker cost"). `--bare` is no
+# way there: it skips the settings' hooks (the kit's guards) and OAuth. MYAGENTKIT_WORKER_FULL=1
+# keeps the full start (the A/B's other side).
+lean=""; worker_rules=""
+if [ "${MYAGENTKIT_WORKER_FULL:-}" != 1 ]; then
+  lean=1
+  for f in "$dir/AGENTS.worker.md" "$dir/core/AGENTS.worker.md"; do
+    if [ -f "$f" ]; then worker_rules=$f; break; fi
+  done
+fi
 # The existing Python selector is also used by the backend reader on either platform.
 if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
@@ -576,7 +587,7 @@ record_result() {
 # Both worktree sessions and Windows tabs get state telemetry (owner decision 23, 2026-10-16).
 native() { if [ -n "$windows" ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 own=$settings
-if [ -n "$windows$worktree$bg" ]; then
+if [ -n "$windows$worktree$bg$lean" ]; then
   settings=$(native "$wdir/$name.settings.json") || die "cannot convert the path: $wdir"
 fi
 prepare_settings() {
@@ -646,7 +657,28 @@ if s:
         d.setdefault("env", {}).update(MYAGENTKIT_ROLE="worker", CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="5m",
                                        MYAGENTKIT_SESSION_ID="worker-" + sys.argv[4])
         d["attribution"] = {"commit": "", "pr": ""}
-    print(json.dumps(d, indent=2))' "$hook" "$project" "$bg" "$name" >"$wdir/$name.settings.json" ||
+    if sys.argv[5]:
+        # The lean start: every plugin a settings file enables or the CLI installed is off (a
+        # flag setting outranks the user, project and local ones), no auto-memory, and no
+        # CLAUDE.md of the folder or above it, nor the user one; one in a subtree stays.
+        import os, pathlib
+        config = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+        top = pathlib.Path(sys.argv[6])
+        names = set(d.get("enabledPlugins") or {})
+        for f in (config / "settings.json", top / ".claude/settings.json", top / ".claude/settings.local.json",
+                  config / "plugins/installed_plugins.json"):
+            try:
+                found = json.load(open(f, encoding="utf-8-sig"))
+                names.update(found.get("enabledPlugins") or found.get("plugins") or {})
+            except (OSError, ValueError, AttributeError, TypeError):
+                pass  # an absent or unreadable file enables nothing to turn off
+        d["enabledPlugins"] = dict.fromkeys(sorted(names), False)
+        d["autoMemoryEnabled"] = False
+        # shortcut: exact paths, matched as Claude Code spells them; on native Windows unmeasured.
+        d["claudeMdExcludes"] = [(a / n).as_posix() for a in (top, *top.parents)
+                                 for n in ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")] + [
+                                 (config / "CLAUDE.md").as_posix()]
+    print(json.dumps(d, indent=2))' "$hook" "$project" "$bg" "$name" "$lean" "$(native "$dir")" >"$wdir/$name.settings.json" ||
     die "cannot merge the project and worker hooks into --settings (not a JSON object?): $own"
 }
 reset_state() {
@@ -674,6 +706,13 @@ cmd="claude -n $(q "$name")${resume:+ --resume $(q "$resume")}"
 [ -n "$model" ]    && cmd="$cmd --model $(q "$model")"
 [ -n "$effort" ]   && cmd="$cmd --effort $(q "$effort")"
 [ -n "$settings" ] && cmd="$cmd --settings $(q "$settings")"
+# The lean start's one appendix: the hard rules, then the behaviour appendix (one file flag).
+if [ -n "$worker_rules" ]; then
+  mkdir -p -- "$wdir" && cat -- "$worker_rules" ${behaviour:+"$behaviour"} > "$wdir/$name.appendix.md" ||
+    die "cannot write the worker's appendix in $wdir"
+  behaviour=$wdir/$name.appendix.md
+fi
+[ -z "$lean" ] || cmd="$cmd --disable-slash-commands"
 if [ -n "$behaviour" ]; then
   [ -z "$windows" ] || behaviour=$(cygpath -m "$behaviour") || die "cygpath cannot convert the behaviour appendix's path"
   cmd="$cmd --append-system-prompt-file $(q "$behaviour")"
@@ -682,6 +721,9 @@ printf '%s' "spawn_worker: behaviour appendix: ${behaviour:-off}" | LC_ALL=C tr 
 printf '\n'
 # Said, since a CLI whose help does not list --bg (or does not answer) falls back without a word.
 printf '%s\n' "spawn_worker: host: $host"
+launch="full (MYAGENTKIT_WORKER_FULL=1)"
+[ -z "$lean" ] || launch="lean (no plugins, skills, auto-memory or root CLAUDE.md; MYAGENTKIT_WORKER_FULL=1 for the full start)"
+printf '%s\n' "spawn_worker: start: $launch"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
 # No question dialog in a pane nobody may watch: QUESTION-NAME.md is the question channel (the
 # instruction says so; this enforces it). Permission prompts are not tools and
@@ -1105,7 +1147,7 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-[ -z "$worktree" ] || prepare_settings
+[ -z "$worktree$lean" ] || prepare_settings
 prepare_worktree
 place_brief
 supervisor
