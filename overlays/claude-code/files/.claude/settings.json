@@ -201,6 +201,11 @@
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/suggestions.py\" stop",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/scripts/quota_snapshot.py\" - end",
+            "timeout": 10
           }
         ]
       }
@@ -258,6 +263,11 @@
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/handoff_pending.py\"",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/scripts/quota_snapshot.py\" - start",
+            "timeout": 10
           }
         ]
       }

@@ -586,6 +586,12 @@ for name; do
   # end: a session this close ended, the lead's own close, or a Kind: completed result. Under
   # --finished a worker neither scan can see (another user's, an elevated one) was found by
   # nothing and ended by nothing (#194).
+  # The subscription's percent at the end, beside spawn_worker.sh's start (agent_cost.py --quota).
+  if [ -z "$dry" ] && [ -n "$top" ]; then
+    for f in "$top/scripts/quota_snapshot.py" "$top/core/scripts/quota_snapshot.py"; do
+      [ -f "$f" ] && { $kit_python -I "$f" "$name" end --dir "$top/.myagentkit/usage" </dev/null || true; break; }
+    done
+  fi
   noquiet=--no-quiet; [ -z "$finished" ] || completed "$wt_dir" "$name" || noquiet=""
   record=$top/.myagentkit/workers/$name
   if [ -e "$record.report-move" ] || [ -L "$record.report-move" ]; then

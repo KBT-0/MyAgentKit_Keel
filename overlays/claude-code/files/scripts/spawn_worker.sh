@@ -409,6 +409,11 @@ fi
 # The spend line, as review.sh prints its own before a review: the owner sees what each worker
 # costs before it runs (issue #68; docs/WORKFLOW.md, "Model routing").
 printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort${fable:+, owner-approved Fable: $fable}" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
+# The subscription's percent before the worker runs; close_worker.sh writes the end, and
+# agent_cost.py --quota compares them. It never fails the spawn.
+for f in "$dir/scripts/quota_snapshot.py" "$dir/core/scripts/quota_snapshot.py"; do
+  [ -f "$f" ] && { $kit_python -I "$f" "$name" start --dir "${wdir%/workers}/usage" </dev/null || true; break; }
+done
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   project_settings=$top/.claude/settings.json

@@ -2,7 +2,7 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Append one subscription-quota snapshot: what a task cost in percent of the plan's windows.
 
-Usage: quota_snapshot.py LABEL PHASE [--dir .myagentkit/usage]
+Usage: quota_snapshot.py LABEL PHASE [--dir DIR]   DIR: $CLAUDE_PROJECT_DIR/.myagentkit/usage, else ./.myagentkit/usage
        LABEL  a worker NAME, or `-` for a hook: the session_id of the JSON on stdin, else "lead"
        PHASE  start or end
 
@@ -42,7 +42,8 @@ def snapshot(label: str, phase: str) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    folder = Path('.myagentkit/usage')
+    # A hook runs in the folder a `cd` left; CLAUDE_PROJECT_DIR stays at the session's root.
+    folder = Path(os.environ.get('CLAUDE_PROJECT_DIR') or '.') / '.myagentkit' / 'usage'
     if len(argv) == 4 and argv[2] == '--dir':
         folder, argv = Path(argv[3]), argv[:2]
     if len(argv) != 2 or argv[1] not in ('start', 'end'):
