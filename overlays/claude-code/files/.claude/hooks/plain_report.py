@@ -53,12 +53,16 @@ from pathlib import Path
 def task_patterns() -> tuple[str, str]:
     """Read the canonical grammar from the installed or source commit hook."""
     for parent in Path(__file__).resolve().parents:
-        for relative in ('.githooks/commit-msg', 'core/.githooks/commit-msg'):
+        # The kit's source first: the kit root's .githooks/commit-msg is a wrapper that runs the
+        # installed copy's (scripts/kit_hook.sh) and holds no grammar.
+        for relative in ('core/.githooks/commit-msg', '.githooks/commit-msg'):
             source = parent / relative
             if source.is_file():
                 body = source.read_text(encoding='utf-8')
-                return tuple(re.search(r"^" + name + r"='([^']+)'$", body, re.M)[1]
-                             for name in ('TASK_ID_PATTERN', 'TASK_ID_DIGIT_PATTERN'))
+                found = [re.search(r"^" + name + r"='([^']+)'$", body, re.M)
+                         for name in ('TASK_ID_PATTERN', 'TASK_ID_DIGIT_PATTERN')]
+                if all(found):  # a file without the grammar is no commit hook of the kit's: look further up
+                    return tuple(m[1] for m in found)
     raise FileNotFoundError('canonical commit-msg task grammar is missing')
 
 

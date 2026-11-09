@@ -3,6 +3,7 @@
 *.sh text eol=lf
 *.py text eol=lf
 core/.githooks/* text eol=lf
+.githooks/* text eol=lf
 overlays/*/files/.githooks/* text eol=lf
 overlays/*/files/scripts/* text eol=lf
 bootstrap.sh text eol=lf

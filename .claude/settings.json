@@ -15,18 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_destructive_git.py\"",
-            "timeout": 30,
-            "onFailure": "block"
-          }
-        ]
-      },
-      {
-        "matcher": "WebFetch|WebSearch|Bash|PowerShell|Monitor",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_private_email.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" guard_risky_review.py",
             "timeout": 30,
             "onFailure": "block"
           }
@@ -37,7 +26,29 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_root_scan.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" guard_destructive_git.py",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch|Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" guard_private_email.py",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" guard_root_scan.py",
             "timeout": 30
           }
         ]
@@ -47,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_secret_files.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" guard_secret_files.py",
             "timeout": 30
           }
         ]
@@ -57,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_worker_route.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" guard_worker_route.py",
             "timeout": 30,
             "onFailure": "block"
           }
@@ -69,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/progress_reminder.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" progress_reminder.py",
             "timeout": 10
           }
         ]
@@ -80,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/plain_report.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" plain_report.py",
             "timeout": 10
           }
         ]
@@ -91,7 +102,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/context_size.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" context_size.py",
             "timeout": 10
           }
         ]
@@ -102,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/before_compact.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" before_compact.py",
             "timeout": 30
           }
         ]
@@ -114,7 +125,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/after_compact.txt\"; cat \"$CLAUDE_PROJECT_DIR/.myagentkit/compact-note.md\" 2>/dev/null && rm -f \"$CLAUDE_PROJECT_DIR/.myagentkit/compact-note.md\"; true",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" after_compact.txt; cat \"$CLAUDE_PROJECT_DIR/.myagentkit/compact-note.md\" 2>/dev/null && rm -f \"$CLAUDE_PROJECT_DIR/.myagentkit/compact-note.md\"; true",
             "timeout": 10
           }
         ]
@@ -124,7 +135,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/handoff_pending.py\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/kit_hook.sh\" handoff_pending.py",
             "timeout": 30
           }
         ]

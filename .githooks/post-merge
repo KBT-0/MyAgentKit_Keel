@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Kit source only: runs the pinned installed copy's post-merge (scripts/kit_hook.sh; scripts/install_self.sh
+# installs the copy and sets core.hooksPath). A project's .githooks/ holds the kit's own hooks instead.
+exec sh "$(dirname -- "$0")/../scripts/kit_hook.sh" --git post-merge "$@"

@@ -100,6 +100,10 @@ arrives, and any change to `install.sh` reaches every new install the moment it 
 before CI: push it as a release, after the narrow tests pass. `MYAGENTKIT_REF=BRANCH` installs
 from a branch instead.
 
+The kit's own hooks run from a pinned copy (below, "The kit runs on itself"): in the release
+commit, move `scripts/installed_ref` to the new tag, and once the tag exists run
+`sh scripts/install_self.sh` in the main checkout, so the kit's sessions run the released hooks.
+
 **Run the kit check** (`./scripts/check.sh`, the launcher of `scripts/check_kit.py`) in its two
 tiers (`docs/research/kit-self-checks.md`, findings 6 to 8). The default run is the fast tier:
 the structural checks and the unit and fixture suites, within ten minutes on the maintainer's
@@ -149,6 +153,28 @@ tmp=$(mktemp -d) && ./bootstrap.sh "$tmp" && cd "$tmp" && git init -q && git add
 
 A contribution that leaves the gate red, or leaves a gate that can no longer fail, is the
 one thing this kit cannot take.
+
+## The kit runs on itself
+
+The kit's own sessions run its hooks from a pinned copy, never from `overlays/` (PLAN item 11,
+owner 2026-11-10): a session editing a hook or the gate must not be governed by its own edit.
+Once per main checkout, after cloning:
+
+```sh
+sh scripts/install_self.sh    # the copy of scripts/installed_ref in .myagentkit/installed/, core.hooksPath=.githooks
+```
+
+`.claude/settings.json` and `.githooks/*` run each hook through `scripts/kit_hook.sh` from that
+read-only copy, in the main checkout and every worktree, so an edit under `overlays/` or
+`core/.githooks/` changes nothing until the ref moves and the script runs again. Without the copy
+the destructive-git, risky-review, private-email and worker-route guards and the commit hook
+refuse (run the script from a terminal); the advisory hooks pass. The commit hook runs the kit
+check, `./scripts/check.sh`.
+
+`scripts/gate_config.sh` names the kit's `risky_paths` (hooks, gates, review and worker tooling),
+so `guard_risky_review.py` is on here as in a project: a commit that changes one waits for a diff
+review. The hand-kept list of reviews owed (`.myagentkit/strong_review.md`) takes no new entry; it
+closes when its last entry is reviewed, and each entry is deleted only by that review.
 
 ## The kit's Claude Code mod
 

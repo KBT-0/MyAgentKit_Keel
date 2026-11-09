@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The kit runs its own hooks from a pinned installed copy** (PLAN item 11, owner 2026-11-10; kit repo only, projects
+  are unaffected and have nothing to do): `scripts/install_self.sh` copies the hooks of `scripts/installed_ref` into the
+  main checkout's `.myagentkit/installed/`, read-only, and sets `core.hooksPath=.githooks`; the kit's
+  `.claude/settings.json` and `.githooks/*` run each hook from that copy through `scripts/kit_hook.sh`, so an edit under
+  `overlays/` or `core/.githooks/` no longer governs the session making it. `scripts/gate_config.sh` names the kit's
+  `risky_paths`, so `guard_risky_review.py` is on in the kit; `plain_report.py` reads the task-id grammar from
+  `core/.githooks/commit-msg` before a `.githooks/commit-msg` and passes over one without it (the kit's wrapper).
+  tests/test_install_self.py.
 - **The constitution is trimmed to its rules** (owner 2026-11-09, loadcut): `AGENTS.md` keeps each rule and points to the
   section that explains it, under a 7 600-character cap; `doctor.sh --quiet` prints nothing on a clean report and the whole
   report on any MISSING or NOTE line; `.claude/rules/state.md` loads only for `docs/STATE.md` and `docs/PROJECT.md`; each
