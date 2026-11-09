@@ -21,6 +21,30 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-10 — v0.16 subeffort: a sub-agent's effort precedence, verified live on Claude Code 2.1.321
+
+Sources: Claude Code CHANGELOG (raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md): 2.1.316 "Added
+`CLAUDE_CODE_SUBAGENT_EFFORT` to set the effort level subagents run at when nothing else names one, instead of inheriting
+the session's"; 2.1.317 "Changed subagents and teammates on a different model from the main conversation to use that
+model's saved effort level or its default, instead of the session's effort level"; 2.1.318 "Changed background subagents to
+move a shell command to the background after 3 minutes on all providers, so the prompt cache doesn't expire while it runs".
+code.claude.com/docs/en/sub-agents: the per-call `effort` "overrides the `effort` field", and `CLAUDE_CODE_EFFORT_LEVEL`
+"takes precedence over both"; neither that page nor model-config or env-vars names `CLAUDE_CODE_SUBAGENT_EFFORT`, so its
+place was tested. Live test (a scratch project, `claude -p --model sonnet --effort E --settings S "Call the Agent tool
+exactly once with subagent_type T ... Do NOT pass the effort or model parameters"`; the sub-agent transcript's
+`output_config.effort` read from `~/.claude/projects/<folder>/<session>/subagents/agent-*.jsonl`; no call carried `effort`):
+definition `effort: high` on haiku, variable `low`: high. `model: inherit` with no `effort`, session high, variable `low`:
+low (without the variable: high). haiku with no `effort`, saved `modelSettings` haiku `high`, variable `low`: low (without
+the variable: high). A `claude -p --model haiku --effort high` session with the variable `low` sent high: the variable
+does not reach the session itself, so `spawn_worker.sh --effort` is untouched. Order: `CLAUDE_CODE_EFFORT_LEVEL` > the
+call's `effort` > the definition's `effort:` > `CLAUDE_CODE_SUBAGENT_EFFORT` > on another model its saved effort or
+default, on the session's model the session's effort. Consequence found: `diff-reviewer.md` writes `model: inherit` and no
+`effort`, and `guard_worker_route.py` lets such a call pass without one, so the variable sets the inner reviewer's effort.
+Verdict (lead, 2026-11-10, option A of four): the overlay ships no `env.CLAUDE_CODE_SUBAGENT_EFFORT`; `medium` would put a
+required review below a high-effort author (REVIEW_GATE "Invariant", owner decisions 64 and 66). Rejected: `high` (every
+inner review of a medium change at high), `medium` with the guard requiring `effort` on an inherit call (a hook change,
+left as a follow-up), `medium` as is.
+
 ### 2026-11-09 — v0.16 stopcut: the stop rules and the reviewer's load
 
 Sources: controlled measurement ctl16 and its anatomy, owner decision 2026-11-09 (cuts 2, 8, 4, 5, 6). A `[state]` red the

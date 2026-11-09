@@ -29,6 +29,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   and runs in the foreground. test_gate_checks, test_band_guard and test_doc_pointers red
   without it. **ACTION** (project-owned `.claude/agents/diff-reviewer.md`, `.claude/agents/worker.md`,
   `.claude/hooks/band_guard.py`, `docs/REVIEW_GATE.md`, `scripts/check.sh`): `sync-kit.sh . --merge`.
+- **`CLAUDE_CODE_SUBAGENT_EFFORT` evaluated and left unset (PLAN item 10A).** Verified live on Claude Code 2.1.321: a
+  sub-agent's effort is the call's `effort`, else its definition's `effort:`, else the variable (2.1.316), else on another
+  model its saved effort or default (2.1.317), else the lead's; `CLAUDE_CODE_EFFORT_LEVEL` outranks all, and a
+  `spawn_worker.sh --effort` session is no sub-agent, so the variable never reaches it. The kit does not set it: the
+  `diff-reviewer` writes `model: inherit` and no `effort`, and the variable would put the required review below the
+  author's effort (`docs/REVIEW_GATE.md`, "Invariant"); `setup/INTERVIEW.md` question 8 says so. "Worker cost" rule 1
+  notes 2.1.318 (a background sub-agent's command moves to the background after 3 minutes): a worker is untouched, a
+  sub-agent's later wait past five minutes still re-writes. test_doc_pointers red without it.
 - **The side check runs once before a moment, never on a timer** (owner, 2026-11-09): before AskUserQuestion, Agent/Task or
   a `spawn_worker.sh`/`spawn_codex.sh` command. A kept note answers the held call, and the agent makes it again. The periodic,
   end-of-turn and repeat-count triggers are gone; both model calls share one cached prefix; `report` says "every second moment".

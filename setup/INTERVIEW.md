@@ -251,12 +251,18 @@ One topic per turn. Suggested order, because each answer informs the next:
    "Worker cost"). If the Claude Code overlay is installed, fill `{{WORKER_MODEL}}`,
    `{{WORKER_EFFORT}}` and `{{LONG_JOBS}}` in `.claude/agents/worker.md` with the author
    model, its effort (`high` when the workers' tasks bear design, lower when they are
-   mechanical; without the field a sub-agent runs at whatever effort its lead session has)
+   mechanical; the field outranks `CLAUDE_CODE_SUBAGENT_EFFORT` and the lead's effort, and only
+   the Agent call's own `effort` or `CLAUDE_CODE_EFFORT_LEVEL` outranks it: `docs/WORKFLOW.md`,
+   "Worker cost", rule 5)
    and those job names, and tell the owner that workers are spawned with that definition
    instead of the general-purpose one. If the answer is no, keep `.claude/agents/worker.md`
    (it pins model, effort and the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete
    only `scripts/spawn_worker.sh` (Phase 4, "Delete what does not apply"). Either way the
-   rules in that section bind the lead from day one.
+   rules in that section bind the lead from day one. `CLAUDE_CODE_SUBAGENT_EFFORT` (Claude Code
+   2.1.316) sets the effort of a sub-agent whose call and definition name none; the kit leaves it
+   unset, because the `diff-reviewer` writes `model: inherit` and must keep the author's effort
+   (`docs/REVIEW_GATE.md`, "Invariant"): a project that sets it in its own `.claude/settings.json`
+   lowers its required reviews, so it is `high` or not set at all.
 
 9. **May AI tools be credited in commit messages?** Coding tools add a co-author trailer by
    default, and in the kit's founding project that put one into most commits against the
