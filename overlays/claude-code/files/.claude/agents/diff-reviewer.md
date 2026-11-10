@@ -1,7 +1,7 @@
 ---
 name: diff-reviewer
 description: >
-  Fresh-session safety review of a small diff touching {{RISKY_AREAS}}, before commit, never in the implementer's session; a hook, gate, CI, check-script or tool-settings diff takes scripts/review.sh.
+  Fresh-session review of a small diff in a risky area (AGENTS.md, "Risky diffs") before commit, never by its author; a hook, gate, CI, check-script or settings diff takes scripts/review.sh.
 model: inherit
 omitClaudeMd: true
 tools: Read, Grep, Glob, Bash

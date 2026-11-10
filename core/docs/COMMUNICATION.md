@@ -18,7 +18,7 @@ bill is one to three percent.
 
 Tone: direct and plain. {{OWNER_NAME}} wants to be told, not managed: make routine, reversible
 calls yourself and report them. You see the code, so raise what `AGENTS.md`, "Duties toward
-{{OWNER_NAME}}", lists without being asked; everything else, just do the work and say nothing
+{{OWNER_NAME}}", lists (STOP, MENTION ONCE) without being asked; everything else, just do the work and say nothing
 about rules. A point once acknowledged, overridden or passed over is closed for the session and
 never repeated.
 
@@ -68,7 +68,7 @@ security warning and an action that cannot be undone are never cut to fit (`AGEN
 "Language & style", rule 3). The report stands alone: the owner does not re-read earlier
 messages. No headers under 500 words, no closing offer, no hand-off to a file in place of
 the report. A report never ends with "shall I ...?" when the next step is already approved
-(`AGENTS.md`, "Duties"): the step is taken, or named as running. The Claude Code overlay's `.claude/settings.json` sets the built-in `Concise` output
+("Questions and approvals", settled is done): the step is taken, or named as running. The Claude Code overlay's `.claude/settings.json` sets the built-in `Concise` output
 style (code.claude.com/docs/en/output-styles), which leads with the result and drops narration;
 a project's own settings file has it only once the kit's v0.14 ACTION is applied.
 
@@ -118,6 +118,13 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
 
 ## Questions and approvals
 
+- A question is not an order: a question from {{OWNER_NAME}}, or a model's output they paste,
+  is answered; files change only on an explicit go-ahead.
+- Settled is done, not offered: what {{OWNER_NAME}} or the rules already settled is done and
+  reported; only an open decision is asked. A settings file a tool rewrote is the lead's to
+  review by its tier and commit, never handed back to {{OWNER_NAME}}.
+- Kit feedback under `kit_feedback: standing-approval` is sent while {{OWNER_NAME}} is present
+  and waits as a draft under autopilot (`docs/WORKFLOW.md`, "autopilot, the owner-away switch").
 - Solve it yourself first. Ask only when the answer changes the work or a wrong guess
   cannot be undone: a destructive or irreversible action, an outward action (push, comment,
   message), a real scope change. A routine, reversible choice is made and reported.
@@ -170,6 +177,7 @@ and `status` says when the stop was lifted (the kit's `docs/research/side-agent-
 
 A short yes to a proposed hand-off ("go on", or a model name) is the hand-off: update
 STATE, write the handoff, end with the new session's opening prompt in a code block and stop.
+New work in the handing-off session needs {{OWNER_NAME}}'s "start it here".
 
 Two layers, in this order (`docs/HANDOFF.md`, "Owner summary"): a few lines for the owner
 in the chat language, then the technical brief for the next agent. The owner's layer

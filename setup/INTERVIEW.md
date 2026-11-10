@@ -108,22 +108,16 @@ whole and unedited but for the `kit_feedback:` value.
 
 **If yes:**
 
-> - **Something about the FOUNDATION itself was wrong, unclear or missing** — a gate that
->   failed open, a rule that did not survive contact with real work, an ambiguous setup
->   instruction, a document contradicting itself → offer to send it upstream with
->   `/myagentkit:kit-feedback`. It scrubs this project out and shows the exact text; the line
->   below says whether it then waits for a yes. Collect findings during the session and offer
->   them ONCE, at its end, as one batch per area; take no for an answer, never send on your
->   own initiative. Keep it light: a footnote in a closing summary, not a
->   campaign.
+> - **A flaw in the kit itself** (a gate that failed open, a rule real work broke, an unclear or
+>   self-contradicting instruction): collect findings in the session and offer them ONCE, at its end,
+>   as one batch per area, sent with `/myagentkit:kit-feedback` (it scrubs this project out and
+>   shows the text); take no for an answer, never send on your own initiative.
 >   `kit_feedback: ask-each-time`
 
 **If no:**
 
-> - **Never offer to report anything upstream to the kit.** The owner declined this at
->   setup. Keep writing what we learn into this project's own docs exactly as before — that
->   half is unchanged. If they ever want to send something, they will run
->   `/myagentkit:kit-feedback` themselves.
+> - **Never offer to report anything upstream to the kit** (declined at setup); what we learn
+>   still goes into this project's own docs.
 
 Record the answer as a DECIDED row in `docs/PROJECT.md` either way, so a later session knows
 it was asked and answered instead of asking again.
@@ -452,7 +446,7 @@ then fails when a subfolder of one is not named in a table row or list entry of 
 
 | Placeholder | What goes in |
 |---|---|
-| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast: seconds, not minutes; put anything slower in CI (a client hook can be skipped, so CI is the last line anyway). No step that writes to a remote, needs a deploy credential or changes what users see. A read-only validation spelled like a deploy (`wrangler deploy --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command in `scripts/gate_config.sh` names it and why it writes nothing remote; an agent's permission layer may still refuse the whole gate over its shape (it did once: the kit's `RESEARCH_LOG.md`, "Gates that did not gate"), so give it an allow rule for that exact command or move the step to CI (#300). No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
+| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests, the same in `scripts/gate_config.sh` and in `AGENTS.md`, "Commands". It runs on every commit — keep it fast: seconds, not minutes; put anything slower in CI (a client hook can be skipped, so CI is the last line anyway). No step that writes to a remote, needs a deploy credential or changes what users see. A read-only validation spelled like a deploy (`wrangler deploy --dry-run --outdir <dir>`) may stay once a `# read-only:` line above the command in `scripts/gate_config.sh` names it and why it writes nothing remote; an agent's permission layer may still refuse the whole gate over its shape (it did once: the kit's `RESEARCH_LOG.md`, "Gates that did not gate"), so give it an allow rule for that exact command or move the step to CI (#300). No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
 | `{{BOUNDARY_CHECKS}}` | **Replace the whole of `scripts/boundary_checks.sh`**: one grep per enforceable boundary, each setting `fail=1`, and a fixture test per check in the project's test suite. Not optional — see below |
 | `{{TOOLCHAIN}}` / `{{TOOLCHAIN_PATH_SETUP}}` / `{{TOOLCHAIN_SETUP_NOTES}}` / `{{TOOLCHAIN_SETUP_STEP}}` | What the gate needs on PATH, how to find it in a non-login shell, how CI installs it. `{{TOOLCHAIN_PATH_SETUP}}` is a directory to prepend, not a line of code |
 | `{{DEFAULT_BRANCH}}` | The branch CI runs on |
