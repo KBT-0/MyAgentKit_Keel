@@ -2,9 +2,10 @@
 
 The review adapters (claude_bridge.py, codex_bridge.py) are kit-owned and every sync replaces
 them, so a check the project adds there is lost (#87). They call validate_final_message() on
-each reviewer's final report when this file sits beside them or in the scripts/ of the
-repository they review (the Codex plugin's bundled adapters). Delete the file and nothing more
-is checked.
+each reviewer's final report, on the copy of this file committed before the reviewed change
+(HEAD for uncommitted work): the check runs in the lead's process before any reviewer accepted
+the change, so the change under review never rewrites it. Delete the file and nothing more is
+checked.
 """
 
 

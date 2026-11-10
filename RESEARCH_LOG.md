@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-10 — v0.16 secfix: two kit leads could be made to run code before any approval
+
+A field project's lead audited the kit's own sources (private report, no public issue) and found two paths by which the
+change under review, or the command under judgement, ran code in the lead's process before a human or a reviewer decided:
+the destructive-git guard forwarded the proposal's `-c` keys and `GIT_CONFIG_*` variables into its own `git status`
+(some keys name a command git runs), and both review adapters imported the reviewed checkout's working copy of
+`scripts/project_validation.py`. Both reproduced here. The guard now forwards only keys git reads and refuses the rest on
+a command it judges by the tree's state (fail closed: judging without the configuration answers under other rules than
+the command runs by); the adapters run the check as committed before the reviewed change, extracted whole from that
+revision. The lesson for the kit: anything a hook or adapter executes is an input, and the input under judgement never
+reaches it.
+
 ### 2026-11-10 — v0.16 pin52: the Fable pins move to Fable 5.2
 
 ai-watch 2026-11-10 finding 1 (Claude Code CHANGELOG 2.1.321: "Added Claude Fable 5.2 (`claude-fable-5-2`), now the default

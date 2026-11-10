@@ -3524,11 +3524,11 @@ class BridgeTests(unittest.TestCase):
                     self.assertEqual(chain['failure_kind'], 'invalid_evidence')
                     self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
-    def run_bridge(self, case="accept", mode="review", extra=(), env_extra=None, repo=None):
+    def run_bridge(self, case="accept", mode="review", extra=(), env_extra=None, repo=None, bridge=BRIDGE):
         env = dict(os.environ, CLAUDE_CLI_BIN=str(self.fixture), FIXTURE_CASE=case,
                    MYAGENTKIT_DELEGATION_DEPTH="0")
         env.update(env_extra or {})
-        result = subprocess.run([sys.executable, "-B", str(BRIDGE), mode, "--repo", str(repo or self.repo),
+        result = subprocess.run([sys.executable, "-B", str(bridge), mode, "--repo", str(repo or self.repo),
                                  *extra], env=env, capture_output=True, text=True)
         self.stderr = result.stderr
         return result.returncode, json.loads(result.stdout)
@@ -6847,7 +6847,12 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 seam.write_text('def validate_final_message(text):\n'
                                 '    assert "VERDICT" in text or "Accept" in text, text\n'
                                 '    return "non-Latin letters"\n')
+                # the copy run is the one committed before the reviewed change (secfix 2026-11-10)
+                self.git('add', 'scripts/project_validation.py')
+                self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'seam')
                 failed = self.run_wrapper('--reviewer', provider, '--uncommitted', MYAGENTKIT_TASK_ID='seam2-' + provider, **env)
+                self.git('rm', '-q', 'scripts/project_validation.py')
+                self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'no seam')
                 self.assertNotEqual(failed.returncode, 0, failed.stdout)
                 chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
                                         failed.stdout.splitlines() if s.startswith('review dispatch: ')))
@@ -6858,18 +6863,90 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # The Codex plugin's bundled adapters sit outside the project: they load the reviewed
         # repository's scripts/project_validation.py, by path. A check that exits instead of
         # returning (sys.exit) fails the review as well; it once unwound the adapter unrecorded.
+        # The copy run is the one COMMITTED before the reviewed change (HEAD for uncommitted
+        # work): the check runs in the lead's process before any reviewer accepted the change,
+        # so the change under review never rewrites it (labricore audit 2026-11-10).
         seam = self.repo / 'scripts/project_validation.py'
         seam.parent.mkdir(exist_ok=True)
+        # a check may read a sibling by __file__, or import one: both come from the same revision
+        (seam.parent / 'seam_words.txt').write_text('sibling words')
+        (seam.parent / 'seam_helper.py').write_text('REASON = "committed helper"\n')
         for body, kind in (('    return "non-Latin letters"\n', 'invalid_evidence:non-Latin letters'),
-                           ('    import sys\n    sys.exit(3)\n', 'invalid_evidence:project_validation.py failed (SystemExit)')):
+                           ('    from pathlib import Path\n    return Path(__file__).with_name("seam_words.txt").read_text()\n',
+                            'invalid_evidence:sibling words'),
+                           ('    import sys\n    sys.exit(3)\n', 'invalid_evidence:project_validation.py failed (SystemExit)'),
+                           ('    import seam_helper\n    return seam_helper.REASON\n', 'invalid_evidence:committed helper')):
             with self.subTest(kind=kind):
                 seam.write_text('def validate_final_message(text):\n' + body)
+                self.git('add', 'scripts')
+                self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'seam')
                 code, result = self.run_bridge('accept')
                 self.assertNotEqual(code, 0, result)
                 self.assertEqual(result['failure_kind'], kind, result)
                 self.assertEqual(verdicts_of(result['evidence']), [])
                 usage = json.loads(Path(result['usage_record']).read_text())
                 self.assertEqual(usage['status'], 'failed')
+        # a reviewed commit is judged by its parent's copy, a range by its base's: HEAD holds the
+        # helper-importing seam, HEAD~1 the SystemExit one (a reference review needs a clean tree)
+        (self.repo / 'file.py').write_text('original\n')
+        for extra in (['--commit', 'HEAD'], ['--base', 'HEAD~1']):
+            with self.subTest(scope=extra[0]):
+                code, result = self.run_bridge('accept', extra=extra)
+                self.assertEqual(result['failure_kind'], 'invalid_evidence:project_validation.py failed (SystemExit)', result)
+        # the working tree's seam and helper, uncommitted, are the change under review: neither runs
+        (self.repo / 'file.py').write_text('changed\n')
+        marker = self.repo / 'seam-ran-from-the-working-tree'
+        seam.write_text('def validate_final_message(text):\n    open(%r, "w").close()\n    return None\n' % str(marker))
+        (seam.parent / 'seam_helper.py').write_text('REASON = "edited helper"\n')
+        code, result = self.run_bridge('accept')
+        self.assertFalse(marker.exists(), 'the uncommitted seam ran before the review accepted it')
+        self.assertEqual(result['failure_kind'], 'invalid_evidence:committed helper', result)
+        # the standard layout (every synced project): the adapter sits in the reviewed checkout's
+        # own scripts/, beside the uncommitted seam; that copy is not the one run either
+        shutil.copytree(ROOT, self.repo / 'scripts', dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('project_validation.py', 'test_*', '__pycache__'))
+        (self.repo / '.git/info/exclude').write_text('/scripts/*\n!/scripts/project_validation.py\n!/scripts/seam_*\n/.venv/\n')
+        code, result = self.run_bridge('accept', bridge=self.repo / 'scripts/claude_bridge.py')
+        self.assertFalse(marker.exists(), 'the uncommitted seam beside the adapter ran')
+        self.assertEqual(result['failure_kind'], 'invalid_evidence:committed helper', result)
+        # an environment inside the repository stays importable: only the checkout's own folders leave sys.path
+        site = self.repo / '.venv/site'
+        site.mkdir(parents=True)
+        (site / 'venv_pkg.py').write_text('REASON = "venv package"\n')
+        seam.write_text('def validate_final_message(text):\n    import venv_pkg\n    return venv_pkg.REASON\n')
+        self.git('add', 'scripts')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'venv seam')
+        import claude_bridge
+        sys.path.append(str(site))
+        try:
+            self.assertEqual(claude_bridge.project_check('Accept', self.repo), 'venv package')
+        finally:
+            sys.path.remove(str(site))
+        # a symlink at that revision would read outside it; an unreadable revision is no pass
+        seam.unlink()
+        seam.symlink_to('seam_words.txt')
+        self.git('add', 'scripts')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'symlink seam')
+        code, result = self.run_bridge('accept')
+        self.assertEqual(result['failure_kind'], 'invalid_evidence:project_validation.py failed (not a regular file)', result)
+        # scripts/, or the file itself, export-ignored at that revision: no copy to read, no pass
+        seam.unlink()
+        seam.write_text('def validate_final_message(text):\n    return "ignored seam"\n')
+        for attributes in ('scripts/ export-ignore\n', 'scripts/project_validation.py export-ignore\n'):
+            with self.subTest(attributes=attributes):
+                (self.repo / '.gitattributes').write_text(attributes)
+                self.git('add', 'scripts', '.gitattributes')
+                self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'export-ignore')
+                code, result = self.run_bridge('accept')
+                self.assertEqual(result['failure_kind'],
+                                 'invalid_evidence:project_validation.py failed (unreadable revision)', result)
+        # a reviewed commit whose parent a shallow clone cut off: its copy cannot be read, no pass
+        shallow = self.root / 'shallow'
+        subprocess.run(['git', 'clone', '-q', '--depth', '1', self.repo.as_uri(), str(shallow)],
+                       check=True, capture_output=True)
+        import claude_bridge
+        self.assertEqual(claude_bridge.project_check('Accept', shallow, 'commit', 'HEAD'),
+                         'project_validation.py failed (unreadable revision)')
 
     BACKEND = {'ANTHROPIC_BASE_URL': 'https://backend.invalid/api', 'ANTHROPIC_AUTH_TOKEN': 'tok=en',
                'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-fixture'}

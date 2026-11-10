@@ -259,7 +259,7 @@ def main(argv=None, result_sink=None, claims=None):
             if not reason and (verdict_refused(final)
                                or not any(v.get("type") == "turn.completed" for v in values)):
                 reason = "invalid_evidence"
-            refused = None if reason else project_check(final, repo)
+            refused = None if reason else project_check(final, repo, scope, ref)
             if refused:
                 reason = "invalid_evidence:" + refused
                 failure = ("\n\n## Failure\n\nThe project's check (scripts/project_validation.py) refused the "

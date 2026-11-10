@@ -15,6 +15,30 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **Security: the destructive-git guard's own queries no longer take the proposal's git configuration**
+  (secfix, a field project's source audit, owner 2026-11-10): `guard_destructive_git.py` ran `git status` with the
+  proposed command's `-c` / `--config-env` values and `GIT_CONFIG_*` variables, and git runs commands named by some
+  configuration keys, so a proposal could run a command inside the hook before the permission decision. The hook's
+  queries now take only the proposal's repository-locating variables (`GIT_DIR`, `GIT_WORK_TREE`, ...) and the `-c`
+  keys git only reads (`alias.*`, `core.excludesFile`, `color.*`, ...); with any other `-c`, `--config-env` or
+  `GIT_CONFIG_*` setting, a `HOME` / `XDG_CONFIG_HOME` that moves the global configuration, or a `GIT_DIR` /
+  `GIT_COMMON_DIR` / `--git-dir` that is not the folder's own git dir (its `config` is its own), the queries answer
+  "cannot read" and every judgement that needs one fails closed (a `reset --hard`, `clean`, a possible alias,
+  `commit --amend`), naming the setting, as judging without it would answer under other rules than the command runs
+  by; a command the hook never asks git about (`push`, `add`, `rebase --continue`) keeps it. The boundary is the
+  command line: the configuration of the repository the command stands in (its own `.git/config`, a folder a `cd` or
+  `-C` enters) was written by earlier, approved steps and is trusted, with `core.fsmonitor` set off in every query
+  (the hook's docstring states the limit). **ACTION:** re-sync; the hook is kit-owned; set such a key with
+  `git config` first instead of `-c`.
+- **Security: the review adapters run the project check as committed before the reviewed change** (secfix):
+  `claude_bridge.py` and `codex_bridge.py` imported the reviewed checkout's working copy of
+  `scripts/project_validation.py` in the lead's process, so the change under review could rewrite the check that
+  judges it. The copy run is now the one at the revision the review starts from (HEAD for uncommitted work, the
+  parent of a reviewed commit, the base of a range), with the whole `scripts/` of that revision beside it; a copy
+  that cannot be read (a shallow clone without the parent, an `export-ignore` on `scripts/`, a symlink there) fails
+  the review as `invalid_evidence`, no pass. **ACTION:** re-sync; a project whose `project_validation.py` edit is
+  itself under review sees the previous version judge that review; a check that reads repository files outside
+  `scripts/` by `__file__` no longer finds them.
 - **`docs/kit/UPGRADE.md` is exempt from the `[setup]` marker scan** (smallfix3, ctl16s harness, owner 2026-11-10):
   `sync-kit.sh` writes UPGRADE.md from the ACTION items of this changelog, and an item may quote a marker name in braces;
   a freshly synced project then failed its own commit gate until UPGRADE.md was edited by hand. `core/scripts/check.sh`

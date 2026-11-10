@@ -46,6 +46,17 @@ or stash before any command that discards work" still covers every destructive c
   wrapper (`timeout 60 $(which git) ...`): the words after it are read as git's. The cost, accepted: a non-git
   program so named whose words spell a git verb (`$(which make) clean`) is refused on a dirty tree.
 
+What the hook's own queries trust (labricore audit 2026-11-10, review rounds 1-4): the boundary
+is the COMMAND LINE. A setting the proposal carries (`-c`, `--config-env`, `GIT_CONFIG_*`, a
+`HOME`/`XDG_CONFIG_HOME`, a git dir named by `GIT_DIR`/`GIT_COMMON_DIR`/`--git-dir` that is not
+the folder's own) reaches the queries only when git merely reads it (QUERY_CONFIG, QUERY_ENV);
+with any other, the queries answer "cannot read" and every judgement that needs one fails closed.
+The configuration of the repository the command STANDS in (its own `.git/config`, that of a
+folder a `cd` or `-C` enters, the global config) is trusted, as it was written by earlier,
+approved steps; still, `core.fsmonitor`, the one key `git status` runs a command from, is set
+off in every query (git's `-c` outranks every config file). The limit, accepted: a clean filter
+(`.gitattributes` + `filter.<name>.clean`) of such a repository runs inside `git status`.
+
 The floor runs first: the base implementation's patterns (`git reset ... --hard`, `checkout --`,
 `checkout -f`, `restore` without `--staged`, `clean -f/-d/-x` without `-n`, `stash drop/clear`,
 `push --force`/`-f`) anywhere in the raw text, quoted strings and here-document bodies included,
@@ -140,6 +151,21 @@ READ_ONLY = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", 
              "grep", "help", "version", "reflog", "shortlog", "remote", "config", "branch", "tag"}
 HOOK_SUBS = {"commit", "merge", "push", "rebase", "am", "pull", "cherry-pick", "revert"}
 HOOK_ENV = re.compile(r"GIT_CONFIG|HUSKY|SKIP$|PRE_COMMIT", re.I)
+QUERY_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE"}  # paths; Git.foreign()
+CONFIG_ENV = re.compile(r"GIT_CONFIG|HOME$|XDG_CONFIG_HOME$")  # moves the configuration git reads
+UNREADABLE = ("a `-c`, `--config-env`, `--git-dir`, GIT_CONFIG_*, GIT_DIR, GIT_COMMON_DIR, HOME or XDG_CONFIG_HOME "
+              "setting on this command is one the hook cannot read safely — some keys name a command git would run "
+              "inside the hook, a git dir brings its own config — so the hook cannot ask git what this command "
+              "would lose. Run the command without it, or set it with `git config` first")
+# The `-c` keys a proposal may carry into the hook's own queries: text or paths git reads, never a
+# command it runs (core.fsmonitor, core.sshCommand, include.path reaches more) nor what the queries
+# see (status.showUntrackedFiles). With any other key, or a CONFIG_ENV variable, the queries answer
+# "cannot read" (Git.ask), and every judgement that needs one fails closed.
+QUERY_CONFIG = re.compile(r"(alias\.[^.]+|core\.(excludesfile|quotepath|ignorecase|autocrlf|safecrlf|eol|symlinks|"
+                          r"precomposeunicode|untrackedcache)|color\..*|i18n\..*|user\..*|"
+                          r"commit\.(template|verbose|cleanup|gpgsign)|push\..*|pull\..*|fetch\..*|merge\.(ff|conflictstyle|"
+                          r"autostash)|rebase\..*|advice\..*|log\..*|format\..*|diff\.(renames|algorithm|context|noprefix)|"
+                          r"gc\..*|pack\..*|protocol\..*|init\..*|branch\..*|stash\..*|clean\.requireforce|safe\.directory)$", re.I)
 GATE = ("this skips a git hook (the commit gate) or commit signing. Fix the failure. "
         "Only the owner bypasses this gate")
 
@@ -624,6 +650,8 @@ class Git:
 
     def __init__(self, tokens, env, cwds):
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
+        self.asked = False  # a query was needed while unreadable(): the refusal names the setting, not a guess
+        self._foreign = None  # foreign(), read once
         self.paths = []  # set by a path checkout: only these paths' changes are lost (#327)
         self.tree = None  # a path checkout's revision: an ignored file is lost only where it holds the path
         self.options = []  # the global options, their separate values skipped (r327 r2: `-C . --icase-pathspecs`)
@@ -649,14 +677,60 @@ class Git:
         self.sub, self.args = (tokens[i:i + 1] or [""])[0], tokens[i + 1:]
 
     def ask(self, *args, where=None):
-        """git's answer as (exit code, stdout); an OSError or a timeout raises."""
-        command = ["git", *self.route, *[x for c in self.configs for x in ("-c", c)], *args]
+        """git's answer as (exit code, stdout); an OSError or a timeout raises. (2, "") without
+        asking when the proposal's configuration cannot reach the query (unreadable())."""
+        # Only the proposal's QUERY_CONFIG keys and QUERY_ENV variables reach the hook's own
+        # queries: `-c core.fsmonitor=<cmd>` would run <cmd> here, before the permission decision
+        # (labricore audit 2026-11-10). With the rest the query would answer under other rules
+        # than the command runs by (an alias or excludes file it brings): no answer at all.
+        if self.unreadable():
+            self.asked = True
+            return 2, ""
+        # core.fsmonitor names a command `git status` runs: off here, whatever config file sets it.
+        command = ["git", *self.route, "-c", "core.fsmonitor=false", *[x for c in self.configs for x in ("-c", c)], *args]
+        env = {k: v for k, v in self.env.items() if k in QUERY_ENV}
         run = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=10,
-                             cwd=where or self.cwd, env=dict(os.environ, **self.env))
+                             cwd=where or self.cwd, env=dict(os.environ, **env))
         return run.returncode, run.stdout.strip()
+
+    def unreadable(self):
+        """The proposal's settings the hook's queries cannot take: a `-c` key outside QUERY_CONFIG
+        (a key without a section, `-c print`, is one git itself refuses), a CONFIG_ENV variable or a
+        foreign git dir."""
+        return ([c for c in self.configs if "." in c.partition("=")[0] and not QUERY_CONFIG.match(c.partition("=")[0])]
+                + [k for k in self.env if CONFIG_ENV.match(k)] + self.foreign())
+
+    def foreign(self):
+        """The git dirs the proposal names (GIT_DIR, GIT_COMMON_DIR, --git-dir) other than the one
+        git finds from the command's folder: such a dir brings its own `config` into the hook's
+        queries (review round 3: one written by hand set core.fsmonitor). Doctor's printed
+        `git --git-dir=.git config core.hooksPath` (#77) names the repository's own."""
+        if self._foreign is None:
+            named = [v for k, v in self.env.items() if k in ("GIT_DIR", "GIT_COMMON_DIR")]
+            named += [r.partition("=")[2] for r in self.route if r.startswith("--git-dir=")]
+            named += [self.route[i + 1] for i, r in enumerate(self.route) if r == "--git-dir"]
+            self._foreign = []
+            # Every folder the command may stand in (dirty() asks from each), after its -C steps
+            # (git changes folder before it resolves the dir): asked without the proposal's settings.
+            for where in (self.cwds if named else []):
+                base = os.path.join(where, *self.dirs) if where is not None else None
+                own = []
+                if base is not None and os.path.isdir(base):
+                    try:
+                        run = subprocess.run(["git", "-c", "core.fsmonitor=false", "rev-parse", "--path-format=absolute",
+                                              "--git-dir", "--git-common-dir"],
+                                             capture_output=True, encoding="utf-8", timeout=10, cwd=base)
+                        own = [os.path.realpath(p) for p in run.stdout.splitlines()] if run.returncode == 0 else []
+                    except (OSError, subprocess.SubprocessError):
+                        own = []
+                self._foreign += [n for n in named if base is None or os.path.realpath(os.path.join(base, n)) not in own]
+        return self._foreign
 
     def dirty(self, ignored=False):
         """What uncommitted work any folder the command may stand in holds ("" for none)."""
+        if self.unreadable():
+            self.asked = True
+            return "(" + UNREADABLE + ")"
         for where in self.cwds:
             if where is None:
                 return "(the command changes to a folder the hook cannot name — assuming uncommitted work)"
@@ -1228,13 +1302,17 @@ def main():
         found = list(judge(command, [os.getcwd()]))
     except Unreadable as exc:
         return unreadable.format(exc)
-    for always, why, _ in found:
+    for always, why, (g, _, _) in found:
+        if always and g.asked:  # the judgement needed a query the proposal's settings cannot reach
+            return f"git {g.sub} needs an answer from git, and {UNREADABLE}"
         if always:
             return (f"{why}.\n\nThis is refused whatever the tree's state. If it is really needed, say so "
                     "to the owner and ask them to run it themselves")
     for _, why, (g, ignored, changed) in found:
         dirty = ("(an earlier command in this line changes the tree — judged as uncommitted work)"
                  if changed else g.dirty(ignored))
+        if dirty and g.asked:
+            return f"git {g.sub} needs an answer from git, and {UNREADABLE}"
         if dirty:
             return lost(why, dirty)
     return None

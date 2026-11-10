@@ -15,6 +15,7 @@ import functools
 import getpass
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import uuid
@@ -1703,16 +1705,68 @@ def validate(envelope: object, mode: str, model: str) -> dict:
     return value
 
 
-def project_check(text: str, repo: Path) -> str | None:
+def project_check(text: str, repo: Path, scope: str = "uncommitted", ref: str | None = None) -> str | None:
     """The project's own check of a reviewer's final report (#87): validate_final_message(text)
     of the project-owned project_validation.py beside this file and in the reviewed repository's
     scripts/ (the Codex plugin's bundled adapters sit elsewhere), each loaded from its path alone
     (a stray module of that name on sys.path is not it). None passes; a reason fails the review
     as invalid_evidence:<reason>. No file, nothing more is checked. A check that cannot run fails
-    the review too: a broken check is no pass."""
-    paths = {Path(__file__).resolve().with_name("project_validation.py"),
-             (repo / "scripts/project_validation.py").resolve()}
-    for path in sorted(path for path in paths if path.is_file()):
+    the review too: a broken check is no pass.
+    The reviewed repository's copy is read at before_revision(), where the reviewed change
+    (`scope`, `ref`) starts from, never its working tree: the check runs in this process, before
+    any reviewer accepted the change, so the change under review must not be able to rewrite it
+    (labricore audit 2026-11-10)."""
+    repo = repo.resolve()
+    beside = Path(__file__).resolve().with_name("project_validation.py")
+    # In the standard layout the copy beside the adapters IS the reviewed checkout's working
+    # copy; the revision copy below stands in for it.
+    paths = [beside] if beside.is_file() and not beside.is_relative_to(repo) else []
+    try:
+        before = before_revision(repo, scope, ref)
+        entry = git(repo, "ls-tree", before, "--", "scripts/project_validation.py").split()
+        if not entry:  # no file at that revision: nothing more is checked
+            return project_check_paths(text, paths)
+        if entry[0] not in (b"100644", b"100755"):  # a symlink there reads outside the revision
+            return "project_validation.py failed (not a regular file)"
+        archive = git(repo, "archive", "--format=tar", before, "scripts")
+        tar = tarfile.open(fileobj=io.BytesIO(archive))
+    except (GitFailed, tarfile.ReadError):  # a shallow clone, an unknown base, an export-ignored scripts/
+        return "project_validation.py failed (unreadable revision)"
+    with tempfile.TemporaryDirectory(prefix="project_validation-") as scratch, tar:
+        # The whole scripts/ at `before`, its regular files (a symlink would read outside the
+        # revision): a check may read or import a sibling. The import must find the extracted
+        # sibling, so the reviewed checkout leaves sys.path for the call.
+        tar.extraction_filter = getattr(tarfile, "data_filter", None)
+        tar.extractall(scratch, [member for member in tar if member.isreg()])
+        if not Path(scratch, "scripts/project_validation.py").is_file():  # export-ignore on the file itself
+            return "project_validation.py failed (unreadable revision)"
+        saved = sys.path[:]
+        # The reviewed checkout's own folders leave sys.path for the call (a working copy of a
+        # sibling would be imported first); an environment inside it (`.venv`) stays.
+        gone = {repo, repo / "scripts", Path(__file__).resolve().parent}
+        sys.path[:] = [str(Path(scratch, "scripts"))] + [p for p in saved if Path(p or ".").resolve() not in gone]
+        try:
+            return project_check_paths(text, paths + [Path(scratch, "scripts/project_validation.py")])
+        finally:
+            sys.path[:] = saved
+
+
+def before_revision(repo: Path, scope: str, ref: str | None) -> str:
+    """The revision the reviewed change starts from, where the project's check is read: HEAD for
+    uncommitted work, a reviewed commit's first parent (the empty tree for a root commit), the
+    base of a range."""
+    if scope != "commit":
+        return "HEAD" if scope == "uncommitted" else ref
+    parents = git(repo, "rev-list", "--parents", "-n1", ref).split()[1:]
+    if parents:
+        return parents[0].decode()
+    if git(repo, "rev-parse", "--is-shallow-repository").strip() == b"true":  # the parent may be cut off
+        raise GitFailed("the reviewed commit has no parent in this shallow clone")
+    return git(repo, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip()
+
+
+def project_check_paths(text: str, paths: list[Path]) -> str | None:
+    for path in paths:
         try:
             spec = importlib.util.spec_from_file_location("project_validation", path)
             module = importlib.util.module_from_spec(spec)
@@ -2233,7 +2287,8 @@ def main(argv=None, result_sink=None, claims=None, verified=None) -> int:
                 raise BridgeError("checkout changed during review; result is stale")
             value = validate(json.loads(execution["stdout"]), args.mode, args.model)
             refused = project_check("\n".join(line for item in value.values()
-                                              for line in (item if isinstance(item, list) else [item])), repo)
+                                              for line in (item if isinstance(item, list) else [item])),
+                                    repo, scope, ref)
             if refused:
                 reason = reason or "invalid_evidence:" + refused
                 raise BridgeError("the project's check (scripts/project_validation.py) refused the final report: " + refused)

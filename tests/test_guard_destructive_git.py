@@ -49,6 +49,74 @@ class GuardCase(unittest.TestCase):
 
 
 class GuardDestructiveGitTests(GuardCase):
+    def test_the_proposals_config_never_runs_inside_the_hooks_own_queries(self):
+        # labricore audit 2026-11-10: the hook asks git status before the permission decision;
+        # a `-c core.fsmonitor=<cmd>` (or GIT_CONFIG_* variable) of the proposal forwarded to that
+        # query ran <cmd> unapproved. The hook still judges the proposal (a clean tree: allowed).
+        # Judging the tree WITHOUT that configuration answers under other rules than the command
+        # runs by (an alias or excludes file it brings), so the hook refuses it on a command it
+        # judges by the tree's state, and still forwards the keys git only reads (alias, excludes).
+        marker = self.repo.parent / 'fsmonitor-ran'
+        script = self.repo.parent / 'fsm.sh'
+        script.write_text('#!/bin/sh\ntouch "%s"\n' % marker, encoding='utf-8')
+        script.chmod(0o755)
+        # a git dir written by hand brings its own config (round 3 High): named by GIT_DIR or --git-dir,
+        # from every folder the command may stand in, after its -C steps (round 4 High)
+        def hand_written(path):
+            for sub in ('objects', 'refs'):
+                (path / sub).mkdir(parents=True, exist_ok=True)
+            (path / 'HEAD').write_text('ref: refs/heads/main\n', encoding='utf-8')
+            (path / 'config').write_text('[core]\n\tfsmonitor = %s\n' % script, encoding='utf-8')
+            return path
+        gitdir = hand_written(self.tmp / 'gd')
+        hand_written(self.tmp / '.git')  # `../.git` from the repository
+        hand_written(self.tmp / 'x/.git')
+        (self.repo / 'sub').mkdir()  # empty: the tree stays clean
+        for command in ('git -c core.fsmonitor=%s reset --hard' % script,
+                        'GIT_DIR=%s git reset --hard' % gitdir, 'git --git-dir=%s clean -fd' % gitdir,
+                        'git --git-dir %s clean -fd' % gitdir, 'GIT_COMMON_DIR=%s git clean -fd' % gitdir,
+                        'cd sub && GIT_DIR=../.git git reset --hard', 'git -C %s/x --git-dir=../.git clean -fd' % self.tmp,
+                        'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=%s git reset --hard' % script,
+                        'git -c include.path=/tmp/x.cfg clean -fd', 'GIT_CONFIG_GLOBAL=/tmp/x.cfg git clean -fd',
+                        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='reset --hard' git x",
+                        # HOME or XDG_CONFIG_HOME moves the global config (an ignore file, an alias) the same way
+                        'HOME=%s git clean -fd' % self.repo.parent, 'XDG_CONFIG_HOME=%s git x' % self.repo.parent,
+                        'git -c status.showUntrackedFiles=no clean -fd'):
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertFalse(marker.exists(), 'the proposal\'s fsmonitor command ran inside the hook')
+                self.assertEqual(result.returncode, 2, result.stderr.decode('utf-8', 'replace'))
+                self.assertIn(b'cannot read safely', result.stderr)
+        # the same dir entered, not named, is the folder's own configuration, trusted (the hook's
+        # boundary is the command line); its fsmonitor command still never runs inside the hook
+        for command in ('git -C %s --work-tree=%s clean -fd' % (gitdir, self.repo),
+                        'cd %s && GIT_WORK_TREE=%s git clean -fd' % (gitdir, self.repo),
+                        'git -C %s/x --git-dir=.git --work-tree=%s clean -fd' % (self.tmp, self.repo),
+                        'cd %s/x && git reset --hard' % self.tmp):
+            with self.subTest(command=command):
+                self.run_hook(command)
+                self.assertFalse(marker.exists(), 'the folder\'s fsmonitor command ran inside the hook')
+        # the folder's own git dir, named, in a path with a space (round 4 Medium): not foreign
+        spaced = self.tmp / 'my project'
+        spaced.mkdir()
+        git(spaced, 'init', '-q', '-b', 'main')
+        git(spaced, 'commit', '-q', '--allow-empty', '-m', 'base')
+        self.assertVerdict(['GIT_DIR=.git git reset --hard', 'git --git-dir=.git --work-tree=. clean -fd'], 0, cwd=spaced)
+        # a judgement that needs a query names the setting, not a guess about remotes or refs (round 3 Low)
+        for command in ('git -c core.editor=true commit --amend', 'git -c core.pager=cat branch -D nosuch',
+                        'git -c http.extraHeader=x ls-remote origin'):
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr.decode('utf-8', 'replace'))
+                self.assertIn(b'needs an answer from git, and a `-c`', result.stderr)
+                self.assertNotIn(b'uncommitted changes:', result.stderr)
+        # a command the hook never asks git about keeps its setting; a read-only one is not judged
+        self.assertVerdict(['git -c core.fsmonitor=%s status' % script, 'git -c core.excludesFile=/dev/null status',
+                            'git -c core.excludesFile=/dev/null clean -n', 'git -c alias.st=status st',
+                            'git -c core.sshCommand="ssh -i k" push origin main', 'git -c core.longpaths=true add .',
+                            'HUSKY=0 git checkout -b topic', 'git -c core.editor=true rebase --continue'], 0)
+        self.assertFalse(marker.exists())
+
     def test_loss_certain_commands_are_refused_on_a_clean_tree(self):
         self.assertVerdict([
             'git stash drop', 'git stash clear', 'git -C . stash drop',
@@ -79,7 +147,7 @@ class GuardDestructiveGitTests(GuardCase):
     def test_work_discarding_commands_are_refused_on_a_dirty_tree(self):
         self.dirty()
         self.assertVerdict([
-            'git reset --hard', 'git -C . reset --hard', 'git -c x.y=1 reset --hard HEAD',
+            'git reset --hard', 'git -C . reset --hard', 'git -c color.ui=never reset --hard HEAD',
             'git -C $(pwd) reset --hard',  # syncfind: the lexer split the line at $( and read a command named reset
             'git checkout -- f.txt', 'git checkout -f', 'git restore f.txt', 'git restore --staged --worktree f.txt',
             'git restore -SW f.txt', 'git clean -fd', 'git clean -x -f', 'git clean --force',
@@ -1075,7 +1143,7 @@ class V0141FieldReportTests(GuardCase):
             "export GIT_EDITOR='git reset --hard #'; git commit", "GIT_EXTERNAL_DIFF='git stash clear #' git diff",
             "git --icase-pathspecs checkout HEAD -- F.TXT", "GIT_ICASE_PATHSPECS=1 git checkout HEAD -- F.TXT",
             # Round 2 (Medium): a global option's separate value hid the pathspec option after it.
-            "git -C . --icase-pathspecs checkout HEAD -- F.TXT", "git -c k.v=1 --icase-pathspecs checkout HEAD -- F.TXT",
+            "git -C . --icase-pathspecs checkout HEAD -- F.TXT", "git -c color.ui=never --icase-pathspecs checkout HEAD -- F.TXT",
             "git --work-tree . --glob-pathspecs checkout HEAD -- F.TXT",
         ], 2)
         self.assertVerdict(["cat <<'E' > n.md\nnote: $(git reset --hard) is bad\nE",

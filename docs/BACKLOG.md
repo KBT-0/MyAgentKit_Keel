@@ -158,3 +158,10 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   counts as live, and closing a session cannot clear it until `MYAGENTKIT_LIMIT_FORCE=1`.
 - Low: spawn_worker.sh session cap: no lock, and a session registers only once its process exists, so parallel or quick
   spawns can pass the cap together.
+
+## Filed from the v0.16 secfix review round 5 (20261110T180918Z-cebbad48094a, owner 2026-11-10)
+
+- Medium: claude_bridge.py project_check() (and its packaged copy) asks `ls-tree <rev> -- scripts/project_validation.py`; a
+  project that commits `scripts` as a symlink to a directory holding the file gets an empty answer, so the project's check
+  silently never runs (the old code loaded it through the working tree; a symlinked FILE fails closed). Resolve the link
+  target at that revision and read from there, with a test; the owner chose the backlog over a sixth review round.

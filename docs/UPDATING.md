@@ -41,9 +41,9 @@ Three scripts stay the project's, and they are where its own content lives (#94)
   reviewer pins. `check.sh` and `review.sh` refuse to run without it.
 - `scripts/boundary_checks.sh`, the project's boundary checks.
 - `scripts/project_validation.py`, the project's own check of a reviewer's final report
-  (#87). Both adapters call its `validate_final_message(text)` when the file sits beside them or
-  in the reviewed repository's `scripts/` (the Codex plugin's bundled adapters); a reason it
-  returns fails the review as `invalid_evidence:<reason>`. A check like this once lived as a
+  (#87). Both adapters call its `validate_final_message(text)` on the copy committed before the
+  reviewed change (HEAD for uncommitted work), never the working tree's; a reason it returns
+  fails the review as `invalid_evidence:<reason>`. A check like this once lived as a
   patch inside the adapters, and every sync dropped it; it never goes there now.
 
 A kit script that became kit-owned meets the project's copy without the header once. The sync
