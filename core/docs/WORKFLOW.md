@@ -1876,6 +1876,18 @@ its logs, and cannot be recalled.
   feeds the model text), not only cost (code.claude.com/docs/en/security, "MCP security").
   Workers do not run with `--strict-mcp-config`, because Unity work needs the project's
   server; the reviewer already runs with MCP off. That choice is the owner's.
+- **graphify (a code knowledge graph skill) is owner-called only;** a lead or worker never runs
+  `/graphify` or `graphify claude install` on its own. It runs only in a project the owner enabled
+  with a `## graphify` block in THAT project's `CLAUDE.md`, never in a home-level or user-level
+  one; the kit's own repository: no. The first run is code-only with `--no-viz` (code is local
+  AST, no tokens); a document pass only after {{OWNER_NAME}} hears "N files × M agents" and says
+  yes. Excludes, in `.graphifyignore`: `node_modules`, `.myagentkit`, `graphify-out`, transcripts,
+  images. The block never says "read GRAPH_REPORT first" on every question; it says: for a
+  cross-file question (what calls what, how A reaches B, change impact) you MAY run
+  `graphify query/path/explain`; edit, debug and exact-string search read the files. After a code
+  change, `graphify update .` only where the block is present (AST-only, no API cost); no
+  `--watch`, no post-commit hook. A measured trial that shows no saving removes the block.
+  Sources: the kit's `docs/research/graphify.md`.
 
 Why: docs/WORKFLOW_RATIONALE.md, "MCP hygiene".
 

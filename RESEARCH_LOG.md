@@ -29,6 +29,10 @@ the proxy-consult line named Fable 5.1, so a lead pinning by name would ask for 
 (reviews run on 5.1, research prices) stays as written. `token_audit.py` still prices `fable` at the 5.1 rates (10/50 $/MTok;
 5.2 is 8/40, the cache-read ratio 0.025 is unchanged): a code change, left for its own task.
 
+### 2026-11-10 — v0.16 graphify: the rule and its limit
+
+graphify 0.6.7 builds code graphs from local AST at no token cost, but the measured savings are mixed (FastAPI: 14% fewer file reads, 49% more input tokens; issue #580: a "read GRAPH_REPORT first" line costs 12-25k a question), so the kit makes it owner-called, per-project and code-only first, removes the home-level block, and prepares a leeway A/B trial before any project keeps it (`docs/research/graphify.md`). Verdict: rule shipped; the trial decides per project.
+
 ### 2026-11-10 — v0.16 textcut: the fixed kit text per request
 
 turnmeasure counted ~8k fixed kit tokens per request in the ctl16r kit lead (leeway's `AGENTS.md` 20 631 chars against
