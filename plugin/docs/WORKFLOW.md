@@ -630,7 +630,7 @@ choice, 2026-10-19; rule 2 says when the top model takes an errand itself, and t
 |---|---|---|---|
 | 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5, medium effort |
 | 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, high effort, only for design-bearing work |
-| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, high effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.1 only as a design consultation (a read-only sub-agent that answers and edits nothing, rule 2) |
+| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, high effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.2 only as a design consultation (a read-only sub-agent that answers and edits nothing, rule 2) |
 | Review | The required review of any change, chosen per task like a worker | at least the author's tier: the author's own in a fresh session by default, a stronger one when the lead names why (`docs/REVIEW_GATE.md`, "Invariant") | the same rule: Fable for a data-loss or gate risk, a release or security |
 
 The review row is `docs/REVIEW_GATE.md`, "Invariant", with its sources (Anthropic's separate
@@ -731,7 +731,7 @@ Rules for whoever routes work, binding with any table:
    allowance is low (a saver mode, below),
    the top model and the highest effort need the owner's yes. Sources: both vendors name a
    routine default and keep the top model for work it fails (platform.claude.com/docs/en/models/overview:
-   start with Opus 5.5, Fable 5.1 where Opus at high effort falls short; learn.chatgpt.com/docs/models:
+   start with Opus 5.5, Fable 5.2 where Opus at high effort falls short; learn.chatgpt.com/docs/models:
    Sol where the plan has it, and some paid plans lack Astra Extra High). "Without asking" and
    "the owner's yes" are the owner's policy, with no source.
 3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier. A
@@ -1058,7 +1058,7 @@ a commit made while away) follows the away line until a switch records it there.
   standing-approval`: its one gate is {{OWNER_NAME}} reading the printed body
   (`/myagentkit:kit-feedback`, §5).
 - **Proxy consult:** a read-only sub-agent with model and effort stated and a line `Fable
-  consult: REASON` in its prompt ("Worker cost" rule 2): Fable 5.1 first; when it is
+  consult: REASON` in its prompt ("Worker cost" rule 2): Fable 5.2 first; when it is
   unavailable or asks to bill usage credits, never approve them: Opus 5.5 at high. First the
   question, why now, the binding rules and the owner's words verbatim, the evidence and the
   options in neutral order; the lead's own view only after the answer, for the proxy to

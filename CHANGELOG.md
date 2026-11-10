@@ -15,6 +15,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The kit's Fable pins move to Fable 5.2** (pin52, ai-watch 2026-11-10 finding 1, owner 2026-11-10): Claude Code 2.1.321
+  made Claude Fable 5.2 (`claude-fable-5-2`) the default Fable model; the "Model routing" tier-3 row, the rule-1 vendor
+  source line and the proxy-consult line in `docs/WORKFLOW.md` now say Fable 5.2. The rule is unchanged: Fable leads,
+  reviews and consults, never a worker without the owner's word. **ACTION:** `sync-kit.sh` brings the kit-owned
+  `docs/WORKFLOW.md`; in a project-owned file that names "Fable 5.1" or `claude-fable-5-1` as a live pin (`AGENTS.md`,
+  `docs/STATE.md`, `.claude/agents/*.md`, a brief template), change it to Fable 5.2 / `claude-fable-5-2`; dated history
+  stays as written.
 - **The kit scans the AI sector weekly from a written scope** (PLAN item 10B, owner 2026-11-10; kit repo only, projects
   report through kit-feedback and have nothing to do): `docs/research/ai-watch.md` names the sources (Anthropic, OpenAI,
   Google, Cursor/Windsurf, MCP, arXiv, the kit's field issues), the "serves the kit" keyword filter and the one-line

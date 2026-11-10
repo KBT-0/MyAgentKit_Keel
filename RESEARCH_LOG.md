@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-10 — v0.16 pin52: the Fable pins move to Fable 5.2
+
+ai-watch 2026-11-10 finding 1 (Claude Code CHANGELOG 2.1.321: "Added Claude Fable 5.2 (`claude-fable-5-2`), now the default
+Fable model"), checked against the installed CLI 2.1.322: the "Model routing" tier-3 row, the vendor-source line of rule 1 and
+the proxy-consult line named Fable 5.1, so a lead pinning by name would ask for the old model. Moved to 5.2; dated history
+(reviews run on 5.1, research prices) stays as written. `token_audit.py` still prices `fable` at the 5.1 rates (10/50 $/MTok;
+5.2 is 8/40, the cache-read ratio 0.025 is unchanged): a code change, left for its own task.
+
 ### 2026-11-10 — v0.16 textcut: the fixed kit text per request
 
 turnmeasure counted ~8k fixed kit tokens per request in the ctl16r kit lead (leeway's `AGENTS.md` 20 631 chars against

@@ -522,7 +522,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('`docs/COMMUNICATION.md`', reading)
         communication = (ROOT / 'core/docs/COMMUNICATION.md').read_text(encoding='utf-8')
         for path, text in (('AGENTS.md', agents), ('COMMUNICATION.md', communication)):
-            for kit_only in ('dogfood', 'KARARLAR', 'ACCEPTANCE.md', 'Fable 5.1'):
+            for kit_only in ('dogfood', 'KARARLAR', 'ACCEPTANCE.md', 'Fable 5.1', 'Fable 5.2'):
                 self.assertNotIn(kit_only, text, '%s carries kit-internal text' % path)
 
     def test_model_routing_values_and_the_inheritance_rule_live_once(self):
