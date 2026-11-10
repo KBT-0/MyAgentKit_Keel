@@ -176,6 +176,10 @@ so `guard_risky_review.py` is on here as in a project: a commit that changes one
 review. The hand-kept list of reviews owed (`.myagentkit/strong_review.md`) takes no new entry; it
 closes when its last entry is reviewed, and each entry is deleted only by that review.
 
+The kit also watches the AI sector once a week (PLAN item 10B): when `Son tarama:` in
+`docs/research/ai-watch.md` is more than 7 days old, the kit's SessionStart tells the lead, who
+starts a research worker on that file's scope and turns its findings into PLAN lines or issues.
+
 ## The kit's Claude Code mod
 
 This is for the kit repo only (installed projects have no `plugin/`). The mod needs Claude Code

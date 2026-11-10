@@ -140,7 +140,7 @@ REQUIRED_SUITES = {
               'test_kit_output': 3, 'test_kit_runner': 53, 'test_clean_worktrees': 146, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,
               'test_close_worker': 56 if os.name == 'nt' else 59, 'test_python_fallback': 3, 'test_master_writer': 13 if os.name == 'nt' else 14,
-              'test_install': 12 if os.name == 'nt' else 8, 'test_install_self': 6, 'test_gate_config': 3, 'test_calm': 4, 'test_run_checks': 6,
+              'test_install': 12 if os.name == 'nt' else 8, 'test_install_self': 6, 'test_aiwatch_stale': 4 if shutil.which('sh') else 0, 'test_gate_config': 3, 'test_calm': 4, 'test_run_checks': 6,
               # limit_stop.py everywhere; the watchdog where flock(1) is, the timer on Linux.
               'test_limit_watchdog': 3 + (14 if shutil.which('flock') and os.name != 'nt' else 0)
               + (1 if sys.platform.startswith('linux') else 0)},

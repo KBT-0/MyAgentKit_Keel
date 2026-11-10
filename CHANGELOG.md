@@ -15,6 +15,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The kit scans the AI sector weekly from a written scope** (PLAN item 10B, owner 2026-11-10; kit repo only, projects
+  report through kit-feedback and have nothing to do): `docs/research/ai-watch.md` names the sources (Anthropic, OpenAI,
+  Google, Cursor/Windsurf, MCP, arXiv, the kit's field issues), the "serves the kit" keyword filter and the one-line
+  finding format, and holds the first scan (2026-11-10). A `startup` SessionStart line in the kit's `.claude/settings.json`
+  tells the lead when its `Son tarama:` date is more than 7 days old or missing; silent when fresh and for workers.
+  tests/test_aiwatch_stale.py.
 - **The kit runs its own hooks from a pinned installed copy** (PLAN item 11, owner 2026-11-10; kit repo only, projects
   are unaffected and have nothing to do): `scripts/install_self.sh` copies the hooks of `scripts/installed_ref` into the
   main checkout's `.myagentkit/installed/`, read-only, and sets `core.hooksPath=.githooks`; the kit's

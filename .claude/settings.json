@@ -139,6 +139,16 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$MYAGENTKIT_ROLE\" = worker ] && exit 0; f=\"$CLAUDE_PROJECT_DIR/docs/research/ai-watch.md\"; [ -f \"$f\" ] || f=/dev/null; awk -v t=\"$(date +%F)\" 'function n(s, y,m,d,e){y=substr(s,1,4)+0;m=substr(s,6,2)+0;d=substr(s,9,2)+0;y-=(m<=2);e=int(y/400);y-=e*400;return e*146097+y*365+int(y/4)-int(y/100)+int((153*(m>2?m-3:m+9)+2)/5)+d-1} s==\"\"&&/^Son tarama: [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/{s=$3} END{if(s==\"\")r=\"yok\";else{k=n(t)-n(s);if(k<=7)exit;r=k\" gün önce\"} print \"ai-watch: son tarama \" r \" (docs/research/ai-watch.md); paralelde aiwatch araştırma işçisini başlat\"}' \"$f\" 2>/dev/null; true",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },

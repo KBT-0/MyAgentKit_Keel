@@ -140,6 +140,12 @@ class InstallSelfTests(unittest.TestCase):
         settings = json.loads((ROOT / '.claude/settings.json').read_text(encoding='utf-8'))
         commands = [h['command'] for event in settings['hooks'].values() for entry in event for h in entry['hooks']]
         self.assertNotIn('overlays/', ' '.join(commands))
+        # The ai-watch stale check (tests/test_aiwatch_stale.py) is inline sh and awk that runs no
+        # file, so there is nothing for a pinned copy to hold; any other command goes through the resolver.
+        inline = [c for c in commands if 'ai-watch.md' in c]
+        self.assertEqual(len(inline), 1)
+        self.assertNotRegex(inline[0], r'\.(py|sh|txt)\b|hooks/|scripts/')
+        commands = [c for c in commands if c not in inline]
         names = [m for c in commands for m in re.findall(r'scripts/kit_hook\.sh\\?" ([\w.]+)', c)]
         self.assertEqual(len(names), len(commands))
         self.assertIn('guard_risky_review.py', names)
