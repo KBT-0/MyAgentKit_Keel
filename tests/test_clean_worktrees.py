@@ -1167,6 +1167,17 @@ class CleanWorktreesTests(unittest.TestCase):
                 os.utime(touched, (self.now - 7200,) * 2, follow_symlinks=False)
         self.assertRemoved(path, self.run_script('--apply'))
 
+    def test_result_moved_leaves_the_folder_out_of_the_quiet_period_and_nothing_else(self):
+        # close_worker.sh moves RESULT-NAME.md out and back: the folder's own change must not restart the wait.
+        path = self.worktree('done')
+        self.recent(path)
+        self.assertKept(path, self.run_script('--apply', '--only=done'), 'quiet period: ')
+        self.assertRemoved(path, self.run_script('--apply', '--only=done', '--result-moved'))
+        path = self.worktree('again')
+        self.recent(path / 'again.txt')
+        self.assertKept(path, self.run_script('--apply', '--only=again', '--result-moved'), 'quiet period: ')
+        self.assertIn('--result-moved is accepted only with --only', self.run_script('--result-moved', code=2))
+
     def test_a_ctime_counts_when_the_mtime_was_kept(self):
         path = self.worktree('done')
         for target in (path / 'a', self.gitdir(path) / 'HEAD'):

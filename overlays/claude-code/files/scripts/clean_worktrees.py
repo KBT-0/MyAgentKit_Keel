@@ -1144,7 +1144,10 @@ def audit(record, ctx):
         # meets it under a name the index does not hold.
         ids = set((i.st_dev, i.st_ino) for i in (entry(real, rel) for rel in tracked) if i is not None)
         for rel, info, is_dir, mount in walk(real, ctx['mounts']):
-            recent = max(recent or 0, changed(info))
+            # close_worker.sh moved its result out and back: that touches the folder itself and the
+            # report, and must not restart the quiet period it waits for (--result-moved).
+            if not (ctx['result_moved'] and rel in (b'', b'RESULT-' + facts['name'] + b'.md')):
+                recent = max(recent or 0, changed(info))
             if mount:
                 foreign.append(rel or b'. (the folder itself)')
                 continue
@@ -1408,7 +1411,12 @@ def main():
     parser.add_argument('--no-quiet', action='store_true',
                         help='with --only: lift the quiet period for that worktree, every other check stays '
                              '(close_worker.sh, once the lead has ended its session)')
+    parser.add_argument('--result-moved', action='store_true',
+                        help='with --only: the folder itself and RESULT-NAME.md do not count for the quiet period '
+                             '(close_worker.sh moved the report out and back)')
     args = parser.parse_args()
+    if args.result_moved and args.only is None:
+        parser.error('--result-moved is accepted only with --only')
     if args.no_quiet and args.only is None:
         parser.error('--no-quiet is accepted only with --only: the post-merge hook never lifts the quiet period')
     if args.only is not None and (args.only in ('', '.', '..') or '/' in args.only):
@@ -1476,7 +1484,7 @@ def main():
            'unlogged': False,
            'now': float(clock or time.time()),
            'proc': os.fsencode(os.environ.get('CLEAN_WORKTREES_PROC', '/proc')),
-           'assume_idle': args.assume_idle, 'all': args.all_reasons, 'no_quiet': args.no_quiet,
+           'assume_idle': args.assume_idle, 'all': args.all_reasons, 'no_quiet': args.no_quiet, 'result_moved': args.result_moved,
            'log': os.path.join(common, b'kit-worktree-removals.log')}
     ctx['run'] = '%s-%d' % (ctx['stamp'].decode(), os.getpid())
     for line, why in refused:

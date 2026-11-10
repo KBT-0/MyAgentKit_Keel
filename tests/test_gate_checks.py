@@ -97,6 +97,12 @@ class GateCheckTests(unittest.TestCase):
         write(self.project / 'docs/RESULT-w1.md', MARKER + '\n')  # only at the top
         self.assert_red('FAIL [setup]: unfilled placeholder markers remain')
 
+    def test_a_marker_in_the_kit_written_upgrade_list_passes_but_not_in_agents_md(self):
+        write(self.project / 'docs/kit/UPGRADE.md', 'an item names ' + MARKER + '\n')
+        self.assert_green()
+        write(self.project / 'AGENTS.md', 'text ' + MARKER + '\n')
+        self.assert_red('FAIL [setup]: unfilled placeholder markers remain')
+
     def test_the_state_file_must_exist_with_its_heading_and_its_length_alone_never_fails(self):
         state = self.project / 'docs/STATE.md'
         write(state, '# STATE\n\n## Active work\n\n## Notes\n' + ''.join('line %d\n' % i for i in range(500)))

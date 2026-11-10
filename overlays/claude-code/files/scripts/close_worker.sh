@@ -870,7 +870,8 @@ for name; do
       fi
       rmdir -- "${copy%/*}" "${copy%/*/*}" 2>/dev/null || :
     fi
-    out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" $noquiet 2>&1); rc=$?
+    rmoved=""; [ -z "$moved" ] || rmoved=--result-moved
+    out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" $noquiet $rmoved 2>&1); rc=$?
     # Deleted only with the worktree: a folder Windows moved aside and not back (MOVED) has no
     # .claude/hooks either, and the file goes back with it.
     removed=""; case $nl$out in *"${nl}clean_worktrees: removed 1,"*) removed=1 ;; esac

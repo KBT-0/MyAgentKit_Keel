@@ -47,9 +47,9 @@ from pathlib import Path
 
 CHARS_PER_TOKEN = 2.4
 BIG = 20000
-# $/MTok input, output, cache-read multiplier. Writes: 1.25x (5 min), 2x (1 h).
+# $/MTok input, output, cache-read multiplier. Writes: 1.25x (5 min), 2x (1 h). Fable: 5.2 rates (5.1 was 10/50).
 PRICES = {'opus': (4.0, 20.0, 0.05), 'sonnet': (2.0, 10.0, 0.05), 'haiku': (0.10, 0.50, 0.10),
-          'fable': (10.0, 50.0, 0.025)}
+          'fable': (8.0, 40.0, 0.025)}
 JUNK = re.compile(r'(^|/)(node_modules|dist|build|\.venv|__pycache__|\.git)/|(package-lock\.json|yarn\.lock|'
                   r'pnpm-lock\.yaml|uv\.lock|poetry\.lock|Cargo\.lock)$|\.(png|jpe?g|gif|ico|min\.js|map)$|'
                   r'plugins/myagentkit/scripts/')

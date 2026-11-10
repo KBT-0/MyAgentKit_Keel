@@ -573,10 +573,12 @@ scan_grep() {
 #   MODULE_AGENTS_TEMPLATE.md    a template that is COPIED per module, never filled in place
 #   RESULT-NAME.md, QUESTION-NAME.md at the top: a worker's hand-back, which quotes marker
 #                                names (#320; WORKFLOW names both files)
+#   docs/kit/UPGRADE.md          sync-kit.sh writes it from the kit's CHANGELOG ACTION items, which
+#                                may quote a marker name (smallfix3: a fresh sync failed its own gate)
 # Without these exemptions a correctly configured project can never go green — which is
 # exactly what happened, and neither file is something the owner may simply delete, because
 # sync-kit.sh restores both.
-hits=$(scan_grep '\{\{[A-Z0-9_]+\}\}' | grep -Ev '^(setup/|MODULE_AGENTS_TEMPLATE\.md:|(RESULT|QUESTION)-[A-Za-z0-9_-]+\.md:)' || true)
+hits=$(scan_grep '\{\{[A-Z0-9_]+\}\}' | grep -Ev '^(setup/|MODULE_AGENTS_TEMPLATE\.md:|(RESULT|QUESTION)-[A-Za-z0-9_-]+\.md:|docs/kit/UPGRADE\.md:)' || true)
 if [ -n "$hits" ]; then
   echo "FAIL [setup]: unfilled placeholder markers remain — run setup/INTERVIEW.md:"
   printf '%s\n' "$hits" | head -30

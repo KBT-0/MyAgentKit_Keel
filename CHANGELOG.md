@@ -15,6 +15,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **`docs/kit/UPGRADE.md` is exempt from the `[setup]` marker scan** (smallfix3, ctl16s harness, owner 2026-11-10):
+  `sync-kit.sh` writes UPGRADE.md from the ACTION items of this changelog, and an item may quote a marker name in braces;
+  a freshly synced project then failed its own commit gate until UPGRADE.md was edited by hand. `core/scripts/check.sh`
+  now skips that file like `setup/` and the RESULT-/QUESTION- files; the textcut entry below no longer writes the braces.
+  tests/test_gate_checks.py. **ACTION:** re-sync (`core/scripts/check.sh` is kit-owned); a red `[setup]` gate on
+  `docs/kit/UPGRADE.md` after a sync is this bug.
+- **`token_audit.py` prices Fable at the 5.2 rates** (smallfix3, pin52 follow-up): 8/40 $/MTok (5.1 was 10/50), cache-read
+  ratio unchanged. Kit-owned; a re-sync brings it.
+- **`close_worker.sh` no longer restarts the quiet period it waits for** (smallfix3, ctl16s): moving a non-completed
+  worker's result out and back touched the worktree folder and `RESULT-NAME.md`, so every repeated close saw "changed 0
+  min ago". It now passes the audit `--result-moved` (with `--only`), which leaves those two out of the quiet scan; every
+  other file still counts. tests/test_clean_worktrees.py, tests/test_close_worker.py. Kit-owned; a re-sync brings it.
+
 - **The kit's Fable pins move to Fable 5.2** (pin52, ai-watch 2026-11-10 finding 1, owner 2026-11-10): Claude Code 2.1.321
   made Claude Fable 5.2 (`claude-fable-5-2`) the default Fable model; the "Model routing" tier-3 row, the rule-1 vendor
   source line and the proxy-consult line in `docs/WORKFLOW.md` now say Fable 5.2. The rule is unchanged: Fable leads,
@@ -33,9 +46,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   request (`AGENTS.md` template, kit-feedback bullet, agent descriptions, `CLAUDE.md`) goes from 8 540 to 7 005 characters
   (about 3 560 → 2 920 tokens). `AGENTS.md` keeps every rule as one sentence under a 6 300-character cap; its "Duties"
   moved into `docs/COMMUNICATION.md` ("Questions and approvals", "Handoff") behind one binding pointer; a new "Commands"
-  section names `{{BUILD_TEST_COMMAND}}` and the gate; each `.claude/agents/*.md` description is one line under 200
+  section names `BUILD_TEST_COMMAND` and the gate; each `.claude/agents/*.md` description is one line under 200
   characters with no placeholder; the kit-feedback bullet is shorter. test_doc_pointers red without it. **ACTION:** merge
-  the kit's `AGENTS.md` (`sync-kit.sh . --merge` fills `{{BUILD_TEST_COMMAND}}` in "Commands" from `scripts/gate_config.sh`;
+  the kit's `AGENTS.md` (`sync-kit.sh . --merge` fills `BUILD_TEST_COMMAND` in "Commands" from `scripts/gate_config.sh`;
   a hand merge copies `build_test_cmd` there),
   `docs/COMMUNICATION.md`, `docs/WORKFLOW.md`, `.claude/agents/diff-reviewer.md` and `.claude/agents/worker.md` into yours.
 - **The kit runs its own hooks from a pinned installed copy** (PLAN item 11, owner 2026-11-10; kit repo only, projects

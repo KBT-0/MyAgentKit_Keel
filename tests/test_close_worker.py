@@ -744,6 +744,24 @@ class CloseWorkerTests(unittest.TestCase):
         out = self.close('w1', code=1)
         self.assertIn('close_worker: FAILED: w1: worktree kept: ', out)
 
+    def test_two_closes_of_a_kept_handoff_worker_do_not_restart_the_quiet_period(self):
+        # ctl16s/textcut: the result moved out and back touched the folder, so "changed 0 min ago" forever.
+        path = self.main / '.claude/worktrees/w1'
+        self.git('worktree', 'add', '-q', str(path), '-b', 'worktree-w1')
+        (path / 'w1.txt').write_text('w1\n')
+        self.git('add', 'w1.txt', cwd=path)
+        self.git('commit', '-q', '-m', 'work in w1', cwd=path)
+        self.git('merge', '-q', '--no-edit', 'worktree-w1')
+        self.result(path, 'w1', 'Kind: handoff')
+        time.sleep(2)  # the files above are older than the moves below
+        # A clock one second before the end of the quiet period counted from now: only a change made
+        # after the sleep is still inside it.
+        clock = str(time.time() + 3599)
+        for _ in range(2):
+            out = self.close('--finished', 'w1', CLEAN_WORKTREES_NOW=clock)  # the merge hook keeps the quiet period
+            self.assertNotIn('quiet period: ', out)
+        self.assertFalse(path.exists(), out)
+
     def test_the_ignore_file_spawn_writes_for_copied_hooks_does_not_keep_the_worktree(self):
         # Fable final review 1: spawn_worker.sh no longer lists the hook files it copies in the
         # shared info/exclude; a self-ignoring .claude/hooks/.gitignore in the worktree lists them.
