@@ -1,7 +1,7 @@
 ---
 name: worker
 description: >
-  Implementation worker for {{PROJECT_NAME}}, one briefed task in one module (docs/HANDOFF.md); use it instead of general-purpose. A job waiting past five minutes goes to scripts/spawn_worker.sh.
+  Implementation worker: one briefed task in one module (docs/HANDOFF.md); use it instead of general-purpose. A job waiting past five minutes goes to scripts/spawn_worker.sh.
 model: {{WORKER_MODEL}}
 effort: {{WORKER_EFFORT}}
 maxTurns: 150

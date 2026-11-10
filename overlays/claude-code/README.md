@@ -279,8 +279,8 @@ in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 | `{{GATED_PATHS}}` / `{{GATED_FILE_PATTERN}}` | `.claude/hooks/gate_on_stop.sh`: the paths whose change makes the Stop hook run the gate (`setup/INTERVIEW.md`) |
 | `{{BOUNDARY_GUARDS}}` | `.claude/hooks/guard_boundaries.py`: a live list element; replace the quoted string with real tuples, or delete the line if nothing is guardable (`setup/INTERVIEW.md`) |
 
-The overlay's files also carry the core's `{{PROJECT_NAME}}`, `{{OWNER_NAME}}` and
-`{{RISKY_AREAS}}`, filled with the same values as the core files. `diff-reviewer.md` runs
+The overlay's files also carry the core's `{{PROJECT_NAME}}` and `{{OWNER_NAME}}`, filled
+with the same values as the core files. `diff-reviewer.md` runs
 on the session's model and effort (`model: inherit`; `docs/REVIEW_GATE.md`, "Invariant"). A project that already has its own reviewer
 agent under `.claude/agents` keeps one definition, not two: merge what its own carries into
 `diff-reviewer.md` and delete it, or keep its own and delete `diff-reviewer.md`. Two

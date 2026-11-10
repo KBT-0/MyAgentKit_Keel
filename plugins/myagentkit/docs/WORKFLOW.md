@@ -757,7 +757,7 @@ Rules for whoever routes work, binding with any table:
 6. **A low allowance shrinks what that side does, never the review.** When the owner says
    one side's allowance is low, the saver mode is in force (below), naming that side. It
    lasts until the allowance resets or the owner says otherwise; then the mode before it is
-   back at once, unasked (`AGENTS.md`, "Duties toward {{OWNER_NAME}}").
+   back at once, unasked (`docs/COMMUNICATION.md`, "Questions and approvals").
 7. **Critical work is written by Opus until {{OWNER_NAME}} says otherwise** (owner decision,
    2026-10-15): architecture, a gate's or the review tooling's design, a security boundary.
    The brief marks it `Risk: <tier> (critical)`; the mark keeps the tier

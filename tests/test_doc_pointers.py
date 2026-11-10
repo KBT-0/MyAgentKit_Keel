@@ -544,10 +544,26 @@ class SectionPointerTests(unittest.TestCase):
 
     def test_the_constitution_stays_under_its_character_cap(self):
         # CHANGELOG v0.16, loadcut (owner 2026-11-09): AGENTS.md is in every request of every agent;
-        # 10 437 characters became 7 594 with each explanation moved to the section a pointer names.
+        # 10 437 characters became 7 594 with each explanation moved to the section a pointer names;
+        # textcut (turnmeasure, owner 2026-11-10) took it to 6 282, "Duties" moved to COMMUNICATION.md.
         # shortcut: a characters cap, raised only by the owner's word.
         text = (ROOT / 'core/AGENTS.md').read_text(encoding='utf-8')
-        self.assertLessEqual(len(text), 7600)
+        self.assertLessEqual(len(text), 6300)
+
+    def test_each_agent_description_is_one_short_line(self):
+        # textcut (turnmeasure, owner 2026-11-10): Claude Code lists every agent's description in
+        # each request's system prompt; a placeholder there grew leeway's diff-reviewer line to 319.
+        agents = sorted((ROOT / 'overlays/claude-code/files/.claude/agents').glob('*.md'))
+        self.assertTrue(agents)
+        for path in agents:
+            with self.subTest(agent=path.name):
+                front = path.read_text(encoding='utf-8').split('---\n')[1]
+                match = re.search(r'^description:[ \t]*(?:>-?[ \t]*\n((?:[ \t]+\S.*\n)+)|(\S.*)\n)', front, re.M)
+                self.assertIsNotNone(match, 'no description in the front matter')
+                lines = (match.group(1) or match.group(2)).strip().split('\n')
+                self.assertEqual(len(lines), 1, 'the description spans lines')
+                self.assertLess(len(lines[0].strip()), 200)
+                self.assertNotIn('{{', lines[0], 'a placeholder makes the filled length unknown')
 
     def test_a_style_plugin_never_replaces_the_test_and_report_rules(self):
         # #140: ponytail injects a "one self-check" test rule and a three-line report cap.

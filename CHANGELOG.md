@@ -21,6 +21,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   finding format, and holds the first scan (2026-11-10). A `startup` SessionStart line in the kit's `.claude/settings.json`
   tells the lead when its `Son tarama:` date is more than 7 days old or missing; silent when fresh and for workers.
   tests/test_aiwatch_stale.py.
+- **The fixed kit text in every request is cut** (turnmeasure, owner 2026-11-10, textcut): a fresh adopter's kit text per
+  request (`AGENTS.md` template, kit-feedback bullet, agent descriptions, `CLAUDE.md`) goes from 8 540 to 7 005 characters
+  (about 3 560 → 2 920 tokens). `AGENTS.md` keeps every rule as one sentence under a 6 300-character cap; its "Duties"
+  moved into `docs/COMMUNICATION.md` ("Questions and approvals", "Handoff") behind one binding pointer; a new "Commands"
+  section names `{{BUILD_TEST_COMMAND}}` and the gate; each `.claude/agents/*.md` description is one line under 200
+  characters with no placeholder; the kit-feedback bullet is shorter. test_doc_pointers red without it. **ACTION:** merge
+  the kit's `AGENTS.md` (`sync-kit.sh . --merge` fills `{{BUILD_TEST_COMMAND}}` in "Commands" from `scripts/gate_config.sh`;
+  a hand merge copies `build_test_cmd` there),
+  `docs/COMMUNICATION.md`, `docs/WORKFLOW.md`, `.claude/agents/diff-reviewer.md` and `.claude/agents/worker.md` into yours.
 - **The kit runs its own hooks from a pinned installed copy** (PLAN item 11, owner 2026-11-10; kit repo only, projects
   are unaffected and have nothing to do): `scripts/install_self.sh` copies the hooks of `scripts/installed_ref` into the
   main checkout's `.myagentkit/installed/`, read-only, and sets `core.hooksPath=.githooks`; the kit's

@@ -21,6 +21,13 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-10 — v0.16 textcut: the fixed kit text per request
+
+turnmeasure counted ~8k fixed kit tokens per request in the ctl16r kit lead (leeway's `AGENTS.md` 20 631 chars against
+plain's 3 123); that file is project-owned old kit text (v0.14.1 and earlier, 12.3k chars kit-origin) no sync could cut,
+since every kit section conflicts, so the cut is in the template: a fresh adopter's kit text 8 540 → 7 005 chars
+(3 558 → 2 919 tokens at chars/2.4), with every rule kept; the owner's 2 000-token line is not reached.
+
 ### 2026-11-10 — v0.16 subeffort: a sub-agent's effort precedence, verified live on Claude Code 2.1.321
 
 Sources: Claude Code CHANGELOG (raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md): 2.1.316 "Added
