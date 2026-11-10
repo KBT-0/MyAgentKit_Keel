@@ -162,9 +162,10 @@ PreToolUse hook (`.claude/hooks/guard_destructive_git.py`) refuses `--no-verify`
 not affected. If the gate fails, fix the cause or stop and report; never route around it.
 
 A git command line holding `--out`, `--ext`, `--textc` or `--sub`, a commit message included,
-is denied (`.claude/settings.json`). The denial reads the whole command line, so the message is
-written in a step of its own to a `mktemp` file (PowerShell: `New-TemporaryFile`; a fixed name
-like `/tmp/msg.txt` is shared with parallel sessions) and committed with `git commit -F FILE`.
+is denied (`.claude/settings.json`). The denial reads the whole command line, so a one-line
+message without those fragments goes as `git commit -qm "..."`; a longer message, or one that holds
+any of them, is written in a step of its own to a `mktemp` file (PowerShell: `New-TemporaryFile`; a
+fixed name like `/tmp/msg.txt` is shared with parallel sessions) and committed with `git commit -F FILE`.
 
 No `Co-Authored-By` line names an AI tool, and no tool or model is credited as author,
 co-author or reviewer in a commit message or pull request description. `.githooks/commit-msg`

@@ -15,6 +15,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **A one-line commit message without a denied fragment needs no file** (leadcut A3, ctl16s turnmeasure-s, owner
+  2026-11-10): `docs/WORKFLOW.md`, "The commit gate and attribution", now sends such a message as `git commit -qm "..."`;
+  a longer message, or one holding `--out`, `--ext`, `--textc` or `--sub`, still goes through a `mktemp` file and
+  `git commit -F FILE`. The written rule only; the `.claude/settings.json` denial is unchanged. Kit-owned; a re-sync
+  brings it.
 - **Security: the destructive-git guard's own queries no longer take the proposal's git configuration**
   (secfix, a field project's source audit, owner 2026-11-10): `guard_destructive_git.py` ran `git status` with the
   proposed command's `-c` / `--config-env` values and `GIT_CONFIG_*` variables, and git runs commands named by some

@@ -706,6 +706,9 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('This is the one place the timing is written', read('core/docs/REVIEW_GATE.md'))
         # #286: a commit is a long job because its hooks run the gate.
         self.assertIn('`git commit` and `git merge` are long jobs too', read('core/docs/WORKFLOW.md'))
+        # leadcut: a one-line message without a denied fragment needs no mktemp file.
+        self.assertIn('a one-line message without those fragments goes as `git commit -qm "..."`',
+                      read('core/docs/WORKFLOW.md'))
         self.assertIn('default foreground timeout is 120 seconds',
                       read('overlays/claude-code/files/.claude/agents/worker.md'))
 
