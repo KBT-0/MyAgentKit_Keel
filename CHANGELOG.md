@@ -15,6 +15,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **graphify is owner-called only, per project, code-only first** (PLAN item 9, owner 2026-11-10; nothing is installed, projects have nothing to do): WORKFLOW "MCP hygiene" gains the rule (a `## graphify` block in that project's `CLAUDE.md`, never a home-level one; `--no-viz` code-only first run, a document pass only after the owner hears the file × agent estimate; no "read GRAPH_REPORT first" line; `graphify update .` only where the block is). The research moved from PLAN into `docs/research/graphify.md`, with the leeway A/B measurement protocol.
 - **The kit scans the AI sector weekly from a written scope** (PLAN item 10B, owner 2026-11-10; kit repo only, projects
   report through kit-feedback and have nothing to do): `docs/research/ai-watch.md` names the sources (Anthropic, OpenAI,
   Google, Cursor/Windsurf, MCP, arXiv, the kit's field issues), the "serves the kit" keyword filter and the one-line

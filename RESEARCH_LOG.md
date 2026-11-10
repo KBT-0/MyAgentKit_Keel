@@ -21,6 +21,10 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-10 — v0.16 graphify: the rule and its limit
+
+graphify 0.6.7 builds code graphs from local AST at no token cost, but the measured savings are mixed (FastAPI: 14% fewer file reads, 49% more input tokens; issue #580: a "read GRAPH_REPORT first" line costs 12-25k a question), so the kit makes it owner-called, per-project and code-only first, removes the home-level block, and prepares a leeway A/B trial before any project keeps it (`docs/research/graphify.md`). Verdict: rule shipped; the trial decides per project.
+
 ### 2026-11-10 — v0.16 textcut: the fixed kit text per request
 
 turnmeasure counted ~8k fixed kit tokens per request in the ctl16r kit lead (leeway's `AGENTS.md` 20 631 chars against
