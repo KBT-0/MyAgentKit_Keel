@@ -1888,6 +1888,12 @@ its logs, and cannot be recalled.
   `graphify query/path/explain`; edit, debug and exact-string search read the files. After a code
   change, `graphify update .` only where the block is present (AST-only, no API cost); no
   `--watch`, no post-commit hook. A measured trial that shows no saving removes the block.
+  The project block is the ONLY steering: the global skill fires on `/graphify` alone, never on
+  an ordinary codebase question, and no global hook nudges sessions toward `GRAPH_REPORT.md`.
+  A tool installer never rewrites a home-level `CLAUDE.md`, a global skill's trigger or
+  `settings.json` hooks on the kit's behalf; after any `graphify install` (every upgrade runs
+  it) the owner checks those three places and restores them (2026-11-10: the 0.9.105 installer
+  changed all three).
   Sources: the kit's `docs/research/graphify.md`.
 
 Why: docs/WORKFLOW_RATIONALE.md, "MCP hygiene".
