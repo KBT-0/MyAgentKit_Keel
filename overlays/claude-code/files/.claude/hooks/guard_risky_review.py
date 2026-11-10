@@ -189,7 +189,9 @@ def main():
     print("BLOCKED: this commit changes risky paths no diff review has seen since HEAD (%s). Start the "
           "diff-reviewer agent on the uncommitted diff, or for a hook, gate, CI or check-script change one "
           "`scripts/review.sh` round (--uncommitted, or --commit/--base for a committed branch you merge; "
-          "docs/REVIEW_GATE.md, \"Invariant\"), fix what it finds, then commit." % ", ".join(missing), file=sys.stderr)
+          "docs/REVIEW_GATE.md, \"Invariant\"), fix what it finds, then commit. Once that review is recorded, a later "
+          "fix inside the same files on the same HEAD needs no new review unless the review left a Critical or High "
+          "(round 2 verifies it)." % ", ".join(missing), file=sys.stderr)
     return 2
 
 

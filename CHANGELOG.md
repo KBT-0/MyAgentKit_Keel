@@ -20,6 +20,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   a longer message, or one holding `--out`, `--ext`, `--textc` or `--sub`, still goes through a `mktemp` file and
   `git commit -F FILE`. The written rule only; the `.claude/settings.json` denial is unchanged. Kit-owned; a re-sync
   brings it.
+- **The risky-review guard's block text states the round rule** (leadcut A1, ctl16s turnmeasure-s, owner 2026-11-10):
+  `guard_risky_review.py`'s refusal now adds "Once that review is recorded, a later fix inside the same files on the same
+  HEAD needs no new review unless the review left a Critical or High (round 2 verifies it)", the rule of
+  `docs/REVIEW_GATE.md` and of the hook's own docstring, so a lead no longer asks
+  the reviewer for a round 2 after a plain fix. What the hook enforces is unchanged. tests/test_guard_risky_review.py.
+  Kit-owned; a re-sync brings it.
 - **Security: the destructive-git guard's own queries no longer take the proposal's git configuration**
   (secfix, a field project's source audit, owner 2026-11-10): `guard_destructive_git.py` ran `git status` with the
   proposed command's `-c` / `--config-env` values and `GIT_CONFIG_*` variables, and git runs commands named by some

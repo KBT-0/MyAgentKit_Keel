@@ -21,6 +21,16 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-10 — v0.16 leadcut: two kit texts that sent the lead extra requests
+
+Source: ctl16s turnmeasure-s (`.myagentkit/v016-reset/ctl16r/RESULT-turnmeasure-s.md`), the kit lead's requests over plain by
+cause. One lead read the risky-review guard's refusal after its review and asked the reviewer for a round 2 after a plain
+fix, which neither `docs/REVIEW_GATE.md` nor the hook requires: the refusal now states when a later fix needs no new review
+(A1). Both leads sent a one-line commit message through a `mktemp` file, and one spent two requests on it (a `Write` on the
+empty file refused "File has not been read yet", then a Read): `docs/WORKFLOW.md` now sends such a message as `git commit
+-qm` when it holds none of the denied fragments (A3). The A2 sentence (review before the first commit) was dropped: a second
+timing statement beside REVIEW_GATE's one place (#220) and over the AGENTS.md character cap.
+
 ### 2026-11-10 — v0.16 secfix: two kit leads could be made to run code before any approval
 
 A field project's lead audited the kit's own sources (private report, no public issue) and found two paths by which the

@@ -21,6 +21,8 @@ __pycache__/
 # Any case: Windows and macOS fold case, and with core.ignorecase false a lowercase-only
 # rule let `git add -A` stage `.MYAGENTKIT/`.
 /.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/
+# A worker's decision file at a worktree root (spawn_codex.sh), as core/.gitignore gives projects.
+/QUESTION-*.md
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
 # local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).
 /docs/reviews/????????T??????Z-*.md

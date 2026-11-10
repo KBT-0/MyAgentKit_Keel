@@ -58,6 +58,9 @@ class RiskyReviewTests(unittest.TestCase):
         refused = self.commit()
         self.assertEqual(refused.returncode, 2)
         self.assertIn('src/money/round.py', refused.stderr.decode())
+        # leadcut: the block text states the round rule, so a lead does not ask for round 2 after a plain fix
+        self.assertIn('Once that review is recorded, a later fix inside the same files on the same HEAD needs no '
+                      'new review unless the review left a Critical or High', ' '.join(refused.stderr.decode().split()))
         self.assertEqual(self.review('Explore').returncode, 0)  # another agent records nothing
         self.assertEqual(self.commit().returncode, 2)
         self.assertEqual(self.review().returncode, 0)
