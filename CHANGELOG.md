@@ -50,6 +50,31 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the review as `invalid_evidence`, no pass. **ACTION:** re-sync; a project whose `project_validation.py` edit is
   itself under review sees the previous version judge that review; a check that reads repository files outside
   `scripts/` by `__file__` no longer finds them.
+- **Security: a `--config-env` setting never reaches the destructive-git guard's queries** (secfix2 d, secfix round 5):
+  the hook forwarded it as `-c`, so the query read the variable's name as the value and could answer about a different
+  alias than git would run. Any `--config-env` now counts as a setting the queries cannot take, whatever its key, as the
+  refusal text already said. tests/test_guard_destructive_git.py. Kit-owned; a re-sync brings it.
+- **Security: `-c commit.gpgSign=false` counts as `--no-gpg-sign`** (secfix2 f, secfix rounds 5 and 6): the guard
+  reads the value as git does, a keyword (`false`, `no`, `off`, empty) or else an integer in C's base-0 syntax with a
+  `k`, `m` or `g` unit, so `00`, `-0`, `0x0` and `0k` are false too; a value it cannot read that way, and a
+  `--config-env` value (unread), count as false (fail closed). False skips signing like the option the guard already
+  refuses; a true value is `--gpg-sign`, and the last of the setting and the subcommand's own option wins.
+  tests/test_guard_destructive_git.py. Kit-owned; a re-sync brings it.
+- **Security: an `export` earlier on the line counts for a later git** (secfix2 g, round 3 leftover): already true in
+  the code (each statement's git takes the variables exported before it); a test now pins it, and the docstring says
+  it. tests/test_guard_destructive_git.py.
+- **Security: `USERPROFILE`, `HOMEDRIVE` and `HOMEPATH` move git's global configuration like `HOME`** (secfix2 n, round
+  2/3 leftover): on Windows with `HOME` unset git reads its global config from them, so the guard's queries now treat
+  them (any letter case) as `HOME`: a command that needs a query fails closed. tests/test_guard_destructive_git.py.
+  Kit-owned; a re-sync brings it.
+- **Security: the guard's own `git status` runs no hook of the repository it reads** (secfix2 j, secfix round 5): a
+  repository the command enters with an executable `post-index-change` hook ran it inside the guard when a tracked
+  file's stat was stale. Every query now sets `core.hooksPath` to a folder that cannot exist, beside `core.fsmonitor`
+  off. tests/test_guard_destructive_git.py. Kit-owned; a re-sync brings it.
+- **The guard reads a Git Bash `-C /c/...` path as the folder it names when it checks a named git dir** (secfix2 k,
+  secfix round 5): on Windows `git -C /c/proj --git-dir=.git ...` judged the repository's own git dir foreign and
+  refused the command (it failed closed). tests/test_guard_destructive_git.py (Windows CI only). Kit-owned; a re-sync
+  brings it.
 - **`docs/kit/UPGRADE.md` is exempt from the `[setup]` marker scan** (smallfix3, ctl16s harness, owner 2026-11-10):
   `sync-kit.sh` writes UPGRADE.md from the ACTION items of this changelog, and an item may quote a marker name in braces;
   a freshly synced project then failed its own commit gate until UPGRADE.md was edited by hand. `core/scripts/check.sh`

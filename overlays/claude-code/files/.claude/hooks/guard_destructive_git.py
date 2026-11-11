@@ -16,7 +16,7 @@ or stash before any command that discards work" still covers every destructive c
   a force push (`--force`, `-f`, `+refspec`, `:ref`, `--mirror`, `--delete`, and a
   `--force-with-lease` without `=ref:expected` or a final `--force-if-includes`),
   `git remote set-url/add` (it moves where a push goes), `git commit --amend` of a commit a
-  remote branch already holds, and a skipped gate: `--no-verify`, `commit -n`, `--no-gpg-sign`,
+  remote branch already holds, and a skipped gate: `--no-verify`, `commit -n`, `--no-gpg-sign` (or `-c commit.gpgSign=false`),
   `-c`/`--config-env` core.hooksPath, writing core.hooksPath away from `.githooks`, and a
   `GIT_CONFIG_*`, `HUSKY*`, `SKIP` or `PRE_COMMIT*` variable on a command that runs hooks. The
   gate's hatch is the owner's, typed in the owner's own terminal; this hook sees only an agent's
@@ -47,14 +47,16 @@ or stash before any command that discards work" still covers every destructive c
   program so named whose words spell a git verb (`$(which make) clean`) is refused on a dirty tree.
 
 What the hook's own queries trust (labricore audit 2026-11-10, review rounds 1-4): the boundary
-is the COMMAND LINE. A setting the proposal carries (`-c`, `--config-env`, `GIT_CONFIG_*`, a
-`HOME`/`XDG_CONFIG_HOME`, a git dir named by `GIT_DIR`/`GIT_COMMON_DIR`/`--git-dir` that is not
-the folder's own) reaches the queries only when git merely reads it (QUERY_CONFIG, QUERY_ENV);
-with any other, the queries answer "cannot read" and every judgement that needs one fails closed.
+is the COMMAND LINE. A setting the proposal carries (`-c`, `GIT_CONFIG_*`, a
+`HOME`/`XDG_CONFIG_HOME`/`USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`, a git dir named by
+`GIT_DIR`/`GIT_COMMON_DIR`/`--git-dir` that is not the folder's own) reaches the queries only when
+git merely reads it (a `-c` key QUERY_CONFIG names whole, QUERY_ENV); a `--config-env` never does,
+an exported variable counts on every later command of the line; with any other, the queries answer "cannot read" and every judgement that needs one fails closed.
 The configuration of the repository the command STANDS in (its own `.git/config`, that of a
 folder a `cd` or `-C` enters, the global config) is trusted, as it was written by earlier,
-approved steps; still, `core.fsmonitor`, the one key `git status` runs a command from, is set
-off in every query (git's `-c` outranks every config file). The limit, accepted: a clean filter
+approved steps; still, `core.fsmonitor` is set off and `core.hooksPath` points at a folder that
+cannot exist in every query (git's `-c` outranks every config file), so `git status` runs neither
+an fsmonitor command nor a hook (post-index-change) of that repository. The limit, accepted: a clean filter
 (`.gitattributes` + `filter.<name>.clean`) of such a repository runs inside `git status`.
 
 The floor runs first: the base implementation's patterns (`git reset ... --hard`, `checkout --`,
@@ -152,9 +154,14 @@ READ_ONLY = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", 
 HOOK_SUBS = {"commit", "merge", "push", "rebase", "am", "pull", "cherry-pick", "revert"}
 HOOK_ENV = re.compile(r"GIT_CONFIG|HUSKY|SKIP$|PRE_COMMIT", re.I)
 QUERY_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE"}  # paths; Git.foreign()
-CONFIG_ENV = re.compile(r"GIT_CONFIG|HOME$|XDG_CONFIG_HOME$")  # moves the configuration git reads
-UNREADABLE = ("a `-c`, `--config-env`, `--git-dir`, GIT_CONFIG_*, GIT_DIR, GIT_COMMON_DIR, HOME or XDG_CONFIG_HOME "
-              "setting on this command is one the hook cannot read safely — some keys name a command git would run "
+# First in every query of the hook (git's `-c` outranks every config file): `git status` runs no fsmonitor command
+# and no hook of the repository it reads (post-index-change, round 5). The hooks path is a folder below this file,
+# one that can never exist on any system.
+QUIET = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.path.join(os.path.abspath(__file__), "no-hooks")]
+# Moves the configuration git reads; USERPROFILE and HOMEDRIVE+HOMEPATH stand for an unset HOME on Windows.
+CONFIG_ENV = re.compile(r"GIT_CONFIG|HOME$|XDG_CONFIG_HOME$|USERPROFILE$|HOMEDRIVE$|HOMEPATH$", re.I)
+UNREADABLE = ("a `-c`, `--config-env`, `--git-dir`, GIT_CONFIG_*, GIT_DIR, GIT_COMMON_DIR, HOME, XDG_CONFIG_HOME, "
+              "USERPROFILE, HOMEDRIVE or HOMEPATH setting on this command is one the hook cannot read safely — some keys name a command git would run "
               "inside the hook, a git dir brings its own config — so the hook cannot ask git what this command "
               "would lose. Run the command without it, or set it with `git config` first")
 # The `-c` keys a proposal may carry into the hook's own queries: text or paths git reads, never a
@@ -645,6 +652,21 @@ def last(opts, on, off, default=False):
     return state
 
 
+def git_false(value):
+    """Whether git reads a `-c` boolean `value` as false: a keyword (case-insensitive), else an
+    integer as git parses it (C's base 0, a k, m or g unit) that is 0, so `00`, `-0`, `0x0` and
+    `0k` are false too. A value Python cannot read that way counts as false: fail closed (round 6)."""
+    value = value.lower()
+    if value in ("false", "no", "off", ""):
+        return True
+    if value in ("true", "yes", "on"):
+        return False
+    try:
+        return int(value[:-1] if value.endswith(("k", "m", "g")) else value, 0) == 0
+    except ValueError:
+        return True
+
+
 class Git:
     """One git invocation and how to ask git about the repository it reaches."""
 
@@ -656,6 +678,7 @@ class Git:
         self.tree = None  # a path checkout's revision: an ignored file is lost only where it holds the path
         self.options = []  # the global options, their separate values skipped (r327 r2: `-C . --icase-pathspecs`)
         self.dirs = []  # the -C values, in order: where commits() says the commit stands
+        self.config_env = []  # the --config-env settings: their value is a variable the queries never read
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
@@ -663,14 +686,15 @@ class Git:
             self.options.append(tok)
             if tok in ("-C", "--git-dir", "--work-tree"):
                 self.route += [tok, native(nxt)]
-                self.dirs += [nxt] if tok == "-C" else []
+                self.dirs += [native(nxt)] if tok == "-C" else []  # as the route carries it: foreign() joins it
             elif tok.startswith(("--git-dir=", "--work-tree=")):
                 key, value = tok.split("=", 1)
                 self.route.append(key + "=" + native(value))
-            elif tok == "-c" or tok == "--config-env":
+            elif tok == "-c":
                 self.configs.append(nxt)
-            elif tok.startswith("--config-env="):
-                self.configs.append(tok.split("=", 1)[1])
+            elif tok == "--config-env" or tok.startswith("--config-env="):
+                self.config_env.append(nxt if tok == "--config-env" else tok.split("=", 1)[1])
+                self.configs.append(self.config_env[-1])
             elif tok.startswith("-c"):
                 self.configs.append(tok[2:])
             i += 2 if takes else 1
@@ -686,8 +710,8 @@ class Git:
         if self.unreadable():
             self.asked = True
             return 2, ""
-        # core.fsmonitor names a command `git status` runs: off here, whatever config file sets it.
-        command = ["git", *self.route, "-c", "core.fsmonitor=false", *[x for c in self.configs for x in ("-c", c)], *args]
+        # QUIET: no fsmonitor command and no hook (post-index-change) runs here, whatever config file sets them.
+        command = ["git", *self.route, *QUIET, *[x for c in self.configs for x in ("-c", c)], *args]
         env = {k: v for k, v in self.env.items() if k in QUERY_ENV}
         run = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=10,
                              cwd=where or self.cwd, env=dict(os.environ, **env))
@@ -695,10 +719,12 @@ class Git:
 
     def unreadable(self):
         """The proposal's settings the hook's queries cannot take: a `-c` key outside QUERY_CONFIG
-        (a key without a section, `-c print`, is one git itself refuses), a CONFIG_ENV variable or a
+        (a key without a section, `-c print`, is one git itself refuses; the whole key must match, so
+        a subsection the list does not name is outside it), any `--config-env` (forwarded as `-c` it
+        would hand the query the variable's NAME as the value: round 5), a CONFIG_ENV variable or a
         foreign git dir."""
         return ([c for c in self.configs if "." in c.partition("=")[0] and not QUERY_CONFIG.match(c.partition("=")[0])]
-                + [k for k in self.env if CONFIG_ENV.match(k)] + self.foreign())
+                + self.config_env + [k for k in self.env if CONFIG_ENV.match(k)] + self.foreign())
 
     def foreign(self):
         """The git dirs the proposal names (GIT_DIR, GIT_COMMON_DIR, --git-dir) other than the one
@@ -717,7 +743,7 @@ class Git:
                 own = []
                 if base is not None and os.path.isdir(base):
                     try:
-                        run = subprocess.run(["git", "-c", "core.fsmonitor=false", "rev-parse", "--path-format=absolute",
+                        run = subprocess.run(["git", *QUIET, "rev-parse", "--path-format=absolute",
                                               "--git-dir", "--git-common-dir"],
                                              capture_output=True, encoding="utf-8", timeout=10, cwd=base)
                         own = [os.path.realpath(p) for p in run.stdout.splitlines()] if run.returncode == 0 else []
@@ -883,8 +909,15 @@ def verdict(g, depth=0, aliases=True):
     first = (words or [""])[0]
     if sub in ("stash", "remote", "reflog", "worktree", "submodule") and unknowable(first):
         return True, f"git {sub} gets its action from a variable or from xargs, so the hook cannot read it", False
+    # `-c commit.gpgSign=<false>` is `--no-gpg-sign` before the subcommand's own options (the last wins);
+    # a `--config-env` value is unread, so it counts as false (round 5).
+    unsigned = False
+    for c in g.configs:
+        key, eq, value = c.partition("=")
+        if key.lower() == "commit.gpgsign":
+            unsigned = c in g.config_env or bool(eq) and git_false(value)
     if sub in HOOK_SUBS and (not last(opts, "verify", "no-verify", True)
-                             or last(opts, "no-gpg-sign", "gpg-sign")):
+                             or last(opts, "no-gpg-sign", "gpg-sign", unsigned and sub != "push")):
         return True, GATE, False
     if sub == "stash" and first == "drop" and len(words) <= 2 and stash_in_head(g, (words[1:] or ["stash@{0}"])[0]):
         return None  # leeway lead 43: every file of the entry is in HEAD as stashed, so the drop loses nothing

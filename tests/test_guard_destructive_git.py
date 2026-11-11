@@ -1322,6 +1322,77 @@ class V0141FieldReportTests(GuardCase):
         self.assertIn(b'`$(...)` names a command the hook cannot resolve, so it is read as git: git reset --hard',
                       self.run_hook(named[0]).stderr)
 
+    def assertUnreadable(self, commands):
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr.decode('utf-8', 'replace'))
+                self.assertIn(b'cannot read safely', result.stderr)
+
+    def test_secfix2_d_a_config_env_setting_is_unreadable_whatever_its_key(self):
+        # Round 5: forwarded as `-c alias.x=V`, the query read the variable's NAME as the alias, found none,
+        # allowed the command, and git ran the alias the variable holds.
+        self.dirty()
+        self.assertUnreadable(["V='reset --hard' git --config-env=alias.x=V x",
+                               "V='reset --hard' git --config-env alias.x=V x",
+                               'V=/dev/null git --config-env=core.excludesFile=V clean -fd'])
+
+    def test_secfix2_f_commit_gpgsign_false_is_no_gpg_sign_and_the_last_wins(self):
+        self.assertVerdict(['git -c commit.gpgsign=false commit -m x', 'git -c commit.gpgSign=No commit -m x',
+                            'git -c commit.gpgsign=off merge x', 'git -c commit.gpgsign=0 commit -m x',
+                            'git -c commit.gpgsign= commit -m x', 'git -c commit.gpgsign=true commit --no-gpg-sign -m x',
+                            'V=true git --config-env=commit.gpgsign=V commit -m x'], 2)
+        # Round 6: git reads a non-keyword boolean as an integer, so these are false too;
+        # one Python cannot read as git does is refused (fail closed).
+        self.assertVerdict(['git -c commit.gpgsign=%s commit -m x' % v
+                            for v in ('00', '000', '-0', '+0', '0x0', '0k', '0G', 'garbage')], 2)
+        self.assertVerdict(['git -c commit.gpgsign=%s commit -m x' % v for v in ('1', 'TRUE', 'yes', '0x1', '2k')], 0)
+        self.assertIn(b'Only the owner bypasses this gate', self.run_hook('git -c commit.gpgsign=false commit -m x').stderr)
+        self.assertVerdict(['git -c commit.gpgsign=false commit -S -m x', 'git -c commit.gpgsign=false commit --gpg-sign -m x',
+                            'git -c commit.gpgsign=true commit -m x', 'git -c commit.gpgsign commit -m x'], 0)
+
+    def test_secfix2_g_an_export_earlier_on_the_line_reaches_the_later_git(self):
+        self.assertUnreadable(['export GIT_CONFIG_GLOBAL=/x/cfg; git reset --hard',
+                               'export HOME=/x && git clean -fd'])
+        self.assertVerdict(['export FOO=1; git status', 'export FOO=1; git reset --hard'], 0)
+
+    @unittest.skipUnless(os.name == 'nt', 'a Git Bash drive path (/c/...) exists only on Windows')
+    def test_secfix2_k_a_git_bash_dash_C_path_finds_the_repositorys_own_git_dir(self):
+        # Round 5: foreign() joined the raw `/c/...` value, no folder for Python, so the own git dir was foreign.
+        drive, rest = os.path.splitdrive(str(self.repo.resolve()))
+        msys = '/' + drive[0].lower() + rest.replace('\\', '/')
+        self.assertVerdict([f'git -C {msys} --git-dir=.git --work-tree=. clean -fd'], 0, cwd=self.tmp)
+    test_secfix2_k_a_git_bash_dash_C_path_finds_the_repositorys_own_git_dir._kit_platform_skip = os.name != 'nt'
+
+    @unittest.skipIf(os.name == 'nt', 'the hook script is a POSIX shell script')
+    def test_secfix2_j_no_hook_of_an_entered_repository_runs_inside_the_hooks_status(self):
+        # Round 5: `git status` refreshing a stale index entry ran the entered repository's post-index-change.
+        marker = self.tmp / 'pic-ran'
+        other = self.tmp / 'e'
+        other.mkdir()
+        git(other, 'init', '-q', '-b', 'main')
+        (other / 'a.txt').write_text('a\n', encoding='utf-8')
+        git(other, 'add', 'a.txt')
+        git(other, 'commit', '-q', '-m', 'base')
+        hook = other / '.git/hooks/post-index-change'
+        hook.write_text('#!/bin/sh\ntouch "%s"\n' % marker, encoding='utf-8')
+        hook.chmod(0o755)
+        for command in ('git -C %s reset --hard' % other, 'cd %s && git reset --hard' % other):
+            with self.subTest(command=command):
+                os.utime(other / 'a.txt', (2000000000, 2000000000))  # a stale stat: status rewrites the index
+                self.assertEqual(self.run_hook(command).returncode, 0)
+                self.assertFalse(marker.exists(), 'the entered repository\'s hook ran inside the guard')
+        os.utime(other / 'a.txt', (2000000001, 2000000001))
+        git(other, 'status', '--porcelain')
+        self.assertTrue(marker.exists(), 'the fixture never runs its hook: the test proves nothing')
+    test_secfix2_j_no_hook_of_an_entered_repository_runs_inside_the_hooks_status._kit_platform_skip = os.name == 'nt'
+
+    def test_secfix2_n_a_windows_home_variable_moves_the_global_config(self):
+        # With HOME unset (PowerShell's default) git on Windows reads its global config from USERPROFILE or
+        # HOMEDRIVE+HOMEPATH; the names are case-insensitive there. Runs on every OS: it fails closed.
+        self.assertUnreadable(['USERPROFILE=/x git clean -fd', 'HOMEDRIVE=X: HOMEPATH=/x git reset --hard',
+                               'userprofile=/x git clean -fd'])
+
 
 if __name__ == '__main__':
     unittest.main()
