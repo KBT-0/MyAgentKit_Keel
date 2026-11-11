@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-11 — v0.16 ctl16u: a harness that spawns claude from a kit worker must drop the role variables
+
+`spawn_worker.sh` gives its session `MYAGENTKIT_ROLE=worker`, `MYAGENTKIT_SESSION_ID` and
+`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`; the measuring harness (`run_one.sh`) inherited them into `claude -p`, so the ctl16s
+and ctl16t kit cells ran as kit workers: the band held them at the worker line 150k (both ctl16t kit multi leads were denied
+there and ended uncommitted), `plain_report`, `progress_reminder`, suggestions, `handoff_pending` and `context_size` branch on
+the role, and reviewer sub-agents had a 5-minute cache. Found because ctl16t's 1.89x looked wrong and the kit cells' hook output
+named the worker band. Fix: `env -u MYAGENTKIT_ROLE -u MYAGENTKIT_SESSION_ID -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL claude -p ...`
+in `run_one.sh`; a result starting "You've hit your" is now flagged as a limit cut. Rule: any script a kit worker runs that starts
+a `claude` meant to act as a lead or as an adopter clears those variables first. Source: the Caveats paragraph of
+`.myagentkit/v016-reset/ctl16r/RESULT-TABLE-ctl16u.md`.
+
 ### 2026-11-10 — v0.16 leadcut: two kit texts that sent the lead extra requests
 
 Source: ctl16s turnmeasure-s (`.myagentkit/v016-reset/ctl16r/RESULT-turnmeasure-s.md`), the kit lead's requests over plain by

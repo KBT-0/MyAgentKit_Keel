@@ -326,6 +326,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (project-owned `.claude/hooks/guard_risky_review.py`, `.claude/hooks/guard_destructive_git.py`):
   `sync-kit.sh . --merge`.
 
+- **Measured cost of this release (ctl16u, 2026-11-11)** (owner 2026-11-11; table
+  `.myagentkit/v016-reset/ctl16r/RESULT-TABLE-ctl16u.md`): 3 real jobs (bug, feature, multi-file) from two field projects,
+  plain `claude` (no kit hooks, the project's own CLAUDE.md) against the kit at master 1b3ea1d, same model and effort
+  (claude-opus-5-5 high), separate clones, n=2 per cell, headless. Lead-only $: kit 8.36 vs plain 5.59 = 1.50x; per job
+  bug 1.11x, feature 1.08x, multi 1.76x (kit 5.98 vs plain 3.40). The review bill is its own line, not in the gate: $2.02
+  in 2 review runs, both on the multi job (bug and feature ran no review). Escaped bugs kit 2 vs plain 2 (passes);
+  committed 6/6 in both. Lead requests per cell on multi, mean: 42 vs 18; the gap is the mandatory review loop (review
+  handling +7 requests per cell) and task class d (27 vs 18, including ~3.5 mutation-proof requests per cell from the
+  AGENTS.md "proven RED" rule, with 24-26k-token thinking steps; `RESULT-turnmeasure-t.md`). Noise: n=2, and the same kit
+  text gave 1.16x (ctl16s) and 1.50x (ctl16u), a spread of ~0.3x, so the $ gate (kit <= plain) is neither met nor refuted
+  at this n; the bug-escape gate passes. Measuring stops here; the field projects (leeway, labricore-web) are the measure
+  from now on. Harness note: the earlier ctl16s and ctl16t kit columns are INVALID: `spawn_worker.sh` gives its session
+  `MYAGENTKIT_ROLE=worker`, `MYAGENTKIT_SESSION_ID` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`, and the measuring
+  harness inherited them into `claude -p`, so those kit cells ran as kit workers (band at 150k, worker hook branches,
+  5-minute reviewer cache). ctl16u is the first run as an adopter lead (the harness now runs claude under `env -u` of
+  the three).
+
 ## v0.14.1 — 2026-11-02
 
 - **Leeway lead 43's field report (2026-11-02).** `guard_destructive_git.py` lets `git stash drop` through when every
