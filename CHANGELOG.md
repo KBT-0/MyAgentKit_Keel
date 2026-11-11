@@ -89,6 +89,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   folder of the same revision is now read at its target; one that leaves the tree, is absolute or names no folder
   there fails the review as `invalid_evidence` (unreadable revision); a symlinked file still fails as before.
   core/scripts/test_claude_bridge.py. Kit-owned; a re-sync brings it.
+- **Security: the default `risky_paths` names `scripts/project_validation.py`** (secfix2 m, secfix round 5): the
+  review adapters run that file as committed before the reviewed change, so an earlier commit on the same branch that
+  edited it, unreviewed, judged the later review. The setup interview now lists it among the gate files, so the
+  risky-review guard refuses its commit without a review; the kit's own `scripts/gate_config.sh` names it too. No test
+  pins the default list (it is interview text). **ACTION:** add `scripts/project_validation.py` to `risky_paths` in
+  your project's `scripts/gate_config.sh` (project-owned; a re-sync does not change it).
 - **`docs/kit/UPGRADE.md` is exempt from the `[setup]` marker scan** (smallfix3, ctl16s harness, owner 2026-11-10):
   `sync-kit.sh` writes UPGRADE.md from the ACTION items of this changelog, and an item may quote a marker name in braces;
   a freshly synced project then failed its own commit gate until UPGRADE.md was edited by hand. `core/scripts/check.sh`

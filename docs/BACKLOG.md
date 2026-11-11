@@ -164,3 +164,8 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `test_codex_worker.test_resumed_in_place_edit_of_an_old_result_neither_closes_nor_signals` is timing-bound
   (grace 0.5 s, waiter `communicate(timeout=5)`): it failed once inside the fast-tier gate (9 units at once,
   10 `claude -p` trial sessions running beside it) and passed alone. Widen the margins or run it serially.
+
+## Filed from the v0.16 secfix2 review round 2 (20261111T121402Z-c5509efe3448)
+
+- core/scripts/test_claude_bridge.py WINDOWS_SUITE_MINIMUMS is reasoned one below the Windows count (268 vs 269, secfix2
+  round 2, pre-existing): set it from the first Windows CI run's printed count.

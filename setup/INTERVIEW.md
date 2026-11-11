@@ -423,7 +423,7 @@ when they become current, never now.
 | Placeholder | What goes in |
 |---|---|
 | `{{RISKY_AREAS}}` | The Phase 2 list, as specific nouns: the money, data-loss and security files and the named critical-logic list. Gates and CI are already listed permanently — do not repeat them. Example: `the ledger write, the webhook signature check, the save-file migration` |
-| `{{RISKY_PATHS}}` (scripts/gate_config.sh) | The same files as file names or the narrowest glob, never a whole source directory, plus the gate files: `scripts/check.sh scripts/review.sh scripts/gate_config.sh .github/workflows/*`. Example: `src/billing/ledger_write.py src/api/webhook.py`. A commit touching one waits for the diff review |
+| `{{RISKY_PATHS}}` (scripts/gate_config.sh) | The same files as file names or the narrowest glob, never a whole source directory, plus the gate files and the project's review check: `scripts/check.sh scripts/review.sh scripts/gate_config.sh scripts/project_validation.py .github/workflows/*`. Example: `src/billing/ledger_write.py src/api/webhook.py`. A commit touching one waits for the diff review |
 | `{{TOP_RISK_PRIORITY}}` | The single worst failure mode, as the first review priority, with what makes it expensive |
 
 ### Architecture
