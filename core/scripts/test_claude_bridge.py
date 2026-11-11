@@ -53,10 +53,23 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 294, 'test_agent_usage': 40, 'test_codex_quota': 6}
+# SUITE_MINIMUMS counts a disk that does not fold case (Linux); a POSIX disk that folds case
+# (macOS) runs CASE_FOLD_TESTS more, added by the runner and by the kit gate.
+SUITE_MINIMUMS = {'test_claude_bridge': 296, 'test_agent_usage': 40, 'test_codex_quota': 6}
+CASE_FOLD_TESTS = 1  # test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 265, 'test_agent_usage': 36, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 268, 'test_agent_usage': 36, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
+
+
+def case_folds():
+    """Whether the temporary folder's disk folds case (macOS and Windows defaults)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, 'probe').touch()
+        return Path(tmp, 'PROBE').exists()
+
+
+CASE_FOLDS = case_folds()
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
@@ -6948,6 +6961,68 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(claude_bridge.project_check('Accept', shallow, 'commit', 'HEAD'),
                          'project_validation.py failed (unreadable revision)')
 
+    def test_secfix2_i_a_scripts_folder_committed_as_a_symlink_is_read_at_its_target(self):
+        # Round 5 (reproduced): `scripts -> tools/scripts` made ls-tree answer nothing for
+        # scripts/project_validation.py, and the project's check silently never ran. The link is
+        # committed through the index, so the test needs no symlink rights on Windows.
+        import claude_bridge
+        tools = self.repo / 'tools/scripts'
+        tools.mkdir(parents=True)
+        (tools / 'project_validation.py').write_text('def validate_final_message(text):\n    return "REFUSED"\n')
+        self.git('add', 'tools')
+
+        def link(target):
+            blob = subprocess.run(['git', '-C', str(self.repo), 'hash-object', '-w', '--stdin'], input=target.encode(),
+                                  check=True, capture_output=True).stdout.decode().strip()
+            self.git('update-index', '--add', '--cacheinfo', '120000,%s,scripts' % blob)
+            self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'link')
+        link('tools/scripts')
+        self.assertEqual(claude_bridge.project_check('Accept', self.repo), 'REFUSED')
+        for target in ('../outside', 'tools/../../outside', '/etc', 'file.py', 'nothing/here'):
+            with self.subTest(target=target):
+                link(target)
+                self.assertEqual(claude_bridge.project_check('Accept', self.repo),
+                                 'project_validation.py failed (unreadable revision)')
+
+    def test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity(self):
+        # Round 5: on a case-folding disk a repository path typed in another case kept that case
+        # through resolve(), so the adapter's own scripts/ looked outside the reviewed checkout and
+        # its working copy of project_validation.py ran beside the committed one.
+        seam = self.repo / 'scripts/project_validation.py'
+        shutil.copytree(ROOT, seam.parent, ignore=shutil.ignore_patterns('project_validation.py', 'test_*', '__pycache__'))
+        seam.write_text('def validate_final_message(text):\n    return "committed"\n')
+        self.git('add', 'scripts/project_validation.py')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'seam')
+        marker = self.root / 'working-copy-ran'
+        seam.write_text('def validate_final_message(text):\n    open(%r, "w").close()\n    return None\n' % str(marker))
+        typed = self.root / self.repo.name.upper()
+        code = ('import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import claude_bridge; '
+                'print(claude_bridge.project_check("Accept", Path(sys.argv[2])))')
+        result = subprocess.run([sys.executable, '-c', code, str(seam.parent), str(typed)],
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.stdout.strip(), 'committed', result.stderr)
+        self.assertFalse(marker.exists(), 'the working copy beside the adapter ran')
+    test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity = unittest.skipUnless(
+        CASE_FOLDS, 'needs a disk that folds case (macOS, Windows)')(
+        test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity)
+    test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity._kit_platform_skip = not CASE_FOLDS
+
+    def test_secfix2_h_adapters_with_no_check_beside_them_still_run_the_committed_one(self):
+        # Round 6 (reproduced): the packaged Codex plugin ships no project_validation.py beside its
+        # adapters; samefile() on that missing file raised, and every paid review failed.
+        seam = self.repo / 'scripts/project_validation.py'
+        seam.parent.mkdir(parents=True, exist_ok=True)
+        seam.write_text('def validate_final_message(text):\n    return "committed"\n')
+        self.git('add', 'scripts/project_validation.py')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-q', '-m', 'seam')
+        plugin = self.root / 'plugin'
+        shutil.copytree(ROOT, plugin, ignore=shutil.ignore_patterns('project_validation.py', 'test_*', '__pycache__'))
+        code = ('import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import claude_bridge; '
+                'print(claude_bridge.project_check("Accept", Path(sys.argv[2])))')
+        result = subprocess.run([sys.executable, '-c', code, str(plugin), str(self.repo)],
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.stdout.strip(), 'committed', result.stderr)
+
     BACKEND = {'ANTHROPIC_BASE_URL': 'https://backend.invalid/api', 'ANTHROPIC_AUTH_TOKEN': 'tok=en',
                'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-fixture'}
 
@@ -8321,7 +8396,9 @@ if __name__ == "__main__":
     keep_output_writable(sys.stderr)
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
-    minimums =WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS
+    minimums = dict(WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS)
+    if CASE_FOLDS and not WINDOWS:
+        minimums['test_claude_bridge'] += CASE_FOLD_TESTS
     suites = []
     for case, name in ((BridgeTests, 'test_claude_bridge'), (UsageTests, 'test_agent_usage'),
                        (QuotaTests, 'test_codex_quota')):

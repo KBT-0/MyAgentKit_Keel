@@ -159,13 +159,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Low: spawn_worker.sh session cap: no lock, and a session registers only once its process exists, so parallel or quick
   spawns can pass the cap together.
 
-## Filed from the v0.16 secfix review round 5 (20261110T180918Z-cebbad48094a, owner 2026-11-10)
-
-- Medium: claude_bridge.py project_check() (and its packaged copy) asks `ls-tree <rev> -- scripts/project_validation.py`; a
-  project that commits `scripts` as a symlink to a directory holding the file gets an empty answer, so the project's check
-  silently never runs (the old code loaded it through the working tree; a symlinked FILE fails closed). Resolve the link
-  target at that revision and read from there, with a test; the owner chose the backlog over a sixth review round.
-
 ## Filed from the v0.16 graphify-rule commit (2026-11-10)
 
 - `test_codex_worker.test_resumed_in_place_edit_of_an_old_result_neither_closes_nor_signals` is timing-bound

@@ -75,6 +75,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   secfix round 5): on Windows `git -C /c/proj --git-dir=.git ...` judged the repository's own git dir foreign and
   refused the command (it failed closed). tests/test_guard_destructive_git.py (Windows CI only). Kit-owned; a re-sync
   brings it.
+- **Security: the review adapters recognise their own folder in the reviewed checkout by identity** (secfix2 h, secfix
+  round 5): on a disk that folds case, a repository path typed in another case made the adapters' `scripts/` look
+  outside the checkout, so its working copy of `project_validation.py` ran beside the committed one. When both files
+  exist they are now compared as files, not spellings; adapters with no `project_validation.py` beside them (the
+  packaged Codex plugin) compare nothing and run the committed check (round 6: the comparison raised there and failed
+  every review). core/scripts/test_claude_bridge.py (the identity test on macOS and Windows CI, the missing-file test
+  everywhere). Kit-owned; a re-sync brings it.
+- **Security: a `scripts` folder committed as a symlink no longer switches the project's check off** (secfix2 i,
+  secfix round 5): the adapters found no `scripts/project_validation.py` through the link and ran no check. A link to a
+  folder of the same revision is now read at its target; one that leaves the tree, is absolute or names no folder
+  there fails the review as `invalid_evidence` (unreadable revision); a symlinked file still fails as before.
+  core/scripts/test_claude_bridge.py. Kit-owned; a re-sync brings it.
 - **`docs/kit/UPGRADE.md` is exempt from the `[setup]` marker scan** (smallfix3, ctl16s harness, owner 2026-11-10):
   `sync-kit.sh` writes UPGRADE.md from the ACTION items of this changelog, and an item may quote a marker name in braces;
   a freshly synced project then failed its own commit gate until UPGRADE.md was edited by hand. `core/scripts/check.sh`

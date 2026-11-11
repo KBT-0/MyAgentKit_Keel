@@ -95,13 +95,13 @@ _PASSED_FILE = os.environ.pop('KIT_CHECK_PASSED', None)
 
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
-BRIDGE_MINIMUMS = next(
-    (ast.literal_eval(node.value)
-     for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')).body
-     if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == ('WINDOWS_SUITE_MINIMUMS' if os.name == 'nt' else 'SUITE_MINIMUMS')),
-    None)
-if BRIDGE_MINIMUMS is None:
-    sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
+BRIDGE_CONSTANTS = {node.targets[0].id: ast.literal_eval(node.value)
+                    for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')).body
+                    if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) in
+                    ('WINDOWS_SUITE_MINIMUMS', 'SUITE_MINIMUMS', 'CASE_FOLD_TESTS')}
+BRIDGE_MINIMUMS = BRIDGE_CONSTANTS.get('WINDOWS_SUITE_MINIMUMS' if os.name == 'nt' else 'SUITE_MINIMUMS')
+if BRIDGE_MINIMUMS is None or 'CASE_FOLD_TESTS' not in BRIDGE_CONSTANTS:
+    sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS or CASE_FOLD_TESTS not found in core/scripts/test_claude_bridge.py')
 
 
 def symlinks_work():
@@ -123,7 +123,9 @@ def case_folds():
 
 
 REQUIRED_SUITES = {
-    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=15, test_context_buckets=8, test_owns_check=13, test_token_audit=8),
+    # SUITE_MINIMUMS counts a disk that does not fold case; macOS's runs CASE_FOLD_TESTS more.
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_claude_bridge=BRIDGE_MINIMUMS['test_claude_bridge'] + (
+        BRIDGE_CONSTANTS['CASE_FOLD_TESTS'] if os.name != 'nt' and case_folds() else 0), test_agent_cost=15, test_context_buckets=8, test_owns_check=13, test_token_audit=8),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 3, 'test_bootstrap': 42 if case_folds() else 41, 'test_acceptance': 20,
@@ -131,7 +133,7 @@ REQUIRED_SUITES = {
               'test_scan_gate': 1, 'test_gate_checks': 22 if symlinks_work() else 21, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 24, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
-              'test_sync_kit': 71 if case_folds() else 70, 'test_doctor': 17, 'test_git_hooks': 39, 'test_stop_hook': 13, 'test_context_hook': 26, 'test_band_guard': 9, 'test_model_check': 3, 'test_handoff_pending': 6, 'test_communication_hooks': 44, 'test_suggestions': 27, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 13, 'test_guard_worker_route': 12, 'test_guard_risky_review': 27 if os.name == 'nt' else 29, 'test_guard_destructive_git': 94, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
+              'test_sync_kit': 71 if case_folds() else 70, 'test_doctor': 17, 'test_git_hooks': 39, 'test_stop_hook': 13, 'test_context_hook': 26, 'test_band_guard': 9, 'test_model_check': 3, 'test_handoff_pending': 6, 'test_communication_hooks': 44, 'test_suggestions': 27, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 13, 'test_guard_worker_route': 12, 'test_guard_risky_review': 27 if os.name == 'nt' else 29, 'test_guard_destructive_git': 100 if os.name == 'nt' else 99, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
               'test_spawn_worker': 90 if os.name == 'nt' else 136, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 68 if os.name == 'nt' else 70 if Path('/proc/self/fd').is_dir() else 69, 'test_working_mode': 61,

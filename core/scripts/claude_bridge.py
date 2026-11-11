@@ -19,6 +19,7 @@ import io
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shlex
 import shutil
@@ -1715,20 +1716,34 @@ def project_check(text: str, repo: Path, scope: str = "uncommitted", ref: str | 
     The reviewed repository's copy is read at before_revision(), where the reviewed change
     (`scope`, `ref`) starts from, never its working tree: the check runs in this process, before
     any reviewer accepted the change, so the change under review must not be able to rewrite it
-    (labricore audit 2026-11-10)."""
+    (labricore audit 2026-11-10). A `scripts` committed as a symlink to a folder of the same
+    revision is read at its target (secfix round 5: the check silently never ran); one that
+    leaves the tree or names no folder there is an unreadable revision."""
     repo = repo.resolve()
     beside = Path(__file__).resolve().with_name("project_validation.py")
+    own = repo / "scripts" / "project_validation.py"
     # In the standard layout the copy beside the adapters IS the reviewed checkout's working
-    # copy; the revision copy below stands in for it.
-    paths = [beside] if beside.is_file() and not beside.is_relative_to(repo) else []
+    # copy; the revision copy below stands in for it. Compared by identity, not spelling: a
+    # path typed in another case on a case-folding disk names the same file (round 5).
+    inside = beside.is_relative_to(repo) or beside.is_file() and own.is_file() and beside.samefile(own)
+    paths = [beside] if beside.is_file() and not inside else []
     try:
         before = before_revision(repo, scope, ref)
-        entry = git(repo, "ls-tree", before, "--", "scripts/project_validation.py").split()
+        folder = "scripts"
+        link = git(repo, "ls-tree", before, "--", folder).split()
+        if link and link[0] == b"120000":
+            target = git(repo, "cat-file", "-p", link[2].decode()).decode("utf-8", "replace")
+            folder = posixpath.normpath(target)
+            kind = git(repo, "ls-tree", before, "--", folder).split()[:1]
+            if (target.startswith("/") or "\\" in target or ":" in target or folder == ".."
+                    or folder.startswith("../") or kind != [b"040000"]):
+                raise GitFailed("scripts links outside the revision's tree")
+        entry = git(repo, "ls-tree", before, "--", folder + "/project_validation.py").split()
         if not entry:  # no file at that revision: nothing more is checked
             return project_check_paths(text, paths)
         if entry[0] not in (b"100644", b"100755"):  # a symlink there reads outside the revision
             return "project_validation.py failed (not a regular file)"
-        archive = git(repo, "archive", "--format=tar", before, "scripts")
+        archive = git(repo, "archive", "--format=tar", before, folder)
         tar = tarfile.open(fileobj=io.BytesIO(archive))
     except (GitFailed, tarfile.ReadError):  # a shallow clone, an unknown base, an export-ignored scripts/
         return "project_validation.py failed (unreadable revision)"
@@ -1738,15 +1753,15 @@ def project_check(text: str, repo: Path, scope: str = "uncommitted", ref: str | 
         # sibling, so the reviewed checkout leaves sys.path for the call.
         tar.extraction_filter = getattr(tarfile, "data_filter", None)
         tar.extractall(scratch, [member for member in tar if member.isreg()])
-        if not Path(scratch, "scripts/project_validation.py").is_file():  # export-ignore on the file itself
+        if not Path(scratch, folder, "project_validation.py").is_file():  # export-ignore on the file itself
             return "project_validation.py failed (unreadable revision)"
         saved = sys.path[:]
         # The reviewed checkout's own folders leave sys.path for the call (a working copy of a
         # sibling would be imported first); an environment inside it (`.venv`) stays.
-        gone = {repo, repo / "scripts", Path(__file__).resolve().parent}
-        sys.path[:] = [str(Path(scratch, "scripts"))] + [p for p in saved if Path(p or ".").resolve() not in gone]
+        gone = {repo, repo / "scripts", repo / folder, Path(__file__).resolve().parent}
+        sys.path[:] = [str(Path(scratch, folder))] + [p for p in saved if Path(p or ".").resolve() not in gone]
         try:
-            return project_check_paths(text, paths + [Path(scratch, "scripts/project_validation.py")])
+            return project_check_paths(text, paths + [Path(scratch, folder, "project_validation.py")])
         finally:
             sys.path[:] = saved
 
