@@ -49,7 +49,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   that cannot be read (a shallow clone without the parent, an `export-ignore` on `scripts/`, a symlink there) fails
   the review as `invalid_evidence`, no pass. **ACTION:** re-sync; a project whose `project_validation.py` edit is
   itself under review sees the previous version judge that review; a check that reads repository files outside
-  `scripts/` by `__file__` no longer finds them.
+  `scripts/` by `__file__` no longer finds them. This holds of `project_validation.py` only: `scripts/review.sh` still
+  sources the working tree's `gate_config.sh` and runs the working tree's `review_dispatch.py` and adapters, an accepted
+  limit the `risky_paths` guard covers (a change there needs a review before its commit; secfix2 l, round 5).
 - **Security: a `--config-env` setting never reaches the destructive-git guard's queries** (secfix2 d, secfix round 5):
   the hook forwarded it as `-c`, so the query read the variable's name as the value and could answer about a different
   alias than git would run. Any `--config-env` now counts as a setting the queries cannot take, whatever its key, as the

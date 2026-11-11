@@ -41,7 +41,10 @@ the destructive-git guard forwarded the proposal's `-c` keys and `GIT_CONFIG_*` 
 a command it judges by the tree's state (fail closed: judging without the configuration answers under other rules than
 the command runs by); the adapters run the check as committed before the reviewed change, extracted whole from that
 revision. The lesson for the kit: anything a hook or adapter executes is an input, and the input under judgement never
-reaches it.
+reaches it; for the review that holds of `project_validation.py` only. `scripts/review.sh` still sources the working
+tree's `gate_config.sh` and runs the working tree's `review_dispatch.py` and adapters, so an uncommitted change to them
+rewrites the code that reviews it: an accepted limit, covered by the `risky_paths` guard (such a change needs a review
+before its commit) (secfix2 l, round 5).
 
 ### 2026-11-10 — v0.16 pin52: the Fable pins move to Fable 5.2
 
