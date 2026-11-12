@@ -2862,9 +2862,13 @@ class BackgroundHostTests(unittest.TestCase):
         env = dict(CLAUDE_CONFIG_DIR=str(self.tmp / 'login-a'), HOME=str(home))
         result = self.spawn(**env)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        # The script names $HOME/.claude as its sh holds it: Git for Windows' sh turns HOME into
+        # /c/Users/..., so expect sh's own HOME, never this path's Windows spelling plus "/.claude".
+        sh_home = subprocess.run(['sh', '-c', 'printf %s "$HOME"'], env=dict(os.environ, HOME=str(home)),
+                                 capture_output=True, text=True, check=True).stdout
         self.assertIn("the background session aaaa0001 of 'w1' still runs on the login folder %s/.claude: close it first "
-                      '(scripts/close_worker.sh w1), or look at it (env -u CLAUDE_CONFIG_DIR claude attach aaaa0001)' % home,
-                      result.stderr)
+                      '(scripts/close_worker.sh w1), or look at it (env -u CLAUDE_CONFIG_DIR claude attach aaaa0001)'
+                      % sh_home, result.stderr)
         self.assertFalse((self.state / 'launch.json').exists(), 'a second session started')
         self.assertEqual((self.workers / 'w1.id').read_text(), 'aaaa0001\n')
         self.assertFalse((self.workers / 'w1.config').exists())

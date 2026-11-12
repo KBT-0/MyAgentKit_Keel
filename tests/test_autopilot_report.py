@@ -52,7 +52,9 @@ class AutopilotReportTests(unittest.TestCase):
                 self.assertRegex(result.stdout, r'- merge [0-9a-f]+ Merge the worker')
                 self.assertNotIn('before the night', result.stdout)
                 self.assertIn('RESULT-w1.md: Kind: completed; Task: w1; Attempt: 1; Remaining: none', result.stdout)
-                self.assertNotIn('w0', result.stdout)
+                # The file name, not 'w0': macOS's temp folder (/var/folders/.../..._w0000gn/T) put
+                # 'w0' in the cost line's path (CI run 43115553552).
+                self.assertNotIn('RESULT-w0', result.stdout)
                 self.assertIn('Cost:', result.stdout)
         presence.write_text('present\n', encoding='utf-8')
         result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(self.project)],

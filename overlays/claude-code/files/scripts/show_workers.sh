@@ -131,8 +131,11 @@ launch() {
   # SIGTERM, then SIGKILL 2 s later: a launcher that ignored the one SIGTERM hung the spawn.
   ( sleep 5; kill "$pid"; sleep 2; kill -9 "$pid" ) >/dev/null 2>&1 </dev/null &
   dog=$!
-  rc=0; wait "$pid" || rc=$?
+  # Each wait reaps its job with stderr closed: macOS's sh (bash 3.2) printed "Terminated: 15" for
+  # the killed watcher (CI run 43115553552), a line the user never asked for.
+  rc=0; wait "$pid" 2>/dev/null || rc=$?
   kill "$dog" 2>/dev/null || true
+  wait "$dog" 2>/dev/null || true
   out=$(head -n 1 "$log"); rm -f "$log"
   case $rc:$out in
     0:*) ;;
