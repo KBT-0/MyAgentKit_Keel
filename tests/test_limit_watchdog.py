@@ -1,5 +1,4 @@
 """The limit watchdog: a fake `claude` on PATH and a fake CLAUDE_CONFIG_DIR; no real session or timer."""
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -190,6 +189,9 @@ class LimitWatchdogTests(unittest.TestCase):
         self.assertEqual(len(self.launched()), 1, self.log())
 
     def test_a_held_lock_does_nothing(self):
+        # Imported here: native Windows has no fcntl, and a module-level import cost the
+        # portable LimitStopTests their Windows run (CI run 43115553552).
+        import fcntl
         self.marker(time.time() - 60)
         with open(self.store / 'limit-watchdog.lock', 'a') as held:
             fcntl.flock(held, fcntl.LOCK_EX)
