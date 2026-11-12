@@ -235,7 +235,9 @@ class OverlaySettingsTests(unittest.TestCase):
             (agents / 'sub' / 'x.md').write_text(pin.format('renamed', 'inherit'), encoding='utf-8')
             (user / 'u.md').write_text(pin.format('user-pinned', 'claude-opus-5-5'), encoding='utf-8')
             (user / 'p.md').write_text(pin.format('half', 'claude-opus-5-5'), encoding='utf-8')  # the project's half wins
-            env = {k: v for k, v in os.environ.items() if k not in ('HOME', 'USERPROFILE')}
+            # Without CLAUDE_CODE_SUBAGENT_EFFORT: with it, `bare` names its effort (test_guard_worker_route).
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ('HOME', 'USERPROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_SUBAGENT_EFFORT')}
             env.update(CLAUDE_PROJECT_DIR=project, HOME=home, USERPROFILE=home)
             for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('quoted', 2), ('inherit', 0),
                                ('qinherit', 0), ('bare', 0), ('by-name', 0), ('renamed', 0), ('user-pinned', 0),

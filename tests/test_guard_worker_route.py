@@ -170,6 +170,8 @@ class FableNeverAWorkerTests(unittest.TestCase):
         (agents / 'builder.md').write_text('---\nname: builder\nmodel: inherit\n---\nBuild.\n', encoding='utf-8')
         (agents / 'code-reviewer.md').write_text('---\nname: code-reviewer\nmodel: inherit\n---\nReview.\n', encoding='utf-8')
         env = dict(os.environ, CLAUDE_PROJECT_DIR=project.name)
+        env.pop('CLAUDE_CODE_SUBAGENT_EFFORT', None)  # set, an inherit type with no effort names one
+        env['CLAUDE_CONFIG_DIR'] = project.name  # no user settings.json that sets it either
         for kind, code in (('builder', 2), ('code-reviewer', 0)):
             payload = json.dumps({'tool_name': 'Agent', 'transcript_path': self.transcript('claude-fable-5-1'),
                                   'tool_input': {'subagent_type': kind, 'description': 'x', 'prompt': 'Do it.'}})
@@ -214,6 +216,68 @@ class FableNeverAWorkerTests(unittest.TestCase):
         result = run({'subagent_type': 'general-purpose', 'description': 'x', 'prompt': 'Write the parser.',
                       'model': 'claude-opus-5-5', 'effort': 'high'}, transcript_path=self.transcript('claude-fable-5-1'))
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class RoutingHintTests(unittest.TestCase):
+    """#346: a one-page read was refused with no row to copy. PLAN 10A: CLAUDE_CODE_SUBAGENT_EFFORT ran the
+    `model: inherit` diff-reviewer at the variable's effort, not the author's (RESEARCH_LOG 2026-11-10 "subeffort")."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.project, self.home = Path(folder.name, 'p'), Path(folder.name, 'h')
+        agents = self.project / '.claude' / 'agents'
+        agents.mkdir(parents=True)
+        (self.home / '.claude').mkdir(parents=True)
+        shipped = HOOK.parents[1] / 'agents' / 'diff-reviewer.md'  # the overlay's own reviewer: inherit, no effort
+        (agents / 'diff-reviewer.md').write_text(shipped.read_text(encoding='utf-8'), encoding='utf-8')
+        (agents / 'pinned.md').write_text('---\nname: pinned\nmodel: inherit\neffort: high\n---\nx\n', encoding='utf-8')
+
+    def call(self, tool_input, **env_extra):
+        env = {k: v for k, v in os.environ.items()
+               if k not in ('HOME', 'USERPROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_SUBAGENT_EFFORT')}
+        env.update(CLAUDE_PROJECT_DIR=str(self.project), HOME=str(self.home), USERPROFILE=str(self.home), **env_extra)
+        payload = json.dumps({'tool_name': 'Agent', 'tool_input': dict({'description': 'x', 'prompt': 'p'}, **tool_input)})
+        return subprocess.run([sys.executable, str(HOOK)], input=payload.encode(), capture_output=True, timeout=60, env=env)
+
+    def test_a_call_with_no_model_or_effort_is_shown_the_tier_1_row(self):
+        for call in ({'subagent_type': 'general-purpose', 'prompt': 'read https://example.com and summarise it'},
+                     {'subagent_type': 'Explore', 'prompt': 'Find where frontmatter() is called.'},
+                     {'subagent_type': 'general-purpose', 'model': 'haiku'}):
+            with self.subTest(call=call):
+                result = self.call(call)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'"model": "haiku", "effort": "medium"', result.stderr)
+        self.assertEqual(self.call({'subagent_type': 'general-purpose', 'model': 'haiku', 'effort': 'medium'}).returncode, 0)
+
+    def test_the_subagent_effort_variable_makes_an_inherit_call_name_its_effort(self):
+        def settings(path, value):
+            path.write_text(json.dumps({'env': {'CLAUDE_CODE_SUBAGENT_EFFORT': value}}), encoding='utf-8')
+        review = {'subagent_type': 'diff-reviewer'}
+        self.assertEqual(self.call(review).returncode, 0, 'no variable: the session effort, as before')
+        for where in ('environment', 'settings.local.json', 'settings.json', 'user'):
+            with self.subTest(where=where):
+                env = {}
+                if where == 'environment':
+                    env['CLAUDE_CODE_SUBAGENT_EFFORT'] = 'low'
+                elif where == 'user':
+                    settings(self.home / '.claude' / 'settings.json', 'low')
+                else:
+                    settings(self.project / '.claude' / where, 'low')
+                result = self.call(review, **env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'CLAUDE_CODE_SUBAGENT_EFFORT=low', result.stderr)
+                self.assertIn(b'"Invariant"', result.stderr)
+                # A per-call model leaves the variable in charge too; an effort on the call or the pin decides.
+                self.assertEqual(self.call(dict(review, model='fable'), **env).returncode, 2)
+                self.assertEqual(self.call(dict(review, effort='high'), **env).returncode, 0)
+                self.assertEqual(self.call({'subagent_type': 'pinned'}, **env).returncode, 0)
+                self.assertEqual(self.call({'subagent_type': 'fork', 'prompt': 'Read it.'}, **env).returncode, 0)
+                for name in ('settings.local.json', 'settings.json'):
+                    (self.project / '.claude' / name).unlink(missing_ok=True)
+                (self.home / '.claude' / 'settings.json').unlink(missing_ok=True)
+        (self.project / '.claude' / 'settings.json').write_text('{not json', encoding='utf-8')
+        self.assertEqual(self.call(review).returncode, 0, 'an unreadable settings file is none')
 
 
 if __name__ == '__main__':

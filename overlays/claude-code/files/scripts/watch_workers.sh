@@ -557,14 +557,37 @@ report_result() {
     say "watch_workers: QUESTIONS: $1, $nq $qw for $owner (Kind: $k, $what)" || return 2
     sed -n 's/^[QL]//p' "$qs" | cutb | sed 's/^/  | /' | LC_ALL=C tr '\001-\011\013-\037\177' '?' || return 2
     say "  ask them now, one at a time; each line is cut at 200 bytes, the full text is in $f" || return 2
+    fable_note "$1" || return 2
     return
   fi
   case $k in completed) k=DONE ;; blocked) k=BLOCKED ;; handoff) k=HANDOFF ;; *) k=PROGRESS ;; esac
   say "watch_workers: $k: $1, $what (result file $f)" || return 2
+  fable_note "$1" || return 2
   # leeway 2026-11-02: after a hand-off the lead could not tell a bg session from a tmux one.
   if [ "$k" = HANDOFF ] && h=$(cat -- "$wdir/$1.host" 2>/dev/null) && [ -n "$h" ]; then
     say "  its host: $h; whether its session still runs: scripts/list_workers.sh (its STATE column)" || return 2
   fi
+}
+
+# fable_note NAME: NAME ran as an owner-approved Fable worker (NAME.fable-approved, spawn_worker.sh
+# --owner-approved-fable) and its answers came from another model: on an account without Fable
+# credits a Fable session runs on Opus with no error (#342, finding 3; model_check.py does it for
+# sub-agents). One line under the report, so the lead never calls the result Fable's; return 2 when it
+# could not be written. shortcut: a grep of the session's transcript (NAME.session, else NAME.id, as
+# limited() finds it) for the `"message":{"model":"X"` Claude Code writes first in each answer, not a
+# JSON parse; no transcript or no answer says nothing.
+fable_note() {
+  [ -f "$wdir/$1.fable-approved" ] || return 0
+  fid=$(cat -- "$wdir/$1.session" 2>/dev/null) || fid=$(cat -- "$wdir/$1.id" 2>/dev/null) || return 0
+  case $fid in ''|*[!0-9a-f-]*) return 0 ;; esac
+  for ft in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$fid"*.jsonl; do
+    [ -f "$ft" ] || continue
+    fother=$(LC_ALL=C grep -o '"message":{"model":"[^"<]*"' -- "$ft" | LC_ALL=C sed 's/.*"model":"//; s/"$//' |
+      LC_ALL=C grep -iv fable | sort | uniq -c | sort -rn | LC_ALL=C sed -n '1s/^ *[0-9]* //p')
+    [ -n "$fother" ] || continue
+    say "  MODEL_FALLBACK: asked fable, answered by $fother: an owner-approved Fable worker that ran on another model; do not report its result as Fable's (#342)" || return 2
+    return 0
+  done
 }
 
 # Native Windows: report NAME's state line when it starts with $2 (waiting or idle) and was not

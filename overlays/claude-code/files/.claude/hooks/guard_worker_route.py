@@ -11,7 +11,15 @@ per-call effort (code.claude.com/docs/en/sub-agents).
 An agent whose definition (the `.claude/agents/` file whose `name:` is the type, in the project
 or the user folder) pins
 both `model` and `effort` is exempt too: the pin is the choice (#137). A per-call value still
-overrides the pin, so a call never needs one for such an agent.
+overrides the pin, so a call never needs one for such an agent. So is one that writes `model: inherit`
+(the session's model and effort), but for its effort only while nothing sets
+`CLAUDE_CODE_SUBAGENT_EFFORT`: Claude Code takes that variable before the session's effort for a
+definition with no `effort:` (RESEARCH_LOG 2026-11-10 "subeffort", verified live), so a project that
+sets it would run its required reviewer, `diff-reviewer` (inherit, no effort), below the author's
+effort. With the variable in the hook's environment or in the `env` of the local, project or user
+settings, such a call names its effort. A refusal for no model and no effort prints the routing
+table's tier-1 row, copy-paste ready, for a read-only errand (one page, one lookup, #346): the
+choice stays the lead's, it only no longer needs a look into the table.
 
 The reason for the choice is the lead's to tell the owner before the start; no hook sees chat.
 
@@ -74,15 +82,39 @@ def definitions(kind):
     return []
 
 
+def chosen(head, field):
+    """The definition writes a value for `field`, not a setup placeholder."""
+    return bool(re.match(r"[^\s{]", head.get(field, "")))
+
+
 def pinned(kind):
     """Whether the agent definition named `kind` pins both model and effort (not a setup
     placeholder), or writes `model: inherit`, which chooses the session's model and effort. Two
     definitions with one name: both must pin."""
     found = definitions(kind)
     # `model: inherit` is a written choice (the reviewer runs on the session's tier, #307).
-    chosen = lambda head, field: bool(re.match(r"[^\s{]", head.get(field, "")))
     return bool(found) and all(chosen(head, "model") and (head["model"] == "inherit" or chosen(head, "effort"))
                                for head in found)
+
+
+def subagent_effort():
+    """CLAUDE_CODE_SUBAGENT_EFFORT as the session may see it: the hook's environment, else the `env`
+    of .claude/settings.local.json, .claude/settings.json or the user's settings.json, in that order.
+    An unreadable file counts as none; managed settings are not read."""
+    if os.environ.get("CLAUDE_CODE_SUBAGENT_EFFORT"):
+        return os.environ["CLAUDE_CODE_SUBAGENT_EFFORT"]
+    project = os.path.join(os.environ.get("CLAUDE_PROJECT_DIR") or ".", ".claude")
+    user = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    for path in (os.path.join(project, "settings.local.json"), os.path.join(project, "settings.json"),
+                 os.path.join(user, "settings.json")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                value = (json.load(f).get("env") or {}).get("CLAUDE_CODE_SUBAGENT_EFFORT")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def session_model(path):
@@ -159,12 +191,24 @@ if "review" not in kind.lower():
 if kind == "fork":
     sys.exit(0)
 missing = [name for name in ("model", "effort") if not call.get(name)]
-if not missing or pinned(call.get("subagent_type")):
+level = None if call.get("effort") else subagent_effort()
+if level and any(head.get("model") == "inherit" and not chosen(head, "effort") for head in definitions(kind)):
+    print(
+        "BLOCKED: CLAUDE_CODE_SUBAGENT_EFFORT=%s is set and `%s` writes `model: inherit` with no effort, so this "
+        "call would run at %s, not at your own effort: Claude Code takes the variable before the session's effort. "
+        "Call again with \"effort\" named: for a required review at least your own effort (docs/REVIEW_GATE.md, "
+        "\"Invariant\"), else from the effort table in docs/WORKFLOW.md \"Model routing\"." % (level, kind, level),
+        file=sys.stderr,
+    )
+    sys.exit(2)
+if not missing or pinned(kind):
     sys.exit(0)
 print(
     "BLOCKED: this Agent call names no %s. Call again with both model and effort (or pin both in the "
     "agent's .claude/agents/ definition): the model from docs/WORKFLOW.md \"Model routing\", the effort from "
-    "its effort table; tell the owner first, in one plain line, which and why." % " and no ".join(missing),
+    "its effort table; tell the owner first, in one plain line, which and why.\n"
+    "A read-only errand (one web page, one lookup, a search, a summary) is that table's tier 1: add "
+    "\"model\": \"haiku\", \"effort\": \"medium\" (\"sonnet\" when the summary must weigh details)." % " and no ".join(missing),
     file=sys.stderr,
 )
 sys.exit(2)

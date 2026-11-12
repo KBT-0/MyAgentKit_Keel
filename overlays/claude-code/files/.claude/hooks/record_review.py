@@ -8,7 +8,7 @@ back through the SubagentHandback tool (auto mode) is read there, from the tool'
 stop's last_assistant_message is not the report (Claude Code hooks docs, SubagentStop). A file made
 while the reviewer ran is not among them, so the guard asks for it again. A stop with no start note, or whose last
 message does not open with an Accept verdict line (Accept, Accept with Manual Checks, or a PASS or
-APPROVE some reviewers write) or lists a Critical or High, records nothing: a reviewer that failed or was cut off, and a Reject, whose fix a
+APPROVE some reviewers write) or lists an open Critical or High (one restated as fixed is not open, #345), records nothing: a reviewer that failed or was cut off, and a Reject, whose fix a
 fresh review sees before the commit (owner 2026-10-25).
 It only records and always exits 0: a SubagentStop hook's exit 2 would keep the reviewer running.
 """
@@ -27,8 +27,13 @@ HEADING = re.compile(r"\W*verdict\W*", re.I)
 # "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; "High-severity" too, not "High-tier".
 LABEL = r"(?:issue|finding|[a-z]?\d+|severity|`[^`\n]*`)"  # one way to split a line: no backtracking blow-up
 # labricore A5: a bare path:line may lead once ("- src/x.ts:3 — High: ...")
-BLOCKING = re.compile(r"^[^\w\n`]*(?:[\w\\-]*[./][\w./\\-]*:\d+[^\w\n`]+)?(?:%s[^\w\n`]+)*(?:critical|high)\b(?!-(?:tier|effort|risk)\b)" % LABEL,
-                      re.I | re.M)
+# #345: an earlier round's finding restated as fixed ("- F1 (High), fixed. REPRODUCED.", "H2 (Critical) — resolved")
+# is none: the disposition word comes right after the severity, at most after "now", "confirmed" or
+# "verified", and ends there (a stop, a bracket, "in"/"by" a commit or test). "High: fixed offset 4 ...",
+# "fixed-width", "not fixed" and "unresolved" still block.
+FIXED = r"[^\w\n]*(?:(?:now|confirmed|verified)\s+)?(?:fixed|closed|resolved)(?:\s*(?:$|[.,;:)\]]|[—–]|\s-\s|\s(?:in|by|since|at)\s))"
+BLOCKING = re.compile(r"^[^\w\n`]*(?:[\w\\-]*[./][\w./\\-]*:\d+[^\w\n`]+)?(?:%s[^\w\n`]+)*(?:critical|high)\b(?!-(?:tier|effort|risk)\b)(?!%s)"
+                      % (LABEL, FIXED), re.I | re.M)
 
 
 def accepted(message):

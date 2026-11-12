@@ -359,6 +359,26 @@ class RiskyReviewTests(unittest.TestCase):
         self.assertFalse(record_review.accepted('Verdict: Accept\n- src/x.ts:3 \u2014 High: off by one'))
         self.assertTrue(record_review.accepted('Verdict: Accept\nHigh-risk paths: none touched.'))
 
+    def test_a_restated_fixed_finding_keeps_the_accept(self):
+        # #345: a round-2 Accept that restates round 1's fixed High read as Reject, and the commit was refused.
+        sys.path.insert(0, str(HOOKS))
+        import record_review
+        for report in ('Verdict: Accept with Manual Checks\n\n## Round-1 findings\n- **F1 (High), fixed. REPRODUCED.**\n'
+                       '\nManual checks: run the Windows gate once by hand.',
+                       'Verdict: Accept\n- F1 (High): fixed in 1a2b3c.', 'Verdict: Accept\n- H2 (Critical) \u2014 resolved',
+                       'Verdict: Accept\n- F3 (High) (closed)', 'Verdict: Accept\n- F1 (High), now fixed',
+                       'Verdict: Accept\n- F1 (High), confirmed fixed by test_round', 'Verdict: Accept\nHigh, fixed'):
+            with self.subTest(report=report):
+                self.assertTrue(record_review.accepted(report))
+        # An open High still rejects, beside a fixed one or in words that only look like a disposition.
+        for report in ('Verdict: Accept\n- F1 (High), fixed.\n- F2 (High): a.py:3 drops the row. REPRODUCED',
+                       'Verdict: Accept\n- F1 (High), not fixed', 'Verdict: Accept\n- F1 (High): unresolved',
+                       'Verdict: Accept\n- High: fixed offset 4 skips the header, a.py:3',
+                       'Verdict: Accept\n- High: fixed-width parse overflows, a.py:3',
+                       'Verdict: Accept\n- High: the F1 fix is incomplete; still not fixed'):
+            with self.subTest(report=report):
+                self.assertFalse(record_review.accepted(report))
+
     def test_the_capped_hand_back_format_is_read(self):
         # stopcut: diff-reviewer.md's hand-back, the verdict, one line per finding, the checks, the report's path last.
         sys.path.insert(0, str(HOOKS))

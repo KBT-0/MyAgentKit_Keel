@@ -1792,6 +1792,26 @@ class BackgroundTests(Base):
                 self.assertIn(said, result.stdout)
                 self.assertNotIn('nothing was waiting', result.stdout)
 
+    def test_an_approved_fable_worker_answered_by_another_model_is_said(self):
+        # #342 finding 3: without Fable credits a --owner-approved-fable worker ran on Opus with no error.
+        self.spawned('w1')
+        self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=1))
+        (self.workers / 'w1.fable-approved').write_text('"do it on Fable" (2026-11-13)\n')
+        answer = lambda model: dict(said('Done.'), message=dict(said('Done.')['message'], model=model))
+        line = '  MODEL_FALLBACK: asked fable, answered by claude-opus-5-5'
+        for run, (entries, approved, shown) in enumerate((((answer('claude-opus-5-5'), answer('claude-opus-5-5')), True, True),
+                                         ((answer('claude-fable-5-1'), answer('claude-opus-5-5')), True, True),
+                                         ((answer('claude-fable-5-1'), LIMITED), True, False),
+                                         ((answer('claude-opus-5-5'),), False, False))):
+            with self.subTest(entries=entries, approved=approved):
+                if not approved:
+                    (self.workers / 'w1.fable-approved').unlink()
+                self.transcript(*entries)
+                (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none') + 'run %d\n' % run + READY)
+                out = self.watch().stdout
+                self.assertIn('DONE: w1', out)
+                self.assertEqual(line in out, shown, out)
+
     def test_only_a_published_final_result_hides_the_sessions_end(self):
         # The supervisor stops a session only on a decision, DONE or HANDOFF (codex_worker.py):
         # a draft or a blocked result leaves it running, so its idle or end is still said.

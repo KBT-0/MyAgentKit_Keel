@@ -15,6 +15,30 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **A one-page read is shown the routing row to copy (#346).** `guard_worker_route.py` refused a general-purpose or
+  Explore errand that named no model or effort with no row to use. The refusal keeps the rule (every sub-agent gets a
+  table-chosen model and effort, never a silent default) and adds the tier-1 row ready to paste: a read-only errand
+  (one web page, one lookup, a search, a summary) takes `"model": "haiku", "effort": "medium"`. test_guard_worker_route
+  red without it. **ACTION** (project-owned `.claude/hooks/guard_worker_route.py`): `sync-kit.sh . --merge`.
+- **`CLAUDE_CODE_SUBAGENT_EFFORT` no longer runs the reviewer below its author** (PLAN 10A follow-up of RESEARCH_LOG
+  2026-11-10 "subeffort"). Claude Code takes the variable before the session's effort for a definition with no
+  `effort:`, and `guard_worker_route.py` let a `model: inherit` type such as `diff-reviewer` pass with no effort, so a
+  project that set it ran its required review at the variable's effort. With the variable in the hook's environment
+  or in the `env` of `.claude/settings.local.json`, `.claude/settings.json` or the user's `settings.json`, a call of
+  such a type that names no effort is refused and asked to name at least the author's effort. test_guard_worker_route
+  red without it. **ACTION** (project-owned `.claude/hooks/guard_worker_route.py`): `sync-kit.sh . --merge`.
+- **An owner-approved Fable worker that ran on another model is said (#342, finding 3).** A worker spawned with
+  `--owner-approved-fable` on an account without Fable credits runs on Opus with no error, as a sub-agent does
+  (`model_check.py`, findings 1, 2 and 4, v0.16 above). `watch_workers.sh` now reads such a worker's transcript when it
+  reports its result and adds `MODEL_FALLBACK: asked fable, answered by <model>` when an answer came from another
+  model. test_worker_visibility red without it. Kit-owned; a re-sync brings it.
+- **A review that restates a fixed finding still records its Accept (#345).** `record_review.py` read a round-2
+  "Verdict: Accept with Manual Checks" that restated round 1's "- **F1 (High), fixed. REPRODUCED.**" as Reject, so
+  `guard_risky_review.py` refused the commit and a third round ran only to drop the line. A Critical or High followed
+  by its disposition ("fixed", "closed", "resolved", after "now", "confirmed" or "verified" at most, ending the
+  phrase) is no open finding; "not fixed", "unresolved", "High: fixed offset 4 ..." and any other open High still
+  reject. tests/test_guard_risky_review.py red without it. **ACTION** (project-owned `.claude/hooks/record_review.py`):
+  `sync-kit.sh . --merge`.
 - **A one-line commit message without a denied fragment needs no file** (leadcut A3, ctl16s turnmeasure-s, owner
   2026-11-10): `docs/WORKFLOW.md`, "The commit gate and attribution", now sends such a message as `git commit -qm "..."`;
   a longer message, or one holding `--out`, `--ext`, `--textc` or `--sub`, still goes through a `mktemp` file and
