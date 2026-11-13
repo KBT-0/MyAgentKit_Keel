@@ -164,3 +164,15 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `test_codex_worker.test_resumed_in_place_edit_of_an_old_result_neither_closes_nor_signals` is timing-bound
   (grace 0.5 s, waiter `communicate(timeout=5)`): it failed once inside the fast-tier gate (9 units at once,
   10 `claude -p` trial sessions running beside it) and passed alone. Widen the margins or run it serially.
+
+## Filed from the v0.15 cifix15b review (20261113T021442Z-8822369247fd)
+
+- Medium: autopilot_report.py:62 takes `workers/NAME.result.md` first; when a worker name is reused, close_worker.sh
+  archives the new result as `NAME.result-N.md`, so the Done report shows the earlier run's result (REPRODUCED).
+  Read the highest `NAME.result-N.md` when the closed record is newer than `NAME.result.md`'s close.
+- Low: autopilot_report.py:58-60: a Codex worker spawned with `spawn_codex.sh --result PATH` leaves only
+  `NAME.session` (no path), so the report says "no result file".
+- Low: check.sh:78: the after-run `git_view`'s stderr goes to `$view.errors` and is never printed, so a failing
+  `git status` there shows only "the kit check changed this checkout".
+- NOT RUN: the Windows minimums (test_spawn_worker 98, test_close_worker 62, test_claude_bridge + CASE_FOLD_TESTS)
+  and #341 on macOS: the first CI run must confirm.
