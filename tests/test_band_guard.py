@@ -62,6 +62,13 @@ class BandGuardTests(unittest.TestCase):
         self.assertIsNone(self.hook('Read', {'file_path': str(self.root / 'src/a.py')}))
         self.assertIsNone(self.hook('Edit', {'file_path': 'src/a.py'}, agent_id='a1'))  # a sub-agent's own call
 
+    def test_a_command_that_writes_a_file_stays_denied_past_the_band(self):
+        # hookb review High: mkdir, touch and tee joined the destructive-git guard's INERT list; they write files.
+        for command in ('cat notes.md | tee src/app.py', "tee src/app.py <<'EOF'\nx\nEOF", 'echo x | tee -a docs/PROJECT.md',
+                        'mkdir -p src/new && touch src/new/a.py'):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.hook('Bash', {'command': command}))
+
     def test_the_hand_off_autopilot_review_and_commit_message_steps_run_past_the_band(self):
         # Round-1 review of the hardband change: steps the kit's docs prescribe for closing a session.
         for command in ("py -3 'C:/k/scripts/codex_worker.py' --publish RESULT-a.md.tmp RESULT-a.md",

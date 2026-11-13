@@ -14,7 +14,7 @@ Past the line every call is denied (permissionDecision deny, one line naming the
 and what still runs) except the closing set: Read, Grep, Glob, ToolSearch and SendMessage (reading
 and telling the lead close nothing); the diff-reviewer sub-agent (the review a commit needs); a
 Bash or PowerShell command whose every part is git add, commit, status, diff or log, a read-only
-command (guard_destructive_git.py's INERT list, with no file redirection), mktemp, or one of the
+command (guard_destructive_git.py's INERT list less its WRITERS, with no file redirection), mktemp, or one of the
 closing scripts in SCRIPTS (the publish, the marker release, the worker listing, the autopilot
 report, the switch back to present, review.sh) or the project's gate, scripts/check.sh with any
 flags (a green gate is the condition of the commit the band already allows: two measured runs were
@@ -142,7 +142,7 @@ def closing_command(command: str, depth: int = 0) -> bool:
                 return False
         elif closing_script(words):
             continue
-        elif name not in g.INERT | {'mktemp'}:
+        elif name not in (g.INERT - g.WRITERS) | {'mktemp'}:
             return False
     return True
 

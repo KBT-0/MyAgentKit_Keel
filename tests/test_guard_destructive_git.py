@@ -796,6 +796,48 @@ class V012GuardTests(GuardCase):
             ' inside a heredoc; git status and git diff were refused too"',
         ], 0)
 
+    def test_git_words_in_quoted_data_or_a_files_here_document_are_no_command_on_a_dirty_tree(self):
+        # #347 (regression of #77): with uncommitted work, a gh search string and a here-document a file is written
+        # from were refused as the checkout they name. An issue, pr, search, release, label, gist or discussion
+        # argument is data; gh api (a field), gh alias (it runs `!` text), a substitution and a git word that leads
+        # an argument are still judged, and an interpreter's here-document is still code.
+        self.dirty()
+        self.assertVerdict([
+            'gh issue list --repo OWNER/REPO --search "git checkout foo bar"',
+            'gh issue list --search "git checkout foo" | head -3',
+            'gh issue create --title "x" --body "git checkout -- f.txt undoes it"',
+            'gh pr comment 3 --body "run git reset --hard first"',
+            'glab mr note 3 -m "git checkout -- f.txt"',
+            "cat > notes.md <<'EOF'\nUndo with git checkout -- <file> when needed.\nEOF",
+            "cat > notes.md <<'EOF'\nUndo with git checkout -- f.txt when needed.\nEOF",
+            "mkdir -p docs && cat > docs/notes.md <<'EOF'\nUndo with `git checkout -- <file>`.\nEOF",
+            "tee notes.md <<'EOF'\ngit checkout -- <file>\nEOF",
+            "touch notes.md && cat >> notes.md <<'EOF'\n- git checkout -- f.txt\nEOF",
+        ], 0)
+        self.assertVerdict([
+            'gh alias set undo "!git checkout -- f.txt"', 'gh api x -f note="git checkout -- f.txt"',
+            'gh issue create --title t --body "$(git checkout -- f.txt)"', 'gh issue list git checkout -- f.txt',
+            "python3 - <<'EOF'\nprint('git checkout -- f.txt')\nEOF",
+            "tee x.sh <<'EOF'\ngit checkout -- f.txt\nEOF\nsh x.sh", 'mkdir -p d && git checkout -- f.txt',
+            # hookb review: a process substitution runs a program the line's text reaches; gh runs these variables
+            'echo "git reset --hard" | tee >(sh)', 'echo "git reset --hard" > >(sh)', 'echo "git reset --hard" | head -1 > >(sh)',
+            'GH_BROWSER=\'sh -c "git reset --hard"\' gh issue view 3 --web',
+            'export BROWSER=\'sh -c "git reset --hard"\'; gh issue view 3 --web',
+            'GH_PAGER=\'sh -c "git reset --hard"\' gh issue list --search x',
+        ], 2)
+
+    def test_a_refused_path_checkout_names_the_reverse_edit(self):
+        # #347: undoing one's own edit with `git checkout -- FILE` was refused with commit or stash as the only
+        # routes, both heavier than the undo. Whose edit it was the hook cannot prove, so it stays refused; the
+        # message names the cheaper route. A reset --hard is no one-file undo: it does not.
+        self.dirty()
+        for command in ('git checkout -- f.txt', 'git restore f.txt', 'git checkout HEAD -- f.txt'):
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(b'Edit tool', result.stderr)
+        self.assertNotIn(b'Edit tool', self.run_hook('git reset --hard').stderr)
+
 
 class V012RoundOneReviewTests(GuardCase):
     """v0.12 guards, round-1 reviews of d991909: the guard fails closed on what it cannot read."""

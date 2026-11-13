@@ -34,7 +34,10 @@ gated_pattern="{{GATED_FILE_PATTERN}}"
 root_config="package.json package-lock.json npm-shrinkwrap.json pnpm-lock.yaml pnpm-workspace.yaml yarn.lock
   bun.lock bun.lockb tsconfig*.json jsconfig*.json vite.config.* vitest.config.* wrangler.toml wrangler.json
   wrangler.jsonc biome.json biome.jsonc eslint.config.* .eslintrc* pyproject.toml setup.cfg setup.py
-  requirements*.txt uv.lock poetry.lock Cargo.toml Cargo.lock go.mod go.sum Makefile CMakeLists.txt"
+  requirements*.txt uv.lock poetry.lock Cargo.toml Cargo.lock go.mod go.sum Makefile CMakeLists.txt
+  :(glob)*.csproj :(glob)*.sln Directory.Build.props global.json"
+# :(glob) keeps a `*` inside one folder, so only the root's project files match (a plain `*.csproj` pathspec
+# matches at any depth). tests/test_stop_hook.py pins this whole set.
 set -f
 
 # shellcheck disable=SC2086

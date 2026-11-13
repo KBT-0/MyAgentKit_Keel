@@ -17,8 +17,8 @@ overrides the pin, so a call never needs one for such an agent. So is one that w
 definition with no `effort:` (RESEARCH_LOG 2026-11-10 "subeffort", verified live), so a project that
 sets it would run its required reviewer, `diff-reviewer` (inherit, no effort), below the author's
 effort. With the variable in the hook's environment or in the `env` of the local, project or user
-settings, such a call names its effort, except a review's when the variable is high, xhigh or max:
-at or above the ceiling a review may run at (REVIEW_GATE.md, "Invariant"). A refusal for no model and no effort prints the routing
+settings, such a call names its effort, except a review's when the variable is high, the ceiling a
+review may run at (REVIEW_GATE.md, "Invariant"); xhigh or max is above it and refused too. A refusal for no model and no effort prints the routing
 table's tier-1 row, copy-paste ready, for a read-only errand (one page, one lookup, #346): the
 choice stays the lead's, it only no longer needs a look into the table.
 
@@ -193,15 +193,17 @@ if kind == "fork":
     sys.exit(0)
 missing = [name for name in ("model", "effort") if not call.get(name)]
 level = None if call.get("effort") else subagent_effort()
-# hooka2: high and above is the ceiling a review may run at (REVIEW_GATE.md, "Invariant"), so the variable
-# cannot run a review below it; a worker type that inherits still names its own effort.
-ceiling = "review" in kind.lower() and str(level).strip().lower() in ("high", "xhigh", "max")
+# hooka2, hookb: high is the ceiling a review may run at (REVIEW_GATE.md, "Invariant": never xhigh or max),
+# so only high runs a review at it; xhigh or max would run it above, any other value below. A worker type
+# that inherits still names its own effort.
+ceiling = "review" in kind.lower() and str(level).strip().lower() == "high"
 if level and not ceiling and any(head.get("model") == "inherit" and not chosen(head, "effort") for head in definitions(kind)):
     print(
         "BLOCKED: CLAUDE_CODE_SUBAGENT_EFFORT=%s is set and `%s` writes `model: inherit` with no effort, so this "
         "call would run at %s, not at your own effort: Claude Code takes the variable before the session's effort. "
-        "Call again with \"effort\" named: for a required review at least your own effort (docs/REVIEW_GATE.md, "
-        "\"Invariant\"), else from the effort table in docs/WORKFLOW.md \"Model routing\"." % (level, kind, level),
+        "Call again with \"effort\" named: for a required review at least your own effort and never above "
+        "\"effort\": \"high\" (docs/REVIEW_GATE.md, \"Invariant\"), else from the effort table in docs/WORKFLOW.md "
+        "\"Model routing\"." % (level, kind, level),
         file=sys.stderr,
     )
     sys.exit(2)

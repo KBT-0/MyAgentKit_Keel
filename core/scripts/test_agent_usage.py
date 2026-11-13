@@ -419,6 +419,17 @@ class UsageTests(unittest.TestCase):
                 self.assertLessEqual(len(result['stderr']), 8_000_000)
             self.assertEqual(temp_file.call_count, 2, 'Only stdin may use a temporary file')
 
+    def test_a_bridge_session_has_a_session_id_of_its_own(self):
+        # #311: a reviewer or proposer the bridges start inherited the lead's CLAUDE_CODE_SESSION_ID (or none), so
+        # the master-writer hooks took its commit for the lead's or for the owner's terminal. Each run is its own.
+        from unittest.mock import patch
+        child = "import os; print(os.environ.get('MYAGENTKIT_SESSION_ID', ''))"
+        with patch.dict(agent_process.os.environ, CLAUDE_CODE_SESSION_ID='lead-1', MYAGENTKIT_SESSION_ID='lead-1'):
+            ids = [agent_process.run([sys.executable, '-c', child], '', Path.cwd(), 10)['stdout'].strip()
+                   for _ in range(2)]
+        self.assertRegex(ids[0], r'^bridge-[0-9a-f]{12}$')
+        self.assertNotEqual(ids[0], ids[1])
+
     def test_large_prompt_reaches_a_slow_starting_child_without_deadlock(self):
         child = "import sys,time; time.sleep(0.3); print(len(sys.stdin.read()))"
         result = agent_process.run([sys.executable, "-c", child], "x" * 200000, Path.cwd(), 2)

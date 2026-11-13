@@ -1837,6 +1837,31 @@ class BackgroundTests(Base):
                 self.assertEqual('MODEL_FALLBACK' in out, shown, out)
                 self.assertEqual(line in out, shown, out)
 
+    def test_a_tmux_workers_note_reads_only_its_own_runs_transcript(self):
+        # hookb (review r2 of hooka2, Low): a transcript of the same session name written before this spawn
+        # (an earlier run) or naming another result file (another checkout's worker of that name) is not this
+        # worker's, so its other model says nothing; each condition of the tmux fallback is killed by one run.
+        (self.workers / 'w1.fable-approved').write_text('"do it on Fable" (2026-11-13)\n')
+        answer = dict(said('Done.'), message=dict(said('Done.')['message'], model='claude-opus-5-5'))
+        named = dict(type='agent-name', agentName='w1', sessionId='aaaa0001-5137-4293-88d5-c4339d1ce56c')
+        prompt = lambda path: dict(type='user', message=dict(role='user', content="Your result file is '%s'" % path))
+        folder = self.tmp / 'home/.claude/projects/D---p--claude-worktrees-w1'
+        for run, (result, age, shown) in enumerate((('RESULT-w1.md', 600, False),
+                                                    ('/elsewhere/RESULT-x.md', 0, False),
+                                                    ('RESULT-w1.md', 0, True))):
+            with self.subTest(result=result, age=age):
+                self.spawned('w1', id=None, host='tmux')
+                (self.workers / 'w1.id').unlink(missing_ok=True)
+                self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=1))
+                self.transcript(prompt(result), named, answer)
+                then = time.time() - age
+                for ft in folder.glob('*.jsonl'):
+                    os.utime(ft, (then, then))
+                (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none') + 'run %d\n' % run + READY)
+                out = self.watch().stdout
+                self.assertIn('DONE: w1', out)
+                self.assertEqual('MODEL_FALLBACK' in out, shown, out)
+
     def test_only_a_published_final_result_hides_the_sessions_end(self):
         # The supervisor stops a session only on a decision, DONE or HANDOFF (codex_worker.py):
         # a draft or a blocked result leaves it running, so its idle or end is still said.

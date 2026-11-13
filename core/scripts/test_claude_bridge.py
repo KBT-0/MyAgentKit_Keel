@@ -55,10 +55,10 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
 # Both minimums below count a disk that does not fold case (Linux's); a disk that folds case
 # (macOS's, Windows') runs CASE_FOLD_TESTS more, added by the runner and by the kit gate.
-SUITE_MINIMUMS = {'test_claude_bridge': 296, 'test_agent_usage': 40, 'test_codex_quota': 6}
+SUITE_MINIMUMS = {'test_claude_bridge': 296, 'test_agent_usage': 41, 'test_codex_quota': 6}
 CASE_FOLD_TESTS = 1  # test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 268, 'test_agent_usage': 36, 'test_codex_quota': 5}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 268, 'test_agent_usage': 37, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 
 

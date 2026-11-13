@@ -617,6 +617,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     # No bytecode in the copy: on Windows the Codex sandbox writes __pycache__
                     # under an account whose folders this user cannot open, read or remove.
                     env["PYTHONDONTWRITEBYTECODE"] = "1"
+                    # A session id of its own (#311): with the caller's CLAUDE_CODE_SESSION_ID, or none, the
+                    # master-writer hooks took a commit it made for the lead's or for the owner's terminal.
+                    env["MYAGENTKIT_SESSION_ID"] = "bridge-" + os.urandom(6).hex()
                     child = launch(command, mask, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE,
                                    env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"))

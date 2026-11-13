@@ -559,10 +559,14 @@ id (`CLAUDE_CODE_SESSION_ID`) and its session name (the one peers send to, from 
 STATE line, `release` clears both, `show` (or `status`) prints them (from a worktree too; also how a peer or another project's lead finds whom to message, `docs/COMMUNICATION.md`, "Addressing a lead"), and the hand-over around MAIN
 CHECKOUT IDLE is the sender's `release` and the receiver's `claim`. A session without
 `CLAUDE_CODE_SESSION_ID` (another CLI) sets `MYAGENTKIT_SESSION_ID` for the claim and for every
-git command it runs; `spawn_worker.sh` and `spawn_codex.sh` set it to `worker-NAME` for every worker they start. While the marker names a session, the pre-commit and pre-merge-commit hooks
+git command it runs; `spawn_worker.sh` and `spawn_codex.sh` set it to `worker-NAME` for every worker they start, and the
+review and proposal bridges to `bridge-<random>` for every session they start. While the marker names a session, the pre-commit and pre-merge-commit hooks
 refuse a commit or merge in the main checkout by any other session before the gate runs, and
 print the MERGE REQUEST shape; a linked worktree is never refused, without the marker nothing
-is, and a command with no session id at all is the owner's terminal, let through with a note.
+is, and a command with no session id at all is the owner's terminal, let through with a note that
+is also one line in the Git-ignored `.myagentkit/owner-terminal.log`; the lead reads that file before
+each merge in the main checkout, and a line that is not the owner's own commit is a session running
+without an id: find it before the merge.
 The hooks enforce commits and merge commits only: a fast-forward merge, a rebase, a
 cherry-pick, a pull or a `git add` in the main checkout runs no hook, and the rule's text alone
 holds them.

@@ -48,6 +48,12 @@ if [ "$here" = "$common" ] && [ -e "$marker" ]; then
   me=${MYAGENTKIT_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}
   if [ -n "$writer" ] && [ -z "$me" ]; then
     printf '%s\n' "$hook: no session id, so taken for the owner's terminal and let through; the master writer is $writer." >&2
+    # #311: also one line in .myagentkit/owner-terminal.log, which the lead reads (docs/WORKFLOW.md): a session
+    # started without an id is seen there, not only in a terminal nobody watches. A failed write blocks nothing.
+    # A merge runs this script twice (pre-merge-commit: --master-writer, then --merge): only the first logs.
+    [ "${1:-}" = --merge ] || printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "$hook: no session id, let through as the owner's terminal; master writer $writer; HEAD $(git rev-parse -q --verify HEAD)" \
+      >> "$(dirname -- "$marker")/owner-terminal.log" 2>/dev/null || true
   elif [ -z "$writer" ] || [ "$me" != "$writer" ]; then
     shape=$(sed -n '/^- MERGE REQUEST: /{s///;s/[.[:space:]]*$//;p;}' "$(dirname -- "$marker")/../docs/COMMUNICATION.md" 2>/dev/null)
     printf '%s\n' "$hook: refused before the gate ran: .myagentkit/master-writer names ${writer:-nothing readable}${name:+ (session name $name)} as the" \

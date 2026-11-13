@@ -79,6 +79,12 @@ class HookTests(unittest.TestCase):
         self.assertEqual(self.runs(), before + 1)
         self.assertIn('writer-1', result.stderr)
         self.assertNotIn('MERGE REQUEST', result.stderr)
+        # #311: the let-through is also one line in .myagentkit/owner-terminal.log, which the lead reads: a worker
+        # that started without an id is seen there, not only in a terminal nobody watches.
+        log = (self.root / '.myagentkit/owner-terminal.log').read_text(encoding='utf-8').splitlines()
+        self.assertEqual(len(log), 1, log)
+        self.assertRegex(log[0], r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ pre-commit: no session id, let through as the '
+                                 r"owner's terminal; master writer writer-1; HEAD [0-9a-f]{40}$")
         # An empty marker names nobody: refused, fail closed.
         self.claim('')
         self.assertNotEqual(self.commit('c', CLAUDE_CODE_SESSION_ID='writer-1').returncode, 0)
@@ -102,6 +108,15 @@ class HookTests(unittest.TestCase):
         merge = self.git('merge', '-q', '--no-edit', 'side', check=False, CLAUDE_CODE_SESSION_ID='writer-1')
         self.assertEqual(merge.returncode, 0, merge.stderr)
         self.assertEqual(self.runs(), before + 1)
+        # #311: a merge without an id runs pre-commit twice (pre-merge-commit); the log still gets one line (hookb review).
+        self.git('checkout', '-q', '-b', 'side2')
+        self.assertEqual(self.commit('t', CLAUDE_CODE_SESSION_ID='writer-1').returncode, 0)
+        self.git('checkout', '-q', 'main')
+        self.assertEqual(self.commit('n', CLAUDE_CODE_SESSION_ID='writer-1').returncode, 0)
+        merge = self.git('merge', '-q', '--no-edit', 'side2', check=False)
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+        log = (self.root / '.myagentkit/owner-terminal.log').read_text(encoding='utf-8').splitlines()
+        self.assertEqual(len(log), 1, log)
 
     def test_the_marked_session_commits_through_the_gate(self):
         self.claim('writer-1')

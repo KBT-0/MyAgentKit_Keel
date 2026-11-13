@@ -176,3 +176,20 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   `git status` there shows only "the kit check changed this checkout".
 - NOT RUN: the Windows minimums (test_spawn_worker 98, test_close_worker 62, test_claude_bridge + CASE_FOLD_TESTS)
   and #341 on macOS: the first CI run must confirm.
+
+## Filed from the v0.15 hookb review (20261113T103144Z-610aab115469)
+
+- record_review.py fails closed on a round-2 summary sentence under an Accept ("The open High from round 1 is fixed.",
+  "Both remaining High findings are fixed."): STATE reads it as a lead, so an accepted review is not recorded (Low).
+- record_review.py FIXED_AS still reads "- F1 (High): fixed: a.py:9 deletes every row" as fixed: one clause naming a
+  path:line with no NOT_DONE word passes, whatever it says (Low; deferrals, wontfix and a second High now block).
+- NOT RUN: the hookb changes on Windows and macOS (gate_on_stop.sh `:(glob)` pathspecs under Git for Windows, the
+  pre-commit owner-terminal.log line under Git Bash); confirm in the next CI run.
+- record_review.py TAIL takes any text without a NOT_DONE word inside the parenthesis after REPRODUCED, VERIFIED or
+  CONFIRMED ("- F1 (High), fixed. REPRODUCED (rows vanish on Windows)." reads as fixed; r2, 20261113T104423Z-dae990e1dba6, Low).
+- RESEARCH_LOG.md has no entry for hookb (#347 DATA_SUBS and WRITERS, #309, #311's bridge id and owner-terminal.log),
+  as CONTRIBUTING.md asks (r2, Low).
+- record_review.py STATE fails closed on a Low or Medium whose 2nd-4th word is new/open/remaining/... followed by
+  high or critical as prose ("- Medium: the new high-water mark at a.py:3 ..."; merge review 20261113T110042Z-3fdbfc840d7d, Low).
+- Pre-existing: guard_destructive_git.py judge(): `echo "git push --mirror" | tee >(sh)` passes on a dirty tree; shlex
+  reads `>(` as one word, so `sh` is never a command name, and the raw floor has no --mirror pattern (merge review).
