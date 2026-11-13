@@ -13,7 +13,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## Unreleased — v0.15
+## v0.15 — 2026-11-13
 
 - **The setup interview asks with a recommended answer and finds facts before asking** (ecosystem evaluation
   2026-11-13, step 5, borrowed from the "grilling" skill of mattpocock/skills). `setup/INTERVIEW.md` rule 3: each
