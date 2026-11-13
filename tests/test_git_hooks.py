@@ -85,6 +85,23 @@ class GitHookTests(unittest.TestCase):
             self.assertGreater((root / '.git/gate-runs').read_text(encoding='utf-8').count('ran'), runs)
             self.assertEqual(git('rev-list', '--count', 'HEAD').stdout.strip(), '2')
 
+    def test_the_gate_of_a_merge_does_not_inherit_the_merges_reflog_action(self):
+        # git exports GIT_REFLOG_ACTION=merge X to pre-merge-commit; a suite's own repos then
+        # recorded every commit as "merge X" and test_clean_worktrees failed 186 cases (2026-11-13).
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            (root / 'scripts/check.sh').write_text(
+                'echo "${GIT_REFLOG_ACTION-unset}" >> .git/gate-env\n', encoding='utf-8')
+            git('add', '-A')
+            git('commit', '-q', '-m', 'gate')
+            git('checkout', '-q', '-b', 'side', 'HEAD~1')
+            (root / 'side').write_text('s\n', encoding='utf-8')
+            git('add', 'side')
+            git('commit', '-q', '-m', 'side')
+            git('checkout', '-q', 'main')
+            git('merge', '-q', '--no-edit', 'side')
+            self.assertEqual((root / '.git/gate-env').read_text(encoding='utf-8').split('\n')[-2], 'unset')
+
     def test_a_commit_of_heads_own_tree_skips_the_gate_and_a_merge_never_does(self):
         # Git runs pre-commit before it finds nothing to commit: each of these ran the whole
         # gate, then git said "nothing to commit" (#232).

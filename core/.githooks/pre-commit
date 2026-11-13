@@ -110,6 +110,9 @@ fi
 # --for-merge: the same documentation-only rule for the merge's result against a gated HEAD
 # (project_leeway, 2026-10-22: docs-only merges each built and tested for 10-15 minutes). A
 # check.sh from before an option (a project not yet upgraded) gets no flag: the full gate.
+# git exports GIT_REFLOG_ACTION to a merge's hooks; a test's own repos would log every commit as
+# that merge. GIT_INDEX_FILE stays: check.sh reads the staged change from it.
+unset GIT_REFLOG_ACTION
 if [ "${1:-}" = --merge ] && grep -q -- '--for-merge)' scripts/check.sh; then
   ./scripts/check.sh --for-merge
 elif [ "${1:-}" != --merge ] && grep -q -- '--for-commit)' scripts/check.sh; then

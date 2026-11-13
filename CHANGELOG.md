@@ -15,6 +15,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **A merge's gate no longer hands git's `GIT_REFLOG_ACTION` to the tests.** git exports `GIT_REFLOG_ACTION=merge X`
+  to `pre-merge-commit`; every test that made its own repository then logged each commit as that merge, and the kit's
+  merge of `worktree-cifix15` was refused by 186 false failures in test_clean_worktrees (test_codex_worker and
+  test_close_worker_windows too), all green when run directly. `pre-commit` unsets it before `check.sh`;
+  `GIT_INDEX_FILE` stays, the gate reads the staged change from it. test_git_hooks red without it. Kit-owned; a
+  re-sync brings it.
 - **A one-page read is shown the routing row to copy (#346).** `guard_worker_route.py` refused a general-purpose or
   Explore errand that named no model or effort with no row to use. The refusal keeps the rule (every sub-agent gets a
   table-chosen model and effort, never a silent default) and adds the tier-1 row ready to paste: a read-only errand
