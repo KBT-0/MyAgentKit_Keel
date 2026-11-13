@@ -53,8 +53,8 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-# SUITE_MINIMUMS counts a disk that does not fold case (Linux); a POSIX disk that folds case
-# (macOS) runs CASE_FOLD_TESTS more, added by the runner and by the kit gate.
+# Both minimums below count a disk that does not fold case (Linux's); a disk that folds case
+# (macOS's, Windows') runs CASE_FOLD_TESTS more, added by the runner and by the kit gate.
 SUITE_MINIMUMS = {'test_claude_bridge': 296, 'test_agent_usage': 40, 'test_codex_quota': 6}
 CASE_FOLD_TESTS = 1  # test_secfix2_h_the_adapter_beside_the_reviewed_checkout_is_found_by_identity
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
@@ -6945,6 +6945,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # scripts/, or the file itself, export-ignored at that revision: no copy to read, no pass
         seam.unlink()
         seam.write_text('def validate_final_message(text):\n    return "ignored seam"\n')
+        # Out of the index first: with core.symlinks=false (Git for Windows' default) `git add` keeps
+        # the index's symlink mode for the regular file, and the tree still held a symlink there
+        # (CI run 43115553552: "not a regular file" before the export-ignore was ever read).
+        self.git('rm', '-q', '--cached', 'scripts/project_validation.py')
         for attributes in ('scripts/ export-ignore\n', 'scripts/project_validation.py export-ignore\n'):
             with self.subTest(attributes=attributes):
                 (self.repo / '.gitattributes').write_text(attributes)
@@ -8397,7 +8401,7 @@ if __name__ == "__main__":
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
     minimums = dict(WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS)
-    if CASE_FOLDS and not WINDOWS:
+    if CASE_FOLDS:
         minimums['test_claude_bridge'] += CASE_FOLD_TESTS
     suites = []
     for case, name in ((BridgeTests, 'test_claude_bridge'), (UsageTests, 'test_agent_usage'),

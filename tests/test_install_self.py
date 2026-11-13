@@ -110,8 +110,12 @@ class InstallSelfTests(unittest.TestCase):
         git(tree, 'add', 'f')
         commit = subprocess.run(['git', '-C', str(tree), 'commit', '-q', '-m', 'f'], capture_output=True, text=True)
         self.assertEqual(commit.returncode, 0, commit.stderr)
-        self.assertIn('pinned pre-commit %s' % (self.kit / '.myagentkit/installed' / self.pinned / '.githooks/pre-commit'),
-                      commit.stderr)
+        # The hook prints its $0, the copy kit_hook.sh found by `pwd -P`: sh's physical form of the
+        # path (/private/var/... on macOS, /c/Users/... on Git for Windows), so expect that form.
+        hooks = subprocess.run(['sh', '-c', 'CDPATH= cd -- "$1" && pwd -P', 'sh',
+                                str(self.kit / '.myagentkit/installed' / self.pinned / '.githooks')],
+                               check=True, capture_output=True, text=True).stdout.strip()
+        self.assertIn('pinned pre-commit %s/pre-commit' % hooks, commit.stderr)
 
     def test_before_the_first_install_a_hook_runs_from_source_with_a_notice(self):
         result = self.hook('guard_destructive_git.py')

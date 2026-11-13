@@ -2,7 +2,7 @@
 """token_audit.py must price requests, carry each item to the next compaction and count the #307 leaks."""
 import json
 import tempfile
-import time
+from datetime import datetime
 import unittest
 from pathlib import Path
 import token_audit
@@ -156,23 +156,27 @@ class TokenAuditTests(unittest.TestCase):
     def test_by_day_rows_per_local_day_of_session_start(self):
         import io
         from unittest import mock
+        # The host's own zone, not TZ=UTC: Windows' time module has no tzset (CI run 43115553552).
+        # a and b start five minutes apart near noon UTC, so they share a local day under every
+        # offset from -12:00 to +14:00 (+11:45 too); c starts two days later.
+        stamps = (('a', '2026-10-24T12:05:00Z'), ('b', '2026-10-24T12:10:00Z'), ('c', '2026-10-26T12:05:00Z'))
+        day = {name: datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone().date().isoformat()
+               for name, stamp in stamps}
+        self.assertEqual(day['a'], day['b'])
         with tempfile.TemporaryDirectory() as tmp:
-            for name, stamp in (('a', '2026-10-24T10:00:00Z'), ('b', '2026-10-24T11:00:00Z'), ('c', '2026-10-26T10:00:00Z')):
+            for name, stamp in stamps:
                 records = [assistant(name + str(i), usage(0, 1000, 10)) for i in (1, 2)]
                 for r in records:
                     r['timestamp'] = stamp
                 (Path(tmp) / (name + '.jsonl')).write_text(''.join(json.dumps(r) + '\n' for r in records))
             out = io.StringIO()
-            self.addCleanup(time.tzset)  # runs after the patch below restored TZ
-            with mock.patch('sys.stdout', out), mock.patch.dict('os.environ', {'TZ': 'UTC'}):
-                time.tzset()
+            with mock.patch('sys.stdout', out):
                 self.assertEqual(token_audit.main(['--by-day', '--since', '100000', tmp]), 0)
             # each request: 1000 1h-written tokens x $4 x 2 + 10 out x $20 per MTok
             each = 2 * (1000 * 4 * 2 + 10 * 20) / 1e6
             self.assertEqual(out.getvalue().splitlines(), [
                 '| day | sessions | requests | cost $ |', '|---|---|---|---|',
-                f'| 2026-10-24 | 2 | 4 | {2 * each:.2f} |', f'| 2026-10-26 | 1 | 2 | {each:.2f} |'])
-
+                f'| {day["a"]} | 2 | 4 | {2 * each:.2f} |', f'| {day["c"]} | 1 | 2 | {each:.2f} |'])
 
 if __name__ == '__main__':
     unittest.main()
