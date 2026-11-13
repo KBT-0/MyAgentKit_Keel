@@ -860,6 +860,22 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertFalse((self.main / '.claude/worktrees/w1').exists(), out)
         self.assertFalse(record.exists(), out)
 
+    def test_a_clean_close_keeps_the_spawn_records_under_closed_names_with_their_spawn_time(self):
+        # #316: autopilot_report.py lists the workers spawned in an absence from these records; a
+        # closed worker's must survive with its result path and the time of its spawn.
+        self.worker('w1')
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True, exist_ok=True)
+        spawned = records / 'w1.result-path'
+        spawned.write_text('/elsewhere/RESULT-w1.md\n')
+        os.utime(spawned, (1700000000, 1700000000))
+        out = self.close('w1')
+        self.assertFalse((self.main / '.claude/worktrees/w1').exists(), out)
+        self.assertFalse(spawned.exists(), out)
+        kept = records / 'w1.closed-result-path'
+        self.assertEqual(kept.read_text(), '/elsewhere/RESULT-w1.md\n', out)
+        self.assertEqual(kept.stat().st_mtime, 1700000000, out)
+
     def test_an_ignore_file_the_worker_extended_keeps_the_worktree_and_its_rules(self):
         # Codex review r1 (Critical): a spawn ignore file with the worker's own rules added still
         # matched by its first line; it was set aside, the worktree removed and the copy deleted.

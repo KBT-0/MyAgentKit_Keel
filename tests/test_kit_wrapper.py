@@ -101,6 +101,33 @@ class KitWrapperTests(unittest.TestCase):
             # Once for the view before the run and once after it; the old loop made one per file.
             self.assertEqual(len(calls.read_text().split()), 2, out)
 
+    def test_a_line_on_the_snapshots_stderr_is_no_change_of_the_checkout(self):
+        # #341 (macOS, run 41652493103): bash's job control printed "child setpgid ... Operation not
+        # permitted" on stderr during the view after the run, and the view took it as a content line.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, wrapped, calls = Path(tmp) / 'kit', Path(tmp) / 'bin', Path(tmp) / 'calls.log'
+            (kit / 'scripts').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'scripts/check.sh', kit / 'scripts/check.sh')
+            write(kit / 'scripts/check_kit.py',
+                  'import os\nfrom pathlib import Path\nPath(os.environ["KIT_CHECK_PASSED"]).touch()\n')
+            subprocess.run(['git', 'init', '-q', str(kit)], check=True)
+            write(kit / 'file.txt', 'x\n')
+            # git, saying the warning on stderr in the view after the run only (its second status);
+            # hash-object's own stderr goes to a file of its own, so a line there would prove nothing.
+            write(wrapped / 'git',
+                  '#!/bin/sh\nfor a; do [ "$a" = status ] && echo x >> "%s" && [ "$(wc -l < "%s")" -eq 2 ] &&\n'
+                  '  echo "check.sh: child setpgid (3970 to 3970): Operation not permitted" >&2; done\nexec "%s" "$@"\n'
+                  % (calls.as_posix(), calls.as_posix(), Path(shutil.which('git')).as_posix()))
+            os.chmod(wrapped / 'git', 0o755)
+            result = subprocess.run(['sh', str(kit / 'scripts/check.sh')], cwd=kit,
+                                    env=dict(os.environ, PATH=str(wrapped) + os.pathsep + os.environ['PATH']),
+                                    capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=120)
+            out = result.stdout + result.stderr
+            self.assertEqual(len(calls.read_text().split()), 2, out)
+            self.assertEqual(result.returncode, 0, out)
+            self.assertNotIn('changed this checkout', out)
+
     def test_an_unopenable_path_or_short_hash_output_fails_by_path(self):
         # Run the wrapper's git_view itself: no kit check is needed.
         for script in ('scripts/check.sh',):
