@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Print the Done section of the autopilot report (docs/AUTOPILOT.md) from the records, never from
-the lead's own account: the commits and merges since the stamp in .myagentkit/presence, the worker
-result files written since, and the latest session's cost line (agent_cost.py --latest).
+the lead's own account: the commits and merges since the stamp in .myagentkit/presence, the results
+of the workers spawned since, and the latest session's cost line (agent_cost.py --latest).
 
 Usage: autopilot_report.py [--project DIR]
 
@@ -41,25 +41,33 @@ def commits(project, since, until):
 
 
 def results(project, since, until):
-    """The four header lines of each worker result written in the absence: in a worktree, or
-    moved under .myagentkit/workers/ by close_worker.sh. Both are the main checkout's, as the record is."""
+    """The four header lines of the result of each worker spawned in the absence (#316). The spawn
+    records say who: spawn_worker.sh's NAME.result-path (its result's path) and spawn_codex.sh's
+    NAME.session, rewritten at each spawn, and their NAME.closed-* forms close_worker.sh keeps with
+    the same time. A result's own file time is never read: a checkout rewrites a committed one. Each
+    is read where its record says, else where close_worker.sh moved it. Both are the main checkout's."""
     start = datetime.fromisoformat(since).timestamp()
     end = datetime.fromisoformat(until).timestamp() if until else float('inf')
     root = presence_record(project).parents[1]
-    paths = [*root.glob('.claude/worktrees/*/RESULT-*.md'), *root.glob('.myagentkit/workers/RESULT-*.md')]
-    for path in sorted(paths):
-        if start <= path.stat().st_mtime <= end and not committed_before(path, start):
-            head = path.read_text(encoding='utf-8', errors='replace').splitlines()[:4]
-            yield '- ' + path.relative_to(root).as_posix() + ': ' + '; '.join(line.strip() for line in head)
-
-
-def committed_before(path, start):
-    """PATH is unchanged since its last commit, made before START: a checkout in the absence (a new
-    worktree) wrote an earlier run's committed result, not a worker of this absence (#334)."""
-    git = lambda *a: subprocess.run(['git', '-C', str(path.parent), *a, '--', path.name],
-                                    capture_output=True, text=True).stdout.strip()
-    made = git('log', '-1', '--format=%ct')
-    return made.isdigit() and int(made) < start and not git('status', '--porcelain')
+    workers = root / '.myagentkit/workers'
+    spawned = {}
+    for kind in ('result-path', 'closed-result-path', 'session', 'closed-session'):
+        for record in workers.glob('*.' + kind):
+            name = record.name[:-len(kind) - 1]
+            if '.' in name or not start <= record.stat().st_mtime <= end:
+                continue
+            told = record.read_text(encoding='utf-8', errors='replace').strip() if 'result' in kind else ''
+            places = [root / told] if told else [root / '.claude/worktrees' / name / ('RESULT-%s.md' % name),
+                                                 root / ('RESULT-%s.md' % name)]
+            spawned.setdefault(name, []).extend(places + [workers / (name + '.result.md'), workers / ('RESULT-%s.md' % name)])
+    for name in sorted(spawned):
+        path = next((place for place in spawned[name] if place.is_file()), None)
+        if path is None:
+            yield '- %s: no result file' % name
+            continue
+        head = path.read_text(encoding='utf-8', errors='replace').splitlines()[:4]
+        shown = path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
+        yield '- ' + shown + ': ' + '; '.join(line.strip() for line in head)
 
 
 def cost(project):

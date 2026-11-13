@@ -15,6 +15,22 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The autopilot report lists the workers spawned in the absence, wherever their results are (#316).**
+  `autopilot_report.py` took every `RESULT-*.md` in a worktree written since the stamp: a `git worktree add` gave
+  committed results of earlier sessions a new file time (about 200 listed on 2026-11-01), and results at the main
+  checkout's root or moved under `.myagentkit/workers/` were missed. It now reads the spawn records written since
+  the stamp (`NAME.result-path`, `NAME.session` for Codex) and each result where its record says, else where
+  `close_worker.sh` moved it (`NAME.result.md`, then `RESULT-NAME.md`). A clean close no longer deletes those two
+  records: it renames them `NAME.closed-result-path` and `NAME.closed-session`, with their spawn time, which no
+  lister reads as a worker. test_autopilot_report and test_close_worker red without it. Kit-owned; a re-sync brings
+  it.
+- **The kit check's before/after checkout view reads only its commands' output (#341).** `scripts/check.sh` took the
+  view's stderr into it, so bash's job-control warning `child setpgid ... Operation not permitted` (macOS, Kit
+  acceptance 41652493103) read as "the kit check changed this checkout". stderr is kept apart and shown only when the
+  view fails. test_kit_wrapper red without it. The kit's own gate; nothing to sync.
+- **The kit check's Windows minimums match the suites (Kit acceptance 43115553552).** test_spawn_worker 98,
+  test_close_worker 62 and test_claude_bridge with its case-fold test on every case-folding disk, Windows' too
+  (counted under a fake `os.name == 'nt'`). The kit's own gate; nothing to sync.
 - **A merge's gate no longer hands git's `GIT_REFLOG_ACTION` to the tests.** git exports `GIT_REFLOG_ACTION=merge X`
   to `pre-merge-commit`; every test that made its own repository then logged each commit as that merge, and the kit's
   merge of `worktree-cifix15` was refused by 186 false failures in test_clean_worktrees (test_codex_worker and

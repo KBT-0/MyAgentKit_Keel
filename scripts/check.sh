@@ -63,7 +63,9 @@ git_view() {
 view=""
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   view="$passed/git-view"
-  git_view "$passed" > "$view.before" 2>&1 || { cat "$view.before" >&2; exit 1; }
+  # Only its stdout is the view: bash's job control may print "child setpgid ... Operation not
+  # permitted" on stderr (macOS, #341), and such a line is no change of the checkout.
+  git_view "$passed" > "$view.before" 2> "$view.errors" || { cat "$view.before" "$view.errors" >&2; exit 1; }
 fi
 status=0
 KIT_CHECK_PASSED="$passed/passed" "$py" -B scripts/check_kit.py "$@" &
@@ -73,7 +75,7 @@ if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
   echo "KIT CHECK: FAIL — the kit check exited 0 without reaching its PASS line" >&2
   status=1
 fi
-if [ -n "$view" ] && ! { git_view "$passed" > "$view.after" 2>&1 && cmp -s "$view.before" "$view.after"; }; then
+if [ -n "$view" ] && ! { git_view "$passed" > "$view.after" 2> "$view.errors" && cmp -s "$view.before" "$view.after"; }; then
   echo "KIT CHECK: FAIL — the kit check changed this checkout, so a review running here meanwhile" >&2
   echo "  fails as stale_checkout, or another process edited the checkout meanwhile." >&2
   echo "  Lines before (-) and after (+): HEAD, index, status, content hashes by path:" >&2

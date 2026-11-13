@@ -100,11 +100,13 @@
 # later closes until the lead recovers the report and removes that marker.
 # The helper prints the .report-move-* folder of a report it could not restore. Where neither
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
-# decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
-# NAME.live and NAME.question go too, spawn_worker.sh's NAME.result-path, NAME.pid, NAME.brief.md and
+# decision). After a removal (or with no worktree), the Codex records NAME.exit, NAME.live and
+# NAME.question go too, spawn_worker.sh's NAME.pid, NAME.brief.md and
 # NAME.hooks-ignore-spawned, NAME.fable-approved and NAME.config, a bg worker's NAME.id, NAME.host and NAME.supervisor.log, and
-# NAME.merged-running (also gone once the worktree is unlocked);
-# a kept worktree keeps them.
+# NAME.merged-running (also gone once the worktree is unlocked). The spawn records NAME.session
+# (Codex) and NAME.result-path are renamed NAME.closed-session and NAME.closed-result-path, which
+# keep their spawn time for autopilot_report.py's workers of an absence (#316) and which no
+# lister reads as a worker. A kept worktree keeps them all.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
@@ -928,7 +930,11 @@ for name; do
   # gives the audit nothing to keep, so its success proved no shutdown.
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
-    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
+    for spawned in session result-path; do
+      [ ! -e "$record.$spawned" ] || mv -f -- "$record.$spawned" "$record.closed-$spawned" ||
+        fail "$name: could not keep its spawn record $record.$spawned as $record.closed-$spawned"
+    done
+    rm -f -- "$record.exit" "$record.live" "$record.question" \
       "$record.hooks-ignore-spawned" "$record.pid" "$record.merged-running" "$record.id" "$record.host" \
       "$record.supervisor.log" "$record.brief.md" "$record.fable-approved" "$record.config" || fail "$name: could not remove its Codex session records"
   fi

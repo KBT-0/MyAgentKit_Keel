@@ -38,7 +38,8 @@ class AutopilotReportTests(unittest.TestCase):
         old = self.project / '.myagentkit/workers/RESULT-w0.md'
         old.parent.mkdir(parents=True)
         old.write_text('Kind: blocked\nTask: w0\nAttempt: 1\nRemaining: all\n', encoding='utf-8')
-        os.utime(old, (since.timestamp() - 60,) * 2)
+        spawn(self.project, 'w1', fresh)
+        os.utime(spawn(self.project, 'w0', old), (since.timestamp() - 60,) * 2)
         presence = self.project / '.myagentkit/presence'
         for record in ('away %s\n' % since.isoformat(), 'present %s %s\n' % (since.isoformat(), (now + timedelta(minutes=5)).isoformat())):
             presence.write_text(record, encoding='utf-8')
@@ -77,6 +78,7 @@ class AutopilotReportTests(unittest.TestCase):
         result_file = self.project / '.claude/worktrees/w1/RESULT-w1.md'
         result_file.parent.mkdir(parents=True)
         result_file.write_text('Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n', encoding='utf-8')
+        spawn(self.project, 'w1', result_file)
         result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(Path(tmp.name) / 'wt')],
                                 capture_output=True, text=True, encoding='utf-8', timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -98,13 +100,62 @@ class AutopilotReportTests(unittest.TestCase):
         night = self.project / '.claude/worktrees/w1/RESULT-w1.md'
         night.parent.mkdir(parents=True)
         night.write_text('Kind: completed\nTask: w1\nAttempt: 1\nRemaining: none\n')
-        (self.project / '.myagentkit').mkdir()
+        spawn(self.project, 'w1', night)
         (self.project / '.myagentkit/presence').write_text('away %s\n' % since.isoformat(), encoding='utf-8')
         result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(self.project)],
                                 capture_output=True, text=True, encoding='utf-8', timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('RESULT-w1.md', result.stdout)
         self.assertNotIn('RESULT-old.md', result.stdout)
+
+    def test_the_results_are_the_spawned_workers_wherever_they_are_never_by_file_time(self):
+        # #316 (2026-11-01): about 200 committed RESULT files a worktree checkout had rewritten
+        # were listed, and the session's own results at the main root and in .myagentkit/workers/
+        # were missed. The spawn records say whose result is listed, and where it is.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name)
+        since = datetime.now().astimezone().replace(microsecond=0) - timedelta(hours=1)
+        self.git('init', '-q', '-b', 'main')
+        self.git('commit', '-q', '--allow-empty', '-m', 'night work')
+        head = 'Kind: completed\nTask: %s\nAttempt: 1\nRemaining: none\n'
+        # A result the worker's brief put at the main checkout's root (spawn_worker.sh --result).
+        (self.project / 'RESULT-root.md').write_text(head % 'root', encoding='utf-8')
+        spawn(self.project, 'root', self.project / 'RESULT-root.md')
+        # A closed worker: its worktree gone, its result moved under .myagentkit/workers/ and its
+        # record kept as NAME.closed-result-path by close_worker.sh.
+        workers = self.project / '.myagentkit/workers'
+        (workers / 'gone.result.md').write_text(head % 'gone', encoding='utf-8')
+        (workers / 'gone.closed-result-path').write_text(
+            str(self.project / '.claude/worktrees/gone/RESULT-gone.md') + '\n', encoding='utf-8')
+        # The brief's fallback place, for a record whose path is another host's form.
+        (workers / 'RESULT-other.md').write_text(head % 'other', encoding='utf-8')
+        (workers / 'other.result-path').write_text('D:/elsewhere/RESULT-other.md\n', encoding='utf-8')
+        # Results no spawn of the absence wrote, each with a fresh file time: a checkout's
+        # untracked copy and one a worker spawned before the stamp left in its worktree.
+        for name in ('copied', 'earlier'):
+            path = self.project / '.claude/worktrees' / name / ('RESULT-%s.md' % name)
+            path.parent.mkdir(parents=True)
+            path.write_text(head % name, encoding='utf-8')
+        os.utime(spawn(self.project, 'earlier', self.project / '.claude/worktrees/earlier/RESULT-earlier.md'),
+                 (since.timestamp() - 60,) * 2)
+        (self.project / '.myagentkit/presence').write_text('away %s\n' % since.isoformat(), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(SCRIPT), '--project', str(self.project)],
+                                capture_output=True, text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('- RESULT-root.md: Kind: completed; Task: root;', result.stdout)
+        self.assertIn('- .myagentkit/workers/gone.result.md: Kind: completed; Task: gone;', result.stdout)
+        self.assertIn('- .myagentkit/workers/RESULT-other.md: Kind: completed; Task: other;', result.stdout)
+        self.assertNotIn('copied', result.stdout)
+        self.assertNotIn('earlier', result.stdout)
+
+
+def spawn(project, name, result):
+    """spawn_worker.sh's record of a spawn: .myagentkit/workers/NAME.result-path names its result."""
+    record = project / '.myagentkit/workers' / (name + '.result-path')
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(str(result) + '\n', encoding='utf-8')
+    return record
 
 
 if __name__ == '__main__':
