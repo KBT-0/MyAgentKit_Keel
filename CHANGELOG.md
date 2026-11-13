@@ -15,6 +15,30 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **Git words in a gh search or a file's here-document are no command (#347).** With uncommitted work,
+  `guard_destructive_git.py` refused `gh issue list --search "git checkout foo bar"` and `tee notes.md <<'EOF'` or
+  `mkdir -p d && cat > d/n.md <<'EOF'` whose body names `git checkout -- <file>`, as the checkout they name (a
+  regression of #77). The arguments of a gh or glab issue, pr, mr, search, release, label, gist or discussion call
+  with no git word of its own are data; `gh api`, `gh alias`, a `$(git ...)` and an interpreter's here-document are
+  still judged. mkdir, touch and tee run none of their text. A refused path checkout or restore now names the
+  reverse edit with the Edit tool before commit or stash; it stays refused, since the hook cannot prove whose edit a
+  change is. band_guard.py reads INERT less mkdir, touch and tee as read-only, so past the band they stay denied; a
+  line with an unquoted `>(` or `<(` is read raw (`... | tee >(sh)` was let through); GH_BROWSER, GH_EDITOR,
+  GLAB_EDITOR, BROWSER and any *PAGER count as command variables; a pre-merge-commit run logs the let-through once, not twice
+  (hookb Fable review). test_guard_destructive_git red without it. **ACTION** (project-owned
+  `.claude/hooks/guard_destructive_git.py`): `sync-kit.sh . --merge`.
+- **The Stop hook gates a .NET root's project files, and its set is pinned (#309, after v0.14).** `gate_on_stop.sh`'s
+  `root_config` adds the root's `*.csproj` and `*.sln` (as `:(glob)` pathspecs, so a nested one is left to the gated
+  folders), `Directory.Build.props` and `global.json`; test_stop_hook pins the whole set, so dropping one name fails
+  it. **ACTION** (project-owned `.claude/hooks/gate_on_stop.sh`): add the four names to your `root_config` line.
+- **A bridge session has an id of its own, and the owner's-terminal let-through is logged (#311, after v0.14.1).**
+  The review and proposal bridges (`agent_process.run()`) start each session with `MYAGENTKIT_SESSION_ID=bridge-
+  <random>`: before, it inherited the lead's `CLAUDE_CODE_SESSION_ID`, so a commit it made in the main checkout
+  passed the master-writer hooks as the lead's. `pre-commit` (and `pre-merge-commit`) also append each "no session
+  id, so taken for the owner's terminal" let-through as one line to `.myagentkit/owner-terminal.log`, which the lead
+  reads before each merge (`docs/WORKFLOW.md`, "Parallel work — worktree policy"). test_agent_usage and
+  test_master_writer red without it. Kit-owned hooks and scripts; a re-sync brings them. **ACTION** (project-owned
+  `docs/WORKFLOW.md`): bring the owner-terminal.log sentence in with `sync-kit.sh --merge`.
 - **A merge's gate no longer hands git's `GIT_REFLOG_ACTION` to the tests.** git exports `GIT_REFLOG_ACTION=merge X`
   to `pre-merge-commit`; every test that made its own repository then logged each commit as that merge, and the kit's
   merge of `worktree-cifix15` was refused by 186 false failures in test_clean_worktrees (test_codex_worker and
@@ -32,8 +56,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   project that set it ran its required review at the variable's effort. With the variable in the hook's environment
   or in the `env` of `.claude/settings.local.json`, `.claude/settings.json` or the user's `settings.json`, a call of
   such a type that names no effort is refused and asked to name at least the author's effort; a review type passes
-  when the variable is high, xhigh or max, at or above the ceiling a review may run at (hooka2). test_guard_worker_route
-  red without it. **ACTION** (project-owned `.claude/hooks/guard_worker_route.py`): `sync-kit.sh . --merge`.
+  only when the variable is high, the ceiling a review may run at (hooka2); xhigh or max is refused too, since a review
+  never runs above high (REVIEW_GATE.md "Invariant"; hookb). test_guard_worker_route red without it. **ACTION** (project-owned `.claude/hooks/guard_worker_route.py`): `sync-kit.sh . --merge`.
 - **An owner-approved Fable worker that ran on another model is said (#342, finding 3).** A worker spawned with
   `--owner-approved-fable` on an account without Fable credits runs on Opus with no error, as a sub-agent does
   ("The answering model is checked", `model_check.py`, findings 1, 2 and 4, below in this section). `watch_workers.sh`
@@ -48,7 +72,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   finding (at most "in", "by", "since" or "at" and one reference after it, then only punctuation and REPRODUCED,
   VERIFIED or CONFIRMED) is no open finding; "fixed, but ...", "fixed in part; ...", "closed. <a new defect>", a file
   named `resolved.ts:12`, "not fixed", "unresolved", "High: fixed offset 4 ..." and any other open High still reject,
-  and so does one behind a "New", "Open", "Remaining", "Reopened" or "Regression" label (hooka2). tests/test_guard_risky_review.py red without it. **ACTION** (project-owned `.claude/hooks/record_review.py`):
+  and so does one behind a "New", "Open", "Remaining", "Reopened" or "Regression" label (hooka2), also after other
+  words ("Still open: High", "One new High"; "No new ... High findings" stays none, hookb). hookb: the reference may
+  be "commit 1a2b3c", "test test_x" or "this diff", REPRODUCED may carry its "(command)", and a colon may add one
+  clause of evidence naming a `path:line` ("fixed: the row is kept now (a.py:9). REPRODUCED."); a question mark,
+  a plain word as the reference ("fixed in theory.", "closed by default"), a word such as but, still, not, only or
+  drops after the disposition, and an open remainder on the finding's wrapped line still reject (fail closed).
+  tests/test_guard_risky_review.py red without it. **ACTION** (project-owned `.claude/hooks/record_review.py`):
   `sync-kit.sh . --merge`.
 - **A one-line commit message without a denied fragment needs no file** (leadcut A3, ctl16s turnmeasure-s, owner
   2026-11-10): `docs/WORKFLOW.md`, "The commit gate and attribution", now sends such a message as `git commit -qm "..."`;

@@ -75,7 +75,10 @@ parse as shell (any interpreter argument or here-document: python*, node, deno, 
 php, PowerShell ...; the part of a here-document only a shell elsewhere on its line may run that
 follows a quote it never closes, such as prose with an apostrophe; any argument of another program: a wrapper such as sudo or xargs may run it,
 data such as a gh title never does) has each `git ...` in it judged as the command it would be,
-so a mention of a safe command passes and a loss-certain one is refused (#77); a quoted `'git'`
+so a mention of a safe command passes and a loss-certain one is refused (#77); the arguments of a gh or
+glab issue, pr, mr, search, release, label, gist or discussion call with no git word of its own are data
+alone: the parser does not judge them and the floor reads that line with its quotes blanked (#347); and
+mkdir, touch and tee are INERT, so the here-document a file is written from is no command; a quoted `'git'`
 starts an argv list read to its closing bracket, across lines, a bare item being a variable. Refused as
 unreadable when it carries a git word: shell or interpreter input piped from a command that holds
 git (not awk running a literal program that starts no command), a backslash-newline, a `<<<`
@@ -136,7 +139,7 @@ TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
 # git(1) ENVIRONMENT gives a command or config: GIT_AUTHOR_NAME="O'Brien git" is a name, not shell text with an
 # unbalanced quote (leeway v0.14.1 sync review).
 COMMAND_VAR = re.compile(r"GIT_(?:SSH|SSH_COMMAND|PROXY_COMMAND|EDITOR|SEQUENCE_EDITOR|PAGER|EXTERNAL_DIFF|CONFIG\w*)"
-                         r"|EDITOR|VISUAL|PAGER|\w*ASKPASS")
+                         r"|EDITOR|VISUAL|\w*PAGER|\w*ASKPASS|GH_BROWSER|GH_EDITOR|GLAB_EDITOR|BROWSER")
 # Names and dates only: a plain line keeps its blanked floor with these (any other GIT_* may carry a command or config).
 NAME_VAR = re.compile(r"GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)")
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
@@ -144,11 +147,18 @@ CALM = {"cd", "pushd", "echo", "printf", "pwd", "ls", "cat", "true", ":", "test"
 # #327: commands that run none of the text they are given (sort is not: --compress-program). Their
 # arguments are data, and on a line of these and PLAIN_GIT alone the floor reads the line with quotes,
 # comments and here-document bodies blanked, so a message that names a hard reset is no reset.
-INERT = CALM | {"grep", "egrep", "fgrep", "head", "tail", "wc", "uniq", "cut", "tr"}
+# #347: mkdir, touch and tee write files and run none of their text (not CALM: they change the tree). band_guard.py
+# reads INERT minus WRITERS as read-only.
+WRITERS = {"mkdir", "touch", "tee"}
+INERT = CALM | {"grep", "egrep", "fgrep", "head", "tail", "wc", "uniq", "cut", "tr"} | WRITERS
 # Programs whose quoted arguments are prose (a title, a body) and that run no text of this line: a git word
 # inside such an argument is no git for commit_folders (the cb35ca5 review). An allowlist: any other command
 # that names git may be a wrapper or an interpreter the hook cannot look through.
 TEXT_ARGS = {"gh", "glab"}
+# #347: these subcommands of a TEXT_ARGS program take titles, bodies, comments and search strings and run none
+# of them, so a git word in their arguments is data (`gh issue list --search "git checkout foo"`). Not `api` (a
+# field is judged, #77), `alias` (`!` text runs as shell), `extension` or `codespace` (they run programs).
+DATA_SUBS = {"issue", "pr", "mr", "search", "release", "label", "gist", "discussion"}
 READ_ONLY = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "describe", "blame",
              "grep", "help", "version", "reflog", "shortlog", "remote", "config", "branch", "tag"}
 HOOK_SUBS = {"commit", "merge", "push", "rebase", "am", "pull", "cherry-pick", "revert"}
@@ -1121,9 +1131,9 @@ def judge(command, cwds, changed=False, env=None):
         elif (input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest)
               and not (name in ("awk", "gawk", "mawk") and plain_awk(rest[1:], text))):
             raise Unreadable(f"interpreter input through {name}")
-        elif name != "git" and name not in INERT and has_git:
+        elif name != "git" and name not in INERT and has_git and not data_only(rest):
             # An interpreter's code, a wrapper's command (sudo, xargs: it appends operands) or
-            # another program's data.
+            # another program's data; a gh issue's or pr's arguments are data alone (#347).
             yield from loose(" ".join(rest[1:]), cwds, changed, here, name in ("xargs", "parallel"))
         if name == "export":
             env.update(dict(t.split("=", 1) for t in rest[1:] if "=" in t))
@@ -1267,6 +1277,17 @@ def once(operand, text):
     return re.sub(r"['\"\\]", "", text).lower().count(operand.rsplit("/", 1)[-1].lower()) == 1
 
 
+def data_only(words):
+    """Whether `words`, a command and its arguments, are a DATA_SUBS call of a TEXT_ARGS program with no git
+    word of its own and no substitution that leads with one (#347): its git words are data, never a command.
+    A quoted argument that starts with git ("git checkout foo") is one word, so it is data."""
+    if not words or base(words[0]) not in TEXT_ARGS:
+        return False
+    sub = next((w for w in words[1:] if not w.startswith("-")), "")
+    return sub in DATA_SUBS and not any(base(w) == "git" or (w.startswith(("$(", "`", "(")) and GIT_WORD.match(
+        w.lstrip("($`"))) for w in words[1:])
+
+
 def plain(command):
     """The command with its quoted strings, comments and here-document bodies blanked when every
     command of the line is INERT, a PLAIN_GIT git without -c (#327) or an interpreter given plain file
@@ -1276,6 +1297,8 @@ def plain(command):
         blank = unquoted(text)
         if any(shell for shell, _ in bodies):
             return None  # a body the shell runs or expands (review r327 High)
+        if blank is not None and re.search(r"[<>]\(", blank):
+            return None  # a process substitution starts a program the line's text may reach (`| tee >(sh)`, hookb review)
         for seg in segments(text, strict=True) if blank is not None else [["eval"]]:
             if any((COMMAND_VAR.fullmatch(k := w.split("=", 1)[0]) or k.startswith("GIT_")) and not NAME_VAR.fullmatch(k)
                    for w in seg if re.match(r"[A-Za-z_]\w*=", w)):
@@ -1287,7 +1310,7 @@ def plain(command):
                 g = Git(words[1:], {}, [None])
                 if g.configs or g.sub not in PLAIN_GIT:
                     return None
-            elif base(words[0]) not in INERT and not (
+            elif base(words[0]) not in INERT and not data_only(words) and not (
                     # leeway-43: `cat > n.md <<EOF ... EOF; python3 x.py` read the cat's body raw; an
                     # interpreter given only plain file operands runs no text of this line
                     interpreter(base(words[0])) and len(words) > 1 and not re.search(r"[$`{*?[]", text)
@@ -1355,10 +1378,14 @@ def lost(why, dirty):
     lines = dirty.splitlines()
     if len(lines) > 10:  # #327: a long list was printed whole on every refusal
         dirty = "\n".join(lines[:10] + [f"... and {len(lines) - 10} more (git status --porcelain)"])
+    # #347: undoing one's own edit of a file this way was refused with only commit or stash offered, both heavier
+    # than the undo. Whose edit a change is the hook cannot prove, so the path checkout stays refused.
+    undo = ("To undo an edit you made to a file this session, make the reverse edit with the Edit tool instead: it "
+            "touches only your change.\n\n" if re.match(r"git (?:checkout|restore)\b(?! -f)", why) else "")
     return (f"{why}, and this tree has uncommitted changes:\n\n{dirty}\n\n"
             "Uncommitted work is NOT in the reflog. If any of the above is not yours — a file the "
             "owner edited by hand, a note written this session — this command is the last moment it "
-            "exists.\n\n"
+            "exists.\n\n" + undo +
             "Do one of these first, then re-run:\n"
             "  git add -A && git commit -m 'wip'      # recoverable; the gate runs, never --no-verify\n"
             "  git stash push -u -m 'before <what you are about to do>'   # recoverable; drop it once committed\n\n"

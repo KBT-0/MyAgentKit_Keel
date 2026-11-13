@@ -133,11 +133,11 @@ REQUIRED_SUITES = {
               'test_scan_gate': 1, 'test_gate_checks': 22 if symlinks_work() else 21, 'test_unity_gate': 13, 'test_kit_wrapper': 6,
               'test_check_gate': 24, 'test_check_gate_windows': 37 if os.name == 'nt' else 13,
               'test_check_gate_windows_harness': 3 if os.name == 'nt' else 0,
-              'test_sync_kit': 71 if case_folds() else 70, 'test_doctor': 17, 'test_git_hooks': 40, 'test_stop_hook': 13, 'test_context_hook': 26, 'test_band_guard': 9, 'test_model_check': 3, 'test_handoff_pending': 6, 'test_communication_hooks': 44, 'test_suggestions': 27, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 13, 'test_guard_worker_route': 15, 'test_guard_risky_review': 29 if os.name == 'nt' else 31, 'test_guard_destructive_git': 100 if os.name == 'nt' else 99, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
+              'test_sync_kit': 71 if case_folds() else 70, 'test_doctor': 17, 'test_git_hooks': 40, 'test_stop_hook': 14, 'test_context_hook': 26, 'test_band_guard': 10, 'test_model_check': 3, 'test_handoff_pending': 6, 'test_communication_hooks': 44, 'test_suggestions': 27, 'test_suggestion_mod': 1 if shutil.which('claude') else 0, 'test_overlay_permissions': 13, 'test_guard_worker_route': 15, 'test_guard_risky_review': 30 if os.name == 'nt' else 32, 'test_guard_destructive_git': 102 if os.name == 'nt' else 101, 'test_guard_boundaries': 3, 'test_guard_private_email': 11, 'test_guard_root_scan': 3, 'test_guard_secret_files': 3,
               'test_spawn_worker': 90 if os.name == 'nt' else 136, 'test_spawn_codex': 53 if os.name == 'nt' else 60 if shutil.which('dash') else 59,
               # The same conditions as the suites' declared skips (dash, /proc, /dev/full), not the platform.
               'test_codex_worker': 68 if os.name == 'nt' else 70 if Path('/proc/self/fd').is_dir() else 69, 'test_working_mode': 61,
-              'test_worker_visibility': 116 if os.name == 'nt' or os.path.exists('/dev/full') else 115, 'test_doc_pointers': 38,
+              'test_worker_visibility': 117 if os.name == 'nt' or os.path.exists('/dev/full') else 116, 'test_doc_pointers': 38,
               'test_usage_summary': 33, 'test_done_audits': 2, 'test_autopilot_report': 3,
               'test_kit_output': 3, 'test_kit_runner': 53, 'test_clean_worktrees': 147, 'test_clean_worktrees_windows': 21 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 28, 'test_worker_paths_windows': 10 if os.name == 'nt' else 7,

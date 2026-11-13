@@ -393,13 +393,42 @@ class RiskyReviewTests(unittest.TestCase):
                      '- F1 (High), fixed, except on Windows', '- F1 (High), fixed partly', '- F1 (High), fixed; still flaky',
                      '- F1 (High), fixed incompletely', '- High: not fixed', '- High: fixed-point overflow, a.py:3',
                      '- New: High: a.py:3 drops row', '- New High: a.py:3', '- Open High: a.py:3 drops row',
-                     '- Remaining High: a.py:3', '- Regression High: a.py:3'):
+                     '- Remaining High: a.py:3', '- Regression High: a.py:3',
+                     # hookb review: an id with an underscore, a deferral, a second High after the evidence
+                     '- F_1 (High): a.py:3 drops the row', '- H_1: High \u2014 a.py:3 drops the row',
+                     '- F1 (High): resolved: deferred to issue #12 (a.py:9)', '- F1 (High): closed: wontfix (a.py:9)',
+                     '- F1 (High): fixed: see a.py:9, High: b.py:3 deletes data'):
             with self.subTest(line=line):
                 self.assertFalse(record_review.accepted('Verdict: Accept\n' + line))
         for line in ('- F1 (High), fixed.', '- F1 (High), fixed, REPRODUCED.', '- F1 (High): fixed in 1a2b3c; VERIFIED',
                      '- F1 (High), fixed by a.py:9.', '- High: resolved \u2014 verified', 'No High findings.'):
             with self.subTest(line=line):
                 self.assertTrue(record_review.accepted('Verdict: Accept\n' + line))
+
+    def test_a_fixed_finding_with_its_evidence_keeps_the_accept_and_nothing_else_does(self):
+        # hookb (review r2 of hooka2): a fixed High restated with its command, with "commit" or "this diff" before the
+        # reference, or with one clause of evidence after a colon read as open, and the commit was refused (Medium).
+        sys.path.insert(0, str(HOOKS))
+        import record_review
+        for line in ('- F1 (High), fixed. REPRODUCED (python3 -m unittest tests.test_x).',
+                     '- F1 (High): fixed in commit 1a2b3c.', '- F1 (High): fixed in this diff.',
+                     '- F1 (High): fixed: the row is kept now (a.py:9). REPRODUCED.',
+                     '- F1 (High), fixed.\n  REPRODUCED (python3 -m unittest tests.test_x).',
+                     'No new Critical or High findings.', 'No High findings.'):
+            with self.subTest(line=line):
+                self.assertTrue(record_review.accepted('Verdict: Accept\n' + line))
+        # Fail closed (Low): a question, a reference that is a plain word, a label after other words, an open
+        # remainder on a wrapped line (pre-existing), and evidence that is more than one clause or says it is not.
+        for line in ('- F1 (High): fixed?', '- F1 (High): fixed in theory.', '- F1 (High): closed by default',
+                     '- Still open: High: a.py:3 drops the row', '- One new High: a.py:3 drops the row',
+                     '- F1 (High), fixed.\n  But the fix drops the row at a.py:9.',
+                     'Findings:\n  High: a.py:3 drops the row',
+                     '- F1 (High): fixed: the row is kept (a.py:9). The gate now passes silently (g.sh:4).',
+                     '- F1 (High): fixed: the row is kept, but not on Windows (a.py:9).',
+                     '- F1 (High): fixed: the row is kept now.',
+                     '- F1 (High), fixed. REPRODUCED (the row still drops).'):
+            with self.subTest(line=line):
+                self.assertFalse(record_review.accepted('Verdict: Accept\n' + line))
 
     def test_the_capped_hand_back_format_is_read(self):
         # stopcut: diff-reviewer.md's hand-back, the verdict, one line per finding, the checks, the report's path last.

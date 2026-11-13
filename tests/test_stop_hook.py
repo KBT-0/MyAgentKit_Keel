@@ -240,6 +240,31 @@ class StopHookTests(unittest.TestCase):
                     self.assertEqual(stop(hook, root).returncode, 0)
                     self.assertEqual((root / '.git/gate-runs').exists(), name != 'notes.txt')
 
+    def test_the_gated_root_configuration_set_is_pinned(self):
+        # #309: the self-test pins the whole set, so dropping one name from the hook fails here; a .NET project's
+        # root *.csproj, *.sln, Directory.Build.props and global.json are gated too, and only at the root.
+        text = HOOK.read_text(encoding='utf-8')
+        listed = text.split('root_config="', 1)[1].split('"', 1)[0].split()
+        self.assertEqual(sorted(listed), sorted(
+            'package.json package-lock.json npm-shrinkwrap.json pnpm-lock.yaml pnpm-workspace.yaml yarn.lock '
+            'bun.lock bun.lockb tsconfig*.json jsconfig*.json vite.config.* vitest.config.* wrangler.toml '
+            'wrangler.json wrangler.jsonc biome.json biome.jsonc eslint.config.* .eslintrc* pyproject.toml setup.cfg '
+            'setup.py requirements*.txt uv.lock poetry.lock Cargo.toml Cargo.lock go.mod go.sum Makefile '
+            'CMakeLists.txt :(glob)*.csproj :(glob)*.sln Directory.Build.props global.json'.split()))
+        for name, gated in (('App.csproj', True), ('App.sln', True), ('Directory.Build.props', True),
+                            ('global.json', True), ('src2/App.csproj', False)):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                hook = gated_repo(root, 'echo ran >> .git/gate-runs\n')
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text('<Project/>\n', newline='\n')
+                subprocess.run(['git', 'add', '-A'], cwd=root, check=True)
+                subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q',
+                                '-m', 'base'], cwd=root, check=True, capture_output=True)
+                (root / name).write_text('<Project Sdk="x"/>\n', newline='\n')
+                self.assertEqual(stop(hook, root).returncode, 0)
+                self.assertEqual((root / '.git/gate-runs').exists(), gated)
+
     def test_a_name_git_quotes_is_gated(self):
         # Porcelain quotes a name with a space or a non-ASCII letter (`?? "src/my file.py"`): the
         # closing quote broke the pattern's `$`, and a turn that only added it ended ungated (#174).
