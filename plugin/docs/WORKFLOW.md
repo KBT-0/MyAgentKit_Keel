@@ -1765,7 +1765,11 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
 
 1. Merge the ready branches into the integration branch in dependency order, each through
    its gate (the commit runs `./scripts/check.sh`). A merge-conflict resolution is a part
-   authored by whoever resolved it, so the final review covers it. A member branch rejected
+   authored by whoever resolved it, so the final review covers it. Each line of a merged
+   result's "Not run / not verified" and "Noticed, not fixed" sections, and each part of the
+   task it left undone, leaves the merge with a `docs/BACKLOG.md` id or "dropped: <why>" in the
+   merge commit message; `docs/STATE.md` never holds it as prose (#344: such prose lines were
+   lost, and one project's audit found 17 untracked gaps). A member branch rejected
    or abandoned after the merge leaves by rebuilding the integration branch without it.
    A merge whose two sides both changed a generator or a content check (code that writes or
    validates generated content) runs that content validator once on the merged tree before

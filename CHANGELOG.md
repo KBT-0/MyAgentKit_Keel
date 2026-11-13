@@ -15,6 +15,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **A merged result's undone lines get a backlog id or a written drop (#344).** A worker's "Not run / not verified"
+  and "Noticed, not fixed" lines were copied into STATE.md as prose and lost; one project's audit found 17 untracked
+  gaps. WORKFLOW "The lead's steps when a branch is ready", step 1: each such line, and each part of the task left
+  undone, leaves the merge with a `docs/BACKLOG.md` id or "dropped: <why>" in the merge commit message. **ACTION**
+  (project-owned `docs/WORKFLOW.md`): `sync-kit.sh . --merge`, or copy that step's new sentence.
+- **README "What it costs" states the newest measurement and the cut since v0.13 (#307).** ctl16u (3 real field jobs,
+  Opus 5.5 high): lead session 1.50x plain, review bill $2.02 apart, escaped bugs 2 vs 2. Same controlled invoice
+  tasks as v0.13's baseline (BASELINE.md section 5b vs ctl15): kit/plain 2.9x at v0.13, 1.44x at v0.14.1.
 - **A second worker without `--worktree` in a folder where a worker runs is refused (#343).** Two workers in the
   main checkout: the second one's commit landed on the first one's branch. `spawn_worker.sh` reads the session
   registry it already reads for the session cap: a live session in the spawn's folder whose name has a

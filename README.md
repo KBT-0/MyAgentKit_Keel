@@ -24,13 +24,20 @@ A codebase written by agents decays in four ways, and a better prompt fixes none
 
 ## What it costs
 
-Measured on v0.14 with headless Sonnet 5.5 (effort medium) runs on a small invoice project, 4 tasks x 4 runs each,
-hidden tests after every run; three tasks are risky (money, a race, a path escape):
+Newest measurement (2026-11-11, a v0.15 development commit): three real jobs replayed from two field projects
+(a bug, a feature, a multi-file change), headless Opus 5.5 (effort high), 2 runs each, hidden tests after every run:
 
-- Kit vs plain Claude Code: the kit left 6 failures, plain 16; it cost 1.9x plain ($3.04 vs $1.58), most of the gap is
-  the required diff review.
-- Kit vs plain with the kit's skill-listing cap copied (`skillListingMaxDescChars: 160`): the kit left 6 failures,
-  plain 18; it cost 2.6x ($3.04 vs $1.16).
+- The lead session cost 1.50x plain Claude Code ($8.36 vs $5.59; bug 1.11x, feature 1.08x, multi-file 1.76x).
+  The kit's required diff review is a separate bill: $2.02, both runs on the multi-file job.
+- Bugs the hidden tests caught: kit 2, plain 2. At 2 runs per job the ratio moves about 0.3x between repeats
+  (the same kit text once measured 1.16x).
+
+Since v0.13, on the same small controlled tasks (a 5-file invoice project: explain, feature, bugfix; headless
+Sonnet 5.5, effort medium): the kit cost 2.9x plain at v0.13 and 1.44x at v0.14.1, so the kit's spend per run fell by
+half ($0.27 to $0.14). Most of the cut is the bugfix task: at v0.13 it ran two Opus review rounds, at v0.14.1 none.
+
+Quality, measured on v0.14 (same invoice project, 4 tasks x 4 runs, three of them risky: money, a race, a path escape):
+the kit left 6 failures, plain 16, at 1.9x plain's cost ($3.04 vs $1.58), most of the gap the required diff review.
 
 ## A second pair of eyes
 
