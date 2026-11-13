@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-11-13 — The ctl16u mutation proofs did not come from the "proven RED" rule: Micro-Test dropped
+
+Track 2 step 4 planned to sample the AGENTS.md "proven RED" wording against a cheaper one, since ctl16u's turn measure
+put ~3.5 mutation-proof requests per kit multi cell on it. That attribution was a guess (`RESULT-turnmeasure-t.md`:
+"likely ... no kit file was read for it"), and the two kit multi transcripts refute it. The AGENTS.md the leads read
+(leeway's, lines 130-132) has no "Gates must be proven RED" line and says "a new test needs no red proof". In kit multi 2
+the lead ran the four mutations because the diff-reviewer's round-1 High said they survived the new tests; in kit multi 1
+the lead made one unprompted "quick mutation check that the new test bites", one mutation survived, and the lead
+strengthened the test. So the cost is the review loop plus a check that found a real test gap, and no rewording of the
+rule can cut it. Verdict (owner 2026-11-13): the paid Micro-Test is not run; nothing in the kit changes; the CHANGELOG
+v0.15 cost entry is corrected.
+
 ### 2026-11-11 — v0.16 ctl16u: a harness that spawns claude from a kit worker must drop the role variables
 
 `spawn_worker.sh` gives its session `MYAGENTKIT_ROLE=worker`, `MYAGENTKIT_SESSION_ID` and

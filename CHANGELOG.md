@@ -448,8 +448,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   bug 1.11x, feature 1.08x, multi 1.76x (kit 5.98 vs plain 3.40). The review bill is its own line, not in the gate: $2.02
   in 2 review runs, both on the multi job (bug and feature ran no review). Escaped bugs kit 2 vs plain 2 (passes);
   committed 6/6 in both. Lead requests per cell on multi, mean: 42 vs 18; the gap is the mandatory review loop (review
-  handling +7 requests per cell) and task class d (27 vs 18, including ~3.5 mutation-proof requests per cell from the
-  AGENTS.md "proven RED" rule, with 24-26k-token thinking steps; `RESULT-turnmeasure-t.md`). Noise: n=2, and the same kit
+  handling +7 requests per cell) and task class d (27 vs 18, including ~3.5 mutation-proof requests per cell, which
+  a reviewer's High asked for in one cell and a self-check that found a real test gap made in the other, not the
+  AGENTS.md "proven RED" rule (RESEARCH_LOG 2026-11-13), with 24-26k-token thinking steps; `RESULT-turnmeasure-t.md`). Noise: n=2, and the same kit
   text gave 1.16x (ctl16s) and 1.50x (ctl16u), a spread of ~0.3x, so the $ gate (kit <= plain) is neither met nor refuted
   at this n; the bug-escape gate passes. Measuring stops here; the field projects (leeway, labricore-web) are the measure
   from now on. Harness note: the earlier ctl16s and ctl16t kit columns are INVALID: `spawn_worker.sh` gives its session
