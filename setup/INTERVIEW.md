@@ -37,6 +37,12 @@ These override any habit you have about being efficient.
    and of the vendor's "Let Claude interview you" (code.claude.com/docs/en/best-practices).
    Sources (D08 inv3#96): [Spec Kit, spec-driven.md](https://github.com/github/spec-kit/blob/main/spec-driven.md)
    and ["Let Claude interview you"](https://code.claude.com/docs/en/best-practices#let-claude-interview-you).
+   **Each question carries your recommended answer, worded so that "yes" accepts it.** A fact the
+   repository, its history or the web can answer is not a question: find it first (read it, or send
+   a fresh sub-agent) and ask the owner only to confirm what you found. Count the questions you ask
+   and the ones the owner says you could have found yourself; both numbers go in the final report.
+   Source: the "grilling" skill (github.com/mattpocock/skills, `skills/productivity/grilling/SKILL.md`);
+   its batch of every open question per turn is not taken, because rule 1 holds.
 4. **Record the RATIONALE for every decision: one sentence next to the rule, and the longer
    reason in `docs/PROJECT.md` (DECIDED) or `RESEARCH_LOG.md`, linked from the rule.** A rule
    without its reason gets deleted by someone who cannot see what it was protecting; a rule
@@ -554,6 +560,8 @@ A day later nobody remembers which instruction was confusing.
 Report, briefly and honestly:
 
 - What was decided, and what stayed OPEN.
+- How many questions you asked the owner, and how many of them the owner said you could have
+  found yourself (rule 3).
 - The real output of `./scripts/check.sh`, and of each check going red in step 3.
 - Whether fresh review accepted the setup diff, or remains pending with a handoff.
 - Anything you could not verify, named as "not run".

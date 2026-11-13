@@ -15,6 +15,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The setup interview asks with a recommended answer and finds facts before asking** (ecosystem evaluation
+  2026-11-13, step 5, borrowed from the "grilling" skill of mattpocock/skills). `setup/INTERVIEW.md` rule 3: each
+  question carries the recommended answer, worded so that "yes" accepts it; a fact the repository, its history or the
+  web can answer is found first and only confirmed; the final report counts the questions asked and those the owner
+  says were findable. The skill's batch of every open question per turn is not taken (rule 1, one topic per turn).
+  **ACTION:** none; it applies to the next setup.
 - **A merged result's undone lines get a backlog id or a written drop (#344).** A worker's "Not run / not verified"
   and "Noticed, not fixed" lines were copied into STATE.md as prose and lost; one project's audit found 17 untracked
   gaps. WORKFLOW "The lead's steps when a branch is ready", step 1: each such line, and each part of the task left
