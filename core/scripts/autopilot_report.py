@@ -70,7 +70,9 @@ def results(project, since, until):
             yield '- %s: no result file' % name
             continue
         head = path.read_text(encoding='utf-8', errors='replace').splitlines()[:4]
-        shown = path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
+        # resolve both: a record's absolute path may keep a symlinked prefix (macOS /var -> /private/var)
+        real, base = path.resolve(), root.resolve()
+        shown = real.relative_to(base).as_posix() if real.is_relative_to(base) else path.as_posix()
         yield '- ' + shown + ': ' + '; '.join(line.strip() for line in head)
 
 
