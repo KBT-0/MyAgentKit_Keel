@@ -15,6 +15,21 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **A second worker without `--worktree` in a folder where a worker runs is refused (#343).** Two workers in the
+  main checkout: the second one's commit landed on the first one's branch. `spawn_worker.sh` reads the session
+  registry it already reads for the session cap: a live session in the spawn's folder whose name has a
+  `NAME.result-path` record refuses the spawn, `MYAGENTKIT_LIMIT_FORCE` included; `--worktree` is the way.
+- **`spawn_worker.sh NAME BRIEF --worktree --continue` starts a new session in a worker's existing worktree (#315).**
+  After a `Kind: handoff` near 200k, a fresh `--worktree` spawn refused the existing branch and `--resume` went on
+  with the same 200k session. `--continue` keeps the branch and the uncommitted files, locks the worktree again and
+  moves the earlier uncommitted result to `.myagentkit/workers/NAME.result-prev.md`, which its instruction names.
+- **`check.sh` prints each section's time (#314).** One `TIME [sections]: start Ns, 1 Ns, ... 5 Ns` line before the
+  CHECK line, `start` holding the wait for the gate lock: a 44-minute commit gate's log could not say where the time
+  went. The issue's second proposal, no second build of a tree that already passed, is the build cache
+  (`build_cache_inputs` in `scripts/gate_config.sh`, keyed on the files' content, so a worker's own passing run
+  covers its commit); the third, fixtures tied to folders, belongs in a project's own build command.
+- **The autopilot report shows a reused worker name's newest result.** `close_worker.sh` keeps a later run's result as
+  `NAME.result-N.md`; the report took `NAME.result.md`, the first run's (cifix15b review Medium).
 - **The owner's delegate may open, resume and park a lead session (owner, 2026-11-13).** WORKFLOW "The owner's
   delegate": an agent the owner names as their delegate (this kit's maintainer: Monday) counts as the owner in "the
   owner opens the session"; a move to a company account still needs the owner's own approval. Docs only; a re-sync

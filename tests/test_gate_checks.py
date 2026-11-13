@@ -76,6 +76,8 @@ class GateCheckTests(unittest.TestCase):
         code, out = self.gate(**extra)
         self.assertEqual(code, 0, out)
         self.assertIn('CHECK: PASS', out)
+        # #314: where a slow gate spent its time, the lock wait in start.
+        self.assertRegex(out, r'TIME \[sections\]: start \d+s, 1 \d+s, 2 \d+s, 3 \d+s, 4 \d+s, 5 \d+s\nCHECK: PASS')
         return out
 
     def set_gate_line(self, old, new):

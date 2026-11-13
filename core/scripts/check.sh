@@ -251,6 +251,14 @@ fi
 # GATE_LOCK_HELD names the lock path, so a gate in another checkout started from the build
 # command still takes its own lock, and GATE_LOCK_FD names the inherited descriptor, which
 # the proof above checks before it believes the claim. Nothing is written into the lock file.
+# Section times (#314: a 44-minute commit gate whose log could not say where the time went): each
+# section's whole seconds, "start" holding the wait for the lock, on one TIME line before CHECK.
+section_t=$(date +%s) section_name=start section_times=""
+section_mark() {
+  section_now=$(date +%s)
+  section_times="$section_times${section_times:+, }$section_name $((section_now - section_t))s"
+  section_t=$section_now section_name=$1
+}
 case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) printf '%s\n' "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
@@ -561,6 +569,7 @@ scan_grep() {
   [ -e "$work/scan_matched" ]
 }
 
+section_mark 1
 # ---------------------------------------------------------------------------
 # 1) Setup completeness — unfilled placeholders
 # ---------------------------------------------------------------------------
@@ -586,6 +595,7 @@ if [ -n "$hits" ]; then
   fail=1
 fi
 
+section_mark 2
 # ---------------------------------------------------------------------------
 # 2) STATE.md: present, and free of finished tasks
 # ---------------------------------------------------------------------------
@@ -991,6 +1001,7 @@ else
   fi
 fi
 
+section_mark 3
 # ---------------------------------------------------------------------------
 # 3) PROJECT BOUNDARY CHECKS
 # ---------------------------------------------------------------------------
@@ -1011,6 +1022,7 @@ else
   fail=1
 fi
 
+section_mark 4
 # ---------------------------------------------------------------------------
 # 4) Build & tests
 # ---------------------------------------------------------------------------
@@ -1304,6 +1316,7 @@ if [ -e scripts/check.project.sh ] || [ -L scripts/check.project.sh ]; then
   fi
 fi
 
+section_mark 5
 # ---------------------------------------------------------------------------
 # 5) Scanner integrity — LAST, so it covers every scan above, including the project's own
 # boundary checks. The flag file is the one failure signal that survives a command
@@ -1316,6 +1329,8 @@ if [ -e "$work/scan_failed" ]; then
   fail=1
 fi
 
+section_mark end
+printf '%s\n' "TIME [sections]: $section_times"
 if [ "$fail" -ne 0 ]; then echo "CHECK: FAIL"; exit 1; fi
 # The build cache (section 4) records a build only for a run that passed. A record that cannot be
 # written costs the next run its build, nothing else.

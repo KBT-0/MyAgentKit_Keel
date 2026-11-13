@@ -518,6 +518,35 @@ class SpawnWorkerTests(unittest.TestCase):
                 result = self.spawn('w%d' % number, str(self.brief), CLAUDE_CONFIG_DIR=config, **extra)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_second_worker_in_a_folder_where_a_worker_runs_is_refused(self):
+        # #343: two workers without --worktree in the main checkout; the second's commit landed on
+        # the first's branch. A live kit worker there (its NAME.result-path) refuses the spawn, and
+        # MYAGENTKIT_LIMIT_FORCE does not pass it; the lead's own row, a closed worker's and one in
+        # another folder do not refuse.
+        records = self.cwd / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        config = self.registry(live=('lead', 'w8', 'w9', 'w7'), cwds=dict(w8=str(self.cwd), w7=str(self.cwd)))
+        (records / 'w7.closed-result-path').write_text('x\n')
+        (records / 'w9.result-path').write_text('x\n')
+        result = self.spawn('w1', str(self.brief), CLAUDE_CONFIG_DIR=config, MYAGENTKIT_LIMIT_FORCE='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (records / 'w8.result-path').write_text('x\n')
+        result = self.spawn('w2', str(self.brief), CLAUDE_CONFIG_DIR=config, MYAGENTKIT_LIMIT_FORCE='1')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('refused the spawn: the worker w8 runs in this folder', result.stderr)
+        self.assertIn('spawn with --worktree', result.stderr)
+        self.assertFalse((records / 'w2.host').exists(), 'a refused spawn left records')
+        # Its own name is a resume's business (the name check), never this refusal.
+        result = self.spawn('w8', str(self.brief), CLAUDE_CONFIG_DIR=config, MYAGENTKIT_LIMIT_FORCE='1')
+        self.assertNotIn('runs in this folder', result.stderr)
+        # Review 6b1372e2b9c1: in a repository, a spawn from a subfolder shares the checkout too.
+        subprocess.run(['git', 'init', '-q', str(self.cwd)], check=True, capture_output=True)
+        (self.cwd / 'sub').mkdir()
+        self.cwd = self.cwd / 'sub'
+        result = self.spawn('w3', str(self.brief), CLAUDE_CONFIG_DIR=config, MYAGENTKIT_LIMIT_FORCE='1')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('refused the spawn: the worker w8 runs in this folder', result.stderr)
+
     def test_a_bad_cap_is_the_default_with_one_note(self):
         config = self.registry(live=('lead', 'w8', 'w9'))
         for value in ('many', '0', '-1', '99999999999999999999999'):
@@ -2770,7 +2799,7 @@ class BackgroundHostTests(unittest.TestCase):
 
     def test_a_resume_over_150k_of_context_is_refused_for_a_fresh_worker(self):
         # pipeline report 2026-11-09: a resume past 100k rewrote its whole context, up to 371k per resume.
-        refused = "start a fresh worker from the RESULT (%s), or set MYAGENTKIT_RESUME_FORCE=REASON" % (self.cwd / 'RESULT-w1.md')
+        refused = "start a fresh worker from the RESULT (%s) (in its worktree: --worktree --continue), or set MYAGENTKIT_RESUME_FORCE=REASON" % (self.cwd / 'RESULT-w1.md')
         for case, records, extra, words in (
                 ('refused at 150,001', dict(state=150001), {},
                  'refused the resume: context 150001 tokens (the state line), over 150000, and a resume rewrites all of it; '),
@@ -3049,6 +3078,35 @@ class BackgroundHostTests(unittest.TestCase):
         self.assertFalse((self.cwd / 'RESULT-w1.md.prev').exists())  # review r-leewayfield: no copy in the tree
         self.assertIn("This resumes your session: that file is the lead's new instruction", self.launch()['argv'][0])
         self.ended()
+
+    def test_a_continuation_is_a_new_session_in_the_existing_worktree_with_its_files(self):
+        # #315: a worker published Kind: handoff near 200k with its work uncommitted; a fresh
+        # --worktree spawn refused the existing branch and --resume continued the 200k session.
+        worktree = self.cwd / '.claude/worktrees/w1'
+        result = self.spawn('--worktree', SPAWN_PUBLISH=DONE, SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.ended()
+        (worktree / 'half-done.txt').write_text('uncommitted work\n')
+        (worktree / 'RESULT-w1.md').write_text('Kind: handoff\n')
+        result = self.spawn('--worktree')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('branch worktree-w1 already exists', result.stderr)
+        for args in (('--continue',), ('--worktree', '--continue', '--resume', '1a2b3c4d')):
+            with self.subTest(args):
+                result = self.spawn(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('--continue needs --worktree and no --resume', result.stderr)
+        result = self.spawn('--worktree', '--continue', SPAWN_PUBLISH=DONE,
+                            SPAWN_PUBLISH_TO=str(worktree / 'RESULT-w1.md'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        launch = self.launch()
+        self.assertEqual(Path(launch['cwd']).resolve(), worktree.resolve())
+        self.assertNotIn('--resume', launch['argv'])
+        self.assertIn("This is a new session in an earlier worker's worktree", launch['argv'][0])
+        self.assertIn('w1.result-prev.md', launch['argv'][0])
+        self.assertEqual((worktree / 'half-done.txt').read_text(), 'uncommitted work\n')
+        self.assertEqual((self.workers / 'w1.result-prev.md').read_text(), 'Kind: handoff\n')
+        self.assertTrue(self.ended().startswith('DONE published'))
 
     def test_a_resume_into_a_worktree_changed_after_the_result_says_so(self):
         # #324 (leeway): a lead cd'd into the worker's worktree from the main checkout; no session

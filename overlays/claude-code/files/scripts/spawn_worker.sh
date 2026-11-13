@@ -2,7 +2,7 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
-#                        [--result FILE] [--resume SESSION_ID] [--owner-approved-fable REASON]
+#                        [--result FILE] [--resume SESSION_ID | --continue] [--owner-approved-fable REASON]
 # Four facts to know before the details below:
 # - --model and --effort are required, from docs/WORKFLOW.md, "Model routing"; nothing is inherited.
 # - --worktree makes .claude/worktrees/NAME on branch worktree-NAME and locks it for the worker.
@@ -58,6 +58,11 @@
 # with Stop-Process (2026-10-16). The spawn prints the id when Claude Code registered the
 # session; it is also the sessionId in ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json.
 # Only once the earlier session has ended: a running one with the name is refused.
+#
+# --worktree --continue starts a NEW session in the existing worktree NAME, its branch and uncommitted
+# files kept (#315: a worker that published Kind: handoff near 200k must not be resumed, and a new
+# name had to copy its files over). Like a resume it reuses and locks the worktree and moves the earlier
+# result, uncommitted, to .myagentkit/workers/NAME.result-prev.md, which its instruction names.
 #
 # --backend NAME starts the worker on the endpoint that NAME.env in the backend folder names
 # (claude_bridge.backends_dir(); the old .myagentkit/backends/ is read while projects move;
@@ -212,7 +217,7 @@ brief=${brief_dir%"${nl}x"}/${brief##*/}
 ctl "brief path" "$brief"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""; result=""; fable=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""; result=""; fable=""; cont=""
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
@@ -221,6 +226,7 @@ while [ $# -gt 0 ]; do
     --settings)      settings=$2; shift 2 ;;
     --allowed-tools) tools=$2; shift 2 ;;
     --worktree)      worktree=1; shift ;;
+    --continue)      cont=1; shift ;;
     --effort)        effort=$2; shift 2 ;;
     --batch)         batch=1; shift ;;
     --backend)       backend=$2; shift 2 ;;
@@ -231,6 +237,9 @@ while [ $# -gt 0 ]; do
     *) die "unknown option: $1" ;;
   esac
 done
+[ -z "$cont" ] || { [ -n "$worktree" ] && [ -z "$resume" ]; } ||
+  die "--continue needs --worktree and no --resume: it starts a new session in the worker's existing worktree"
+reuse=$resume$cont  # the worktree NAME exists already: a resume or a continuation
 # The lead picks both for every worker (docs/WORKFLOW.md, "Model routing"); left out, the
 # session silently took the user's default.
 [ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
@@ -499,7 +508,7 @@ if files and len(sys.argv) > 4:
        elif [ -n "${MYAGENTKIT_RESUME_FORCE:-}" ]; then
          printf '%s\n' "spawn_worker: resume: context ${ctx%% *} tokens (${ctx#* }), over 150000, forced: $MYAGENTKIT_RESUME_FORCE" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
        else
-         die "refused the resume: context ${ctx%% *} tokens (${ctx#* }), over 150000, and a resume rewrites all of it; start a fresh worker from the RESULT ($told_result), or set MYAGENTKIT_RESUME_FORCE=REASON"
+         die "refused the resume: context ${ctx%% *} tokens (${ctx#* }), over 150000, and a resume rewrites all of it; start a fresh worker from the RESULT ($told_result) (in its worktree: --worktree --continue), or set MYAGENTKIT_RESUME_FORCE=REASON"
        fi ;;
   esac
 fi
@@ -532,6 +541,12 @@ fi
 # it continues, which it replaces (it may still be in its closing grace). No registry or an
 # unreadable file: it passes, silent. On native Windows os.kill(pid, 0) is no probe but a Ctrl-C
 # to that process group (CTRL_C_EVENT is 0), so there the process is opened instead; unmeasured.
+# The same registry refuses a spawn without --worktree into a folder where another kit worker runs
+# (#343: two workers in the main checkout, the second's commit landed on the first's branch). A kit
+# worker: a live row whose cwd is in the same checkout (git's top folder, a subfolder too: review
+# 6b1372e2b9c1) and whose name has a NAME.result-path here (close_worker.sh renames it); no variable
+# passes it, --worktree is the way. shortcut: the spawning login folder's registry only.
+max_sessions=0
 if [ "${MYAGENTKIT_LIMIT_FORCE:-}" != 1 ]; then
   max_sessions=${MYAGENTKIT_MAX_SESSIONS:-3}
   case $max_sessions in *[!0-9]*) max_sessions=0 ;; esac
@@ -539,9 +554,12 @@ if [ "${MYAGENTKIT_LIMIT_FORCE:-}" != 1 ]; then
     printf '%s\n' "spawn_worker: MYAGENTKIT_MAX_SESSIONS is no whole number of 1 or more: the default 3 applies" >&2
     max_sessions=3
   }
+fi
+shared_dir=""; [ -n "$worktree" ] || shared_dir=$(native "$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$dir")")
+if [ "$max_sessions" -ge 1 ] || [ -n "$shared_dir" ]; then
   project=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
   [ -n "$project" ] || project=${wdir%/.myagentkit/workers}
-  live_sessions=$($kit_python -I -c 'import glob, json, os, sys
+  live_sessions=$($kit_python -I -c 'import glob, json, os, subprocess, sys
 def alive(pid):
     if os.name == "nt":
         import ctypes
@@ -566,8 +584,13 @@ def alive(pid):
 folder, resume, cap = sys.argv[1], sys.argv[2], int(sys.argv[3])
 key = lambda path: os.path.normcase(os.path.realpath(path))
 main = key(sys.argv[4])
+here, records, name = sys.argv[5], sys.argv[6], sys.argv[7]
+here = here and key(here)
+def checkout(cwd):
+    top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return key(top.stdout.strip() if top.returncode == 0 and top.stdout.strip() else cwd)
 trees = os.path.join(main, ".claude", "worktrees", "")
-live = []
+live, shared = [], []
 for path in sorted(glob.glob(os.path.join(glob.escape(folder), "*.json"))):
     try:
         with open(path, encoding="utf-8") as f:
@@ -576,17 +599,27 @@ for path in sorted(glob.glob(os.path.join(glob.escape(folder), "*.json"))):
     except (OSError, ValueError, KeyError, TypeError):
         continue
     cwd = row.get("cwd")
-    if not cwd or not isinstance(cwd, str) or (key(cwd) != main and not key(cwd).startswith(trees)):
-        continue
-    if type(pid) is not int or pid < 1 or not alive(pid):
+    if not cwd or not isinstance(cwd, str) or type(pid) is not int or pid < 1 or not alive(pid):
         continue
     session = str(row.get("sessionId") or "")
     if resume and (session == resume or session.startswith(resume + "-")):
         continue
-    live.append("%s (%s)" % (row.get("name") or "process %d" % pid, cwd))
-if len(live) >= cap:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    print(len(live), ", ".join(live))' "$(native "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")" "$resume" "$max_sessions" "$(native "$project")" 2>/dev/null) || live_sessions=""
+    other = row.get("name")
+    if here and isinstance(other, str) and other not in ("", name) and "/" not in other and "\\" not in other \
+            and os.path.isfile(os.path.join(records, other + ".result-path")) and checkout(cwd) == here:
+        shared.append(other)
+    if key(cwd) != main and not key(cwd).startswith(trees):
+        continue
+    live.append("%s (%s)" % (other or "process %d" % pid, cwd))
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if shared:
+    print("here", ", ".join(shared))
+elif cap and len(live) >= cap:
+    print(len(live), ", ".join(live))' "$(native "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")" "$resume" "$max_sessions" \
+    "$(native "$project")" "$shared_dir" "$(native "$wdir")" "$name" 2>/dev/null) || live_sessions=""
+  case $live_sessions in "here "*)
+    die "refused the spawn: the worker ${live_sessions#here } runs in this folder ($dir); a second worker here shares its checkout and branch (#343): spawn with --worktree, or close it first (scripts/close_worker.sh NAME)" ;;
+  esac
   [ -z "$live_sessions" ] || die "refused the spawn: ${live_sessions%% *} Claude Code sessions run in this project (cap $max_sessions, MYAGENTKIT_MAX_SESSIONS): ${live_sessions#* }; every running session rewrites its context at an account switch; close one (scripts/close_worker.sh NAME) or wait for it; the cap: docs/WORKFLOW.md rule 10 (MYAGENTKIT_MAX_SESSIONS=N raises it, MYAGENTKIT_LIMIT_FORCE=1 passes)"
 fi
 # The spend line, as review.sh prints its own before a review: the owner sees what each worker
@@ -607,10 +640,11 @@ if [ -n "$worktree" ]; then
   main=$(git worktree list --porcelain | sed -n '1s/^worktree //p') && [ -n "$main" ] ||
     die "--worktree: git worktree list names no main checkout"
   dir=$main/.claude/worktrees/$name
-  if [ -n "$resume" ]; then
+  if [ -n "$reuse" ]; then
     listed=$(git worktree list --porcelain | awk -v b="branch refs/heads/worktree-$name" '/^worktree /{p=substr($0,10)} $0==b{print p; exit}')
+    [ -n "$listed" ] || [ -z "$cont" ] || die "--continue: git lists no worktree on branch worktree-$name"
     [ -z "$listed" ] || dir=$listed
-    [ -d "$dir" ] || die "--resume --worktree: no worktree at $dir"
+    [ -d "$dir" ] || die "${cont:+--continue}${resume:+--resume} --worktree: no worktree at $dir"
   else
     ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
       die "branch worktree-$name already exists and may be stale; delete it or pick another name"
@@ -634,7 +668,7 @@ prepare_worktree() {
   # worktrees while they run (code.claude.com/docs/en/worktrees). The quiet period stays as the
   # second check for worktrees no kit script locked. `add --lock --reason` needs git 2.33
   # (its release notes); the audit already needs 2.36.
-  if [ -z "$resume" ]; then
+  if [ -z "$reuse" ]; then
     base=$(git rev-parse --verify -q HEAD) || die "--worktree needs a commit to start from"
     # The folder is claimed before the add: mkdir without -p fails when it exists, so of two
     # spawns of one name only one gets it, and only that one may remove anything (Codex r2: a
@@ -651,7 +685,7 @@ prepare_worktree() {
   # worktree under the new run. A lock someone else set stays as it is.
   elif ! gd=$(git -C "$dir" rev-parse --absolute-git-dir) ||
        { [ ! -e "$gd/locked" ] && ! git worktree lock --reason "kit worker $name" "$dir"; }; then
-    die "--resume --worktree: cannot lock $dir for the resumed worker"
+    die "${cont:+--continue}${resume:+--resume} --worktree: cannot lock $dir for the worker"
   fi
   # Untracked kit installs carry settings and hooks together. Fill missing hook files,
   # preserving the committed versions already present in the worker's checkout.
@@ -682,7 +716,7 @@ if copied and not os.path.lexists(ignore):
         stream.write(text)
 elif copied:
     print("spawn_worker: the worktree has its own .claude/hooks/.gitignore; the hook files copied into it show as untracked there", file=sys.stderr)' \
-      "${project_settings%/*}/hooks" "$dir/.claude/hooks" "$hooks_mark" "$wdir/$name.hooks-ignore-spawned" "$resume" ||
+      "${project_settings%/*}/hooks" "$dir/.claude/hooks" "$hooks_mark" "$wdir/$name.hooks-ignore-spawned" "$reuse" ||
       die "cannot carry project hooks into $dir"
   fi
 }
@@ -747,7 +781,8 @@ record_result() {
   # 2026-11-02: the worker's merge renewed its mtime and the watch said DONE at once), and no copy
   # stays in the worker's tree to keep it at close (review r-leewayfield). Only the last one is kept:
   # the lead has read it. A committed result stays: the watch's earlier() check sets it aside.
-  if [ -n "$resume" ] && [ -f "$result" ] &&
+  # A continuation's earlier result (#315) moves the same way.
+  if [ -n "$reuse" ] && [ -f "$result" ] &&
      ! git -C "${result%/*}" ls-files --error-unmatch -- "${result##*/}" >/dev/null 2>&1; then
     mkdir -p -- "$wdir" && mv -f -- "$result" "$wdir/$name.result-prev.md" ||
       die "cannot move the earlier result aside: $result"
@@ -800,8 +835,8 @@ if s:
   # Do not duplicate a tracked project's hooks: Claude Code already loads that file.
   if [ -n "$worktree" ] && [ -f "$project_settings" ]; then
     # A fresh checkout does not exist yet: inspect its commit, not the absent folder.
-    if { [ -n "$resume" ] && [ ! -e "$dir/.claude/settings.json" ]; } ||
-       { [ -z "$resume" ] && ! git cat-file -e HEAD:.claude/settings.json 2>/dev/null; }; then
+    if { [ -n "$reuse" ] && [ ! -e "$dir/.claude/settings.json" ]; } ||
+       { [ -z "$reuse" ] && ! git cat-file -e HEAD:.claude/settings.json 2>/dev/null; }; then
       project=$(native "$project_settings") || die "cannot convert the project settings path"
     fi
   fi
@@ -955,6 +990,7 @@ place_brief() {
 }
 instruction="Read $(q "$told") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 60 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way and with the same last line, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
 [ -z "$resume" ] || instruction="$instruction This resumes your session: that file is the lead's new instruction, a new task or an answer to go on with the current one. Your earlier result is closed even if it said the work was done (an uncommitted one was moved out of your folder): publish a new result once the work is done."
+[ -z "$cont" ] || instruction="$instruction This is a new session in an earlier worker's worktree: its branch and uncommitted files are yours to go on with; the earlier session's result, when it left an uncommitted one, is now $(q "$(native "$wdir/$name.result-prev.md")")."
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
 # opens as a Windows Terminal tab (KIT_WT names another launcher, as for show_workers.sh) with
@@ -1082,7 +1118,7 @@ for row in json.loads(sys.stdin.buffer.read()):
 # loaded host. in_grace sleeps one second and succeeds while the wait goes on.
 grace_end=""
 in_grace() {
-  [ -n "$resume" ] || return 1
+  [ -n "$reuse" ] || return 1
   if [ -z "$grace_end" ]; then
     [ -e "$wdir/$name.result-path" ] || return 1
     for f in "$result" "$dir/QUESTION-$name.md" ""; do

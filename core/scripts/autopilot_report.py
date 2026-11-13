@@ -59,7 +59,11 @@ def results(project, since, until):
             told = record.read_text(encoding='utf-8', errors='replace').strip() if 'result' in kind else ''
             places = [root / told] if told else [root / '.claude/worktrees' / name / ('RESULT-%s.md' % name),
                                                  root / ('RESULT-%s.md' % name)]
-            spawned.setdefault(name, []).extend(places + [workers / (name + '.result.md'), workers / ('RESULT-%s.md' % name)])
+            # close_worker.sh numbers a reused name's later results NAME.result-2.md, -3, ...: newest first.
+            numbered = sorted((int(f.name[len(name) + 8:-3]), f) for f in workers.glob(name + '.result-*.md')
+                              if f.name[len(name) + 8:-3].isdigit())
+            spawned.setdefault(name, []).extend(places + [f for _, f in reversed(numbered)] +
+                                                [workers / (name + '.result.md'), workers / ('RESULT-%s.md' % name)])
     for name in sorted(spawned):
         path = next((place for place in spawned[name] if place.is_file()), None)
         if path is None:

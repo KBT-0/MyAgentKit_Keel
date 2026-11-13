@@ -126,6 +126,12 @@ class AutopilotReportTests(unittest.TestCase):
         # record kept as NAME.closed-result-path by close_worker.sh.
         workers = self.project / '.myagentkit/workers'
         (workers / 'gone.result.md').write_text(head % 'gone', encoding='utf-8')
+        # A reused name (cifix15b review): its earlier runs' results stay, the newest is -10.md, not -9.md.
+        (workers / 'again.result.md').write_text(head % 'again 1', encoding='utf-8')
+        for n in (2, 9, 10):
+            (workers / ('again.result-%d.md' % n)).write_text(head % ('again %d' % n), encoding='utf-8')
+        (workers / 'again.closed-result-path').write_text(
+            str(self.project / '.claude/worktrees/again/RESULT-again.md') + '\n', encoding='utf-8')
         (workers / 'gone.closed-result-path').write_text(
             str(self.project / '.claude/worktrees/gone/RESULT-gone.md') + '\n', encoding='utf-8')
         # The brief's fallback place, for a record whose path is another host's form.
@@ -145,6 +151,8 @@ class AutopilotReportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('- RESULT-root.md: Kind: completed; Task: root;', result.stdout)
         self.assertIn('- .myagentkit/workers/gone.result.md: Kind: completed; Task: gone;', result.stdout)
+        self.assertIn('- .myagentkit/workers/again.result-10.md: Kind: completed; Task: again 10;', result.stdout)
+        self.assertEqual(result.stdout.count('again'), 2, result.stdout)
         self.assertIn('- .myagentkit/workers/RESULT-other.md: Kind: completed; Task: other;', result.stdout)
         self.assertNotIn('copied', result.stdout)
         self.assertNotIn('earlier', result.stdout)
