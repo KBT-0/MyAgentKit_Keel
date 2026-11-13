@@ -279,6 +279,18 @@ class RoutingHintTests(unittest.TestCase):
         (self.project / '.claude' / 'settings.json').write_text('{not json', encoding='utf-8')
         self.assertEqual(self.call(review).returncode, 0, 'an unreadable settings file is none')
 
+    def test_a_subagent_effort_at_the_review_ceiling_runs_the_review(self):
+        # hooka2 (review r1 of hookA, Low): high, the value setup/INTERVIEW.md lets a project set, is the ceiling a
+        # review may run at (REVIEW_GATE.md, "Invariant"); a worker type that inherits is still asked for its effort.
+        (self.project / '.claude' / 'agents' / 'builder.md').write_text(
+            '---\nname: builder\nmodel: inherit\n---\nBuild.\n', encoding='utf-8')
+        for level, kind, code in (('high', 'diff-reviewer', 0), ('xhigh', 'diff-reviewer', 0), ('max', 'diff-reviewer', 0),
+                                  ('HIGH', 'diff-reviewer', 0), ('medium', 'diff-reviewer', 2), ('auto', 'diff-reviewer', 2),
+                                  ('high', 'builder', 2)):
+            with self.subTest(level=level, kind=kind):
+                result = self.call({'subagent_type': kind}, CLAUDE_CODE_SUBAGENT_EFFORT=level)
+                self.assertEqual(result.returncode, code, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

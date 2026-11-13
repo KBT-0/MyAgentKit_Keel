@@ -1812,6 +1812,31 @@ class BackgroundTests(Base):
                 self.assertIn('DONE: w1', out)
                 self.assertEqual(line in out, shown, out)
 
+    def test_a_fable_note_skips_sub_agents_and_finds_a_tmux_workers_transcript(self):
+        # hooka2 (review r1 of hookA, Low): a sub-agent's sidechain answer is not the worker's; (Medium) the
+        # tmux host records no NAME.id, so its transcript is found by the session name `claude -n NAME` writes.
+        (self.workers / 'w1.fable-approved').write_text('"do it on Fable" (2026-11-13)\n')
+        answer = lambda model, **extra: dict(said('Done.'), message=dict(said('Done.')['message'], model=model), **extra)
+        named = dict(type='agent-name', agentName='w1', sessionId='aaaa0001-5137-4293-88d5-c4339d1ce56c')
+        prompt = dict(type='user', message=dict(role='user', content="Your result file is 'RESULT-w1.md'"))
+        line = '  MODEL_FALLBACK: asked fable, answered by claude-opus-5-5'
+        for run, (host, entries, shown) in enumerate((
+                ('bg', (answer('claude-fable-5-2'), answer('claude-haiku-5-5', isSidechain=True),
+                        answer('claude-fable-5-2')), False),
+                ('tmux', (prompt, named, answer('claude-opus-5-5')), True),
+                ('tmux', (prompt, dict(named, agentName='w10'), answer('claude-opus-5-5')), False))):
+            with self.subTest(host=host, entries=entries):
+                self.spawned('w1', id='aaaa0001' if host == 'bg' else None, host=host)
+                if host == 'tmux':
+                    (self.workers / 'w1.id').unlink(missing_ok=True)
+                self.rows(agent('aaaa0001', 'w1', self.cwd, 'done', pid=1))
+                self.transcript(*entries)
+                (self.cwd / 'RESULT-w1.md').write_text(HEAD % ('completed', 'none') + 'run %d\n' % run + READY)
+                out = self.watch().stdout
+                self.assertIn('DONE: w1', out)
+                self.assertEqual('MODEL_FALLBACK' in out, shown, out)
+                self.assertEqual(line in out, shown, out)
+
     def test_only_a_published_final_result_hides_the_sessions_end(self):
         # The supervisor stops a session only on a decision, DONE or HANDOFF (codex_worker.py):
         # a draft or a blocked result leaves it running, so its idle or end is still said.

@@ -25,13 +25,17 @@ VERDICT = re.compile(r"\W*(?:verdict\W*)?(?:accept|approve)\b|\W*verdict\W*pass\
 HEADING = re.compile(r"\W*verdict\W*", re.I)
 # A line that leads with Critical or High, after list, table and emphasis markup and labels such as
 # "Issue #1 -", "Finding 1:", "H1 (", "Severity:" or a `path:line`; "High-severity" too, not "High-tier".
-LABEL = r"(?:issue|finding|[a-z]?\d+|severity|`[^`\n]*`)"  # one way to split a line: no backtracking blow-up
+# hooka2: "New", "Open", "Remaining", "Reopened" or "Regression" before it too ("- New High: a.py:3").
+LABEL = r"(?:issue|finding|[a-z]?\d+|severity|new|open|remaining|reopened|regression|`[^`\n]*`)"  # one way to split a line: no backtracking blow-up
 # labricore A5: a bare path:line may lead once ("- src/x.ts:3 — High: ...")
 # #345: an earlier round's finding restated as fixed ("- F1 (High), fixed. REPRODUCED.", "H2 (Critical) — resolved")
 # is none: the disposition word comes right after the severity, at most after "now", "confirmed" or
-# "verified", and ends there (a stop, a bracket, "in"/"by" a commit or test). "High: fixed offset 4 ...",
-# "fixed-width", "not fixed" and "unresolved" still block.
-FIXED = r"[^\w\n]*(?:(?:now|confirmed|verified)\s+)?(?:fixed|closed|resolved)(?:\s*(?:$|[.,;:)\]]|[—–]|\s-\s|\s(?:in|by|since|at)\s))"
+# "verified", and ends the finding (hooka2): after it at most "in", "by", "since" or "at" and one
+# reference (a commit, a test, a path:line), then only punctuation and REPRODUCED, VERIFIED or CONFIRMED
+# up to the line's end. "fixed, but ...", "fixed in part; ...", "closed. <a new defect>", "resolved in the
+# wrong order ...", a file "resolved.ts:12", "fixed-width", "not fixed" and "unresolved" still block.
+FIXED = (r"[^\w\n]*(?:(?:now|confirmed|verified)\s+)?(?:fixed|closed|resolved)"
+         r"(?:\s+(?:in|by|since|at)\s+(?!part\b)[^\s,;]{1,80})?(?:[^\w\n]|\b(?:reproduced|verified|confirmed)\b)*$")
 BLOCKING = re.compile(r"^[^\w\n`]*(?:[\w\\-]*[./][\w./\\-]*:\d+[^\w\n`]+)?(?:%s[^\w\n`]+)*(?:critical|high)\b(?!-(?:tier|effort|risk)\b)(?!%s)"
                       % (LABEL, FIXED), re.I | re.M)
 

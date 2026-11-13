@@ -17,7 +17,8 @@ overrides the pin, so a call never needs one for such an agent. So is one that w
 definition with no `effort:` (RESEARCH_LOG 2026-11-10 "subeffort", verified live), so a project that
 sets it would run its required reviewer, `diff-reviewer` (inherit, no effort), below the author's
 effort. With the variable in the hook's environment or in the `env` of the local, project or user
-settings, such a call names its effort. A refusal for no model and no effort prints the routing
+settings, such a call names its effort, except a review's when the variable is high, xhigh or max:
+at or above the ceiling a review may run at (REVIEW_GATE.md, "Invariant"). A refusal for no model and no effort prints the routing
 table's tier-1 row, copy-paste ready, for a read-only errand (one page, one lookup, #346): the
 choice stays the lead's, it only no longer needs a look into the table.
 
@@ -192,7 +193,10 @@ if kind == "fork":
     sys.exit(0)
 missing = [name for name in ("model", "effort") if not call.get(name)]
 level = None if call.get("effort") else subagent_effort()
-if level and any(head.get("model") == "inherit" and not chosen(head, "effort") for head in definitions(kind)):
+# hooka2: high and above is the ceiling a review may run at (REVIEW_GATE.md, "Invariant"), so the variable
+# cannot run a review below it; a worker type that inherits still names its own effort.
+ceiling = "review" in kind.lower() and str(level).strip().lower() in ("high", "xhigh", "max")
+if level and not ceiling and any(head.get("model") == "inherit" and not chosen(head, "effort") for head in definitions(kind)):
     print(
         "BLOCKED: CLAUDE_CODE_SUBAGENT_EFFORT=%s is set and `%s` writes `model: inherit` with no effort, so this "
         "call would run at %s, not at your own effort: Claude Code takes the variable before the session's effort. "

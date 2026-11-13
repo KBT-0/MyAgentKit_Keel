@@ -573,21 +573,31 @@ report_result() {
 # --owner-approved-fable) and its answers came from another model: on an account without Fable
 # credits a Fable session runs on Opus with no error (#342, finding 3; model_check.py does it for
 # sub-agents). One line under the report, so the lead never calls the result Fable's; return 2 when it
-# could not be written. shortcut: a grep of the session's transcript (NAME.session, else NAME.id, as
-# limited() finds it) for the `"message":{"model":"X"` Claude Code writes first in each answer, not a
-# JSON parse; no transcript or no answer says nothing.
+# could not be written. The session's transcript: NAME.session, else NAME.id, as limited() finds it;
+# a worker with neither (the tmux host records no id, hooka2) by the session name `claude -n NAME`
+# writes (`"agentName":"NAME"`, unescaped only in its own entries) in a transcript written since the
+# spawn (NAME.result-path) that names its result file. shortcut: a grep for the `"message":{"model":"X"`
+# Claude Code writes first in each answer, not a JSON parse, skipping a sub-agent's sidechain entries
+# as limited() does; no transcript or no answer says nothing.
 fable_note() {
   [ -f "$wdir/$1.fable-approved" ] || return 0
-  fid=$(cat -- "$wdir/$1.session" 2>/dev/null) || fid=$(cat -- "$wdir/$1.id" 2>/dev/null) || return 0
-  case $fid in ''|*[!0-9a-f-]*) return 0 ;; esac
-  for ft in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$fid"*.jsonl; do
-    [ -f "$ft" ] || continue
-    fother=$(LC_ALL=C grep -o '"message":{"model":"[^"<]*"' -- "$ft" | LC_ALL=C sed 's/.*"model":"//; s/"$//' |
-      LC_ALL=C grep -iv fable | sort | uniq -c | sort -rn | LC_ALL=C sed -n '1s/^ *[0-9]* //p')
-    [ -n "$fother" ] || continue
+  froot=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects
+  if fid=$(cat -- "$wdir/$1.session" 2>/dev/null) || fid=$(cat -- "$wdir/$1.id" 2>/dev/null); then
+    case $fid in ''|*[!0-9a-f-]*) return 0 ;; esac
+    fts=$(for ft in "$froot"/*/"$fid"*.jsonl; do [ ! -f "$ft" ] || printf '%s\n' "$ft"; done)
+  else
+    fres=$(cat -- "$wdir/$1.result-path" 2>/dev/null) && [ -n "$fres" ] || return 0
+    fts=$(find "$froot" -mindepth 2 -maxdepth 2 -name '*.jsonl' -newer "$wdir/$1.result-path" 2>/dev/null |
+      while IFS= read -r ft; do
+        ! LC_ALL=C grep -qF "\"agentName\":\"$1\"" -- "$ft" || ! LC_ALL=C grep -qF -- "$fres" "$ft" || printf '%s\n' "$ft"
+      done)
+  fi
+  fother=$(printf '%s\n' "$fts" | while IFS= read -r ft; do
+      [ ! -f "$ft" ] || LC_ALL=C grep -vF '"isSidechain":true' -- "$ft" | LC_ALL=C grep -o '"message":{"model":"[^"<]*"'
+    done | LC_ALL=C sed 's/.*"model":"//; s/"$//' | LC_ALL=C grep -iv fable | sort | uniq -c | sort -rn |
+    LC_ALL=C sed -n '1s/^ *[0-9]* //p')
+  [ -z "$fother" ] ||
     say "  MODEL_FALLBACK: asked fable, answered by $fother: an owner-approved Fable worker that ran on another model; do not report its result as Fable's (#342)" || return 2
-    return 0
-  done
 }
 
 # Native Windows: report NAME's state line when it starts with $2 (waiting or idle) and was not

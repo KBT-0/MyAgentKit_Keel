@@ -379,6 +379,28 @@ class RiskyReviewTests(unittest.TestCase):
             with self.subTest(report=report):
                 self.assertFalse(record_review.accepted(report))
 
+    def test_a_disposition_counts_only_when_it_ends_the_finding(self):
+        # hooka2 (review r1 of hookA, Medium): a disposition word followed by more of the finding, or a file named
+        # like one, read as a fixed High and the commit passed; (pre-existing) a "New" label hid an open High.
+        sys.path.insert(0, str(HOOKS))
+        import record_review
+        for line in ('- F1 (High): fixed, but the fix drops the row at a.py:9. REPRODUCED',
+                     '- F1 (High): fixed in part; the Windows path still drops the row',
+                     'Critical: closed. The gate now passes silently when the file is empty (g.sh:4)',
+                     '- High: resolved in the wrong order, the symlink escapes the root (a.py:3)',
+                     'High resolved.ts:12 \u2014 the symlink target escapes the root',
+                     '- High: fixed.ts:3 drops the row', '- F1 (High), fixed only on POSIX',
+                     '- F1 (High), fixed, except on Windows', '- F1 (High), fixed partly', '- F1 (High), fixed; still flaky',
+                     '- F1 (High), fixed incompletely', '- High: not fixed', '- High: fixed-point overflow, a.py:3',
+                     '- New: High: a.py:3 drops row', '- New High: a.py:3', '- Open High: a.py:3 drops row',
+                     '- Remaining High: a.py:3', '- Regression High: a.py:3'):
+            with self.subTest(line=line):
+                self.assertFalse(record_review.accepted('Verdict: Accept\n' + line))
+        for line in ('- F1 (High), fixed.', '- F1 (High), fixed, REPRODUCED.', '- F1 (High): fixed in 1a2b3c; VERIFIED',
+                     '- F1 (High), fixed by a.py:9.', '- High: resolved \u2014 verified', 'No High findings.'):
+            with self.subTest(line=line):
+                self.assertTrue(record_review.accepted('Verdict: Accept\n' + line))
+
     def test_the_capped_hand_back_format_is_read(self):
         # stopcut: diff-reviewer.md's hand-back, the verdict, one line per finding, the checks, the report's path last.
         sys.path.insert(0, str(HOOKS))
