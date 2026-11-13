@@ -1034,6 +1034,10 @@ a commit made while away) follows the away line until a switch records it there.
   back, as after a crash); its lock is free. Then it deletes `limit-stop` and logs one line to `.myagentkit/limit-watchdog.log`; a
   failed launch is logged and never retried. A band stop, autopilot off, or any doubt: it does
   nothing, and {{OWNER_NAME}} opens the session.
+- **The owner's delegate** (owner, 2026-11-13): an agent {{OWNER_NAME}} names as their delegate (this kit's
+  maintainer: Monday) counts as {{OWNER_NAME}} in "{{OWNER_NAME}} opens the session": it may open a lead session
+  remotely, resume it and park it. A move to a company account still needs {{OWNER_NAME}}'s own approval; the
+  delegate cannot give it. A lead never opens its own sessions.
 - **Decides:**
 
   | What | When | The lead |

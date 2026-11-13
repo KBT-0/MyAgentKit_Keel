@@ -15,6 +15,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## Unreleased — v0.15
 
+- **The owner's delegate may open, resume and park a lead session (owner, 2026-11-13).** WORKFLOW "The owner's
+  delegate": an agent the owner names as their delegate (this kit's maintainer: Monday) counts as the owner in "the
+  owner opens the session"; a move to a company account still needs the owner's own approval. Docs only; a re-sync
+  brings it.
 - **The autopilot report lists the workers spawned in the absence, wherever their results are (#316).**
   `autopilot_report.py` took every `RESULT-*.md` in a worktree written since the stamp: a `git worktree add` gave
   committed results of earlier sessions a new file time (about 200 listed on 2026-11-01), and results at the main
