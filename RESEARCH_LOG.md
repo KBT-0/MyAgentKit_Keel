@@ -1628,6 +1628,18 @@ since (`setup/RESEARCH_PROTOCOL.md`, "The baseline").
 
 ## Ecosystem findings
 
+### 2026-11-13 — obra/superpowers v7.0.2 measured on the ctl16u jobs: inconclusive, not adopted
+
+The ecosystem evaluation (owner 2026-11-13) asked whether superpowers could replace the kit's process text. A plain
+`claude -p` column with superpowers loaded by `--plugin-dir` (that session only) ran the three ctl16u jobs, Opus 5.5
+high, n=2. Lead-only $: superpowers 6.87, kit 8.36, plain 5.59; escaped bugs 2 in all three; committed 6/6 in all.
+Superpowers never engaged: 0 Skill calls and 0 sub-agents in the 6 transcripts, so the column is plain Claude with an
+inert skill listing. The pre-written rule ("cheaper than the kit with no more escaped bugs: plan to keep only the
+hook and gate layer") was met on paper; the owner judged it inconclusive, since its premise, an active superpowers,
+did not hold. Verdict: not adopted; no evidence of benefit. By-product: two near-identical setups (plain, plain plus an
+inert plugin) differ by 1.23x at n=2, so a cost decision at this n is inside the noise. A re-run with the skill named
+in the prompt was offered and not chosen. Data: `.myagentkit/v016-reset/ctl16sp/RESULT-TABLE.md`.
+
 ### 2026-09-05 — Correcting role-neutral workflow claims
 
 The owner approved correcting three overstatements in the role-neutral handoff. A skill
